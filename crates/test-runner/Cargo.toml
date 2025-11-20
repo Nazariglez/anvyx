@@ -1,0 +1,6 @@
+[package]
+name = "test-runner"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

@@ -1,0 +1,9 @@
+[package]
+name = "anvyl-lang"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+chumsky = "0.11.2"
+ariadne = "0.6.0"
+internment = "0.8.6"

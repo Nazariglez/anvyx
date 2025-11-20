@@ -1,0 +1,267 @@
+use chumsky::{Parser, prelude::*};
+use internment::Intern;
+use std::fmt::Display;
+
+use crate::ast;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Token {
+    Keyword(Keyword),
+    Open(Delimiter),
+    Close(Delimiter),
+    TypeIdent(ast::Ident),
+    TermIdent(ast::Ident),
+    Literal(LitToken),
+    Op(Op),
+}
+
+impl Display for Token {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::Keyword(keyword) => write!(f, "{}", keyword),
+            Token::TypeIdent(ident) => write!(f, "{}", ident),
+            Token::TermIdent(ident) => write!(f, "{}", ident),
+            Token::Literal(lit_token) => write!(f, "{}", lit_token),
+            Token::Open(Delimiter::Parent) => write!(f, "("),
+            Token::Open(Delimiter::Brace) => write!(f, "{{"),
+            Token::Open(Delimiter::Bracket) => write!(f, "["),
+            Token::Close(Delimiter::Parent) => write!(f, ")"),
+            Token::Close(Delimiter::Brace) => write!(f, "}}"),
+            Token::Close(Delimiter::Bracket) => write!(f, "]"),
+            Token::Op(op) => write!(f, "{}", op),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LitToken {
+    Number(i64),
+    Float(Intern<String>),
+    String(Intern<String>),
+}
+
+impl Display for LitToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LitToken::Number(n) => write!(f, "{}", n),
+            LitToken::Float(s) => write!(f, "{}", s),
+            LitToken::String(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Delimiter {
+    Parent,
+    Brace,
+    Bracket,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Keyword {
+    Int,
+    Float,
+    Bool,
+    String,
+    Void,
+    Nil,
+    True,
+    False,
+    Fn,
+    Return,
+}
+
+impl Display for Keyword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Keyword::Int => write!(f, "int"),
+            Keyword::Float => write!(f, "float"),
+            Keyword::Bool => write!(f, "bool"),
+            Keyword::String => write!(f, "string"),
+            Keyword::Void => write!(f, "void"),
+            Keyword::Nil => write!(f, "nil"),
+            Keyword::True => write!(f, "true"),
+            Keyword::False => write!(f, "false"),
+            Keyword::Fn => write!(f, "fn"),
+            Keyword::Return => write!(f, "return"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Op {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
+    And,
+    Or,
+    Not,
+    Assign,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    ThinArrow,
+    FatArrow,
+}
+
+impl Display for Op {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Op::Add => write!(f, "+"),
+            Op::Sub => write!(f, "-"),
+            Op::Mul => write!(f, "*"),
+            Op::Div => write!(f, "/"),
+            Op::Mod => write!(f, "%"),
+            Op::Eq => write!(f, "=="),
+            Op::Ne => write!(f, "!="),
+            Op::Lt => write!(f, "<"),
+            Op::Gt => write!(f, ">"),
+            Op::LtEq => write!(f, "<="),
+            Op::GtEq => write!(f, ">="),
+            Op::And => write!(f, "&&"),
+            Op::Or => write!(f, "||"),
+            Op::Not => write!(f, "!"),
+            Op::Assign => todo!(),
+            Op::AddAssign => write!(f, "+="),
+            Op::SubAssign => write!(f, "-="),
+            Op::MulAssign => write!(f, "*="),
+            Op::DivAssign => write!(f, "/="),
+            Op::ThinArrow => write!(f, "->"),
+            Op::FatArrow => write!(f, "=>"),
+        }
+    }
+}
+
+pub fn tokenize(program: &str) -> Result<Vec<Token>, String> {
+    lexer().parse(program).into_result().map_err(|errors| {
+        errors
+            .into_iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    })
+}
+
+fn lexer<'src>() -> impl Parser<'src, &'src str, Vec<Token>> {
+    choice((line_comment().to(None), token().map(Some)))
+        .repeated()
+        .collect::<Vec<_>>()
+        .map(|items| items.into_iter().flatten().collect::<Vec<_>>())
+        .then_ignore(end())
+}
+
+fn token<'src>() -> impl Parser<'src, &'src str, Token> {
+    choice((keyword(), delimiter(), literal(), ident(), op())).padded()
+}
+
+fn keyword<'src>() -> impl Parser<'src, &'src str, Token> {
+    choice((
+        just("fn").to(Keyword::Fn),
+        just("return").to(Keyword::Return),
+        just("int").to(Keyword::Int),
+        just("float").to(Keyword::Float),
+        just("bool").to(Keyword::Bool),
+        just("string").to(Keyword::String),
+        just("void").to(Keyword::Void),
+        just("nil").to(Keyword::Nil),
+        just("true").to(Keyword::True),
+    ))
+    .map(Token::Keyword)
+}
+
+fn delimiter<'src>() -> impl Parser<'src, &'src str, Token> {
+    choice((open_delimiter(), close_delimiter()))
+}
+
+fn open_delimiter<'src>() -> impl Parser<'src, &'src str, Token> {
+    choice((
+        just("(").to(Delimiter::Parent),
+        just("{").to(Delimiter::Brace),
+        just("[").to(Delimiter::Bracket),
+    ))
+    .map(Token::Open)
+}
+
+fn close_delimiter<'src>() -> impl Parser<'src, &'src str, Token> {
+    choice((
+        just(")").to(Delimiter::Parent),
+        just("}").to(Delimiter::Brace),
+        just("]").to(Delimiter::Bracket),
+    ))
+    .map(Token::Close)
+}
+
+fn literal<'src>() -> impl Parser<'src, &'src str, Token> {
+    choice((lit_integer(), lit_float(), lit_string())).map(Token::Literal)
+}
+
+fn lit_integer<'src>() -> impl Parser<'src, &'src str, LitToken> {
+    text::int(10)
+        .map(|s: &str| s.parse().unwrap())
+        .map(LitToken::Number)
+}
+
+fn lit_float<'src>() -> impl Parser<'src, &'src str, LitToken> {
+    text::int(10)
+        .then(just('.'))
+        .then(text::digits(10))
+        .to_slice()
+        .map(|s: &str| Intern::new(s.to_string()))
+        .map(LitToken::Float)
+}
+
+fn lit_string<'src>() -> impl Parser<'src, &'src str, LitToken> {
+    just("\"")
+        .ignore_then(none_of("\"").repeated().collect::<String>())
+        .then_ignore(just("\""))
+        .map(|s| Intern::new(s))
+        .map(LitToken::String)
+}
+
+fn ident<'src>() -> impl Parser<'src, &'src str, Token> {
+    text::ident()
+        .map(|s: &str| ast::Ident(Intern::new(s.to_string())))
+        .map(Token::TermIdent)
+}
+
+fn op<'src>() -> impl Parser<'src, &'src str, Token> {
+    choice((
+        // complex op
+        just("==").to(Op::Eq),
+        just("!=").to(Op::Ne),
+        just("<=").to(Op::LtEq),
+        just(">=").to(Op::GtEq),
+        just("&&").to(Op::And),
+        just("||").to(Op::Or),
+        just("+=").to(Op::AddAssign),
+        just("-=").to(Op::SubAssign),
+        just("*=").to(Op::MulAssign),
+        just("/=").to(Op::DivAssign),
+        just("->").to(Op::ThinArrow),
+        just("=>").to(Op::FatArrow),
+        // simple op
+        just("+").to(Op::Add),
+        just("-").to(Op::Sub),
+        just("*").to(Op::Mul),
+        just("/").to(Op::Div),
+        just("%").to(Op::Mod),
+        just("<").to(Op::Lt),
+        just(">").to(Op::Gt),
+        just("!").to(Op::Not),
+        just("=").to(Op::Assign),
+    ))
+    .map(Token::Op)
+}
+
+fn line_comment<'src>() -> impl Parser<'src, &'src str, ()> {
+    just("//").ignore_then(none_of("\n").repeated()).ignored()
+}

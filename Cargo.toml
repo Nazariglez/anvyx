@@ -1,6 +1,13 @@
-[package]
-name = "anvyl"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = ["crates/*"]
+default-members = ["crates/anvyl"]
+resolver = "3"
 
-[dependencies]
+[workspace.package]
+version = "0.1.0"
+description = "Anvyl Programming Language"
+edition = "2024"
+authors = ["Nazarí González <nazari.nz@gmail.com>"]
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/Nazariglez/anvyl"
+repository = "https://github.com/Nazariglez/anvyl"
