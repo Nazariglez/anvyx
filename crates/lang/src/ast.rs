@@ -1,11 +1,16 @@
-use std::fmt::Display;
-
+use crate::span::Spanned;
 use internment::Intern;
+use std::fmt::Display;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
-    pub stmts: Vec<Stmt>,
+    pub stmts: Vec<StmtNode>,
 }
+
+pub type ExprNode = Spanned<Expr>;
+pub type StmtNode = Spanned<Stmt>;
+pub type FuncNode = Spanned<Func>;
+pub type BlockNode = Spanned<Block>;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Ident(pub Intern<String>);
@@ -52,8 +57,8 @@ impl Display for Type {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    Func(Func),
-    Expr(Expr),
+    Func(FuncNode),
+    Expr(ExprNode),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -68,7 +73,7 @@ pub struct Func {
     pub visibility: Visibility,
     pub params: Vec<Param>,
     pub ret: Type,
-    pub body: Block,
+    pub body: BlockNode,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -79,7 +84,7 @@ pub struct Param {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
-    pub stmts: Vec<Stmt>,
+    pub stmts: Vec<StmtNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,11 +99,11 @@ pub enum Lit {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Ident(Ident),
-    Block(Block),
+    Block(BlockNode),
     Lit(Lit),
     Call {
-        func: Box<Expr>,
-        args: Vec<Expr>,
+        func: Box<ExprNode>,
+        args: Vec<ExprNode>,
         type_args: Vec<Type>,
     },
 }

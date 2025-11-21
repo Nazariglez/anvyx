@@ -2,25 +2,25 @@ use chumsky::{Parser, prelude::*};
 use internment::Intern;
 use std::fmt::Display;
 
-use crate::ast;
+use crate::{ast, span::Span};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     Keyword(Keyword),
     Open(Delimiter),
     Close(Delimiter),
-    TypeIdent(ast::Ident),
-    TermIdent(ast::Ident),
+    Ident(ast::Ident),
     Literal(LitToken),
     Op(Op),
 }
+
+pub type SpannedToken = (Token, Span);
 
 impl Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Token::Keyword(keyword) => write!(f, "{}", keyword),
-            Token::TypeIdent(ident) => write!(f, "{}", ident),
-            Token::TermIdent(ident) => write!(f, "{}", ident),
+            Token::Ident(ident) => write!(f, "{}", ident),
             Token::Literal(lit_token) => write!(f, "{}", lit_token),
             Token::Open(Delimiter::Parent) => write!(f, "("),
             Token::Open(Delimiter::Brace) => write!(f, "{{"),
@@ -141,7 +141,7 @@ impl Display for Op {
     }
 }
 
-pub fn tokenize(program: &str) -> Result<Vec<Token>, String> {
+pub fn tokenize(program: &str) -> Result<Vec<SpannedToken>, String> {
     lexer().parse(program).into_result().map_err(|errors| {
         errors
             .into_iter()
@@ -151,7 +151,7 @@ pub fn tokenize(program: &str) -> Result<Vec<Token>, String> {
     })
 }
 
-fn lexer<'src>() -> impl Parser<'src, &'src str, Vec<Token>> {
+fn lexer<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>> {
     choice((line_comment().to(None), token().map(Some)))
         .repeated()
         .collect::<Vec<_>>()
@@ -159,8 +159,19 @@ fn lexer<'src>() -> impl Parser<'src, &'src str, Vec<Token>> {
         .then_ignore(end())
 }
 
-fn token<'src>() -> impl Parser<'src, &'src str, Token> {
-    choice((keyword(), delimiter(), literal(), ident(), op())).padded()
+fn token<'src>() -> impl Parser<'src, &'src str, SpannedToken> {
+    choice((keyword(), delimiter(), literal(), ident(), op()))
+        .padded()
+        .map_with(|tok, e| {
+            let span = e.span();
+            (
+                tok,
+                Span {
+                    start: span.start,
+                    end: span.end,
+                },
+            )
+        })
 }
 
 fn keyword<'src>() -> impl Parser<'src, &'src str, Token> {
@@ -174,6 +185,7 @@ fn keyword<'src>() -> impl Parser<'src, &'src str, Token> {
         just("void").to(Keyword::Void),
         just("nil").to(Keyword::Nil),
         just("true").to(Keyword::True),
+        just("false").to(Keyword::False),
     ))
     .map(Token::Keyword)
 }
@@ -230,7 +242,7 @@ fn lit_string<'src>() -> impl Parser<'src, &'src str, LitToken> {
 fn ident<'src>() -> impl Parser<'src, &'src str, Token> {
     text::ident()
         .map(|s: &str| ast::Ident(Intern::new(s.to_string())))
-        .map(Token::TermIdent)
+        .map(Token::Ident)
 }
 
 fn op<'src>() -> impl Parser<'src, &'src str, Token> {
