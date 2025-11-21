@@ -1,2 +1,8 @@
-run:
-    cargo run -- run tests/test.anvyl
+run target:
+    cargo run -- run {{target}}
+
+check target:
+    cargo run -- check {{target}}
+
+tests target="tests":
+    cargo run --package test-runner -- {{target}}

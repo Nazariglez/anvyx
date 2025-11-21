@@ -4,7 +4,7 @@ mod lexer;
 mod parser;
 mod span;
 
-pub fn run_program(program: &str) -> Result<ast::Program, String> {
+pub fn generate_ast(program: &str) -> Result<ast::Program, String> {
     let tokens = lexer::tokenize(program)?;
     match parser::parse_ast(&tokens) {
         Ok(ast) => Ok(ast),
@@ -13,4 +13,10 @@ pub fn run_program(program: &str) -> Result<ast::Program, String> {
             Err("Failed to parse program".to_string())
         }
     }
+}
+
+pub fn run_program(program: &str) -> Result<(), String> {
+    let ast = generate_ast(program)?;
+    println!("AST: {:?}", ast);
+    Ok(())
 }
