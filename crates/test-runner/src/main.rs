@@ -4,7 +4,10 @@ mod run_test;
 
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use run_test::{ExpectedResult, TestResult, run_test_file};
-use std::{path::PathBuf, time::Instant};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 const EXT: &str = "anv";
 const GREEN: &str = "\x1b[32m";
@@ -16,6 +19,8 @@ const RESET: &str = "\x1b[0m";
 
 fn main() {
     let args = args::RunnerArgs::new().unwrap();
+
+    let exe = run_test::compile_lang(false).unwrap();
 
     let start_time = Instant::now();
     let files = if let Some(file) = args.file {
@@ -30,14 +35,16 @@ fn main() {
 
     let results = files
         .par_iter()
-        .filter_map(|file| match run_test_file(file) {
-            Ok(res) => Some((file.clone(), res)),
-            Err(e) => Some((
-                file.clone(),
-                TestResult::Fail {
-                    message: format!("Test runner error: {e}"),
-                },
-            )),
+        .filter_map(|file| {
+            match run_test_file(&exe, file, Duration::from_millis(args.timeout_ms)) {
+                Ok(res) => Some((file.clone(), res)),
+                Err(e) => Some((
+                    file.clone(),
+                    TestResult::Fail {
+                        message: format!("Test runner error: {e}"),
+                    },
+                )),
+            }
         })
         .collect::<Vec<_>>();
 

@@ -1,3 +1,4 @@
-fn main() -> int {
+// @expect: success
+fn main() -> in {
     
 }

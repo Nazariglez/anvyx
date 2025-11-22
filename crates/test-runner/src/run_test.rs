@@ -1,9 +1,9 @@
-use anvyl_lang::run_program;
+use wait_timeout::ChildExt;
 
 use crate::directives::Directives;
-use std::path::PathBuf;
+use std::{io::Read, path::PathBuf, time::Duration};
 
-pub fn run_test_file(file: &PathBuf) -> Result<TestResult, String> {
+pub fn run_test_file(cmd: &str, file: &PathBuf, timeout: Duration) -> Result<TestResult, String> {
     let src = std::fs::read_to_string(file).map_err(|e| e.to_string())?;
     let directives = Directives::new(&src);
     if directives.skip.is_some() {
@@ -12,25 +12,29 @@ pub fn run_test_file(file: &PathBuf) -> Result<TestResult, String> {
         });
     }
 
-    Ok(match run_program(&src) {
-        Ok(output) => match directives.expect {
-            ExpectedResult::Success => match_output(&output, &directives)?,
-            ExpectedResult::Error => TestResult::Fail {
-                message: "Expected error but got success".to_string(),
-            },
-            ExpectedResult::Timeout => TestResult::Fail {
-                message: "Expected timeout but got success".to_string(),
-            },
+    let outcome = spawn_test_process(cmd, file, timeout)?;
+    Ok(match (outcome, directives.expect) {
+        (ProcessOutcome::Pass { output }, ExpectedResult::Success) => {
+            match_output(&output, &directives)?
+        }
+        (ProcessOutcome::Pass { .. }, ExpectedResult::Error) => TestResult::Fail {
+            message: format!("Expected error but got success"),
         },
-        Err(err) => match directives.expect {
-            ExpectedResult::Error => match_output(&err, &directives)?,
-            ExpectedResult::Success => TestResult::Fail {
-                message: format!("Expected success but got error:\n{err}"),
-            },
-            ExpectedResult::Timeout => TestResult::Fail {
-                message: format!("Expected timeout but got error:\n{err}"),
-            },
+        (ProcessOutcome::Pass { output }, ExpectedResult::Timeout) => TestResult::Fail {
+            message: format!("Expected timeout but got success:\n{output}"),
         },
+        (ProcessOutcome::Fail { message }, ExpectedResult::Success) => TestResult::Fail {
+            message: format!("Expected success but got error:\n{message}"),
+        },
+        (ProcessOutcome::Fail { message }, ExpectedResult::Timeout) => TestResult::Fail {
+            message: format!("Expected timeout but got error:\n{message}"),
+        },
+        (ProcessOutcome::Fail { message }, ExpectedResult::Error) => {
+            match_output(&message, &directives)?
+        }
+        (ProcessOutcome::Timeout, ExpectedResult::Success) => TestResult::Timeout,
+        (ProcessOutcome::Timeout, ExpectedResult::Error) => TestResult::Timeout,
+        (ProcessOutcome::Timeout, ExpectedResult::Timeout) => TestResult::Pass,
     })
 }
 
@@ -114,4 +118,78 @@ pub enum TestResult {
     Fail { message: String },
     Timeout,
     Skip { message: String },
+}
+
+enum ProcessOutcome {
+    Pass { output: String },
+    Fail { message: String },
+    Timeout,
+}
+
+pub fn compile_lang(release: bool) -> Result<String, String> {
+    // TODO: release? backend?
+    println!("Compiling anvyl...");
+    let mut child = std::process::Command::new("cargo")
+        .arg("build")
+        .arg("--package")
+        .arg("anvyl")
+        .args(if release { vec!["--release"] } else { vec![] })
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let status = child.wait().map_err(|e| e.to_string())?;
+    if !status.success() {
+        return Err("Build failed".to_string());
+    }
+
+    let profile = if release { "release" } else { "debug" };
+    let exe_name = if cfg!(target_os = "windows") {
+        "anvyl.exe"
+    } else {
+        "anvyl"
+    };
+    let exe_path = PathBuf::from("target").join(profile).join(exe_name);
+    Ok(exe_path.display().to_string())
+}
+
+fn spawn_test_process(
+    cmd: &str,
+    file: &PathBuf,
+    timeout: Duration,
+) -> Result<ProcessOutcome, String> {
+    // TODO: allows to set backend? debug or release?
+    let mut child = std::process::Command::new(cmd)
+        .arg("run")
+        .arg(file.display().to_string())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    let res = child.wait_timeout(timeout).map_err(|e| e.to_string())?;
+    match res {
+        Some(status) => {
+            let mut msg = String::new();
+
+            if let Some(mut output) = child.stdout.take() {
+                let _ = output.read_to_string(&mut msg);
+            }
+            if let Some(mut stderr) = child.stderr.take() {
+                let _ = stderr.read_to_string(&mut msg);
+            }
+
+            if status.success() {
+                Ok(ProcessOutcome::Pass { output: msg })
+            } else {
+                Ok(ProcessOutcome::Fail { message: msg })
+            }
+        }
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Ok(ProcessOutcome::Timeout)
+        }
+    }
 }
