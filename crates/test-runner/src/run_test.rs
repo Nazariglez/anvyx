@@ -57,7 +57,7 @@ fn match_output(output: &str, directives: &Directives) -> Result<TestResult, Str
             if ln != expected_ln {
                 return Ok(TestResult::Fail {
                     message: format!(
-                        "*Line {idx} failed\n* Expected:\n{expected}\n* Got:\n{output}",
+                        "* Line {idx} failed\n* Expected:\n{expected}\n* Got:\n{output}",
                     ),
                 });
             }
