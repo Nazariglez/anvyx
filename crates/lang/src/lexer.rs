@@ -1,4 +1,4 @@
-use chumsky::{Parser, prelude::*};
+use chumsky::{Parser, error::Rich, extra, prelude::*};
 use internment::Intern;
 use std::fmt::Display;
 
@@ -141,40 +141,35 @@ impl Display for Op {
     }
 }
 
-pub fn tokenize(program: &str) -> Result<Vec<SpannedToken>, String> {
-    lexer().parse(program).into_result().map_err(|errors| {
-        errors
-            .into_iter()
-            .map(|e| e.to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    })
+pub fn tokenize(program: &str) -> Result<Vec<SpannedToken>, Vec<Rich<'_, char>>> {
+    lexer().parse(program).into_result()
 }
 
-fn lexer<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>> {
+type Extra<'src> = extra::Full<Rich<'src, char>, (), ()>;
+
+fn lexer<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Extra<'src>> {
     choice((line_comment().to(None), token().map(Some)))
+        .padded()
         .repeated()
         .collect::<Vec<_>>()
         .map(|items| items.into_iter().flatten().collect::<Vec<_>>())
         .then_ignore(end())
 }
 
-fn token<'src>() -> impl Parser<'src, &'src str, SpannedToken> {
-    choice((keyword(), delimiter(), literal(), ident(), op()))
-        .padded()
-        .map_with(|tok, e| {
-            let span = e.span();
-            (
-                tok,
-                Span {
-                    start: span.start,
-                    end: span.end,
-                },
-            )
-        })
+fn token<'src>() -> impl Parser<'src, &'src str, SpannedToken, Extra<'src>> {
+    choice((keyword(), delimiter(), literal(), ident(), op())).map_with(|tok, e| {
+        let span = e.span();
+        (
+            tok,
+            Span {
+                start: span.start,
+                end: span.end,
+            },
+        )
+    })
 }
 
-fn keyword<'src>() -> impl Parser<'src, &'src str, Token> {
+fn keyword<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
     choice((
         just("fn").to(Keyword::Fn),
         just("return").to(Keyword::Return),
@@ -190,11 +185,11 @@ fn keyword<'src>() -> impl Parser<'src, &'src str, Token> {
     .map(Token::Keyword)
 }
 
-fn delimiter<'src>() -> impl Parser<'src, &'src str, Token> {
+fn delimiter<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
     choice((open_delimiter(), close_delimiter()))
 }
 
-fn open_delimiter<'src>() -> impl Parser<'src, &'src str, Token> {
+fn open_delimiter<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
     choice((
         just("(").to(Delimiter::Parent),
         just("{").to(Delimiter::Brace),
@@ -203,7 +198,7 @@ fn open_delimiter<'src>() -> impl Parser<'src, &'src str, Token> {
     .map(Token::Open)
 }
 
-fn close_delimiter<'src>() -> impl Parser<'src, &'src str, Token> {
+fn close_delimiter<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
     choice((
         just(")").to(Delimiter::Parent),
         just("}").to(Delimiter::Brace),
@@ -212,17 +207,17 @@ fn close_delimiter<'src>() -> impl Parser<'src, &'src str, Token> {
     .map(Token::Close)
 }
 
-fn literal<'src>() -> impl Parser<'src, &'src str, Token> {
+fn literal<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
     choice((lit_integer(), lit_float(), lit_string())).map(Token::Literal)
 }
 
-fn lit_integer<'src>() -> impl Parser<'src, &'src str, LitToken> {
+fn lit_integer<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
     text::int(10)
         .map(|s: &str| s.parse().unwrap())
         .map(LitToken::Number)
 }
 
-fn lit_float<'src>() -> impl Parser<'src, &'src str, LitToken> {
+fn lit_float<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
     text::int(10)
         .then(just('.'))
         .then(text::digits(10))
@@ -231,7 +226,7 @@ fn lit_float<'src>() -> impl Parser<'src, &'src str, LitToken> {
         .map(LitToken::Float)
 }
 
-fn lit_string<'src>() -> impl Parser<'src, &'src str, LitToken> {
+fn lit_string<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
     just("\"")
         .ignore_then(none_of("\"").repeated().collect::<String>())
         .then_ignore(just("\""))
@@ -239,13 +234,13 @@ fn lit_string<'src>() -> impl Parser<'src, &'src str, LitToken> {
         .map(LitToken::String)
 }
 
-fn ident<'src>() -> impl Parser<'src, &'src str, Token> {
+fn ident<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
     text::ident()
         .map(|s: &str| ast::Ident(Intern::new(s.to_string())))
         .map(Token::Ident)
 }
 
-fn op<'src>() -> impl Parser<'src, &'src str, Token> {
+fn op<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
     choice((
         // complex op
         just("==").to(Op::Eq),
@@ -274,6 +269,6 @@ fn op<'src>() -> impl Parser<'src, &'src str, Token> {
     .map(Token::Op)
 }
 
-fn line_comment<'src>() -> impl Parser<'src, &'src str, ()> {
+fn line_comment<'src>() -> impl Parser<'src, &'src str, (), Extra<'src>> {
     just("//").ignore_then(none_of("\n").repeated()).ignored()
 }

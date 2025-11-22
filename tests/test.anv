@@ -1,4 +1,5 @@
 // @expect: success
+// @contains: Unexpected character
 
 fn main() -> in {
     

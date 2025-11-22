@@ -1,6 +1,32 @@
+use std::ops::Range;
+
 use crate::lexer::{SpannedToken, Token};
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::error::{Rich, RichPattern};
+
+pub fn report_lexer_errors(src: &str, errors: Vec<Rich<'_, char>>) {
+    for e in errors {
+        let span = e.span();
+        let byte_range = span.start..span.end;
+
+        let last_context = last_ctx(&e)
+            .map(|s| format!("while lexing a {}", s))
+            .unwrap_or_default();
+        let (msg_title, msg_body) = if let Some(found_char) = e.found() {
+            (
+                format!("Unexpected character {}", last_context),
+                format!("'{}'", found_char),
+            )
+        } else {
+            (
+                format!("Unexpected end of input {}", last_context),
+                "end of file".to_string(),
+            )
+        };
+
+        emit_report(src, byte_range, msg_title, msg_body);
+    }
+}
 
 pub fn report_parse_errors(src: &str, tokens: &[SpannedToken], errors: Vec<Rich<SpannedToken>>) {
     for e in errors {
@@ -30,18 +56,11 @@ pub fn report_parse_errors(src: &str, tokens: &[SpannedToken], errors: Vec<Rich<
             )
         };
 
-        let report = Report::build(ReportKind::Error, byte_range.clone())
-            .with_message(msg_title)
-            .with_label(
-                Label::new(byte_range.clone())
-                    .with_color(Color::Red)
-                    .with_message(msg_body),
-            );
-        let _ = report.finish().print(Source::from(src));
+        emit_report(src, byte_range, msg_title, msg_body);
     }
 }
 
-fn last_ctx(ctx: &Rich<'_, SpannedToken>) -> Option<String> {
+fn last_ctx<T>(ctx: &Rich<'_, T>) -> Option<String> {
     ctx.contexts()
         .filter_map(|(pat, span)| match pat {
             RichPattern::Label(s) => Some((s.as_ref(), span)),
@@ -49,6 +68,17 @@ fn last_ctx(ctx: &Rich<'_, SpannedToken>) -> Option<String> {
         })
         .last()
         .map(|(s, _)| s.to_string())
+}
+
+fn emit_report(src: &str, range: Range<usize>, title: String, body: String) {
+    let report = Report::build(ReportKind::Error, range.clone())
+        .with_message(title)
+        .with_label(
+            Label::new(range.clone())
+                .with_color(Color::Red)
+                .with_message(body),
+        );
+    let _ = report.finish().print(Source::from(src));
 }
 
 fn describe_token(token: &Token) -> String {
