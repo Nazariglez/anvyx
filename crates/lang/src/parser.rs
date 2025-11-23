@@ -7,12 +7,17 @@ use chumsky::{error::Rich, extra, prelude::*};
 
 type Input<'src> = &'src [SpannedToken];
 type Extra<'src> = extra::Full<Rich<'src, SpannedToken>, (), ()>;
+trait AnvParser<'src, T>: chumsky::Parser<'src, Input<'src>, T, Extra<'src>> + 'src {}
+impl<'src, T, P> AnvParser<'src, T> for P where
+    P: chumsky::Parser<'src, Input<'src>, T, Extra<'src>> + 'src
+{
+}
 
 pub fn parse_ast(tokens: &[SpannedToken]) -> Result<ast::Program, Vec<Rich<'_, SpannedToken>>> {
     parser().parse(tokens).into_result()
 }
 
-fn parser<'src>() -> impl Parser<'src, Input<'src>, ast::Program, Extra<'src>> + 'src {
+fn parser<'src>() -> impl AnvParser<'src, ast::Program> {
     let stmt = statement();
     function(stmt)
         .map(|func_node| {
@@ -25,7 +30,7 @@ fn parser<'src>() -> impl Parser<'src, Input<'src>, ast::Program, Extra<'src>> +
         .then_ignore(end())
 }
 
-fn statement<'src>() -> impl Parser<'src, Input<'src>, ast::StmtNode, Extra<'src>> + 'src {
+fn statement<'src>() -> impl AnvParser<'src, ast::StmtNode> {
     recursive(|stmt| {
         let expr = expression(stmt.clone());
         let func = function(stmt.clone());
@@ -52,8 +57,8 @@ fn statement<'src>() -> impl Parser<'src, Input<'src>, ast::StmtNode, Extra<'src
 }
 
 fn function<'src>(
-    stmt: impl Parser<'src, Input<'src>, ast::StmtNode, Extra<'src>>,
-) -> impl Parser<'src, Input<'src>, ast::FuncNode, Extra<'src>> {
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> impl AnvParser<'src, ast::FuncNode> {
     select! {
         (Token::Keyword(Keyword::Fn), _) => (),
     }
@@ -79,8 +84,8 @@ fn function<'src>(
 }
 
 fn block_stmt<'src>(
-    stmt: impl Parser<'src, Input<'src>, ast::StmtNode, Extra<'src>>,
-) -> impl Parser<'src, Input<'src>, ast::BlockNode, Extra<'src>> {
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> impl AnvParser<'src, ast::BlockNode> {
     select! {
         (Token::Open(Delimiter::Brace), _) => (),
     }
@@ -96,9 +101,9 @@ fn block_stmt<'src>(
     .as_context()
 }
 
-fn expression<'src>(
-    stmt: impl Parser<'src, Input<'src>, ast::StmtNode, Extra<'src>>,
-) -> impl Parser<'src, Input<'src>, ast::ExprNode, Extra<'src>> {
+fn atom_expr<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> impl AnvParser<'src, ast::ExprNode> {
     choice((
         literal().map_with(|lit, e| {
             let s = e.span();
@@ -113,11 +118,92 @@ fn expression<'src>(
             Spanned::new(ast::Expr::Block(block_node), span)
         }),
     ))
+    .labelled("atom")
+}
+
+fn fn_call_args<'src>(
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> impl AnvParser<'src, Vec<ast::ExprNode>> {
+    select! {
+        (Token::Open(Delimiter::Parent), _) => (),
+    }
+    .ignore_then(
+        expr.separated_by(select! {
+            (Token::Comma, _) => (),
+        })
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .or_not()
+        .map(|opt| opt.unwrap_or_default()),
+    )
+    .then_ignore(select! {
+        (Token::Close(Delimiter::Parent), _) => (),
+    })
+    .boxed()
+    .labelled("function call arguments")
+    .as_context()
+}
+
+fn call_expr<'src>(
+    atom: impl AnvParser<'src, ast::ExprNode>,
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> impl AnvParser<'src, ast::ExprNode> {
+    let args = fn_call_args(expr);
+    atom.foldl(args.repeated(), |callee, args| {
+        let start = callee.span.start;
+        let end = args.last().map(|a| a.span.end).unwrap_or(callee.span.end);
+        let span = Span::new(start, end);
+
+        let call_node = Spanned::new(
+            ast::Call {
+                func: Box::new(callee),
+                args,
+                type_args: vec![], // later: parse `<T, U>` etc.
+            },
+            span,
+        );
+
+        Spanned::new(ast::Expr::Call(call_node), span)
+    })
+    .boxed()
+    .labelled("call expr")
+}
+
+fn binary_expr<'src>(
+    term: impl AnvParser<'src, ast::ExprNode>,
+) -> impl AnvParser<'src, ast::ExprNode> {
+    let term = term.boxed();
+    let op_rhs = binary_op().then(term.clone());
+
+    term.foldl(op_rhs.repeated(), |left, (op, right)| {
+        let span = Span::new(left.span.start, right.span.end);
+        let bin_node = Spanned::new(
+            ast::Binary {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            },
+            span,
+        );
+
+        Spanned::new(ast::Expr::Binary(bin_node), span)
+    })
     .labelled("expression")
     .as_context()
 }
 
-fn identifier<'src>() -> impl Parser<'src, Input<'src>, ast::Ident, Extra<'src>> {
+fn expression<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> impl AnvParser<'src, ast::ExprNode> {
+    recursive(|expr| {
+        let atom = atom_expr(stmt).boxed();
+        let call = call_expr(atom, expr);
+        let binary = binary_expr(call);
+        binary.boxed()
+    })
+}
+
+fn identifier<'src>() -> impl AnvParser<'src, ast::Ident> {
     select! {
         (Token::Ident(ident), _) => ident,
     }
@@ -125,7 +211,7 @@ fn identifier<'src>() -> impl Parser<'src, Input<'src>, ast::Ident, Extra<'src>>
     .as_context()
 }
 
-fn literal<'src>() -> impl Parser<'src, Input<'src>, ast::Lit, Extra<'src>> {
+fn literal<'src>() -> impl AnvParser<'src, ast::Lit> {
     select! {
         (Token::Literal(lit), _) => match lit {
             LitToken::Number(n) => ast::Lit::Int(n),
@@ -144,25 +230,36 @@ fn literal<'src>() -> impl Parser<'src, Input<'src>, ast::Lit, Extra<'src>> {
     .as_context()
 }
 
-fn params<'src>() -> impl Parser<'src, Input<'src>, Vec<ast::Param>, Extra<'src>> {
+fn params<'src>() -> impl AnvParser<'src, Vec<ast::Param>> {
     select! {
         (Token::Open(Delimiter::Parent), _) => (),
     }
-    .ignore_then(param().repeated().collect::<Vec<_>>())
+    .ignore_then(
+        param()
+            .separated_by(select! {
+                (Token::Comma, _) => (),
+            })
+            .collect::<Vec<_>>()
+            .or_not()
+            .map(|opt| opt.unwrap_or_default()),
+    )
     .then_ignore(select! {
         (Token::Close(Delimiter::Parent), _) => (),
     })
 }
 
-fn param<'src>() -> impl Parser<'src, Input<'src>, ast::Param, Extra<'src>> {
+fn param<'src>() -> impl AnvParser<'src, ast::Param> {
     identifier()
+        .then_ignore(select! {
+            (Token::Colon, _) => (),
+        })
         .then(type_ident())
         .map(|(name, ty)| ast::Param { name, ty })
         .labelled("parameter")
         .as_context()
 }
 
-fn return_type<'src>() -> impl Parser<'src, Input<'src>, Option<ast::Type>, Extra<'src>> {
+fn return_type<'src>() -> impl AnvParser<'src, Option<ast::Type>> {
     select! {
         (Token::Op(Op::ThinArrow), _) => (),
     }
@@ -172,7 +269,7 @@ fn return_type<'src>() -> impl Parser<'src, Input<'src>, Option<ast::Type>, Extr
     .as_context()
 }
 
-fn type_ident<'src>() -> impl Parser<'src, Input<'src>, ast::Type, Extra<'src>> {
+fn type_ident<'src>() -> impl AnvParser<'src, ast::Type> {
     select! {
         (Token::Keyword(Keyword::Int), _) => ast::Type::Int,
         (Token::Keyword(Keyword::Float), _) => ast::Type::Float,
@@ -185,8 +282,8 @@ fn type_ident<'src>() -> impl Parser<'src, Input<'src>, ast::Type, Extra<'src>> 
 }
 
 fn binding<'src>(
-    stmt: impl Parser<'src, Input<'src>, ast::StmtNode, Extra<'src>>,
-) -> impl Parser<'src, Input<'src>, ast::BindingNode, Extra<'src>> {
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> impl AnvParser<'src, ast::BindingNode> {
     let mutability = select! {
         (Token::Keyword(Keyword::Let), _) => ast::Mutability::Immutable,
         (Token::Keyword(Keyword::Var), _) => ast::Mutability::Mutable,
@@ -220,4 +317,24 @@ fn binding<'src>(
                 Span::new(s.start, s.end),
             )
         })
+}
+
+fn binary_op<'src>() -> impl AnvParser<'src, ast::BinaryOp> {
+    select! {
+        (Token::Op(Op::Add), _) => ast::BinaryOp::Add,
+        (Token::Op(Op::Sub), _) => ast::BinaryOp::Sub,
+        (Token::Op(Op::Mul), _) => ast::BinaryOp::Mul,
+        (Token::Op(Op::Div), _) => ast::BinaryOp::Div,
+        (Token::Op(Op::Rem), _) => ast::BinaryOp::Rem,
+        (Token::Op(Op::Eq), _) => ast::BinaryOp::Eq,
+        (Token::Op(Op::NotEq), _) => ast::BinaryOp::NotEq,
+        (Token::Op(Op::LessThan), _) => ast::BinaryOp::LessThan,
+        (Token::Op(Op::GreaterThan), _) => ast::BinaryOp::GreaterThan,
+        (Token::Op(Op::LessThanEq), _) => ast::BinaryOp::LessThanEq,
+        (Token::Op(Op::GreaterThanEq), _) => ast::BinaryOp::GreaterThanEq,
+        (Token::Op(Op::And), _) => ast::BinaryOp::And,
+        (Token::Op(Op::Or), _) => ast::BinaryOp::Or,
+    }
+    .labelled("binary op")
+    .as_context()
 }

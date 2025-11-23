@@ -12,6 +12,9 @@ pub type StmtNode = Spanned<Stmt>;
 pub type FuncNode = Spanned<Func>;
 pub type BlockNode = Spanned<Block>;
 pub type BindingNode = Spanned<Binding>;
+pub type BinaryNode = Spanned<Binary>;
+pub type UnaryNode = Spanned<Unary>;
+pub type CallNode = Spanned<Call>;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Ident(pub Intern<String>);
@@ -119,9 +122,81 @@ pub enum Expr {
     Ident(Ident),
     Block(BlockNode),
     Lit(Lit),
-    Call {
-        func: Box<ExprNode>,
-        args: Vec<ExprNode>,
-        type_args: Vec<Type>,
-    },
+    Call(CallNode),
+    Binary(BinaryNode),
+    Unary(UnaryNode),
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Eq,
+    NotEq,
+    LessThan,
+    GreaterThan,
+    LessThanEq,
+    GreaterThanEq,
+    And,
+    Or,
+    Xor,
+}
+
+impl Display for BinaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BinaryOp::Add => write!(f, "+"),
+            BinaryOp::Sub => write!(f, "-"),
+            BinaryOp::Mul => write!(f, "*"),
+            BinaryOp::Div => write!(f, "/"),
+            BinaryOp::Rem => write!(f, "%"),
+            BinaryOp::Eq => write!(f, "=="),
+            BinaryOp::NotEq => write!(f, "!="),
+            BinaryOp::LessThan => write!(f, "<"),
+            BinaryOp::GreaterThan => write!(f, ">"),
+            BinaryOp::LessThanEq => write!(f, "<="),
+            BinaryOp::GreaterThanEq => write!(f, ">="),
+            BinaryOp::And => write!(f, "&&"),
+            BinaryOp::Or => write!(f, "||"),
+            BinaryOp::Xor => write!(f, "^"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Binary {
+    pub left: Box<ExprNode>,
+    pub op: BinaryOp,
+    pub right: Box<ExprNode>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum UnaryOp {
+    Neg,
+    Not,
+}
+
+impl Display for UnaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnaryOp::Neg => write!(f, "-"),
+            UnaryOp::Not => write!(f, "!"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unary {
+    pub op: UnaryOp,
+    pub expr: Box<ExprNode>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Call {
+    pub func: Box<ExprNode>,
+    pub args: Vec<ExprNode>,
+    pub type_args: Vec<Type>,
 }

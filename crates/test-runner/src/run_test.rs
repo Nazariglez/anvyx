@@ -76,7 +76,7 @@ fn match_output(output: &str, directives: &Directives) -> Result<TestResult, Str
         let same_lines_num = lns.count() == expected_lines.count();
         if !same_lines_num {
             return Ok(TestResult::Fail {
-                message: format!("* Expected:\n{output}\n* Got:\n{}", expected),
+                message: format!("* Expected:\n{expected}\n* Got:\n{output}"),
             });
         }
 
@@ -103,13 +103,13 @@ fn match_output(output: &str, directives: &Directives) -> Result<TestResult, Str
             if !ln.contains(expected_ln) {
                 return Ok(TestResult::Fail {
                     message: format!(
-                        "* Line {idx} failed\n* Expected to contain:\n{expected_ln}\n* Got:\n{ln}",
+                        "* Expected line '{idx}' to contain:\n{expected_ln}\n* Got:\n{ln}",
                     ),
                 });
             }
         } else {
             return Ok(TestResult::Fail {
-                message: format!("* Line {idx} not found\n* Expected to contain:\n{expected_ln}"),
+                message: format!("* Missing line '{idx}' expected to contain:\n{expected_ln}"),
             });
         }
     }
@@ -176,6 +176,7 @@ pub enum TestResult {
     Skip { message: String },
 }
 
+#[derive(Debug)]
 enum ProcessOutcome {
     Pass { output: String },
     Fail { message: String },

@@ -131,6 +131,7 @@ impl Summary {
         if self.failed > 0 {
             eprintln!("* {}Failed:{} {}", RED, RESET, self.failed);
             self.failures.iter().for_each(|(f, m)| {
+                println!("");
                 eprintln!("{RED}  - {}:{RESET}", f.display());
                 tab_print(4, m, true);
             });

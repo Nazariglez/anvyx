@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    var a: int = 10;
+    var b: string = "str";
+    var c: bool = true;
+    var d: bool = false;
+    var f: float = 10.0;
+}

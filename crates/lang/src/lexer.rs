@@ -14,6 +14,7 @@ pub enum Token {
     Op(Op),
     Colon,
     Semicolon,
+    Comma,
 }
 
 pub type SpannedToken = (Token, Span);
@@ -33,6 +34,7 @@ impl Display for Token {
             Token::Op(op) => write!(f, "{}", op),
             Token::Colon => write!(f, ":"),
             Token::Semicolon => write!(f, ";"),
+            Token::Comma => write!(f, ","),
         }
     }
 }
@@ -118,13 +120,13 @@ pub enum Op {
     Sub,
     Mul,
     Div,
-    Mod,
+    Rem,
     Eq,
-    Ne,
-    Lt,
-    Gt,
-    LtEq,
-    GtEq,
+    NotEq,
+    LessThan,
+    GreaterThan,
+    LessThanEq,
+    GreaterThanEq,
     And,
     Or,
     Not,
@@ -144,13 +146,13 @@ impl Display for Op {
             Op::Sub => write!(f, "-"),
             Op::Mul => write!(f, "*"),
             Op::Div => write!(f, "/"),
-            Op::Mod => write!(f, "%"),
+            Op::Rem => write!(f, "%"),
             Op::Eq => write!(f, "=="),
-            Op::Ne => write!(f, "!="),
-            Op::Lt => write!(f, "<"),
-            Op::Gt => write!(f, ">"),
-            Op::LtEq => write!(f, "<="),
-            Op::GtEq => write!(f, ">="),
+            Op::NotEq => write!(f, "!="),
+            Op::LessThan => write!(f, "<"),
+            Op::GreaterThan => write!(f, ">"),
+            Op::LessThanEq => write!(f, "<="),
+            Op::GreaterThanEq => write!(f, ">="),
             Op::And => write!(f, "&&"),
             Op::Or => write!(f, "||"),
             Op::Not => write!(f, "!"),
@@ -250,7 +252,7 @@ fn close_delimiter<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
 }
 
 fn literal<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
-    choice((lit_integer(), lit_float(), lit_string())).map(Token::Literal)
+    choice((lit_float(), lit_integer(), lit_string())).map(Token::Literal)
 }
 
 fn lit_integer<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
@@ -286,9 +288,9 @@ fn op<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
     choice((
         // complex op
         just("==").to(Op::Eq),
-        just("!=").to(Op::Ne),
-        just("<=").to(Op::LtEq),
-        just(">=").to(Op::GtEq),
+        just("!=").to(Op::NotEq),
+        just("<=").to(Op::LessThanEq),
+        just(">=").to(Op::GreaterThanEq),
         just("&&").to(Op::And),
         just("||").to(Op::Or),
         just("+=").to(Op::AddAssign),
@@ -302,9 +304,9 @@ fn op<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
         just("-").to(Op::Sub),
         just("*").to(Op::Mul),
         just("/").to(Op::Div),
-        just("%").to(Op::Mod),
-        just("<").to(Op::Lt),
-        just(">").to(Op::Gt),
+        just("%").to(Op::Rem),
+        just("<").to(Op::LessThan),
+        just(">").to(Op::GreaterThan),
         just("!").to(Op::Not),
         just("=").to(Op::Assign),
     ))
@@ -316,5 +318,9 @@ fn line_comment<'src>() -> impl Parser<'src, &'src str, (), Extra<'src>> {
 }
 
 fn punctuation<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
-    choice((just(":").to(Token::Colon), just(";").to(Token::Semicolon)))
+    choice((
+        just(":").to(Token::Colon),
+        just(";").to(Token::Semicolon),
+        just(",").to(Token::Comma),
+    ))
 }

@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+fn check(a: int) -> void {}
+
+fn add(a: int, b: int) -> int { 10 }
+
+fn add3(a: int, b: int, c: int) -> int { a + b + c }
