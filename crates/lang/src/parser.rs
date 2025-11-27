@@ -1,12 +1,29 @@
 use crate::{
-    ast,
+    ast::{self, ExprId},
     lexer::{Delimiter, Keyword, LitToken, Op, SpannedToken, Token},
     span::{Span, Spanned},
 };
-use chumsky::{error::Rich, extra, prelude::*};
+use chumsky::{
+    error::Rich,
+    extra::{self, SimpleState},
+    prelude::*,
+};
+
+#[derive(Debug, Default)]
+struct ParserState {
+    next_expr_id: ExprId,
+}
+
+impl ParserState {
+    fn new_expr_id(&mut self) -> ExprId {
+        let id = ExprId(self.next_expr_id.0);
+        self.next_expr_id = ExprId(id.0 + 1);
+        id
+    }
+}
 
 type Input<'src> = &'src [SpannedToken];
-type Extra<'src> = extra::Full<Rich<'src, SpannedToken>, (), ()>;
+type Extra<'src> = extra::Full<Rich<'src, SpannedToken>, SimpleState<ParserState>, ()>;
 trait AnvParser<'src, T>: chumsky::Parser<'src, Input<'src>, T, Extra<'src>> + Clone + 'src {}
 impl<'src, T, P> AnvParser<'src, T> for P where
     P: chumsky::Parser<'src, Input<'src>, T, Extra<'src>> + Clone + 'src
@@ -14,7 +31,8 @@ impl<'src, T, P> AnvParser<'src, T> for P where
 }
 
 pub fn parse_ast(tokens: &[SpannedToken]) -> Result<ast::Program, Vec<Rich<'_, SpannedToken>>> {
-    parser().parse(tokens).into_result()
+    let mut state = SimpleState(ParserState::default());
+    parser().parse_with_state(tokens, &mut state).into_result()
 }
 
 fn parser<'src>() -> impl AnvParser<'src, ast::Program> {
@@ -109,15 +127,23 @@ fn atom_expr<'src>(
     choice((
         literal().map_with(|lit, e| {
             let s = e.span();
-            Spanned::new(ast::Expr::Lit(lit), Span::new(s.start, s.end))
+            let span = Span::new(s.start, s.end);
+            let id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Lit(lit), id);
+            Spanned::new(expr, span)
         }),
-        identifier().map_with(|id, e| {
+        identifier().map_with(|ident, e| {
             let s = e.span();
-            Spanned::new(ast::Expr::Ident(id), Span::new(s.start, s.end))
+            let span = Span::new(s.start, s.end);
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Ident(ident), expr_id);
+            Spanned::new(expr, span)
         }),
-        block_stmt(stmt).map(|block_node| {
+        block_stmt(stmt).map_with(|block_node, e| {
             let span = block_node.span;
-            Spanned::new(ast::Expr::Block(block_node), span)
+            let id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Block(block_node), id);
+            Spanned::new(expr, span)
         }),
         grouped_expr(expr),
     ))
@@ -163,7 +189,7 @@ fn call_expr<'src>(
     expr: impl AnvParser<'src, ast::ExprNode>,
 ) -> impl AnvParser<'src, ast::ExprNode> {
     let args = fn_call_args(expr);
-    atom.foldl(args.repeated(), |callee, args| {
+    atom.foldl_with(args.repeated(), |callee, args, e| {
         let start = callee.span.start;
         let end = args.last().map(|a| a.span.end).unwrap_or(callee.span.end);
         let span = Span::new(start, end);
@@ -172,12 +198,14 @@ fn call_expr<'src>(
             ast::Call {
                 func: Box::new(callee),
                 args,
-                type_args: vec![], // later: parse `<T, U>` etc.
+                type_args: vec![],
             },
             span,
         );
 
-        Spanned::new(ast::Expr::Call(call_node), span)
+        let expr_id = e.state().new_expr_id();
+        let expr = ast::Expr::new(ast::ExprKind::Call(call_node), expr_id);
+        Spanned::new(expr, span)
     })
     .labelled("call expr")
 }
@@ -196,17 +224,23 @@ fn unary_expr<'src>(
         let s = e.span();
         let span = Span::new(s.start, s.end);
 
-        ops.into_iter().rev().fold(expr, |acc, op| {
+        let mut expr_node = expr;
+        for op in ops.into_iter().rev() {
             let unary_node = Spanned::new(
                 ast::Unary {
                     op,
-                    expr: Box::new(acc),
+                    expr: Box::new(expr_node),
                 },
                 span,
             );
+            let expr_id = e.state().new_expr_id();
+            expr_node = Spanned::new(
+                ast::Expr::new(ast::ExprKind::Unary(unary_node), expr_id),
+                span,
+            );
+        }
 
-            Spanned::new(ast::Expr::Unary(unary_node), span)
-        })
+        expr_node
     })
     .labelled("unary")
     .as_context()
@@ -218,7 +252,7 @@ fn binary_expr<'src>(
     // FIXME: precedence (sum, mul, etc...)
 
     let op_rhs = binary_op().then(term.clone());
-    term.foldl(op_rhs.repeated(), |left, (op, right)| {
+    term.foldl_with(op_rhs.repeated(), |left, (op, right), e| {
         let span = Span::new(left.span.start, right.span.end);
         let bin_node = Spanned::new(
             ast::Binary {
@@ -229,7 +263,9 @@ fn binary_expr<'src>(
             span,
         );
 
-        Spanned::new(ast::Expr::Binary(bin_node), span)
+        let expr_id = e.state().new_expr_id();
+        let expr = ast::Expr::new(ast::ExprKind::Binary(bin_node), expr_id);
+        Spanned::new(expr, span)
     })
     .labelled("expression")
     .as_context()
@@ -428,7 +464,9 @@ fn assignment_expr<'src>(
                 span,
             );
 
-            Spanned::new(ast::Expr::Assign(assign_node), span)
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Assign(assign_node), expr_id);
+            Spanned::new(expr, span)
         })
         .then_ignore(select! {
             (Token::Semicolon, _) => (),
@@ -451,10 +489,8 @@ fn return_stmt<'src>(
     .map_with(|value_opt, e| {
         let s = e.span();
         let span = Span::new(s.start, s.end);
-        Spanned::new(
-            ast::Stmt::Return(Spanned::new(ast::Return { value: value_opt }, span)),
-            span,
-        )
+        let ret = ast::Return { value: value_opt };
+        Spanned::new(ast::Stmt::Return(Spanned::new(ret, span)), span)
     })
     .labelled("return")
     .as_context()

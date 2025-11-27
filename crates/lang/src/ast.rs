@@ -26,8 +26,23 @@ pub enum Stmt {
     Return(ReturnNode),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Default)]
+pub struct ExprId(pub u64);
+
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expr {
+pub struct Expr {
+    pub id: ExprId,
+    pub kind: ExprKind,
+}
+
+impl Expr {
+    pub fn new(kind: ExprKind, id: ExprId) -> Self {
+        Self { id, kind }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExprKind {
     Ident(Ident),
     Block(BlockNode),
     Lit(Lit),
@@ -37,7 +52,7 @@ pub enum Expr {
     Assign(AssignNode),
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, Hash, Eq)]
 pub struct Ident(pub Intern<String>);
 
 impl Display for Ident {
@@ -56,6 +71,36 @@ pub enum Type {
     Void,
     Optional(Box<Type>),
     Func { params: Vec<Type>, ret: Box<Type> },
+}
+
+impl Type {
+    pub fn is_num(&self) -> bool {
+        matches!(self, Type::Int | Type::Float)
+    }
+
+    pub fn is_bool(&self) -> bool {
+        matches!(self, Type::Bool)
+    }
+
+    pub fn is_str(&self) -> bool {
+        matches!(self, Type::String)
+    }
+
+    pub fn is_void(&self) -> bool {
+        matches!(self, Type::Void)
+    }
+
+    pub fn is_optional(&self) -> bool {
+        matches!(self, Type::Optional(_))
+    }
+
+    pub fn is_func(&self) -> bool {
+        matches!(self, Type::Func { .. })
+    }
+
+    pub fn is_unresolved(&self) -> bool {
+        matches!(self, Type::Infer)
+    }
 }
 
 impl Display for Type {
