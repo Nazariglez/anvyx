@@ -7,7 +7,7 @@ use crate::{
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::error::{Rich, RichPattern};
 
-pub fn report_lexer_errors(src: &str, errors: Vec<Rich<'_, char>>) {
+pub fn report_lexer_errors(src: &str, file_path: &str, errors: Vec<Rich<'_, char>>) {
     for e in errors {
         let span = e.span();
         let byte_range = span.start..span.end;
@@ -27,11 +27,16 @@ pub fn report_lexer_errors(src: &str, errors: Vec<Rich<'_, char>>) {
             )
         };
 
-        emit_report(src, byte_range, msg_title, msg_body);
+        emit_report(src, file_path, byte_range, msg_title, msg_body);
     }
 }
 
-pub fn report_parse_errors(src: &str, tokens: &[SpannedToken], errors: Vec<Rich<SpannedToken>>) {
+pub fn report_parse_errors(
+    src: &str,
+    file_path: &str,
+    tokens: &[SpannedToken],
+    errors: Vec<Rich<SpannedToken>>,
+) {
     for e in errors {
         let token_span = e.span();
 
@@ -50,11 +55,16 @@ pub fn report_parse_errors(src: &str, tokens: &[SpannedToken], errors: Vec<Rich<
             )
         };
 
-        emit_report(src, byte_range, msg_title, msg_body);
+        emit_report(src, file_path, byte_range, msg_title, msg_body);
     }
 }
 
-pub fn report_typecheck_errors(src: &str, tokens: &[SpannedToken], errors: Vec<TypeErr>) {
+pub fn report_typecheck_errors(
+    src: &str,
+    file_path: &str,
+    tokens: &[SpannedToken],
+    errors: Vec<TypeErr>,
+) {
     for e in errors {
         let span = e.span;
         let byte_range = token_span_to_byte_range(tokens, span.start..span.end);
@@ -86,7 +96,7 @@ pub fn report_typecheck_errors(src: &str, tokens: &[SpannedToken], errors: Vec<T
             ),
         };
 
-        emit_report(src, byte_range, title, body);
+        emit_report(src, file_path, byte_range, title, body);
     }
 }
 
@@ -110,15 +120,17 @@ fn last_ctx<T>(ctx: &Rich<'_, T>) -> Option<String> {
         .map(|(s, _)| s.to_string())
 }
 
-fn emit_report(src: &str, range: Range<usize>, title: String, body: String) {
-    let report = Report::build(ReportKind::Error, range.clone())
+fn emit_report(src: &str, file_path: &str, range: Range<usize>, title: String, body: String) {
+    let report = Report::build(ReportKind::Error, (file_path, range.clone()))
         .with_message(title)
         .with_label(
-            Label::new(range.clone())
+            Label::new((file_path, range.clone()))
                 .with_color(Color::Red)
                 .with_message(body),
         );
-    let _ = report.finish().print(Source::from(src));
+    let _ = report
+        .finish()
+        .print((file_path, Source::from(src)));
 }
 
 fn describe_token(token: &Token) -> String {
