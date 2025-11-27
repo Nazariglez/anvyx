@@ -3,6 +3,7 @@ mod error;
 mod lexer;
 mod parser;
 mod span;
+mod typecheck;
 
 pub fn generate_ast(program: &str) -> Result<ast::Program, String> {
     let tokens = match lexer::tokenize(program) {
@@ -21,14 +22,11 @@ pub fn generate_ast(program: &str) -> Result<ast::Program, String> {
         }
     };
 
-    // let ast = match typecheck::check_program(&ast) {
-    //     Ok(_) => Ok(()),
-    //     Err(errors) => {
-    //         println!("Typecheck errors: {:?}", errors);
-    //         // error::report_typecheck_errors(program, errors);
-    //         Err("Failed to typecheck program".to_string())
-    //     }
-    // };
+    if let Err(errors) = typecheck::check_program(&ast) {
+        error::report_typecheck_errors(program, &tokens, errors);
+        return Err("Failed to typecheck program".to_string());
+    }
+
     Ok(ast)
 }
 

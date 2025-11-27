@@ -1,6 +1,9 @@
 use std::ops::Range;
 
-use crate::lexer::{SpannedToken, Token};
+use crate::{
+    lexer::{SpannedToken, Token},
+    typecheck::{TypeErr, TypeErrKind},
+};
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::error::{Rich, RichPattern};
 
@@ -32,16 +35,7 @@ pub fn report_parse_errors(src: &str, tokens: &[SpannedToken], errors: Vec<Rich<
     for e in errors {
         let token_span = e.span();
 
-        let start_byte = tokens
-            .get(token_span.start)
-            .map(|(_, span)| span.start)
-            .unwrap_or(0);
-        let end_byte = tokens
-            .get(token_span.end)
-            .map(|(_, span)| span.end.saturating_sub(1))
-            .unwrap_or(start_byte);
-
-        let byte_range = start_byte..end_byte;
+        let byte_range = token_span_to_byte_range(tokens, token_span.start..token_span.end);
 
         let last_context = last_ctx(&e)
             .map(|s| format!("while parsing a {}", s))
@@ -58,6 +52,52 @@ pub fn report_parse_errors(src: &str, tokens: &[SpannedToken], errors: Vec<Rich<
 
         emit_report(src, byte_range, msg_title, msg_body);
     }
+}
+
+pub fn report_typecheck_errors(src: &str, tokens: &[SpannedToken], errors: Vec<TypeErr>) {
+    for e in errors {
+        let span = e.span;
+        let byte_range = token_span_to_byte_range(tokens, span.start..span.end);
+
+        let (title, body) = match &e.kind {
+            TypeErrKind::UnknownVariable { name } => (
+                format!("Unknown variable '{name}'"),
+                "This variable is not in scope".to_string(),
+            ),
+            TypeErrKind::UnknownFunction { name } => (
+                format!("Unknown function '{name}'"),
+                "This function is not defined in this scope".to_string(),
+            ),
+            TypeErrKind::MismatchedTypes { expected, found } => (
+                "Mismatched types".to_string(),
+                format!("expected '{expected}', found '{found}'"),
+            ),
+            TypeErrKind::InvalidOperand { op, operand_type } => (
+                "Invalid operand type".to_string(),
+                format!("operator '{op}' cannot be applied to '{operand_type}'"),
+            ),
+            TypeErrKind::NotAFunction { expr_type } => (
+                "Not a function".to_string(),
+                format!("expression of type '{expr_type}' is not callable"),
+            ),
+            TypeErrKind::UnresolvedInfer => (
+                "Could not infer type".to_string(),
+                "type inference could not resolve this expression".to_string(),
+            ),
+        };
+
+        emit_report(src, byte_range, title, body);
+    }
+}
+
+fn token_span_to_byte_range(tokens: &[SpannedToken], span: Range<usize>) -> Range<usize> {
+    let start_byte = tokens.get(span.start).map(|(_, s)| s.start).unwrap_or(0);
+    let end_byte = tokens
+        .get(span.end)
+        .map(|(_, s)| s.end.saturating_sub(1))
+        .unwrap_or(start_byte);
+
+    start_byte..end_byte
 }
 
 fn last_ctx<T>(ctx: &Rich<'_, T>) -> Option<String> {
