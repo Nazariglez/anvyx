@@ -1,0 +1,4 @@
+[build]
+# necessary to avoid apple linker to choking ont he chumsky symbol names length :(
+# https://github.com/zesterer/chumsky/issues/815
+rustflags = ["-Csymbol-mangling-version=v0"]
