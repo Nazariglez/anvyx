@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: success
+
+struct Wrapper<T> {
+    value: T,
+}
+
+fn main() {
+    let a = Wrapper { value: 42 };
+    let b = Wrapper { value: "hi" };
+    let x: int = a.value;
+    let y: string = b.value;
+}

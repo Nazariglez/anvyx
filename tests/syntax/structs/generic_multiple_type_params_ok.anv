@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+struct Triple<A, B, C> {
+    first: A,
+    second: B,
+    third: C,
+}
+
+fn main() {
+    let t = Triple { first: 1, second: "two", third: true };
+    let a: int = t.first;
+    let b: string = t.second;
+    let c: bool = t.third;
+}

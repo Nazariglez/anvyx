@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+struct Wrapper<T> {
+    value: T,
+}
+
+fn main() {
+    let a: Wrapper<int> = Wrapper { value: "oops" };
+}

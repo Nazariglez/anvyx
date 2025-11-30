@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+struct Box<T> {
+    inner: T,
+}
+
+struct Wrapper<T> {
+    value: T,
+}
+
+fn main() {
+    let b = Box { inner: Wrapper { value: 42 } };
+    let x: int = b.inner.value;
+}

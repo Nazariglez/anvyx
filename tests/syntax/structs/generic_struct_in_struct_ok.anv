@@ -1,0 +1,20 @@
+// @mode: check
+// @expect: success
+
+struct Wrapper<T> {
+    value: T,
+}
+
+struct Container {
+    wrapped_int: Wrapper<int>,
+    wrapped_str: Wrapper<string>,
+}
+
+fn main() {
+    let c = Container {
+        wrapped_int: Wrapper { value: 42 },
+        wrapped_str: Wrapper { value: "hello" },
+    };
+    let a: int = c.wrapped_int.value;
+    let b: string = c.wrapped_str.value;
+}

@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: success
+
+struct Container<T> {
+    value: T,
+}
+
+fn main() {
+    let c: Container<(int, int)> = Container { value: (1, 2) };
+    let pair: (int, int) = c.value;
+}

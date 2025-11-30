@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: success
+
+struct Pair<T, U> {
+    first: T,
+    second: U,
+}
+
+fn main() {
+    let p = Pair { first: 42, second: "hello" };
+    let a: int = p.first;
+    let b: string = p.second;
+}
