@@ -164,6 +164,30 @@ pub fn report_typecheck_errors(
                 format!("cannot access field '{field}' on non-named tuple"),
                 format!("type '{found}' has no named fields; use '.0', '.1', ... instead"),
             ),
+            TypeErrKind::UnknownStruct { name } => (
+                format!("Unknown struct '{name}'"),
+                "This struct is not defined in this scope".to_string(),
+            ),
+            TypeErrKind::UnknownType { name } => (
+                format!("Unknown type '{name}'"),
+                "This type is not defined".to_string(),
+            ),
+            TypeErrKind::StructMissingField { struct_name, field } => (
+                format!("Missing field '{field}' in struct literal"),
+                format!("struct '{struct_name}' requires field '{field}'"),
+            ),
+            TypeErrKind::StructUnknownField { struct_name, field } => (
+                format!("Unknown field '{field}' for struct '{struct_name}'"),
+                format!("struct '{struct_name}' has no field named '{field}'"),
+            ),
+            TypeErrKind::StructDuplicateField { struct_name, field } => (
+                format!("Duplicate field '{field}' in struct literal"),
+                format!("field '{field}' is specified more than once in '{struct_name}'"),
+            ),
+            TypeErrKind::FieldAccessOnNonStruct { field, found } => (
+                format!("Cannot access field '{field}' on non-struct type"),
+                format!("type '{found}' is not a struct"),
+            ),
         };
 
         emit_report(src, file_path, byte_range, title, body);

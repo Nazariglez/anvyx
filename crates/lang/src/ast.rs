@@ -16,6 +16,8 @@ pub type IfNode = Spanned<If>;
 pub type TupleIndexNode = Spanned<TupleIndex>;
 pub type PatternNode = Spanned<Pattern>;
 pub type FieldAccessNode = Spanned<FieldAccess>;
+pub type StructDeclNode = Spanned<StructDecl>;
+pub type StructLiteralNode = Spanned<StructLiteral>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -25,6 +27,7 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Func(FuncNode),
+    Struct(StructDeclNode),
     Expr(ExprNode),
     Binding(BindingNode),
     Return(ReturnNode),
@@ -59,6 +62,7 @@ pub enum ExprKind {
     NamedTuple(Vec<(Ident, ExprNode)>),
     TupleIndex(TupleIndexNode),
     Field(FieldAccessNode),
+    StructLiteral(StructLiteralNode),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Hash, Eq)]
@@ -113,6 +117,8 @@ pub enum Type {
     Tuple(Vec<Type>),
     /// Named tuple type (x: int, y: string)
     NamedTuple(Vec<(Ident, Type)>),
+    /// Struct type
+    Struct(Ident),
 }
 
 impl Type {
@@ -154,6 +160,10 @@ impl Type {
 
     pub fn is_named_tuple(&self) -> bool {
         matches!(self, Type::NamedTuple(_))
+    }
+
+    pub fn is_struct(&self) -> bool {
+        matches!(self, Type::Struct(_))
     }
 
     pub fn tuple_arity(&self) -> Option<usize> {
@@ -210,6 +220,7 @@ impl Display for Type {
                     .collect();
                 write!(f, "({})", parts.join(", "))
             }
+            Type::Struct(name) => write!(f, "{}", name),
         }
     }
 }
@@ -398,4 +409,22 @@ pub struct TupleIndex {
 pub struct FieldAccess {
     pub target: Box<ExprNode>,
     pub field: Ident,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructField {
+    pub name: Ident,
+    pub ty: Type,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructDecl {
+    pub name: Ident,
+    pub fields: Vec<StructField>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructLiteral {
+    pub name: Ident,
+    pub fields: Vec<(Ident, ExprNode)>,
 }

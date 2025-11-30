@@ -89,6 +89,7 @@ pub enum Keyword {
     Continue,
     Match,
     Pub,
+    Struct,
 }
 
 impl Display for Keyword {
@@ -114,6 +115,7 @@ impl Display for Keyword {
             Keyword::Continue => write!(f, "continue"),
             Keyword::Match => write!(f, "match"),
             Keyword::Pub => write!(f, "pub"),
+            Keyword::Struct => write!(f, "struct"),
         }
     }
 }
@@ -211,6 +213,8 @@ fn token<'src>() -> impl Parser<'src, &'src str, SpannedToken, Extra<'src>> {
 
 fn keyword<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
     choice((
+        just("struct").to(Keyword::Struct),
+        just("string").to(Keyword::String),
         just("pub").to(Keyword::Pub),
         just("let").to(Keyword::Let),
         just("var").to(Keyword::Var),
@@ -226,7 +230,6 @@ fn keyword<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
         just("int").to(Keyword::Int),
         just("float").to(Keyword::Float),
         just("bool").to(Keyword::Bool),
-        just("string").to(Keyword::String),
         just("void").to(Keyword::Void),
         just("nil").to(Keyword::Nil),
         just("true").to(Keyword::True),

@@ -2,13 +2,18 @@ use crate::{
     ast::{
         AssignNode, AssignOp, BinaryNode, BinaryOp, BindingNode, BlockNode, CallNode, ExprId,
         ExprKind, ExprNode, FieldAccessNode, Func, FuncNode, Ident, IfNode, Lit, Pattern,
-        PatternNode, Program, ReturnNode, Stmt, StmtNode, TupleIndexNode, Type, TypeParam,
-        TypeVarId, UnaryNode, UnaryOp,
+        PatternNode, Program, ReturnNode, Stmt, StmtNode, StructField, StructLiteralNode,
+        TupleIndexNode, Type, TypeParam, TypeVarId, UnaryNode, UnaryOp,
     },
     span::Span,
 };
 use internment::Intern;
 use std::collections::{HashMap, HashSet};
+
+#[derive(Debug, Clone)]
+struct StructDef {
+    fields: Vec<StructField>,
+}
 
 type InferenceSlots = HashMap<TypeVarId, Ident>;
 
@@ -90,6 +95,9 @@ pub struct TypeChecker {
 
     /// Stores specialized functions avoiding re-checking for same type arguments
     specialization_cache: HashMap<SpecializationKey, SpecializationResult>,
+
+    /// Stores struct definitions (name -> fields)
+    struct_defs: HashMap<Ident, StructDef>,
 }
 
 impl Default for TypeChecker {
@@ -103,6 +111,7 @@ impl Default for TypeChecker {
             next_infer_call_id: 0,
             generic_func_templates: HashMap::new(),
             specialization_cache: HashMap::new(),
+            struct_defs: HashMap::new(),
         }
     }
 }
@@ -112,6 +121,33 @@ impl TypeChecker {
         let id = self.next_infer_call_id;
         self.next_infer_call_id += 1;
         id
+    }
+}
+
+impl TypeChecker {
+    fn get_struct(&self, name: Ident) -> Option<&StructDef> {
+        self.struct_defs.get(&name)
+    }
+
+    fn resolve_type(&self, ty: &Type) -> Type {
+        match ty {
+            Type::UnresolvedName(name) if self.struct_defs.contains_key(name) => {
+                Type::Struct(*name)
+            }
+            Type::Optional(inner) => Type::Optional(Box::new(self.resolve_type(inner))),
+            Type::Tuple(elems) => Type::Tuple(elems.iter().map(|t| self.resolve_type(t)).collect()),
+            Type::NamedTuple(fields) => Type::NamedTuple(
+                fields
+                    .iter()
+                    .map(|(n, t)| (*n, self.resolve_type(t)))
+                    .collect(),
+            ),
+            Type::Func { params, ret } => Type::Func {
+                params: params.iter().map(|t| self.resolve_type(t)).collect(),
+                ret: Box::new(self.resolve_type(ret)),
+            },
+            _ => ty.clone(),
+        }
     }
 }
 
@@ -327,6 +363,28 @@ pub enum TypeErrKind {
         tuple_type: Type,
     },
     FieldAccessOnNonNamedTuple {
+        field: Ident,
+        found: Type,
+    },
+    UnknownStruct {
+        name: Ident,
+    },
+    UnknownType {
+        name: Ident,
+    },
+    StructMissingField {
+        struct_name: Ident,
+        field: Ident,
+    },
+    StructUnknownField {
+        struct_name: Ident,
+        field: Ident,
+    },
+    StructDuplicateField {
+        struct_name: Ident,
+        field: Ident,
+    },
+    FieldAccessOnNonStruct {
         field: Ident,
         found: Type,
     },
@@ -591,7 +649,16 @@ fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChecker) {
                 }
             }
 
-            // TODO: consts, structs, type alias, anything that we need to collect first goes here
+            Stmt::Struct(node) => {
+                let decl = &node.node;
+                type_checker.struct_defs.insert(
+                    decl.name,
+                    StructDef {
+                        fields: decl.fields.clone(),
+                    },
+                );
+            }
+
             _ => {}
         }
     }
@@ -720,6 +787,7 @@ fn type_from_lit(lit: &Lit) -> Type {
 fn check_stmt(stmt: &Stmt, type_checker: &mut TypeChecker, errors: &mut Vec<TypeErr>) {
     match stmt {
         Stmt::Func(node) => check_func(node, type_checker, errors),
+        Stmt::Struct(_) => {}
         Stmt::Expr(node) => {
             let _ = check_expr(node, type_checker, errors);
         }
@@ -856,6 +924,7 @@ fn check_expr(
         }
         ExprKind::TupleIndex(index_node) => check_tuple_index(index_node, type_checker, errors),
         ExprKind::Field(field_node) => check_field_access(field_node, type_checker, errors),
+        ExprKind::StructLiteral(lit_node) => check_struct_lit(lit_node, type_checker, errors),
     };
 
     type_checker.set_type(expr_node.node.id, ty.clone(), expr_node.span);
@@ -1542,6 +1611,76 @@ fn check_named_tuple(
     Type::NamedTuple(fields)
 }
 
+fn check_struct_lit(
+    lit_node: &StructLiteralNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let lit = &lit_node.node;
+    let struct_name = lit.name;
+
+    let Some(struct_def) = type_checker.get_struct(struct_name).cloned() else {
+        errors.push(TypeErr {
+            span: lit_node.span,
+            kind: TypeErrKind::UnknownStruct { name: struct_name },
+        });
+        return Type::Infer;
+    };
+
+    let mut seen_fields = HashSet::new();
+    let mut provided_fields = HashMap::new();
+
+    for (field_name, field_expr) in &lit.fields {
+        let field_ty = check_expr(field_expr, type_checker, errors);
+
+        let is_new = seen_fields.insert(*field_name);
+        if !is_new {
+            errors.push(TypeErr {
+                span: field_expr.span,
+                kind: TypeErrKind::StructDuplicateField {
+                    struct_name,
+                    field: *field_name,
+                },
+            });
+            continue;
+        }
+
+        let expected_field = struct_def.fields.iter().find(|f| f.name == *field_name);
+        let Some(expected) = expected_field else {
+            errors.push(TypeErr {
+                span: field_expr.span,
+                kind: TypeErrKind::StructUnknownField {
+                    struct_name,
+                    field: *field_name,
+                },
+            });
+            continue;
+        };
+
+        let resolved_expected_ty = type_checker.resolve_type(&expected.ty);
+        let field_ref = TypeRef::Expr(field_expr.node.id);
+        let expected_ref = TypeRef::Concrete(resolved_expected_ty);
+        type_checker.constrain_assignable(field_expr.span, field_ref, expected_ref, errors);
+
+        provided_fields.insert(*field_name, field_ty);
+    }
+
+    for struct_field in &struct_def.fields {
+        let contains_field = provided_fields.contains_key(&struct_field.name);
+        if !contains_field {
+            errors.push(TypeErr {
+                span: lit_node.span,
+                kind: TypeErrKind::StructMissingField {
+                    struct_name,
+                    field: struct_field.name,
+                },
+            });
+        }
+    }
+
+    Type::Struct(struct_name)
+}
+
 fn check_tuple_index(
     index_node: &TupleIndexNode,
     type_checker: &mut TypeChecker,
@@ -1604,6 +1743,30 @@ fn check_field_access(
                 kind: TypeErrKind::NoSuchFieldOnTuple {
                     field,
                     tuple_type: target_ty.clone(),
+                },
+            });
+            Type::Infer
+        }
+        Type::Struct(struct_name) => {
+            let Some(struct_def) = type_checker.get_struct(*struct_name).cloned() else {
+                errors.push(TypeErr {
+                    span: field_node.span,
+                    kind: TypeErrKind::UnknownStruct { name: *struct_name },
+                });
+                return Type::Infer;
+            };
+
+            for struct_field in &struct_def.fields {
+                if struct_field.name == field {
+                    return type_checker.resolve_type(&struct_field.ty);
+                }
+            }
+
+            errors.push(TypeErr {
+                span: field_node.span,
+                kind: TypeErrKind::StructUnknownField {
+                    struct_name: *struct_name,
+                    field,
                 },
             });
             Type::Infer

@@ -45,11 +45,16 @@ pub fn parse_ast(tokens: &[SpannedToken]) -> Result<ast::Program, Vec<Rich<'_, S
 
 fn parser<'src>() -> impl AnvParser<'src, ast::Program> {
     let stmt = statement();
-    function(stmt)
-        .map(|func_node| {
-            let span = func_node.span;
-            Spanned::new(ast::Stmt::Func(func_node), span)
-        })
+    let func_decl = function(stmt).map(|func_node| {
+        let span = func_node.span;
+        Spanned::new(ast::Stmt::Func(func_node), span)
+    });
+    let struct_decl = struct_declaration().map(|struct_node| {
+        let span = struct_node.span;
+        Spanned::new(ast::Stmt::Struct(struct_node), span)
+    });
+
+    choice((func_decl, struct_decl))
         .repeated()
         .collect::<Vec<_>>()
         .map(|stmts| ast::Program { stmts })
@@ -160,6 +165,46 @@ fn function<'src>(
     .as_context()
 }
 
+fn struct_field<'src>() -> impl AnvParser<'src, ast::StructField> {
+    identifier()
+        .then_ignore(select! {
+            (Token::Colon, _) => (),
+        })
+        .then(type_ident())
+        .map(|(name, ty)| ast::StructField { name, ty })
+        .labelled("struct field")
+        .as_context()
+}
+
+fn struct_declaration<'src>() -> impl AnvParser<'src, ast::StructDeclNode> {
+    select! {
+        (Token::Keyword(Keyword::Struct), _) => (),
+    }
+    .ignore_then(identifier())
+    .then(
+        select! {
+            (Token::Open(Delimiter::Brace), _) => (),
+        }
+        .ignore_then(
+            struct_field()
+                .separated_by(select! {
+                    (Token::Comma, _) => (),
+                })
+                .allow_trailing()
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(select! {
+            (Token::Close(Delimiter::Brace), _) => (),
+        }),
+    )
+    .map_with(|(name, fields), e| {
+        let s = e.span();
+        Spanned::new(ast::StructDecl { name, fields }, Span::new(s.start, s.end))
+    })
+    .labelled("struct declaration")
+    .as_context()
+}
+
 fn resolve_type_params(
     ty: &ast::Type,
     type_param_map: &HashMap<ast::Ident, ast::TypeVarId>,
@@ -264,6 +309,37 @@ fn if_expr<'src>(
     .as_context()
 }
 
+fn struct_literal<'src>(
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> impl AnvParser<'src, ast::ExprNode> {
+    let field_init = identifier()
+        .then_ignore(select! { (Token::Colon, _) => () })
+        .then(expr)
+        .map(|(name, value)| (name, value));
+
+    identifier()
+        .then(
+            select! { (Token::Open(Delimiter::Brace), _) => () }
+                .ignore_then(
+                    field_init
+                        .separated_by(select! { (Token::Comma, _) => () })
+                        .allow_trailing()
+                        .collect::<Vec<_>>(),
+                )
+                .then_ignore(select! { (Token::Close(Delimiter::Brace), _) => () }),
+        )
+        .map_with(|(name, fields), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let lit_node = Spanned::new(ast::StructLiteral { name, fields }, span);
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::StructLiteral(lit_node), expr_id);
+            Spanned::new(expr, span)
+        })
+        .labelled("struct literal")
+        .as_context()
+}
+
 fn atom_expr<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
     expr: impl AnvParser<'src, ast::ExprNode>,
@@ -276,6 +352,7 @@ fn atom_expr<'src>(
             let expr = ast::Expr::new(ast::ExprKind::Lit(lit), id);
             Spanned::new(expr, span)
         }),
+        struct_literal(expr.clone()),
         identifier().map_with(|ident, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
@@ -1105,16 +1182,32 @@ fn assign_op<'src>() -> impl AnvParser<'src, ast::AssignOp> {
 }
 
 fn lvalue_expr<'src>() -> impl AnvParser<'src, ast::ExprNode> {
-    identifier()
-        .map_with(|ident, e| {
-            let s = e.span();
-            let span = Span::new(s.start, s.end);
-            let expr_id = e.state().new_expr_id();
-            let expr = ast::Expr::new(ast::ExprKind::Ident(ident), expr_id);
-            Spanned::new(expr, span)
-        })
-        .labelled("left value expr")
-        .as_context()
+    let base = identifier().map_with(|ident, e| {
+        let s = e.span();
+        let span = Span::new(s.start, s.end);
+        let expr_id = e.state().new_expr_id();
+        let expr = ast::Expr::new(ast::ExprKind::Ident(ident), expr_id);
+        Spanned::new(expr, span)
+    });
+
+    let field_suffix = select! { (Token::Dot, _) => () }.ignore_then(identifier());
+
+    base.foldl_with(field_suffix.repeated(), |target, field, e| {
+        let s = e.span();
+        let span = Span::new(s.start, s.end);
+        let field_node = Spanned::new(
+            ast::FieldAccess {
+                target: Box::new(target),
+                field,
+            },
+            span,
+        );
+        let expr_id = e.state().new_expr_id();
+        let expr = ast::Expr::new(ast::ExprKind::Field(field_node), expr_id);
+        Spanned::new(expr, span)
+    })
+    .labelled("left value expr")
+    .as_context()
 }
 
 fn assignment_expr<'src>(
