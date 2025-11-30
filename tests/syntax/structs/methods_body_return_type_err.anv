@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: error
+// @contains: expected 'int'
+
+struct Counter {
+    value: int,
+
+    fn get(self) -> int {
+        "not an int"
+    },
+}
+
+fn main() {
+    let c = Counter { value: 1 };
+    let _ = c.get();
+}

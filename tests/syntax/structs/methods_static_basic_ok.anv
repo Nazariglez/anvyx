@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+struct Counter {
+    value: int,
+
+    fn new(start: int) -> Self {
+        Counter { value: start }
+    },
+}
+
+fn main() {
+    let c = Counter.new(10);
+    let x: int = c.value;
+}

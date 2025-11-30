@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: error
+// @contains: static method
+
+struct Counter {
+    value: int,
+
+    fn new(start: int) -> Self {
+        Counter { value: start }
+    },
+}
+
+fn main() {
+    let c = Counter { value: 42 };
+    c.new(10);
+}

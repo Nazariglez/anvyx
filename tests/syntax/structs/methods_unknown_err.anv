@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown method
+
+struct Counter {
+    value: int,
+}
+
+fn main() {
+    let c = Counter { value: 42 };
+    let x = c.unknown();
+}

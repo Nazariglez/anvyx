@@ -1,0 +1,18 @@
+// @mode: check
+// @expect: success
+
+struct Counter {
+    value: int,
+
+    fn get(self) -> int {
+        self.value
+    },
+}
+
+fn main() {
+    let c = Counter { value: 42 };
+    let x: int = c.get();
+    
+    var d = Counter { value: 100 };
+    let y: int = d.get();
+}
