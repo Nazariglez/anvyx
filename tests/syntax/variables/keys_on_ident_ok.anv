@@ -1,0 +1,32 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let float_range = -2.5..7.5;
+    let int_range: Range<int> = -5..5;
+    let bool_flag = true;
+    let string_value = "hello";
+    let while_loop = 42;
+    let if_condition = false;
+    let fn_pointer = 123;
+    let return_value = "returned";
+    let let_binding = 3.14;
+    let var_variable = "mutable";
+    let struct_type = 999;
+    let pub_visibility = "public";
+
+    let _ = (
+        float_range,
+        int_range,
+        bool_flag,
+        string_value,
+        while_loop,
+        if_condition,
+        fn_pointer,
+        return_value,
+        let_binding,
+        var_variable,
+        struct_type,
+        pub_visibility
+    );
+}

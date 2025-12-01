@@ -195,15 +195,7 @@ fn lexer<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Extra<'src>>
 }
 
 fn token<'src>() -> impl Parser<'src, &'src str, SpannedToken, Extra<'src>> {
-    choice((
-        keyword(),
-        delimiter(),
-        literal(),
-        ident(),
-        op(),
-        punctuation(),
-    ))
-    .map_with(|tok, e| {
+    choice((delimiter(), literal(), ident(), op(), punctuation())).map_with(|tok, e| {
         let span = e.span();
         (
             tok,
@@ -213,33 +205,6 @@ fn token<'src>() -> impl Parser<'src, &'src str, SpannedToken, Extra<'src>> {
             },
         )
     })
-}
-
-fn keyword<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
-    choice((
-        just("struct").to(Keyword::Struct),
-        just("string").to(Keyword::String),
-        just("pub").to(Keyword::Pub),
-        just("let").to(Keyword::Let),
-        just("var").to(Keyword::Var),
-        just("if").to(Keyword::If),
-        just("else").to(Keyword::Else),
-        just("while").to(Keyword::While),
-        just("for").to(Keyword::For),
-        just("break").to(Keyword::Break),
-        just("continue").to(Keyword::Continue),
-        just("match").to(Keyword::Match),
-        just("fn").to(Keyword::Fn),
-        just("return").to(Keyword::Return),
-        just("int").to(Keyword::Int),
-        just("float").to(Keyword::Float),
-        just("bool").to(Keyword::Bool),
-        just("void").to(Keyword::Void),
-        just("nil").to(Keyword::Nil),
-        just("true").to(Keyword::True),
-        just("false").to(Keyword::False),
-    ))
-    .map(Token::Keyword)
 }
 
 fn delimiter<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
@@ -292,9 +257,33 @@ fn lit_string<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
 }
 
 fn ident<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
-    text::ident()
-        .map(|s: &str| ast::Ident(Intern::new(s.to_string())))
-        .map(Token::Ident)
+    text::ident().map(|s: &str| match s {
+        "struct" => Token::Keyword(Keyword::Struct),
+        "string" => Token::Keyword(Keyword::String),
+        "pub" => Token::Keyword(Keyword::Pub),
+        "let" => Token::Keyword(Keyword::Let),
+        "var" => Token::Keyword(Keyword::Var),
+        "if" => Token::Keyword(Keyword::If),
+        "else" => Token::Keyword(Keyword::Else),
+        "while" => Token::Keyword(Keyword::While),
+        "for" => Token::Keyword(Keyword::For),
+        "break" => Token::Keyword(Keyword::Break),
+        "continue" => Token::Keyword(Keyword::Continue),
+        "match" => Token::Keyword(Keyword::Match),
+        "fn" => Token::Keyword(Keyword::Fn),
+        "return" => Token::Keyword(Keyword::Return),
+        "int" => Token::Keyword(Keyword::Int),
+        "float" => Token::Keyword(Keyword::Float),
+        "bool" => Token::Keyword(Keyword::Bool),
+        "void" => Token::Keyword(Keyword::Void),
+        "nil" => Token::Keyword(Keyword::Nil),
+        "true" => Token::Keyword(Keyword::True),
+        "false" => Token::Keyword(Keyword::False),
+        _ => {
+            let ident = ast::Ident(Intern::new(s.to_string()));
+            Token::Ident(ident)
+        }
+    })
 }
 
 fn op<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
