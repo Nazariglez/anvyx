@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    var x: int = 0;
+    while x < 3 {
+        x = x + 1;
+    }
+
+    let y: int = x;
+}
+

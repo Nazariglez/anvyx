@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    var i: int = 0;
+
+    while true {
+        if i == 3 {
+            break;
+        }
+        i = i + 1;
+    }
+
+    let x: int = i;
+}
+

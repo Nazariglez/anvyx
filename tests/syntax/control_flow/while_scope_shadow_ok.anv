@@ -1,0 +1,17 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    var x: int = 0;
+    while x < 2 {
+        {
+            let x: int = x + 1;
+            let y: int = x * 2;
+            let _use_y: int = y;
+        }
+        x = x + 1;
+    }
+
+    let z: int = x;
+}
+

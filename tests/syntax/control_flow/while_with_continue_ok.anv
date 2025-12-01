@@ -1,0 +1,20 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    var i: int = 0;
+    var sum: int = 0;
+
+    while i < 5 {
+        i = i + 1;
+
+        if i % 2 == 0 {
+            continue;
+        }
+
+        sum = sum + i;
+    }
+
+    let result: int = sum;
+}
+
