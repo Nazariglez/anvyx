@@ -1,0 +1,19 @@
+// @mode: check
+// @expect: success
+
+fn do_something() {
+    fn rev_fn(step: int) -> int {
+        let rev = step + 1;
+        rev
+    }
+    let result = rev_fn(1);
+}
+
+fn main() {
+    let rev: int = 1;
+    let step: int = 2;
+    let sum = rev + step;
+
+    do_something();
+}
+
