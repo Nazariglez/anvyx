@@ -1,0 +1,27 @@
+// @mode: check
+// @expect: success
+
+fn clamp<T>(value: T, range: Range<T>) -> T {
+    let _ = range;
+    value
+}
+
+fn clamp_inclusive<T>(value: T, range: RangeInclusive<T>) -> T {
+    let _ = range;
+    value
+}
+
+fn main() {
+    let a = clamp(5, 0..10);
+    let b = clamp_inclusive(1.5, -1.0..=1.0);
+    let tuple_value = (1, 2);
+    let tuple_range = (0, 0)..(10, 10);
+    let c = clamp(tuple_value, tuple_range);
+
+    let inclusive_tuple_value = (0.5, 0.25);
+    let inclusive_tuple_range = (-1.0, -1.0)..=(1.0, 1.0);
+    let d = clamp_inclusive(inclusive_tuple_value, inclusive_tuple_range);
+
+    let _ = (a, b, c, d);
+}
+

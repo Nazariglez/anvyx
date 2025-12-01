@@ -1044,12 +1044,40 @@ fn binary_expr<'src>(
 ) -> BoxedParser<'src, ast::ExprNode> {
     let mul = infix_left(unary, mul_div_op());
     let add = infix_left(mul, add_sub_op());
-    let cmp = infix_left(add, cmp_op());
+    let range = range_expr(add);
+    let cmp = infix_left(range, cmp_op());
     let eq = infix_left(cmp, eq_op());
     let and = infix_left(eq, and_op());
     let coal = infix_left(and, coalesce_op());
     let or = infix_left(coal, or_op());
     or.labelled("expression").as_context().boxed()
+}
+
+fn range_expr<'src>(
+    lower: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let op_rhs = select! {
+        (Token::Range, _) => false,
+        (Token::RangeEq, _) => true,
+    }
+    .then(lower.clone());
+
+    lower
+        .foldl_with(op_rhs.repeated(), |start, (inclusive, end), e| {
+            let span = Span::new(start.span.start, end.span.end);
+            let range_node = Spanned::new(
+                ast::Range {
+                    start: Box::new(start),
+                    end: Box::new(end),
+                    inclusive,
+                },
+                span,
+            );
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Range(range_node), expr_id);
+            Spanned::new(expr, span)
+        })
+        .boxed()
 }
 
 fn ternary_expr<'src>(
@@ -1736,6 +1764,24 @@ mod tests {
         }
     }
 
+    fn expect_range<'a>(
+        expr: &'a ast::ExprNode,
+        inclusive: bool,
+    ) -> (&'a ast::ExprNode, &'a ast::ExprNode) {
+        match &expr.node().kind {
+            ast::ExprKind::Range(range_node) => {
+                let range = range_node.node();
+                assert_eq!(
+                    range.inclusive, inclusive,
+                    "expected inclusive={inclusive}, found {}",
+                    range.inclusive
+                );
+                (&range.start, &range.end)
+            }
+            other => panic!("expected range expr, found {other:?}"),
+        }
+    }
+
     fn expect_ident(expr: &ast::ExprNode, name: &str) {
         match &expr.node().kind {
             ast::ExprKind::Ident(ident) => {
@@ -1882,6 +1928,56 @@ mod tests {
         expect_ident(mul_left, "c");
         expect_ident(mul_right, "d");
         expect_ident(and_right, "e");
+    }
+
+    #[test]
+    fn range_has_lower_precedence_than_addition() {
+        let expr = parse_expr("1 + 2 .. 3");
+        let (start, end) = expect_range(&expr, false);
+        let (add_left, add_right) = expect_binary(start, ast::BinaryOp::Add);
+        expect_int(add_left, 1);
+        expect_int(add_right, 2);
+        expect_int(end, 3);
+    }
+
+    #[test]
+    fn range_has_higher_precedence_than_comparison() {
+        let expr = parse_expr("a..b < c");
+        let (left, right) = expect_binary(&expr, ast::BinaryOp::LessThan);
+        let (start, end) = expect_range(left, false);
+        expect_ident(start, "a");
+        expect_ident(end, "b");
+        expect_ident(right, "c");
+    }
+
+    #[test]
+    fn inclusive_range_parses() {
+        let expr = parse_expr("0..=10");
+        let (start, end) = expect_range(&expr, true);
+        expect_int(start, 0);
+        expect_int(end, 10);
+    }
+
+    #[test]
+    fn range_in_complex_expression_respects_all_levels() {
+        let expr = parse_expr("a + b .. c < d && e ?? f || g");
+        let (left, right) = expect_binary(&expr, ast::BinaryOp::Or);
+        expect_ident(right, "g");
+
+        let (coal_left, coal_right) = expect_binary(left, ast::BinaryOp::Coalesce);
+        expect_ident(coal_right, "f");
+
+        let (and_left, and_right) = expect_binary(coal_left, ast::BinaryOp::And);
+        expect_ident(and_right, "e");
+
+        let (cmp_left, cmp_right) = expect_binary(and_left, ast::BinaryOp::LessThan);
+        expect_ident(cmp_right, "d");
+
+        let (range_start, range_end) = expect_range(cmp_left, false);
+        let (add_left, add_right) = expect_binary(range_start, ast::BinaryOp::Add);
+        expect_ident(add_left, "a");
+        expect_ident(add_right, "b");
+        expect_ident(range_end, "c");
     }
 
     fn parse_program(src: &str) -> ast::Program {

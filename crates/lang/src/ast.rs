@@ -19,6 +19,7 @@ pub type PatternNode = Spanned<Pattern>;
 pub type FieldAccessNode = Spanned<FieldAccess>;
 pub type StructDeclNode = Spanned<StructDecl>;
 pub type StructLiteralNode = Spanned<StructLiteral>;
+pub type RangeNode = Spanned<Range>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -67,6 +68,7 @@ pub enum ExprKind {
     TupleIndex(TupleIndexNode),
     Field(FieldAccessNode),
     StructLiteral(StructLiteralNode),
+    Range(RangeNode),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Hash, Eq)]
@@ -471,4 +473,11 @@ pub struct Method {
 pub struct StructLiteral {
     pub name: Ident,
     pub fields: Vec<(Ident, ExprNode)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Range {
+    pub start: Box<ExprNode>,
+    pub end: Box<ExprNode>,
+    pub inclusive: bool,
 }

@@ -17,6 +17,8 @@ pub enum Token {
     Comma,
     Question,
     Dot,
+    Range,
+    RangeEq,
 }
 
 pub type SpannedToken = (Token, Span);
@@ -39,6 +41,8 @@ impl Display for Token {
             Token::Comma => write!(f, ","),
             Token::Question => write!(f, "?"),
             Token::Dot => write!(f, "."),
+            Token::Range => write!(f, ".."),
+            Token::RangeEq => write!(f, "..="),
         }
     }
 }
@@ -329,6 +333,8 @@ fn line_comment<'src>() -> impl Parser<'src, &'src str, (), Extra<'src>> {
 
 fn punctuation<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
     choice((
+        just("..=").to(Token::RangeEq),
+        just("..").to(Token::Range),
         just(":").to(Token::Colon),
         just(";").to(Token::Semicolon),
         just(",").to(Token::Comma),

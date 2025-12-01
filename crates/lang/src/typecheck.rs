@@ -2,9 +2,9 @@ use crate::{
     ast::{
         AssignNode, AssignOp, BinaryNode, BinaryOp, BindingNode, BlockNode, CallNode, ExprId,
         ExprKind, ExprNode, FieldAccessNode, Func, FuncNode, Ident, IfNode, Lit, MethodReceiver,
-        Param, Pattern, PatternNode, Program, ReturnNode, Stmt, StmtNode, StructDeclNode,
-        StructField, StructLiteralNode, TupleIndexNode, Type, TypeParam, TypeVarId, UnaryNode,
-        UnaryOp, WhileNode,
+        Param, Pattern, PatternNode, Program, RangeNode, ReturnNode, Stmt, StmtNode,
+        StructDeclNode, StructField, StructLiteralNode, TupleIndexNode, Type, TypeParam, TypeVarId,
+        UnaryNode, UnaryOp, WhileNode,
     },
     span::Span,
 };
@@ -28,6 +28,11 @@ struct StructDef {
 }
 
 type InferenceSlots = HashMap<TypeVarId, Ident>;
+
+// Use fixed ids for builtin Range<T> type params so they never collide
+// with user declared generic type variables created by the parser
+const RANGE_TYPE_PARAM_ID: TypeVarId = TypeVarId(u32::MAX - 1);
+const RANGE_INCLUSIVE_TYPE_PARAM_ID: TypeVarId = TypeVarId(u32::MAX);
 
 pub fn check_program(program: &Program) -> Result<TypeChecker, Vec<TypeErr>> {
     let mut type_checker = TypeChecker::default();
@@ -136,7 +141,7 @@ impl Default for TypeChecker {
             next_infer_call_id: 0,
             generic_func_templates: HashMap::new(),
             specialization_cache: HashMap::new(),
-            struct_defs: HashMap::new(),
+            struct_defs: builtin_structs(),
             loop_depth: 0,
         }
     }
@@ -478,6 +483,9 @@ fn contains_infer(ty: &Type) -> bool {
         Type::Infer => true,
         Type::Optional(inner) => contains_infer(inner),
         Type::Func { params, ret } => params.iter().any(contains_infer) || contains_infer(ret),
+        Type::Tuple(elems) => elems.iter().any(contains_infer),
+        Type::NamedTuple(fields) => fields.iter().any(|(_, t)| contains_infer(t)),
+        Type::Struct { type_args, .. } => type_args.iter().any(contains_infer),
         _ => false,
     }
 }
@@ -582,6 +590,39 @@ fn unify_types(left: &Type, right: &Type, span: Span, errors: &mut Vec<TypeErr>)
             unify_types(lr, rr, span, errors).map(|new_ret| Func {
                 params: new_params,
                 ret: Box::new(new_ret),
+            })
+        }
+
+        (
+            Struct {
+                name: ln,
+                type_args: la,
+            },
+            Struct {
+                name: rn,
+                type_args: ra,
+            },
+        ) => {
+            if ln != rn || la.len() != ra.len() {
+                errors.push(TypeErr {
+                    span,
+                    kind: TypeErrKind::MismatchedTypes {
+                        expected: left.clone(),
+                        found: right.clone(),
+                    },
+                });
+                return None;
+            }
+
+            let unified_args = la
+                .iter()
+                .zip(ra.iter())
+                .map(|(l_arg, r_arg)| unify_types(l_arg, r_arg, span, errors).unwrap())
+                .collect();
+
+            Some(Struct {
+                name: *ln,
+                type_args: unified_args,
             })
         }
 
@@ -1141,10 +1182,38 @@ fn check_expr(
         ExprKind::TupleIndex(index_node) => check_tuple_index(index_node, type_checker, errors),
         ExprKind::Field(field_node) => check_field_access(field_node, type_checker, errors),
         ExprKind::StructLiteral(lit_node) => check_struct_lit(lit_node, type_checker, errors),
+        ExprKind::Range(range_node) => check_range(range_node, type_checker, errors),
     };
 
     type_checker.set_type(expr_node.node.id, ty.clone(), expr_node.span);
     ty
+}
+
+fn check_range(
+    range: &RangeNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let start_expr = range.node.start.as_ref();
+    let end_expr = range.node.end.as_ref();
+
+    let start_ty = check_expr(start_expr, type_checker, errors);
+    let _ = check_expr(end_expr, type_checker, errors);
+
+    let start_ref = TypeRef::Expr(start_expr.node.id);
+    let end_ref = TypeRef::Expr(end_expr.node.id);
+    type_checker.constrain_equal(range.span, start_ref, end_ref, errors);
+
+    let elem_ty = type_checker
+        .get_type(start_expr.node.id)
+        .map(|(_, ty)| ty.clone())
+        .unwrap_or(start_ty);
+
+    if range.node.inclusive {
+        range_inclusive_type(elem_ty)
+    } else {
+        range_type(elem_ty)
+    }
 }
 
 fn check_call(call: &CallNode, type_checker: &mut TypeChecker, errors: &mut Vec<TypeErr>) -> Type {
@@ -2508,13 +2577,79 @@ fn check_ret(ret: &ReturnNode, type_checker: &mut TypeChecker, errors: &mut Vec<
     }
 }
 
+fn builtin_structs() -> HashMap<Ident, StructDef> {
+    let mut defs = HashMap::new();
+    defs.insert(range_ident(), make_range_struct(RANGE_TYPE_PARAM_ID));
+    defs.insert(
+        range_inclusive_ident(),
+        make_range_struct(RANGE_INCLUSIVE_TYPE_PARAM_ID),
+    );
+    defs
+}
+
+fn range_type(elem_ty: Type) -> Type {
+    Type::Struct {
+        name: range_ident(),
+        type_args: vec![elem_ty],
+    }
+}
+
+fn range_inclusive_type(elem_ty: Type) -> Type {
+    Type::Struct {
+        name: range_inclusive_ident(),
+        type_args: vec![elem_ty],
+    }
+}
+
+fn make_range_struct(type_param_id: TypeVarId) -> StructDef {
+    let type_param = TypeParam {
+        name: builtin_type_param_name(),
+        id: type_param_id,
+    };
+    let elem_ty = Type::Var(type_param.id);
+    let start_field = StructField {
+        name: builtin_field_name("start"),
+        ty: elem_ty.clone(),
+    };
+    let end_field = StructField {
+        name: builtin_field_name("end"),
+        ty: elem_ty,
+    };
+    StructDef {
+        type_params: vec![type_param],
+        fields: vec![start_field, end_field],
+        methods: HashMap::new(),
+    }
+}
+
+fn builtin_type_param_name() -> Ident {
+    builtin_ident("T")
+}
+
+fn range_ident() -> Ident {
+    builtin_ident("Range")
+}
+
+fn range_inclusive_ident() -> Ident {
+    builtin_ident("RangeInclusive")
+}
+
+fn builtin_field_name(name: &str) -> Ident {
+    builtin_ident(name)
+}
+
+fn builtin_ident(name: &str) -> Ident {
+    Ident(Intern::new(name.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         ast::{
             Assign, Binary, Binding, Block, BlockNode, Call, Expr, Func, Mutability, Param,
-            Pattern, PatternNode, Return, TypeParam, TypeVarId, Unary, Visibility,
+            Pattern, PatternNode, Range, RangeNode, Return, TypeParam, TypeVarId, Unary,
+            Visibility,
         },
         span::Span,
     };
@@ -2630,6 +2765,23 @@ mod tests {
                         func: Box::new(func),
                         args,
                         type_args: vec![],
+                    },
+                    span: dummy_span(),
+                }),
+                next_expr_id(),
+            ),
+            span: dummy_span(),
+        }
+    }
+
+    fn range_expr(start: ExprNode, inclusive: bool, end: ExprNode) -> ExprNode {
+        ExprNode {
+            node: Expr::new(
+                ExprKind::Range(RangeNode {
+                    node: Range {
+                        start: Box::new(start),
+                        end: Box::new(end),
+                        inclusive,
                     },
                     span: dummy_span(),
                 }),
@@ -2774,6 +2926,74 @@ mod tests {
 
     fn get_expr_id(expr: &ExprNode) -> ExprId {
         expr.node.id
+    }
+
+    #[test]
+    fn range_expr_of_ints_has_range_int_type() {
+        reset_expr_ids();
+        let range = range_expr(lit_int(0), false, lit_int(10));
+        let range_id = get_expr_id(&range);
+        let prog = program(vec![expr_stmt(range.clone())]);
+        let tcx = run_ok(prog);
+        assert_expr_type(&tcx, range_id, range_type(Type::Int));
+    }
+
+    #[test]
+    fn inclusive_range_expr_of_floats_has_range_inclusive_float_type() {
+        reset_expr_ids();
+        let range = range_expr(lit_float(0.0), true, lit_float(10.0));
+        let range_id = get_expr_id(&range);
+        let prog = program(vec![expr_stmt(range.clone())]);
+        let tcx = run_ok(prog);
+        assert_expr_type(&tcx, range_id, range_inclusive_type(Type::Float));
+    }
+
+    #[test]
+    fn range_expr_bounds_must_unify() {
+        reset_expr_ids();
+        let range = range_expr(lit_int(0), false, lit_float(1.0));
+        let prog = program(vec![expr_stmt(range)]);
+        let errors = run_err(prog);
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+            "expected mismatched types error, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn range_exprs_work_with_generics() {
+        reset_expr_ids();
+
+        let t_id = TypeVarId(0);
+        let t_type = Type::Var(t_id);
+        let type_params = vec![TypeParam {
+            name: dummy_ident("T"),
+            id: t_id,
+        }];
+        let wrap_fn = generic_fn_decl(
+            "wrap",
+            type_params,
+            vec![
+                ("value", t_type.clone()),
+                ("range", range_type(t_type.clone())),
+            ],
+            t_type.clone(),
+            vec![expr_stmt(ident_expr("value"))],
+        );
+
+        let call = call_expr(
+            ident_expr("wrap"),
+            vec![lit_int(5), range_expr(lit_int(0), false, lit_int(10))],
+        );
+        let call_id = get_expr_id(&call);
+        let binding = let_binding("result", None, call);
+
+        let prog = program(vec![wrap_fn, binding]);
+        let tcx = run_ok(prog);
+        assert_expr_type(&tcx, call_id, Type::Int);
     }
 
     #[test]

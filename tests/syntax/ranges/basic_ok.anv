@@ -1,0 +1,33 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let half_open = 0..10;
+    let inclusive = 0..=10;
+
+    let f_range = -2.5..7.5;
+    let f_range_inclusive = -1.0..=1.0;
+
+    let start = 5;
+    let end = 15;
+    let inferred = start..end;
+
+    let start_f = 1.5;
+    let end_f = 3.5;
+    let inferred_f_range = start_f..=end_f;
+
+    // ensure ranges act as values
+    let copy = inferred;
+    let copy_inclusive = f_range_inclusive;
+    let nested = (1 + 2)..(3 + 4);
+    let nested_inclusive = (start - 1)..=(end + 1);
+    let _ignore = (
+        copy,
+        copy_inclusive,
+        nested,
+        nested_inclusive,
+        inferred_f_range,
+        f_range,
+    );
+}
+

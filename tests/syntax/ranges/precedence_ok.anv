@@ -1,0 +1,24 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    // ensure arithmetic binds tighter than ranges
+    let primary = 1 + 2 .. 3 + 4;
+    let secondary = 5 * 2 ..= 40 / 4;
+
+    let tuple = (primary, secondary);
+    let span_sum = tuple.0.start + tuple.1.end;
+
+    // ensure boolean operators around ranges still work
+    let cond = (tuple.0.start < tuple.0.end) && true || false;
+    if cond {
+        let _ = span_sum;
+    }
+
+    // ranges may appear inline inside larger expressions without parens
+    let inline = true && (10 - 5..20 - 10).start < tuple.1.end;
+    if inline {
+        let _ = tuple.1;
+    }
+}
+

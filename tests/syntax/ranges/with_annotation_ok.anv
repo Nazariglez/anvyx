@@ -1,0 +1,24 @@
+// @mode: check
+// @expect: success
+
+fn passthrough_int(range: Range<int>) -> Range<int> {
+    range
+}
+
+fn passthrough_float(range: RangeInclusive<float>) -> RangeInclusive<float> {
+    range
+}
+
+fn main() {
+    let i_range: Range<int> = -5..5;
+    let f_range: RangeInclusive<float> = -1.0..=1.0;
+
+    let _ = passthrough_int(i_range);
+    let _ = passthrough_float(f_range);
+
+    let explicit: Range<float> = 0.5..2.5;
+    let explicit_inclusive: RangeInclusive<int> = 1..=3;
+
+    let _ = (explicit, explicit_inclusive);
+}
+
