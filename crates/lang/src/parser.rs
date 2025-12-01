@@ -4,6 +4,7 @@ use crate::{
     span::{Span, Spanned},
 };
 use chumsky::{
+    Boxed,
     error::Rich,
     extra::{self, SimpleState},
     prelude::*,
@@ -38,12 +39,17 @@ impl<'src, T, P> AnvParser<'src, T> for P where
 {
 }
 
+// It seems tht rustc chokes trying to compile the parser types, so we need to box them
+// in order to reduce the chusmky generic types :(
+// I feel this is fine for now, the parser should still be fast enough for my tiny lang
+type BoxedParser<'src, T> = Boxed<'src, 'src, Input<'src>, T, Extra<'src>>;
+
 pub fn parse_ast(tokens: &[SpannedToken]) -> Result<ast::Program, Vec<Rich<'_, SpannedToken>>> {
     let mut state = SimpleState(ParserState::default());
     parser().parse_with_state(tokens, &mut state).into_result()
 }
 
-fn parser<'src>() -> impl AnvParser<'src, ast::Program> {
+fn parser<'src>() -> BoxedParser<'src, ast::Program> {
     let stmt = statement();
     let func_decl = function(stmt.clone()).map(|func_node| {
         let span = func_node.span;
@@ -59,9 +65,10 @@ fn parser<'src>() -> impl AnvParser<'src, ast::Program> {
         .collect::<Vec<_>>()
         .map(|stmts| ast::Program { stmts })
         .then_ignore(end())
+        .boxed()
 }
 
-fn statement<'src>() -> impl AnvParser<'src, ast::StmtNode> {
+fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
     recursive(|stmt| {
         let expr = expression(stmt.clone());
         let func = function(stmt.clone());
@@ -106,9 +113,10 @@ fn statement<'src>() -> impl AnvParser<'src, ast::StmtNode> {
     })
     .labelled("statement")
     .as_context()
+    .boxed()
 }
 
-fn type_params<'src>() -> impl AnvParser<'src, Vec<ast::TypeParam>> {
+fn type_params<'src>() -> BoxedParser<'src, Vec<ast::TypeParam>> {
     select! {
         (Token::Op(Op::LessThan), _) => (),
     }
@@ -131,11 +139,10 @@ fn type_params<'src>() -> impl AnvParser<'src, Vec<ast::TypeParam>> {
     .map(|opt| opt.unwrap_or_default())
     .labelled("type parameters")
     .as_context()
+    .boxed()
 }
 
-fn function<'src>(
-    stmt: impl AnvParser<'src, ast::StmtNode>,
-) -> impl AnvParser<'src, ast::FuncNode> {
+fn function<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'src, ast::FuncNode> {
     select! {
         (Token::Keyword(Keyword::Fn), _) => (),
     }
@@ -176,9 +183,10 @@ fn function<'src>(
     })
     .labelled("function")
     .as_context()
+    .boxed()
 }
 
-fn struct_field<'src>() -> impl AnvParser<'src, ast::StructField> {
+fn struct_field<'src>() -> BoxedParser<'src, ast::StructField> {
     identifier()
         .then_ignore(select! {
             (Token::Colon, _) => (),
@@ -187,6 +195,7 @@ fn struct_field<'src>() -> impl AnvParser<'src, ast::StructField> {
         .map(|(name, ty)| ast::StructField { name, ty })
         .labelled("struct field")
         .as_context()
+        .boxed()
 }
 
 enum StructMember {
@@ -196,7 +205,7 @@ enum StructMember {
 
 fn struct_method<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
-) -> impl AnvParser<'src, ast::Method> {
+) -> BoxedParser<'src, ast::Method> {
     select! {
         (Token::Keyword(Keyword::Fn), _) => (),
     }
@@ -240,9 +249,10 @@ fn struct_method<'src>(
     )
     .labelled("method")
     .as_context()
+    .boxed()
 }
 
-fn method_params<'src>() -> impl AnvParser<'src, (Option<ast::MethodReceiver>, Vec<ast::Param>)> {
+fn method_params<'src>() -> BoxedParser<'src, (Option<ast::MethodReceiver>, Vec<ast::Param>)> {
     select! {
         (Token::Open(Delimiter::Parent), _) => (),
     }
@@ -254,9 +264,10 @@ fn method_params<'src>() -> impl AnvParser<'src, (Option<ast::MethodReceiver>, V
     .then_ignore(select! {
         (Token::Close(Delimiter::Parent), _) => (),
     })
+    .boxed()
 }
 
-fn self_param<'src>() -> impl AnvParser<'src, ()> {
+fn self_param<'src>() -> BoxedParser<'src, ()> {
     identifier()
         .try_map(|ident, span| {
             if ident.0.as_ref() == "self" {
@@ -270,10 +281,10 @@ fn self_param<'src>() -> impl AnvParser<'src, ()> {
                 .ignore_then(type_ident())
                 .or_not(),
         )
+        .boxed()
 }
 
-fn method_param_list<'src>() -> impl AnvParser<'src, (Option<ast::MethodReceiver>, Vec<ast::Param>)>
-{
+fn method_param_list<'src>() -> BoxedParser<'src, (Option<ast::MethodReceiver>, Vec<ast::Param>)> {
     let regular_params = param()
         .separated_by(select! { (Token::Comma, _) => () })
         .collect::<Vec<_>>();
@@ -289,20 +300,22 @@ fn method_param_list<'src>() -> impl AnvParser<'src, (Option<ast::MethodReceiver
             .map(|(_, params)| (Some(ast::MethodReceiver::Value), params)),
         regular_params.map(|params| (None, params)),
     ))
+    .boxed()
 }
 
 fn struct_member<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
-) -> impl AnvParser<'src, StructMember> {
+) -> BoxedParser<'src, StructMember> {
     choice((
         struct_method(stmt).map(StructMember::Method),
         struct_field().map(StructMember::Field),
     ))
+    .boxed()
 }
 
 fn struct_declaration<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
-) -> impl AnvParser<'src, ast::StructDeclNode> {
+) -> BoxedParser<'src, ast::StructDeclNode> {
     select! {
         (Token::Keyword(Keyword::Struct), _) => (),
     }
@@ -395,6 +408,7 @@ fn struct_declaration<'src>(
     })
     .labelled("struct declaration")
     .as_context()
+    .boxed()
 }
 
 fn resolve_type_params_with_self(
@@ -476,7 +490,7 @@ fn resolve_type_params(
 
 fn block_stmt<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
-) -> impl AnvParser<'src, ast::BlockNode> {
+) -> BoxedParser<'src, ast::BlockNode> {
     select! {
         (Token::Open(Delimiter::Brace), _) => (),
     }
@@ -490,12 +504,13 @@ fn block_stmt<'src>(
     })
     .labelled("block")
     .as_context()
+    .boxed()
 }
 
 fn if_expr<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
     expr: impl AnvParser<'src, ast::ExprNode>,
-) -> impl AnvParser<'src, ast::ExprNode> {
+) -> BoxedParser<'src, ast::ExprNode> {
     recursive(|if_parser| {
         let else_branch = select! {
             (Token::Keyword(Keyword::Else), _) => (),
@@ -536,11 +551,12 @@ fn if_expr<'src>(
     })
     .labelled("if expression")
     .as_context()
+    .boxed()
 }
 
 fn struct_literal<'src>(
     expr: impl AnvParser<'src, ast::ExprNode>,
-) -> impl AnvParser<'src, ast::ExprNode> {
+) -> BoxedParser<'src, ast::ExprNode> {
     let field_init = identifier()
         .then_ignore(select! { (Token::Colon, _) => () })
         .then(expr)
@@ -567,12 +583,13 @@ fn struct_literal<'src>(
         })
         .labelled("struct literal")
         .as_context()
+        .boxed()
 }
 
 fn atom_expr<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
     expr: impl AnvParser<'src, ast::ExprNode>,
-) -> impl AnvParser<'src, ast::ExprNode> {
+) -> BoxedParser<'src, ast::ExprNode> {
     choice((
         literal().map_with(|lit, e| {
             let s = e.span();
@@ -599,6 +616,7 @@ fn atom_expr<'src>(
         grouped_or_tuple_expr(expr),
     ))
     .labelled("atom")
+    .boxed()
 }
 
 enum TupleShapeResult<T> {
@@ -633,7 +651,7 @@ enum TupleExprElem {
 
 fn grouped_or_tuple_expr<'src>(
     expr: impl AnvParser<'src, ast::ExprNode>,
-) -> impl AnvParser<'src, ast::ExprNode> {
+) -> BoxedParser<'src, ast::ExprNode> {
     let comma = select! { (Token::Comma, _) => () };
     let open_paren = select! { (Token::Open(Delimiter::Parent), _) => () };
     let close_paren = select! { (Token::Close(Delimiter::Parent), _) => () };
@@ -724,11 +742,12 @@ fn grouped_or_tuple_expr<'src>(
         })
         .labelled("tuple or grouped expression")
         .as_context()
+        .boxed()
 }
 
 fn fn_call_args<'src>(
     expr: impl AnvParser<'src, ast::ExprNode>,
-) -> impl AnvParser<'src, Vec<ast::ExprNode>> {
+) -> BoxedParser<'src, Vec<ast::ExprNode>> {
     select! {
         (Token::Open(Delimiter::Parent), _) => (),
     }
@@ -746,9 +765,10 @@ fn fn_call_args<'src>(
     })
     .labelled("function call arguments")
     .as_context()
+    .boxed()
 }
 
-fn call_type_args<'src>() -> impl AnvParser<'src, Vec<ast::Type>> {
+fn call_type_args<'src>() -> BoxedParser<'src, Vec<ast::Type>> {
     // lookahead for optional generic type arguments (<int, ..>)
     // and rewind to avoid consuming < when its a comparsion op (a < b)
     let generic_lookahead = select! {
@@ -791,6 +811,7 @@ fn call_type_args<'src>() -> impl AnvParser<'src, Vec<ast::Type>> {
         .map(|opt| opt.unwrap_or_default())
         .labelled("type arguments")
         .as_context()
+        .boxed()
 }
 
 enum PostfixOp {
@@ -805,7 +826,7 @@ enum PostfixOp {
 fn postfix_expr<'src>(
     atom: impl AnvParser<'src, ast::ExprNode>,
     expr: impl AnvParser<'src, ast::ExprNode>,
-) -> impl AnvParser<'src, ast::ExprNode> {
+) -> BoxedParser<'src, ast::ExprNode> {
     let call_suffix = call_type_args()
         .then(fn_call_args(expr))
         .map(|(type_args, args)| PostfixOp::Call { type_args, args });
@@ -899,11 +920,10 @@ fn postfix_expr<'src>(
     })
     .labelled("postfix expression")
     .as_context()
+    .boxed()
 }
 
-fn unary_expr<'src>(
-    expr: impl AnvParser<'src, ast::ExprNode>,
-) -> impl AnvParser<'src, ast::ExprNode> {
+fn unary_expr<'src>(expr: impl AnvParser<'src, ast::ExprNode>) -> BoxedParser<'src, ast::ExprNode> {
     select! {
         (Token::Op(Op::Sub), _) => ast::UnaryOp::Neg,
         (Token::Op(Op::Not), _) => ast::UnaryOp::Not,
@@ -935,37 +955,50 @@ fn unary_expr<'src>(
     })
     .labelled("unary")
     .as_context()
+    .boxed()
+}
+
+fn infix_left<'src>(
+    lower: impl AnvParser<'src, ast::ExprNode>,
+    op: impl AnvParser<'src, ast::BinaryOp>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let op_rhs = op.then(lower.clone());
+    lower
+        .foldl_with(op_rhs.repeated(), |left, (op, right), e| {
+            let span = Span::new(left.span.start, right.span.end);
+            let bin_node = Spanned::new(
+                ast::Binary {
+                    left: Box::new(left),
+                    op,
+                    right: Box::new(right),
+                },
+                span,
+            );
+
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Binary(bin_node), expr_id);
+            Spanned::new(expr, span)
+        })
+        .boxed()
 }
 
 fn binary_expr<'src>(
-    term: impl AnvParser<'src, ast::ExprNode>,
-) -> impl AnvParser<'src, ast::ExprNode> {
-    // FIXME: precedence (sum, mul, etc...)
-
-    let op_rhs = binary_op().then(term.clone());
-    term.foldl_with(op_rhs.repeated(), |left, (op, right), e| {
-        let span = Span::new(left.span.start, right.span.end);
-        let bin_node = Spanned::new(
-            ast::Binary {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
-            },
-            span,
-        );
-
-        let expr_id = e.state().new_expr_id();
-        let expr = ast::Expr::new(ast::ExprKind::Binary(bin_node), expr_id);
-        Spanned::new(expr, span)
-    })
-    .labelled("expression")
-    .as_context()
+    unary: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let mul = infix_left(unary, mul_div_op());
+    let add = infix_left(mul, add_sub_op());
+    let cmp = infix_left(add, cmp_op());
+    let eq = infix_left(cmp, eq_op());
+    let and = infix_left(eq, and_op());
+    let coal = infix_left(and, coalesce_op());
+    let or = infix_left(coal, or_op());
+    or.labelled("expression").as_context().boxed()
 }
 
 fn ternary_expr<'src>(
     lower: impl AnvParser<'src, ast::ExprNode>,
     expr: impl AnvParser<'src, ast::ExprNode>,
-) -> impl AnvParser<'src, ast::ExprNode> {
+) -> BoxedParser<'src, ast::ExprNode> {
     let ternary_suffix = select! {
         (Token::Question, _) => (),
     }
@@ -1013,11 +1046,10 @@ fn ternary_expr<'src>(
         )
         .labelled("ternary")
         .as_context()
+        .boxed()
 }
 
-fn expression<'src>(
-    stmt: impl AnvParser<'src, ast::StmtNode>,
-) -> impl AnvParser<'src, ast::ExprNode> {
+fn expression<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'src, ast::ExprNode> {
     recursive(|expr| {
         let atom = atom_expr(stmt, expr.clone());
         let postfix = postfix_expr(atom, expr.clone());
@@ -1027,17 +1059,19 @@ fn expression<'src>(
         let assign = assignment_expr(ternary);
         assign
     })
+    .boxed()
 }
 
-fn identifier<'src>() -> impl AnvParser<'src, ast::Ident> {
+fn identifier<'src>() -> BoxedParser<'src, ast::Ident> {
     select! {
         (Token::Ident(ident), _) => ident,
     }
     .labelled("identifier")
     .as_context()
+    .boxed()
 }
 
-fn literal<'src>() -> impl AnvParser<'src, ast::Lit> {
+fn literal<'src>() -> BoxedParser<'src, ast::Lit> {
     select! {
         (Token::Literal(lit), _) => match lit {
             LitToken::Number(n) => ast::Lit::Int(n),
@@ -1054,9 +1088,10 @@ fn literal<'src>() -> impl AnvParser<'src, ast::Lit> {
     }
     .labelled("literal")
     .as_context()
+    .boxed()
 }
 
-fn params<'src>() -> impl AnvParser<'src, Vec<ast::Param>> {
+fn params<'src>() -> BoxedParser<'src, Vec<ast::Param>> {
     select! {
         (Token::Open(Delimiter::Parent), _) => (),
     }
@@ -1072,9 +1107,10 @@ fn params<'src>() -> impl AnvParser<'src, Vec<ast::Param>> {
     .then_ignore(select! {
         (Token::Close(Delimiter::Parent), _) => (),
     })
+    .boxed()
 }
 
-fn param<'src>() -> impl AnvParser<'src, ast::Param> {
+fn param<'src>() -> BoxedParser<'src, ast::Param> {
     identifier()
         .then_ignore(select! {
             (Token::Colon, _) => (),
@@ -1083,9 +1119,10 @@ fn param<'src>() -> impl AnvParser<'src, ast::Param> {
         .map(|(name, ty)| ast::Param { name, ty })
         .labelled("parameter")
         .as_context()
+        .boxed()
 }
 
-fn return_type<'src>() -> impl AnvParser<'src, Option<ast::Type>> {
+fn return_type<'src>() -> BoxedParser<'src, Option<ast::Type>> {
     select! {
         (Token::Op(Op::ThinArrow), _) => (),
     }
@@ -1093,9 +1130,10 @@ fn return_type<'src>() -> impl AnvParser<'src, Option<ast::Type>> {
     .or_not()
     .labelled("return type")
     .as_context()
+    .boxed()
 }
 
-fn type_ident<'src>() -> impl AnvParser<'src, ast::Type> {
+fn type_ident<'src>() -> BoxedParser<'src, ast::Type> {
     recursive(|type_parser| {
         let builtin_typ = select! {
             (Token::Keyword(Keyword::Int), _) => ast::Type::Int,
@@ -1143,6 +1181,7 @@ fn type_ident<'src>() -> impl AnvParser<'src, ast::Type> {
     })
     .labelled("type")
     .as_context()
+    .boxed()
 }
 
 enum TupleTypeElem {
@@ -1152,7 +1191,7 @@ enum TupleTypeElem {
 
 fn paren_or_tuple_type<'src>(
     type_parser: impl AnvParser<'src, ast::Type>,
-) -> impl AnvParser<'src, ast::Type> {
+) -> BoxedParser<'src, ast::Type> {
     let comma = select! { (Token::Comma, _) => () };
     let open_paren = select! { (Token::Open(Delimiter::Parent), _) => () };
     let close_paren = select! { (Token::Close(Delimiter::Parent), _) => () };
@@ -1235,9 +1274,10 @@ fn paren_or_tuple_type<'src>(
         })
         .labelled("tuple or grouped type")
         .as_context()
+        .boxed()
 }
 
-fn pattern<'src>() -> impl AnvParser<'src, ast::PatternNode> {
+fn pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
     recursive(|pat| {
         let ident_or_wildcard = identifier().map_with(|ident, e| {
             let s = e.span();
@@ -1255,6 +1295,7 @@ fn pattern<'src>() -> impl AnvParser<'src, ast::PatternNode> {
     })
     .labelled("pattern")
     .as_context()
+    .boxed()
 }
 
 enum TuplePatternElem {
@@ -1264,7 +1305,7 @@ enum TuplePatternElem {
 
 fn tuple_pattern<'src>(
     pat: impl AnvParser<'src, ast::PatternNode>,
-) -> impl AnvParser<'src, ast::PatternNode> {
+) -> BoxedParser<'src, ast::PatternNode> {
     let comma = select! { (Token::Comma, _) => () };
     let open_paren = select! { (Token::Open(Delimiter::Parent), _) => () };
     let close_paren = select! { (Token::Close(Delimiter::Parent), _) => () };
@@ -1348,11 +1389,10 @@ fn tuple_pattern<'src>(
         })
         .labelled("tuple pattern")
         .as_context()
+        .boxed()
 }
 
-fn binding<'src>(
-    stmt: impl AnvParser<'src, ast::StmtNode>,
-) -> impl AnvParser<'src, ast::BindingNode> {
+fn binding<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'src, ast::BindingNode> {
     let mutability = select! {
         (Token::Keyword(Keyword::Let), _) => ast::Mutability::Immutable,
         (Token::Keyword(Keyword::Var), _) => ast::Mutability::Mutable,
@@ -1386,30 +1426,80 @@ fn binding<'src>(
                 Span::new(s.start, s.end),
             )
         })
+        .boxed()
 }
 
-fn binary_op<'src>() -> impl AnvParser<'src, ast::BinaryOp> {
+fn mul_div_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
     select! {
-        (Token::Op(Op::Add), _) => ast::BinaryOp::Add,
-        (Token::Op(Op::Sub), _) => ast::BinaryOp::Sub,
         (Token::Op(Op::Mul), _) => ast::BinaryOp::Mul,
         (Token::Op(Op::Div), _) => ast::BinaryOp::Div,
         (Token::Op(Op::Rem), _) => ast::BinaryOp::Rem,
-        (Token::Op(Op::Eq), _) => ast::BinaryOp::Eq,
-        (Token::Op(Op::NotEq), _) => ast::BinaryOp::NotEq,
+    }
+    .labelled("multiplicative op")
+    .as_context()
+    .boxed()
+}
+
+fn add_sub_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
+    select! {
+        (Token::Op(Op::Add), _) => ast::BinaryOp::Add,
+        (Token::Op(Op::Sub), _) => ast::BinaryOp::Sub,
+    }
+    .labelled("additive op")
+    .as_context()
+    .boxed()
+}
+
+fn cmp_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
+    select! {
         (Token::Op(Op::LessThan), _) => ast::BinaryOp::LessThan,
         (Token::Op(Op::GreaterThan), _) => ast::BinaryOp::GreaterThan,
         (Token::Op(Op::LessThanEq), _) => ast::BinaryOp::LessThanEq,
         (Token::Op(Op::GreaterThanEq), _) => ast::BinaryOp::GreaterThanEq,
-        (Token::Op(Op::And), _) => ast::BinaryOp::And,
-        (Token::Op(Op::Or), _) => ast::BinaryOp::Or,
-        (Token::Op(Op::Coalesce), _) => ast::BinaryOp::Coalesce,
     }
-    .labelled("binary op")
+    .labelled("comparison op")
     .as_context()
+    .boxed()
 }
 
-fn assign_op<'src>() -> impl AnvParser<'src, ast::AssignOp> {
+fn eq_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
+    select! {
+        (Token::Op(Op::Eq), _) => ast::BinaryOp::Eq,
+        (Token::Op(Op::NotEq), _) => ast::BinaryOp::NotEq,
+    }
+    .labelled("equality op")
+    .as_context()
+    .boxed()
+}
+
+fn and_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
+    select! {
+        (Token::Op(Op::And), _) => ast::BinaryOp::And,
+    }
+    .labelled("logical and op")
+    .as_context()
+    .boxed()
+}
+
+fn coalesce_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
+    select! {
+        (Token::Op(Op::Coalesce), _) => ast::BinaryOp::Coalesce,
+    }
+    .labelled("coalesce op")
+    .as_context()
+    .boxed()
+}
+
+fn or_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
+    select! {
+        (Token::Op(Op::Or), _) => ast::BinaryOp::Or,
+    }
+    .labelled("logical or op")
+    .as_context()
+    .boxed()
+}
+
+fn assign_op<'src>() -> BoxedParser<'src, ast::AssignOp> {
     select! {
         (Token::Op(Op::Assign), _) => ast::AssignOp::Assign,
         (Token::Op(Op::AddAssign), _) => ast::AssignOp::AddAssign,
@@ -1419,9 +1509,10 @@ fn assign_op<'src>() -> impl AnvParser<'src, ast::AssignOp> {
     }
     .labelled("assign op")
     .as_context()
+    .boxed()
 }
 
-fn lvalue_expr<'src>() -> impl AnvParser<'src, ast::ExprNode> {
+fn lvalue_expr<'src>() -> BoxedParser<'src, ast::ExprNode> {
     let base = identifier().map_with(|ident, e| {
         let s = e.span();
         let span = Span::new(s.start, s.end);
@@ -1448,11 +1539,12 @@ fn lvalue_expr<'src>() -> impl AnvParser<'src, ast::ExprNode> {
     })
     .labelled("left value expr")
     .as_context()
+    .boxed()
 }
 
 fn assignment_expr<'src>(
     expr: impl AnvParser<'src, ast::ExprNode>,
-) -> impl AnvParser<'src, ast::ExprNode> {
+) -> BoxedParser<'src, ast::ExprNode> {
     lvalue_expr()
         .then(assign_op().then(expr.clone()))
         .map_with(|(target, (op, value)), e| {
@@ -1474,11 +1566,12 @@ fn assignment_expr<'src>(
         .or(expr)
         .labelled("assignment")
         .as_context()
+        .boxed()
 }
 
 fn return_stmt<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
-) -> impl AnvParser<'src, ast::StmtNode> {
+) -> BoxedParser<'src, ast::StmtNode> {
     select! {
         (Token::Keyword(Keyword::Return), _) => (),
     }
@@ -1494,4 +1587,190 @@ fn return_stmt<'src>(
     })
     .labelled("return")
     .as_context()
+    .boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer;
+    use chumsky::Parser;
+
+    fn parse_expr(src: &str) -> ast::ExprNode {
+        let tokens = lexer::tokenize(src)
+            .unwrap_or_else(|errs| panic!("failed to tokenize '{src}': {errs:?}"));
+        let stmt_parser = statement();
+        let expr_parser = expression(stmt_parser.clone()).then_ignore(end());
+        let mut state = SimpleState(ParserState::default());
+        expr_parser
+            .parse_with_state(&tokens, &mut state)
+            .into_result()
+            .unwrap_or_else(|errs| panic!("failed to parse '{src}': {errs:?}"))
+    }
+
+    fn expect_binary<'a>(
+        expr: &'a ast::ExprNode,
+        op: ast::BinaryOp,
+    ) -> (&'a ast::ExprNode, &'a ast::ExprNode) {
+        match &expr.node().kind {
+            ast::ExprKind::Binary(bin_node) => {
+                let binary = bin_node.node();
+                assert_eq!(
+                    binary.op, op,
+                    "expected binary op {:?}, found {:?}",
+                    op, binary.op
+                );
+                (binary.left.as_ref(), binary.right.as_ref())
+            }
+            other => panic!("expected binary op {op:?}, found {other:?}"),
+        }
+    }
+
+    fn expect_ident(expr: &ast::ExprNode, name: &str) {
+        match &expr.node().kind {
+            ast::ExprKind::Ident(ident) => {
+                assert_eq!(ident.0.as_ref(), name, "expected ident '{name}'");
+            }
+            other => panic!("expected ident '{name}', found {other:?}"),
+        }
+    }
+
+    fn expect_int(expr: &ast::ExprNode, value: i64) {
+        match &expr.node().kind {
+            ast::ExprKind::Lit(ast::Lit::Int(v)) => {
+                assert_eq!(v, &value, "expected int literal {value}");
+            }
+            other => panic!("expected int literal {value}, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn multiplication_outbinds_addition() {
+        let expr = parse_expr("1 + 2 * 3");
+        let (left, right) = expect_binary(&expr, ast::BinaryOp::Add);
+        expect_int(left, 1);
+        let (mul_left, mul_right) = expect_binary(right, ast::BinaryOp::Mul);
+        expect_int(mul_left, 2);
+        expect_int(mul_right, 3);
+    }
+
+    #[test]
+    fn subtraction_is_left_associative() {
+        let expr = parse_expr("a - b - c");
+        let (left, right) = expect_binary(&expr, ast::BinaryOp::Sub);
+        let (first_left, first_right) = expect_binary(left, ast::BinaryOp::Sub);
+        expect_ident(first_left, "a");
+        expect_ident(first_right, "b");
+        expect_ident(right, "c");
+    }
+
+    #[test]
+    fn comparison_is_looser_than_arithmetic() {
+        let expr = parse_expr("a + b < c * d");
+        let (left, right) = expect_binary(&expr, ast::BinaryOp::LessThan);
+        let (add_left, add_right) = expect_binary(left, ast::BinaryOp::Add);
+        expect_ident(add_left, "a");
+        expect_ident(add_right, "b");
+        let (mul_left, mul_right) = expect_binary(right, ast::BinaryOp::Mul);
+        expect_ident(mul_left, "c");
+        expect_ident(mul_right, "d");
+    }
+
+    #[test]
+    fn equality_is_looser_than_multiplication_and_left_assoc() {
+        let expr = parse_expr("a * b == c + d");
+        let (left, right) = expect_binary(&expr, ast::BinaryOp::Eq);
+        let (mul_left, mul_right) = expect_binary(left, ast::BinaryOp::Mul);
+        expect_ident(mul_left, "a");
+        expect_ident(mul_right, "b");
+        let (add_left, add_right) = expect_binary(right, ast::BinaryOp::Add);
+        expect_ident(add_left, "c");
+        expect_ident(add_right, "d");
+
+        let chain = parse_expr("x == y == z");
+        let (first, tail) = expect_binary(&chain, ast::BinaryOp::Eq);
+        let (lhs, rhs) = expect_binary(first, ast::BinaryOp::Eq);
+        expect_ident(lhs, "x");
+        expect_ident(rhs, "y");
+        expect_ident(tail, "z");
+    }
+
+    #[test]
+    fn logical_and_has_higher_precedence_than_or() {
+        let expr = parse_expr("a && b || c");
+        let (left, right) = expect_binary(&expr, ast::BinaryOp::Or);
+        let (and_left, and_right) = expect_binary(left, ast::BinaryOp::And);
+        expect_ident(and_left, "a");
+        expect_ident(and_right, "b");
+        expect_ident(right, "c");
+    }
+
+    #[test]
+    fn coalesce_sits_between_and_and_or() {
+        let expr = parse_expr("a ?? b || c");
+        let (left, right) = expect_binary(&expr, ast::BinaryOp::Or);
+        let (coal_left, coal_right) = expect_binary(left, ast::BinaryOp::Coalesce);
+        expect_ident(coal_left, "a");
+        expect_ident(coal_right, "b");
+        expect_ident(right, "c");
+
+        let expr = parse_expr("a && b ?? c");
+        let (coal_left, coal_right) = expect_binary(&expr, ast::BinaryOp::Coalesce);
+        let (and_left, and_right) = expect_binary(coal_left, ast::BinaryOp::And);
+        expect_ident(and_left, "a");
+        expect_ident(and_right, "b");
+        expect_ident(coal_right, "c");
+    }
+
+    #[test]
+    fn coalesce_vs_and_and_chain() {
+        let expr = parse_expr("a ?? b && c");
+        let (left, right) = expect_binary(&expr, ast::BinaryOp::Coalesce);
+        expect_ident(left, "a");
+        let (and_left, and_right) = expect_binary(right, ast::BinaryOp::And);
+        expect_ident(and_left, "b");
+        expect_ident(and_right, "c");
+
+        let expr = parse_expr("a ?? b ?? c");
+        let (first, tail) = expect_binary(&expr, ast::BinaryOp::Coalesce);
+        let (left_left, left_right) = expect_binary(first, ast::BinaryOp::Coalesce);
+        expect_ident(left_left, "a");
+        expect_ident(left_right, "b");
+        expect_ident(tail, "c");
+    }
+
+    #[test]
+    fn coalesce_interacts_with_equality() {
+        let expr = parse_expr("x == y ?? z");
+        let (left, right) = expect_binary(&expr, ast::BinaryOp::Coalesce);
+        let (eq_left, eq_right) = expect_binary(left, ast::BinaryOp::Eq);
+        expect_ident(eq_left, "x");
+        expect_ident(eq_right, "y");
+        expect_ident(right, "z");
+
+        let expr = parse_expr("x ?? y == z");
+        let (left, right) = expect_binary(&expr, ast::BinaryOp::Coalesce);
+        expect_ident(left, "x");
+        let (eq_left, eq_right) = expect_binary(right, ast::BinaryOp::Eq);
+        expect_ident(eq_left, "y");
+        expect_ident(eq_right, "z");
+    }
+
+    #[test]
+    fn complex_expression_respects_all_levels() {
+        let expr = parse_expr("a + b ?? c * d && e || f");
+        let (left, right) = expect_binary(&expr, ast::BinaryOp::Or);
+        expect_ident(right, "f");
+
+        let (coal_left, coal_right) = expect_binary(left, ast::BinaryOp::Coalesce);
+        let (add_left, add_right) = expect_binary(coal_left, ast::BinaryOp::Add);
+        expect_ident(add_left, "a");
+        expect_ident(add_right, "b");
+
+        let (and_left, and_right) = expect_binary(coal_right, ast::BinaryOp::And);
+        let (mul_left, mul_right) = expect_binary(and_left, ast::BinaryOp::Mul);
+        expect_ident(mul_left, "c");
+        expect_ident(mul_right, "d");
+        expect_ident(and_right, "e");
+    }
 }

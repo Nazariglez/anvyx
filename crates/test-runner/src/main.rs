@@ -59,7 +59,7 @@ fn main() {
     for (file, result) in results {
         summary.add(file, result, args.quiet);
     }
-    summary.print_summary(start_time, files.len());
+    summary.print_summary(start_time);
     println!("");
 }
 
@@ -106,7 +106,7 @@ impl Summary {
         }
     }
 
-    fn print_summary(&self, start_time: Instant, total: usize) {
+    fn print_summary(&self, start_time: Instant) {
         println!("");
         println!("{CYAN}Summary: {RESET}");
         println!("");
