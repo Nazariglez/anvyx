@@ -1,9 +1,9 @@
 [package]
-name = "anvyl"
+name = "anvyx"
 description.workspace = true
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 clap = { version = "4.5.53", features = ["derive"] }
-anvyl-lang = { path = "../lang" }
+anvyx-lang = { path = "../lang" }

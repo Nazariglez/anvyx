@@ -1,4 +1,4 @@
-use anvyl_lang::run_program;
+use anvyx_lang::run_program;
 use std::fs;
 use std::path::Path;
 

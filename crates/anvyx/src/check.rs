@@ -1,4 +1,4 @@
-use anvyl_lang::generate_ast;
+use anvyx_lang::generate_ast;
 use std::{fs, path::Path};
 
 pub fn cmd(file: &Path) -> Result<(), String> {

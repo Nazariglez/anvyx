@@ -178,13 +178,13 @@ enum ProcessOutcome {
 pub fn compile_lang(release: bool) -> Result<String, String> {
     // TODO: release? backend?
     println!(
-        "{ORANGE}Compiling anvyl{}{RESET}",
+        "{ORANGE}Compiling anvyx{}{RESET}",
         if release { " (release)..." } else { "..." }
     );
     let mut child = std::process::Command::new("cargo")
         .arg("build")
         .arg("--package")
-        .arg("anvyl")
+        .arg("anvyx")
         .args(if release { vec!["--release"] } else { vec![] })
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -198,9 +198,9 @@ pub fn compile_lang(release: bool) -> Result<String, String> {
 
     let profile = if release { "release" } else { "debug" };
     let exe_name = if cfg!(target_os = "windows") {
-        "anvyl.exe"
+        "anvyx.exe"
     } else {
-        "anvyl"
+        "anvyx"
     };
     let exe_path = PathBuf::from("target").join(profile).join(exe_name);
     Ok(exe_path.display().to_string())

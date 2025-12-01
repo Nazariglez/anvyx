@@ -1,13 +1,13 @@
 [workspace]
 members = ["crates/*"]
-default-members = ["crates/anvyl"]
+default-members = ["crates/anvyx"]
 resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
-description = "Anvyl Programming Language"
+description = "Anvyx Programming Language"
 edition = "2024"
 authors = ["Nazarí González <nazari.nz@gmail.com>"]
 license = "MIT OR Apache-2.0"
-homepage = "https://github.com/Nazariglez/anvyl"
-repository = "https://github.com/Nazariglez/anvyl"
+homepage = "https://github.com/Nazariglez/anvyx"
+repository = "https://github.com/Nazariglez/anvyx"

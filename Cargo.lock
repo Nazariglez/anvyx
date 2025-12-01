@@ -68,15 +68,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "anvyl"
+name = "anvyx"
 version = "0.1.0"
 dependencies = [
- "anvyl-lang",
+ "anvyx-lang",
  "clap",
 ]
 
 [[package]]
-name = "anvyl-lang"
+name = "anvyx-lang"
 version = "0.1.0"
 dependencies = [
  "ariadne",
@@ -431,7 +431,7 @@ dependencies = [
 name = "test-runner"
 version = "0.1.0"
 dependencies = [
- "anvyl-lang",
+ "anvyx-lang",
  "rayon",
  "wait-timeout",
  "walkdir",

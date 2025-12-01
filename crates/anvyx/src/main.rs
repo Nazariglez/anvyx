@@ -18,9 +18,9 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    #[command(about = "Run an Anvyl program")]
+    #[command(about = "Run an Anvyx program")]
     Run { file: PathBuf },
-    #[command(about = "Check an Anvyl file")]
+    #[command(about = "Check an Anvyx file")]
     Check { file: PathBuf },
 }
 
