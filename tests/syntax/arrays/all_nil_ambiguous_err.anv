@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: cannot infer element type for all-nil array literal
+
+fn main() {
+    var a = [nil, nil];
+}

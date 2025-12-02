@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: array fill length must be an integer literal
+
+fn main() {
+    let n = 3;
+    let a = [0; n];
+}

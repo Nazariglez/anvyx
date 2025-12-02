@@ -1,0 +1,6 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let d: int[_] = [1, 2, 3];
+}

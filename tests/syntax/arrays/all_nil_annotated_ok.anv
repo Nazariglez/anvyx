@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    // FIXME: allow T?[] instead of (T?)[]
+    var a: (int?)[_] = [nil, nil];
+}
