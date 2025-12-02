@@ -2,11 +2,11 @@
 // @expect: success
 
 struct Board {
-    rows: int[3][2],
+    rows: [[int; 3]; 2],
 }
 
 struct Bag {
-    slots: int[4],
+    slots: [int; 4],
 }
 
 fn main() {

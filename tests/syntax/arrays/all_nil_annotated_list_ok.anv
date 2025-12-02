@@ -2,6 +2,6 @@
 // @expect: success
 
 fn main() {
-    var c: int?[] = [nil, nil];
+    var c: [int?] = [nil, nil];
 }
 

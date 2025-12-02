@@ -108,7 +108,6 @@ pub struct TypeParam {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ArrayLen {
     Fixed(usize),
-    Dynamic,
     Infer,
 }
 
@@ -140,8 +139,12 @@ pub enum Type {
     NamedTuple(Vec<(Ident, Type)>),
     /// Struct type
     Struct { name: Ident, type_args: Vec<Type> },
-    /// Arrays (fixed and dynamic)
+    /// List are dynamic arrays
+    List { elem: Box<Type> },
+    /// Arrays are fixed length [T; N] or [T; _]
     Array { elem: Box<Type>, len: ArrayLen },
+    /// Map type (key-value pairs)
+    Map { key: Box<Type>, value: Box<Type> },
 }
 
 impl Type {
@@ -187,6 +190,18 @@ impl Type {
 
     pub fn is_struct(&self) -> bool {
         matches!(self, Type::Struct { .. })
+    }
+
+    pub fn is_list(&self) -> bool {
+        matches!(self, Type::List { .. })
+    }
+
+    pub fn is_array(&self) -> bool {
+        matches!(self, Type::Array { .. })
+    }
+
+    pub fn is_map(&self) -> bool {
+        matches!(self, Type::Map { .. })
     }
 
     pub fn tuple_arity(&self) -> Option<usize> {
@@ -260,11 +275,12 @@ impl Display for Type {
                     write!(f, "{name}<{args}>")
                 }
             }
+            Type::List { elem } => write!(f, "[{elem}]"),
             Type::Array { elem, len } => match len {
-                ArrayLen::Fixed(n) => write!(f, "{elem}[{n}]"),
-                ArrayLen::Dynamic => write!(f, "{elem}[]"),
-                ArrayLen::Infer => write!(f, "{elem}[_]"),
+                ArrayLen::Fixed(n) => write!(f, "[{elem}; {n}]"),
+                ArrayLen::Infer => write!(f, "[{elem}; _]"),
             },
+            Type::Map { key, value } => write!(f, "[{key}: {value}]"),
         }
     }
 }

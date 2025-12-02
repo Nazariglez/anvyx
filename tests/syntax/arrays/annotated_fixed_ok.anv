@@ -2,6 +2,6 @@
 // @expect: success
 
 fn main() {
-    let a: int[3] = [1, 2, 3];
-    let b: string[2] = ["x", "y"];
+    let a: [int; 3] = [1, 2, 3];
+    let b: [string; 2] = ["x", "y"];
 }

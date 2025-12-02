@@ -2,6 +2,6 @@
 // @expect: success
 
 fn main() {
-    let m: int[2] = [1, 2];
+    let m: [int; 2] = [1, 2];
     let xs = [m, [3, 4]];
 }

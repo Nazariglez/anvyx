@@ -3,6 +3,6 @@
 // @contains: Mismatched types
 
 fn main() {
-    let xs: int[2]? = [1, 2];
-    let ys: int?[_] = xs;
+    let xs: [int; 2]? = [1, 2];
+    let ys: [int?; _] = xs;
 }

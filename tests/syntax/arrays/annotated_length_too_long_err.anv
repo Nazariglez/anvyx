@@ -3,5 +3,5 @@
 // @contains: Mismatched types
 
 fn main() {
-    let b: int[2] = [1, 2, 3];
+    let b: [int; 2] = [1, 2, 3];
 }

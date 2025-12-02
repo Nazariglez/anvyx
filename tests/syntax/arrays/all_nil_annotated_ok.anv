@@ -2,5 +2,5 @@
 // @expect: success
 
 fn main() {
-    var a: int?[_] = [nil, nil];
+    var a: [int?; _] = [nil, nil];
 }

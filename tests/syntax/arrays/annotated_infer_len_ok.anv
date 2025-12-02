@@ -2,5 +2,5 @@
 // @expect: success
 
 fn main() {
-    let d: int[_] = [1, 2, 3];
+    let d: [int; _] = [1, 2, 3];
 }

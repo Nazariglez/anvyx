@@ -3,6 +3,6 @@
 
 fn main() {
     let a = [0; 3];
-    let b: int[3] = [0; 3];
-    let c: int[_] = [1; 4];
+    let b: [int; 3] = [0; 3];
+    let c: [int; _] = [1; 4];
 }

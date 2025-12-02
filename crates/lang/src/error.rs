@@ -229,7 +229,7 @@ pub fn report_typecheck_errors(
             ),
             TypeErrKind::ArrayAllNilAmbiguous => (
                 "cannot infer element type for all-nil array literal".to_string(),
-                "try adding a type annotation, e.g. `var a: int?[_] = [nil, nil];`".to_string(),
+                "try adding a type annotation, e.g. `var a: [int?; _] = [nil, nil];`".to_string(),
             ),
             TypeErrKind::ArrayFillLengthNotLiteral => (
                 "array fill length must be an integer literal".to_string(),
