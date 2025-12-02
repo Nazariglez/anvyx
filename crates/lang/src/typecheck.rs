@@ -1,10 +1,10 @@
 use crate::{
     ast::{
-        AssignNode, AssignOp, BinaryNode, BinaryOp, BindingNode, BlockNode, CallNode, ExprId,
-        ExprKind, ExprNode, FieldAccessNode, ForNode, Func, FuncNode, Ident, IfNode, Lit,
-        MethodReceiver, Param, Pattern, PatternNode, Program, RangeNode, ReturnNode, Stmt,
-        StmtNode, StructDeclNode, StructField, StructLiteralNode, TupleIndexNode, Type, TypeParam,
-        TypeVarId, UnaryNode, UnaryOp, WhileNode,
+        ArrayFillNode, ArrayLiteralNode, AssignNode, AssignOp, BinaryNode, BinaryOp, BindingNode,
+        BlockNode, CallNode, ExprId, ExprKind, ExprNode, FieldAccessNode, ForNode, Func, FuncNode,
+        Ident, IfNode, Lit, MethodReceiver, Param, Pattern, PatternNode, Program, RangeNode,
+        ReturnNode, Stmt, StmtNode, StructDeclNode, StructField, StructLiteralNode, TupleIndexNode,
+        Type, TypeParam, TypeVarId, UnaryNode, UnaryOp, WhileNode,
     },
     span::Span,
 };
@@ -189,6 +189,13 @@ impl TypeChecker {
                 params: params.iter().map(|t| self.resolve_type(t)).collect(),
                 ret: Box::new(self.resolve_type(ret)),
             },
+            Type::Array { elem, len } => Type::Array {
+                elem: self.resolve_type(elem).boxed(),
+                len: *len,
+            },
+            Type::ArrayInfer { elem } => Type::ArrayInfer {
+                elem: self.resolve_type(elem).boxed(),
+            },
             _ => ty.clone(),
         }
     }
@@ -348,6 +355,20 @@ impl TypeChecker {
             return;
         }
 
+        // if both are arrays, constrain element types
+        if let (
+            Type::Array {
+                elem: elem_from, ..
+            },
+            Type::Array { elem: elem_to, .. },
+        ) = (&from_ty, &to_ty)
+        {
+            let elem_from_ref = TypeRef::Concrete(*elem_from.clone());
+            let elem_to_ref = TypeRef::Concrete(*elem_to.clone());
+            self.constrain_assignable(span, elem_from_ref, elem_to_ref, errors);
+            return;
+        }
+
         // otherwise just constrain them to be the same as fallback
         self.constrain_equal(span, from, to, errors);
     }
@@ -464,6 +485,12 @@ pub enum TypeErrKind {
         item_ty: Type,
         step_ty: Type,
     },
+    ArrayLengthMismatch {
+        expected: usize,
+        found: usize,
+    },
+    ArrayAllNilAmbiguous,
+    ArrayFillLengthNotLiteral,
 }
 
 #[derive(Debug, Clone)]
@@ -488,6 +515,8 @@ fn contains_infer(ty: &Type) -> bool {
         Type::Tuple(elems) => elems.iter().any(contains_infer),
         Type::NamedTuple(fields) => fields.iter().any(|(_, t)| contains_infer(t)),
         Type::Struct { type_args, .. } => type_args.iter().any(contains_infer),
+        Type::Array { elem, .. } => contains_infer(elem),
+        Type::ArrayInfer { elem } => contains_infer(elem),
         _ => false,
     }
 }
@@ -538,6 +567,25 @@ fn is_assignable(from: &Type, to: &Type) -> bool {
 
         // T? to T is not assignable, the value must be unwrapped first
         (Optional(_), non_opt) if !matches!(non_opt, Optional(_)) => false,
+
+        // Array T[N] to T[M] requires N == M and element assignability
+        (
+            Array {
+                elem: elem_from,
+                len: len_from,
+            },
+            Array {
+                elem: elem_to,
+                len: len_to,
+            },
+        ) => {
+            let len_ok = match (len_from, len_to) {
+                (Some(n), Some(m)) => n == m,
+                (_, None) => true,
+                (None, Some(_)) => false,
+            };
+            len_ok && is_assignable(elem_from, elem_to)
+        }
 
         // anything else is just not assignable
         _ => false,
@@ -625,6 +673,29 @@ fn unify_types(left: &Type, right: &Type, span: Span, errors: &mut Vec<TypeErr>)
             Some(Struct {
                 name: *ln,
                 type_args: unified_args,
+            })
+        }
+
+        // arrays unify if the len matches and the element types can unify
+        (Array { elem: le, len: ll }, Array { elem: re, len: rl }) => {
+            let unified_len = match (ll, rl) {
+                (Some(a), Some(b)) if a == b => Some(*a),
+                (Some(a), None) | (None, Some(a)) => Some(*a),
+                (None, None) => None,
+                _ => {
+                    errors.push(TypeErr {
+                        span,
+                        kind: TypeErrKind::ArrayLengthMismatch {
+                            expected: ll.unwrap_or(0),
+                            found: rl.unwrap_or(0),
+                        },
+                    });
+                    return None;
+                }
+            };
+            unify_types(le, re, span, errors).map(|elem| Array {
+                elem: elem.boxed(),
+                len: unified_len,
             })
         }
 
@@ -826,6 +897,13 @@ fn subst_type(ty: &Type, subst: &HashMap<TypeVarId, Type>) -> Type {
             name: *name,
             type_args: type_args.iter().map(|a| subst_type(a, subst)).collect(),
         },
+        Array { elem, len } => Array {
+            elem: subst_type(elem, subst).boxed(),
+            len: *len,
+        },
+        ArrayInfer { elem } => ArrayInfer {
+            elem: subst_type(elem, subst).boxed(),
+        },
         _ => ty.clone(),
     }
 }
@@ -929,6 +1007,13 @@ fn substitute_vars_with_infer(ty: &Type, slots: &InferenceSlots) -> Type {
                 .iter()
                 .map(|a| substitute_vars_with_infer(a, slots))
                 .collect(),
+        },
+        Type::Array { elem, len } => Type::Array {
+            elem: substitute_vars_with_infer(elem, slots).boxed(),
+            len: *len,
+        },
+        Type::ArrayInfer { elem } => Type::ArrayInfer {
+            elem: substitute_vars_with_infer(elem, slots).boxed(),
         },
         _ => ty.clone(),
     }
@@ -1186,6 +1271,8 @@ fn check_expr(
         ExprKind::Field(field_node) => check_field_access(field_node, type_checker, errors),
         ExprKind::StructLiteral(lit_node) => check_struct_lit(lit_node, type_checker, errors),
         ExprKind::Range(range_node) => check_range(range_node, type_checker, errors),
+        ExprKind::ArrayLiteral(lit_node) => check_array_literal(lit_node, type_checker, errors),
+        ExprKind::ArrayFill(fill_node) => check_array_fill(fill_node, type_checker, errors),
     };
 
     type_checker.set_type(expr_node.node.id, ty.clone(), expr_node.span);
@@ -1216,6 +1303,83 @@ fn check_range(
         range_inclusive_type(elem_ty)
     } else {
         range_type(elem_ty)
+    }
+}
+
+fn check_array_literal(
+    lit: &ArrayLiteralNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let elements = &lit.node.elements;
+    if elements.is_empty() {
+        return Type::Array {
+            elem: Type::Infer.boxed(),
+            len: Some(0),
+        };
+    }
+
+    let mut elem_types = vec![];
+
+    for elem in elements {
+        let ty = check_expr(elem, type_checker, errors);
+        elem_types.push(ty);
+    }
+
+    for i in 1..elements.len() {
+        let left_ref = TypeRef::Expr(elements[i - 1].node.id);
+        let right_ref = TypeRef::Expr(elements[i].node.id);
+        type_checker.constrain_equal(lit.span, left_ref, right_ref, errors);
+    }
+
+    let elem_ty = type_checker
+        .get_type(elements[0].node.id)
+        .map(|(_, ty)| ty.clone())
+        .unwrap_or_else(|| elem_types[0].clone());
+
+    Type::Array {
+        elem: elem_ty.boxed(),
+        len: Some(elements.len()),
+    }
+}
+
+fn is_all_nil_array_literal(expr: &ExprNode) -> bool {
+    if let ExprKind::ArrayLiteral(lit) = &expr.node.kind {
+        let elements = &lit.node.elements;
+        let has_elements = !elements.is_empty();
+        if has_elements {
+            return elements
+                .iter()
+                .all(|e| matches!(&e.node.kind, ExprKind::Lit(Lit::Nil)));
+        }
+    }
+
+    false
+}
+
+fn check_array_fill(
+    fill: &ArrayFillNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let value_ty = check_expr(&fill.node.value, type_checker, errors);
+    check_expr(&fill.node.len, type_checker, errors);
+
+    let len_expr = &fill.node.len;
+    let len = match &len_expr.node.kind {
+        ExprKind::Lit(Lit::Int(n)) if *n >= 0 => Some(*n as usize),
+        _ => {
+            errors.push(TypeErr {
+                span: len_expr.span,
+                kind: TypeErrKind::ArrayFillLengthNotLiteral,
+            });
+            None
+        }
+    };
+
+    Type::Array {
+        elem: value_ty.boxed(),
+        len,
     }
 }
 
@@ -2490,14 +2654,99 @@ fn check_binding(binding: &BindingNode, type_checker: &mut TypeChecker, errors: 
 
     let binding_ty = match &node.ty {
         Some(annot_ty) => {
-            let annot_ref = TypeRef::Concrete(annot_ty.clone());
+            let resolved_annot = resolve_array_infer_annotation(annot_ty, &value_ty);
+            let annot_ref = TypeRef::Concrete(resolved_annot.clone());
             type_checker.constrain_assignable(binding.span, val_ref, annot_ref, errors);
-            annot_ty.clone()
+
+            if is_array_literal_with_infer_elem(&node.value, &value_ty) {
+                update_array_literal_type(&node.value, &resolved_annot, type_checker);
+            }
+
+            resolved_annot
         }
-        None => value_ty,
+        None => {
+            if is_all_nil_array_literal(&node.value) {
+                errors.push(TypeErr {
+                    span: node.value.span,
+                    kind: TypeErrKind::ArrayAllNilAmbiguous,
+                });
+            }
+            value_ty
+        }
     };
 
     check_pattern(&node.pattern, &binding_ty, type_checker, errors);
+}
+
+fn is_array_literal_with_infer_elem(expr: &ExprNode, value_ty: &Type) -> bool {
+    let is_array_literal = matches!(
+        &expr.node.kind,
+        ExprKind::ArrayLiteral(_) | ExprKind::ArrayFill(_)
+    );
+    let has_infer_elem = matches!(value_ty, Type::Array { elem, .. } if contains_infer(elem));
+    is_array_literal && has_infer_elem
+}
+
+fn update_array_literal_type(expr: &ExprNode, annot_ty: &Type, type_checker: &mut TypeChecker) {
+    match &expr.node.kind {
+        ExprKind::ArrayLiteral(lit) => {
+            let Type::Array { elem, .. } = annot_ty else {
+                return;
+            };
+            let new_ty = Type::Array {
+                elem: elem.clone(),
+                len: Some(lit.node.elements.len()),
+            };
+            type_checker.set_type(expr.node.id, new_ty, expr.span);
+
+            for el in &lit.node.elements {
+                type_checker.set_type(el.node.id, *elem.clone(), el.span);
+            }
+        }
+        ExprKind::ArrayFill(fill) => {
+            let Type::Array { elem, len } = annot_ty else {
+                return;
+            };
+            let new_ty = Type::Array {
+                elem: elem.clone(),
+                len: *len,
+            };
+            type_checker.set_type(expr.node.id, new_ty, expr.span);
+            type_checker.set_type(fill.node.value.node.id, *elem.clone(), fill.node.value.span);
+        }
+        _ => {}
+    }
+}
+
+fn resolve_array_infer_annotation(annot_ty: &Type, value_ty: &Type) -> Type {
+    match annot_ty {
+        Type::ArrayInfer { elem } => {
+            let inferred_len = match value_ty {
+                Type::Array { len: Some(n), .. } => Some(*n),
+                _ => None,
+            };
+            Type::Array {
+                elem: elem.clone(),
+                len: inferred_len,
+            }
+        }
+        Type::Array { elem, len } => {
+            let resolved_elem = match value_ty {
+                Type::Array {
+                    elem: value_elem, ..
+                } if value_elem.is_infer() => elem.clone(),
+                _ => elem.clone(),
+            };
+            Type::Array {
+                elem: resolved_elem,
+                len: *len,
+            }
+        }
+        Type::Optional(inner) => {
+            Type::Optional(resolve_array_infer_annotation(inner, value_ty).boxed())
+        }
+        _ => annot_ty.clone(),
+    }
 }
 
 fn check_pattern(
@@ -2665,9 +2914,9 @@ mod tests {
     use super::*;
     use crate::{
         ast::{
-            Assign, Binary, Binding, Block, BlockNode, Call, Expr, Func, Mutability, Param,
-            Pattern, PatternNode, Range, RangeNode, Return, TypeParam, TypeVarId, Unary,
-            Visibility,
+            ArrayFill, ArrayLiteral, Assign, Binary, Binding, Block, BlockNode, Call, Expr, Func,
+            Mutability, Param, Pattern, PatternNode, Range, RangeNode, Return, TypeParam,
+            TypeVarId, Unary, Visibility,
         },
         span::Span,
     };
@@ -5242,5 +5491,334 @@ mod tests {
         assert_expr_type(&tcx, call1_id, Type::Int);
         // second call should have type bool
         assert_expr_type(&tcx, call2_id, Type::Bool);
+    }
+
+    fn array_literal(elements: Vec<ExprNode>) -> ExprNode {
+        ExprNode {
+            node: Expr::new(
+                ExprKind::ArrayLiteral(ArrayLiteralNode {
+                    node: ArrayLiteral { elements },
+                    span: dummy_span(),
+                }),
+                next_expr_id(),
+            ),
+            span: dummy_span(),
+        }
+    }
+
+    fn array_fill(value: ExprNode, len: ExprNode) -> ExprNode {
+        ExprNode {
+            node: Expr::new(
+                ExprKind::ArrayFill(ArrayFillNode {
+                    node: ArrayFill {
+                        value: Box::new(value),
+                        len: Box::new(len),
+                    },
+                    span: dummy_span(),
+                }),
+                next_expr_id(),
+            ),
+            span: dummy_span(),
+        }
+    }
+
+    #[test]
+    fn test_array_literal_unannotated_int() {
+        reset_expr_ids();
+
+        // let a = [1, 2, 3];
+        let arr = array_literal(vec![lit_int(1), lit_int(2), lit_int(3)]);
+        let arr_id = get_expr_id(&arr);
+        let prog = program(vec![let_binding("a", None, arr)]);
+
+        let tcx = run_ok(prog);
+        assert_expr_type(
+            &tcx,
+            arr_id,
+            Type::Array {
+                elem: Type::Int.boxed(),
+                len: Some(3),
+            },
+        );
+    }
+
+    #[test]
+    fn test_array_literal_unannotated_string() {
+        reset_expr_ids();
+
+        // let b = ["x", "y"];
+        let arr = array_literal(vec![lit_string("x"), lit_string("y")]);
+        let arr_id = get_expr_id(&arr);
+        let prog = program(vec![let_binding("b", None, arr)]);
+
+        let tcx = run_ok(prog);
+        assert_expr_type(
+            &tcx,
+            arr_id,
+            Type::Array {
+                elem: Type::String.boxed(),
+                len: Some(2),
+            },
+        );
+    }
+
+    #[test]
+    fn test_array_literal_empty() {
+        reset_expr_ids();
+
+        // let c: int[0] = [];
+        let arr = array_literal(vec![]);
+        let arr_id = get_expr_id(&arr);
+        let annot = Type::Array {
+            elem: Type::Int.boxed(),
+            len: Some(0),
+        };
+        let prog = program(vec![let_binding("c", Some(annot.clone()), arr)]);
+
+        let tcx = run_ok(prog);
+        assert_expr_type(&tcx, arr_id, annot);
+    }
+
+    #[test]
+    fn test_array_literal_annotated_fixed_length_ok() {
+        reset_expr_ids();
+
+        // let d: int[3] = [1, 2, 3];
+        let arr = array_literal(vec![lit_int(1), lit_int(2), lit_int(3)]);
+        let arr_id = get_expr_id(&arr);
+        let annot = Type::Array {
+            elem: Type::Int.boxed(),
+            len: Some(3),
+        };
+        let prog = program(vec![let_binding("d", Some(annot.clone()), arr)]);
+
+        let tcx = run_ok(prog);
+        assert_expr_type(&tcx, arr_id, annot);
+    }
+
+    #[test]
+    fn test_array_literal_annotated_length_mismatch() {
+        reset_expr_ids();
+
+        // let e: int[2] = [1, 2, 3];
+        let arr = array_literal(vec![lit_int(1), lit_int(2), lit_int(3)]);
+        let annot = Type::Array {
+            elem: Type::Int.boxed(),
+            len: Some(2),
+        };
+        let prog = program(vec![let_binding("e", Some(annot), arr)]);
+
+        let errors = run_err(prog);
+        assert!(!errors.is_empty());
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
+        );
+    }
+
+    #[test]
+    fn test_array_literal_annotated_infer_length() {
+        reset_expr_ids();
+
+        // let f: int[_] = [1, 2, 3, 4];
+        let arr = array_literal(vec![lit_int(1), lit_int(2), lit_int(3), lit_int(4)]);
+        let arr_id = get_expr_id(&arr);
+        let annot = Type::ArrayInfer {
+            elem: Type::Int.boxed(),
+        };
+        let prog = program(vec![let_binding("f", Some(annot), arr)]);
+
+        let tcx = run_ok(prog);
+        assert_expr_type(
+            &tcx,
+            arr_id,
+            Type::Array {
+                elem: Type::Int.boxed(),
+                len: Some(4),
+            },
+        );
+    }
+
+    #[test]
+    fn test_array_literal_annotated_dynamic() {
+        reset_expr_ids();
+
+        // let g: int[] = [1, 2];
+        // the literal [1, 2] has type int[2], which is assignable to int[]
+        let arr = array_literal(vec![lit_int(1), lit_int(2)]);
+        let arr_id = get_expr_id(&arr);
+        let annot = Type::Array {
+            elem: Type::Int.boxed(),
+            len: None,
+        };
+        let prog = program(vec![let_binding("g", Some(annot), arr)]);
+
+        let tcx = run_ok(prog);
+        assert_expr_type(
+            &tcx,
+            arr_id,
+            Type::Array {
+                elem: Type::Int.boxed(),
+                len: Some(2),
+            },
+        );
+    }
+
+    #[test]
+    fn test_array_literal_all_nil_ambiguous() {
+        reset_expr_ids();
+
+        // let h = [nil, nil];
+        let arr = array_literal(vec![lit_nil(), lit_nil()]);
+        let prog = program(vec![let_binding("h", None, arr)]);
+
+        let errors = run_err(prog);
+        assert!(!errors.is_empty());
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(&e.kind, TypeErrKind::ArrayAllNilAmbiguous))
+        );
+    }
+
+    #[test]
+    fn test_array_literal_all_nil_annotated_ok() {
+        reset_expr_ids();
+
+        // let i: int?[_] = [nil, nil];
+        let arr = array_literal(vec![lit_nil(), lit_nil()]);
+        let arr_id = get_expr_id(&arr);
+        let annot = Type::ArrayInfer {
+            elem: Type::Optional(Type::Int.boxed()).boxed(),
+        };
+        let prog = program(vec![let_binding("i", Some(annot), arr)]);
+
+        let tcx = run_ok(prog);
+        assert_expr_type(
+            &tcx,
+            arr_id,
+            Type::Array {
+                elem: Type::Optional(Type::Int.boxed()).boxed(),
+                len: Some(2),
+            },
+        );
+    }
+
+    #[test]
+    fn test_array_literal_element_type_mismatch() {
+        reset_expr_ids();
+
+        // let j = [1, "x"];
+        let arr = array_literal(vec![lit_int(1), lit_string("x")]);
+        let prog = program(vec![let_binding("j", None, arr)]);
+
+        let errors = run_err(prog);
+        assert!(!errors.is_empty());
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
+        );
+    }
+
+    #[test]
+    fn test_array_fill_unannotated() {
+        reset_expr_ids();
+
+        // let k = [0; 5];
+        let arr = array_fill(lit_int(0), lit_int(5));
+        let arr_id = get_expr_id(&arr);
+        let prog = program(vec![let_binding("k", None, arr)]);
+
+        let tcx = run_ok(prog);
+        assert_expr_type(
+            &tcx,
+            arr_id,
+            Type::Array {
+                elem: Type::Int.boxed(),
+                len: Some(5),
+            },
+        );
+    }
+
+    #[test]
+    fn test_array_fill_annotated_ok() {
+        reset_expr_ids();
+
+        // let l: int[3] = [0; 3];
+        let arr = array_fill(lit_int(0), lit_int(3));
+        let arr_id = get_expr_id(&arr);
+        let annot = Type::Array {
+            elem: Type::Int.boxed(),
+            len: Some(3),
+        };
+        let prog = program(vec![let_binding("l", Some(annot.clone()), arr)]);
+
+        let tcx = run_ok(prog);
+        assert_expr_type(&tcx, arr_id, annot);
+    }
+
+    #[test]
+    fn test_array_fill_length_mismatch() {
+        reset_expr_ids();
+
+        // let m: int[2] = [0; 3];
+        let arr = array_fill(lit_int(0), lit_int(3));
+        let annot = Type::Array {
+            elem: Type::Int.boxed(),
+            len: Some(2),
+        };
+        let prog = program(vec![let_binding("m", Some(annot), arr)]);
+
+        let errors = run_err(prog);
+        assert!(!errors.is_empty());
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
+        );
+    }
+
+    #[test]
+    fn test_array_fill_infer_length() {
+        reset_expr_ids();
+
+        // let n: int[_] = [0; 4];
+        let arr = array_fill(lit_int(0), lit_int(4));
+        let arr_id = get_expr_id(&arr);
+        let annot = Type::ArrayInfer {
+            elem: Type::Int.boxed(),
+        };
+        let prog = program(vec![let_binding("n", Some(annot), arr)]);
+
+        let tcx = run_ok(prog);
+        assert_expr_type(
+            &tcx,
+            arr_id,
+            Type::Array {
+                elem: Type::Int.boxed(),
+                len: Some(4),
+            },
+        );
+    }
+
+    #[test]
+    fn test_array_fill_length_not_literal() {
+        reset_expr_ids();
+
+        // let x = 3;
+        // let o = [0; x];
+        let x_binding = let_binding("x", None, lit_int(3));
+        let arr = array_fill(lit_int(0), ident_expr("x"));
+        let prog = program(vec![x_binding, let_binding("o", None, arr)]);
+
+        let errors = run_err(prog);
+        assert!(!errors.is_empty());
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(&e.kind, TypeErrKind::ArrayFillLengthNotLiteral))
+        );
     }
 }

@@ -501,6 +501,15 @@ fn resolve_type_params_with_self(
             }
         }
 
+        Array { elem, len } => Array {
+            elem: resolve_type_params_with_self(elem, type_param_map, self_type).boxed(),
+            len: *len,
+        },
+
+        ArrayInfer { elem } => ArrayInfer {
+            elem: resolve_type_params_with_self(elem, type_param_map, self_type).boxed(),
+        },
+
         _ => ty.clone(),
     }
 }
@@ -609,6 +618,57 @@ fn struct_literal<'src>(
         .boxed()
 }
 
+fn array_literal<'src>(
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let open_bracket = select! { (Token::Open(Delimiter::Bracket), _) => () };
+    let close_bracket = select! { (Token::Close(Delimiter::Bracket), _) => () };
+    let comma = select! { (Token::Comma, _) => () };
+    let semicolon = select! { (Token::Semicolon, _) => () };
+
+    let fill_literal = open_bracket
+        .clone()
+        .ignore_then(expr.clone())
+        .then_ignore(semicolon)
+        .then(expr.clone())
+        .then_ignore(close_bracket.clone())
+        .map_with(|(value, len), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let fill_node = Spanned::new(
+                ast::ArrayFill {
+                    value: Box::new(value),
+                    len: Box::new(len),
+                },
+                span,
+            );
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::ArrayFill(fill_node), expr_id);
+            Spanned::new(expr, span)
+        });
+
+    let element_list = open_bracket
+        .ignore_then(
+            expr.separated_by(comma)
+                .allow_trailing()
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(close_bracket)
+        .map_with(|elements, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let lit_node = Spanned::new(ast::ArrayLiteral { elements }, span);
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::ArrayLiteral(lit_node), expr_id);
+            Spanned::new(expr, span)
+        });
+
+    choice((fill_literal, element_list))
+        .labelled("array literal")
+        .as_context()
+        .boxed()
+}
+
 fn atom_expr<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
     expr: impl AnvParser<'src, ast::ExprNode>,
@@ -622,6 +682,7 @@ fn atom_expr<'src>(
             Spanned::new(expr, span)
         }),
         struct_literal(expr.clone()),
+        array_literal(expr.clone()),
         identifier().map_with(|ident, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
@@ -653,6 +714,7 @@ fn cond_atom_expr<'src>(
             let expr = ast::Expr::new(ast::ExprKind::Lit(lit), id);
             Spanned::new(expr, span)
         }),
+        array_literal(cond_expr.clone()),
         identifier().map_with(|ident, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
@@ -1221,6 +1283,13 @@ fn return_type<'src>() -> BoxedParser<'src, Option<ast::Type>> {
     .boxed()
 }
 
+#[derive(Clone)]
+enum ArraySuffix {
+    Fixed(usize),
+    Dynamic,
+    Infer,
+}
+
 fn type_ident<'src>() -> BoxedParser<'src, ast::Type> {
     recursive(|type_parser| {
         let builtin_typ = select! {
@@ -1252,20 +1321,51 @@ fn type_ident<'src>() -> BoxedParser<'src, ast::Type> {
         let paren_type = paren_or_tuple_type(type_parser.clone());
 
         // try built-in types first, then type name references, then parenthesized/tuple types
-        let typ = choice((builtin_typ, type_name_ref, paren_type));
-        typ.then(
-            select! {
-                (Token::Question, _) => (),
-            }
-            .or_not(),
-        )
-        .map(|(ty, q)| {
-            if q.is_some() {
-                ast::Type::Optional(ty.boxed())
+        let base_typ = choice((builtin_typ, type_name_ref, paren_type));
+
+        let open_bracket = select! { (Token::Open(Delimiter::Bracket), _) => () };
+        let close_bracket = select! { (Token::Close(Delimiter::Bracket), _) => () };
+
+        let array_fixed = select! { (Token::Literal(LitToken::Number(n)), _) => n as usize }
+            .map(ArraySuffix::Fixed);
+        let array_infer = identifier().try_map(|ident, span| {
+            if ident.0.as_ref() == "_" {
+                Ok(ArraySuffix::Infer)
             } else {
-                ty
+                Err(Rich::custom(span, "expected '_' or integer literal"))
             }
-        })
+        });
+        let array_dynamic = empty().to(ArraySuffix::Dynamic);
+
+        let array_suffix = open_bracket
+            .ignore_then(choice((array_fixed, array_infer, array_dynamic)))
+            .then_ignore(close_bracket);
+
+        let typ_with_array =
+            base_typ
+                .then(array_suffix.or_not())
+                .map(|(base, suffix)| match suffix {
+                    Some(ArraySuffix::Fixed(n)) => ast::Type::Array {
+                        elem: base.boxed(),
+                        len: Some(n),
+                    },
+                    Some(ArraySuffix::Dynamic) => ast::Type::Array {
+                        elem: base.boxed(),
+                        len: None,
+                    },
+                    Some(ArraySuffix::Infer) => ast::Type::ArrayInfer { elem: base.boxed() },
+                    None => base,
+                });
+
+        typ_with_array
+            .then(select! { (Token::Question, _) => () }.or_not())
+            .map(|(ty, q)| {
+                if q.is_some() {
+                    ast::Type::Optional(ty.boxed())
+                } else {
+                    ty
+                }
+            })
     })
     .labelled("type")
     .as_context()
@@ -2230,5 +2330,161 @@ mod tests {
             panic!("expected Range iterable");
         };
         assert!(range_node.node.inclusive);
+    }
+
+    fn parse_type(src: &str) -> ast::Type {
+        let tokens = lexer::tokenize(src)
+            .unwrap_or_else(|errs| panic!("failed to tokenize type '{src}': {errs:?}"));
+        let mut state = SimpleState(ParserState::default());
+        type_ident()
+            .then_ignore(end())
+            .parse_with_state(&tokens, &mut state)
+            .into_result()
+            .unwrap_or_else(|errs| panic!("failed to parse type '{src}': {errs:?}"))
+    }
+
+    #[test]
+    fn array_type_fixed_len_parses() {
+        let ty = parse_type("int[3]");
+        match ty {
+            ast::Type::Array { elem, len } => {
+                assert_eq!(*elem, ast::Type::Int);
+                assert_eq!(len, Some(3));
+            }
+            other => panic!("expected array type, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn array_type_dynamic_parses() {
+        let ty = parse_type("string[]");
+        match ty {
+            ast::Type::Array { elem, len } => {
+                assert_eq!(*elem, ast::Type::String);
+                assert_eq!(len, None);
+            }
+            other => panic!("expected array type, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn array_type_infer_len_parses() {
+        let ty = parse_type("float[_]");
+        match ty {
+            ast::Type::ArrayInfer { elem } => {
+                assert_eq!(*elem, ast::Type::Float);
+            }
+            other => panic!("expected infer-length array type, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn array_type_can_be_optional() {
+        let ty = parse_type("int[3]?");
+        match ty {
+            ast::Type::Optional(inner) => match *inner {
+                ast::Type::Array { elem, len } => {
+                    assert_eq!(*elem, ast::Type::Int);
+                    assert_eq!(len, Some(3));
+                }
+                other => panic!("expected inner array type, found {other:?}"),
+            },
+            other => panic!("expected optional array type, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn array_type_with_struct_elem_parses() {
+        let ty = parse_type("MyStruct[5]");
+        match ty {
+            ast::Type::Array { elem, len } => {
+                assert_eq!(len, Some(5));
+                match *elem {
+                    ast::Type::UnresolvedName(name) => {
+                        assert_eq!(name.0.as_ref(), "MyStruct");
+                    }
+                    other => panic!("expected unresolved name, found {other:?}"),
+                }
+            }
+            other => panic!("expected array type, found {other:?}"),
+        }
+    }
+
+    fn expect_array_literal(expr: &ast::ExprNode) -> &[ast::ExprNode] {
+        match &expr.node.kind {
+            ast::ExprKind::ArrayLiteral(lit) => &lit.node.elements,
+            other => panic!("expected ArrayLiteral, found {other:?}"),
+        }
+    }
+
+    fn expect_array_fill(expr: &ast::ExprNode) -> (&ast::ExprNode, &ast::ExprNode) {
+        match &expr.node.kind {
+            ast::ExprKind::ArrayFill(fill) => (&fill.node.value, &fill.node.len),
+            other => panic!("expected ArrayFill, found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn array_literal_basic_parses() {
+        let expr = parse_expr("[1, 2, 3]");
+        let elements = expect_array_literal(&expr);
+        assert_eq!(elements.len(), 3);
+        expect_int(&elements[0], 1);
+        expect_int(&elements[1], 2);
+        expect_int(&elements[2], 3);
+    }
+
+    #[test]
+    fn array_literal_trailing_comma_parses() {
+        let expr = parse_expr("[1, 2, 3,]");
+        let elements = expect_array_literal(&expr);
+        assert_eq!(elements.len(), 3);
+        expect_int(&elements[0], 1);
+        expect_int(&elements[1], 2);
+        expect_int(&elements[2], 3);
+    }
+
+    #[test]
+    fn array_literal_empty_parses() {
+        let expr = parse_expr("[]");
+        let elements = expect_array_literal(&expr);
+        assert_eq!(elements.len(), 0);
+    }
+
+    #[test]
+    fn array_literal_nested_parses() {
+        let expr = parse_expr("[[1, 2], [3, 4]]");
+        let outer_elements = expect_array_literal(&expr);
+        assert_eq!(outer_elements.len(), 2);
+
+        let inner1 = expect_array_literal(&outer_elements[0]);
+        assert_eq!(inner1.len(), 2);
+        expect_int(&inner1[0], 1);
+        expect_int(&inner1[1], 2);
+
+        let inner2 = expect_array_literal(&outer_elements[1]);
+        assert_eq!(inner2.len(), 2);
+        expect_int(&inner2[0], 3);
+        expect_int(&inner2[1], 4);
+    }
+
+    #[test]
+    fn array_fill_literal_basic_parses() {
+        let expr = parse_expr("[0; 3]");
+        let (value, len) = expect_array_fill(&expr);
+        expect_int(value, 0);
+        expect_int(len, 3);
+    }
+
+    #[test]
+    fn array_fill_literal_with_expr_len_parses() {
+        let expr = parse_expr("[x + 1; n]");
+        let (value, len) = expect_array_fill(&expr);
+
+        let (left, right) = expect_binary(value, ast::BinaryOp::Add);
+        expect_ident(left, "x");
+        expect_int(right, 1);
+
+        expect_ident(len, "n");
     }
 }

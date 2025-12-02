@@ -21,6 +21,8 @@ pub type FieldAccessNode = Spanned<FieldAccess>;
 pub type StructDeclNode = Spanned<StructDecl>;
 pub type StructLiteralNode = Spanned<StructLiteral>;
 pub type RangeNode = Spanned<Range>;
+pub type ArrayLiteralNode = Spanned<ArrayLiteral>;
+pub type ArrayFillNode = Spanned<ArrayFill>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -71,6 +73,8 @@ pub enum ExprKind {
     Field(FieldAccessNode),
     StructLiteral(StructLiteralNode),
     Range(RangeNode),
+    ArrayLiteral(ArrayLiteralNode),
+    ArrayFill(ArrayFillNode),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Hash, Eq)]
@@ -127,6 +131,10 @@ pub enum Type {
     NamedTuple(Vec<(Ident, Type)>),
     /// Struct type
     Struct { name: Ident, type_args: Vec<Type> },
+    /// Fixed-length array T[N] (Some) or dynamic list T[] (None)
+    Array { elem: Box<Type>, len: Option<usize> },
+    /// Length-inferred fixed array T[_] (annotation-only sugar)
+    ArrayInfer { elem: Box<Type> },
 }
 
 impl Type {
@@ -245,6 +253,11 @@ impl Display for Type {
                     write!(f, "{name}<{args}>")
                 }
             }
+            Type::Array { elem, len } => match len {
+                Some(n) => write!(f, "{elem}[{n}]"),
+                None => write!(f, "{elem}[]"),
+            },
+            Type::ArrayInfer { elem } => write!(f, "{elem}[_]"),
         }
     }
 }
@@ -491,4 +504,15 @@ pub struct Range {
     pub start: Box<ExprNode>,
     pub end: Box<ExprNode>,
     pub inclusive: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayLiteral {
+    pub elements: Vec<ExprNode>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayFill {
+    pub value: Box<ExprNode>,
+    pub len: Box<ExprNode>,
 }
