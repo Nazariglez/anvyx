@@ -506,10 +506,6 @@ fn resolve_type_params_with_self(
             len: *len,
         },
 
-        ArrayInfer { elem } => ArrayInfer {
-            elem: resolve_type_params_with_self(elem, type_param_map, self_type).boxed(),
-        },
-
         _ => ty.clone(),
     }
 }
@@ -1347,13 +1343,16 @@ fn type_ident<'src>() -> BoxedParser<'src, ast::Type> {
                 .map(|(base, suffix)| match suffix {
                     Some(ArraySuffix::Fixed(n)) => ast::Type::Array {
                         elem: base.boxed(),
-                        len: Some(n),
+                        len: ast::ArrayLen::Fixed(n),
                     },
                     Some(ArraySuffix::Dynamic) => ast::Type::Array {
                         elem: base.boxed(),
-                        len: None,
+                        len: ast::ArrayLen::Dynamic,
                     },
-                    Some(ArraySuffix::Infer) => ast::Type::ArrayInfer { elem: base.boxed() },
+                    Some(ArraySuffix::Infer) => ast::Type::Array {
+                        elem: base.boxed(),
+                        len: ast::ArrayLen::Infer,
+                    },
                     None => base,
                 });
 
@@ -2349,7 +2348,7 @@ mod tests {
         match ty {
             ast::Type::Array { elem, len } => {
                 assert_eq!(*elem, ast::Type::Int);
-                assert_eq!(len, Some(3));
+                assert_eq!(len, ast::ArrayLen::Fixed(3));
             }
             other => panic!("expected array type, found {other:?}"),
         }
@@ -2361,7 +2360,7 @@ mod tests {
         match ty {
             ast::Type::Array { elem, len } => {
                 assert_eq!(*elem, ast::Type::String);
-                assert_eq!(len, None);
+                assert_eq!(len, ast::ArrayLen::Dynamic);
             }
             other => panic!("expected array type, found {other:?}"),
         }
@@ -2371,8 +2370,9 @@ mod tests {
     fn array_type_infer_len_parses() {
         let ty = parse_type("float[_]");
         match ty {
-            ast::Type::ArrayInfer { elem } => {
+            ast::Type::Array { elem, len } => {
                 assert_eq!(*elem, ast::Type::Float);
+                assert_eq!(len, ast::ArrayLen::Infer);
             }
             other => panic!("expected infer-length array type, found {other:?}"),
         }
@@ -2385,7 +2385,7 @@ mod tests {
             ast::Type::Optional(inner) => match *inner {
                 ast::Type::Array { elem, len } => {
                     assert_eq!(*elem, ast::Type::Int);
-                    assert_eq!(len, Some(3));
+                    assert_eq!(len, ast::ArrayLen::Fixed(3));
                 }
                 other => panic!("expected inner array type, found {other:?}"),
             },
@@ -2398,7 +2398,7 @@ mod tests {
         let ty = parse_type("MyStruct[5]");
         match ty {
             ast::Type::Array { elem, len } => {
-                assert_eq!(len, Some(5));
+                assert_eq!(len, ast::ArrayLen::Fixed(5));
                 match *elem {
                     ast::Type::UnresolvedName(name) => {
                         assert_eq!(name.0.as_ref(), "MyStruct");

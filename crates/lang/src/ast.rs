@@ -103,6 +103,13 @@ pub struct TypeParam {
     pub id: TypeVarId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ArrayLen {
+    Fixed(usize),
+    Dynamic,
+    Infer,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     /// Unknown type that needs to be inferred
@@ -131,10 +138,8 @@ pub enum Type {
     NamedTuple(Vec<(Ident, Type)>),
     /// Struct type
     Struct { name: Ident, type_args: Vec<Type> },
-    /// Fixed-length array T[N] (Some) or dynamic list T[] (None)
-    Array { elem: Box<Type>, len: Option<usize> },
-    /// Length-inferred fixed array T[_] (annotation-only sugar)
-    ArrayInfer { elem: Box<Type> },
+    /// Arrays (fixed and dynamic)
+    Array { elem: Box<Type>, len: ArrayLen },
 }
 
 impl Type {
@@ -254,10 +259,10 @@ impl Display for Type {
                 }
             }
             Type::Array { elem, len } => match len {
-                Some(n) => write!(f, "{elem}[{n}]"),
-                None => write!(f, "{elem}[]"),
+                ArrayLen::Fixed(n) => write!(f, "{elem}[{n}]"),
+                ArrayLen::Dynamic => write!(f, "{elem}[]"),
+                ArrayLen::Infer => write!(f, "{elem}[_]"),
             },
-            Type::ArrayInfer { elem } => write!(f, "{elem}[_]"),
         }
     }
 }
