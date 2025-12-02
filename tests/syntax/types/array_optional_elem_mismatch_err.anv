@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+fn main() {
+    let xs: int?[_] = [nil, 1];
+    let ys: int[2] = xs;
+}

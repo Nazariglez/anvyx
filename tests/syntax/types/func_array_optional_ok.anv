@@ -1,0 +1,22 @@
+// @skip: needs review and mroe features
+// @mode: check
+// @expect: success
+
+fn main() {
+    fn takes_optional_array(xs: int[2]?) -> int {
+        let actual: int[2] = xs ?? [0, 0];
+        actual[0]
+    }
+
+    fn takes_array_of_optional(xs: int?[_]) -> int? {
+        let _local: int?[_] = xs;
+        nil
+    }
+
+    let _a: int = takes_optional_array([1, 2]);
+    let _b: int = takes_optional_array(nil);
+
+    let one: int? = 1;
+    let mixed: int?[_] = [nil, one];
+    let _c: int? = takes_array_of_optional(mixed);
+}

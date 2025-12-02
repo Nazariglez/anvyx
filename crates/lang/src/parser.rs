@@ -1280,10 +1280,11 @@ fn return_type<'src>() -> BoxedParser<'src, Option<ast::Type>> {
 }
 
 #[derive(Clone)]
-enum ArraySuffix {
-    Fixed(usize),
-    Dynamic,
-    Infer,
+enum TypeSuffix {
+    Optional,
+    ArrayFixed(usize),
+    ArrayDynamic,
+    ArrayInfer,
 }
 
 fn type_ident<'src>() -> BoxedParser<'src, ast::Type> {
@@ -1313,57 +1314,50 @@ fn type_ident<'src>() -> BoxedParser<'src, ast::Type> {
                 None => ast::Type::UnresolvedName(name),
             });
 
-        // (T) is grouping, (T, T, ...) is tuple
         let paren_type = paren_or_tuple_type(type_parser.clone());
 
-        // try built-in types first, then type name references, then parenthesized/tuple types
-        let base_typ = choice((builtin_typ, type_name_ref, paren_type));
+        let primary_type = choice((builtin_typ, type_name_ref, paren_type));
 
         let open_bracket = select! { (Token::Open(Delimiter::Bracket), _) => () };
         let close_bracket = select! { (Token::Close(Delimiter::Bracket), _) => () };
 
         let array_fixed = select! { (Token::Literal(LitToken::Number(n)), _) => n as usize }
-            .map(ArraySuffix::Fixed);
+            .map(TypeSuffix::ArrayFixed);
         let array_infer = identifier().try_map(|ident, span| {
             if ident.0.as_ref() == "_" {
-                Ok(ArraySuffix::Infer)
+                Ok(TypeSuffix::ArrayInfer)
             } else {
                 Err(Rich::custom(span, "expected '_' or integer literal"))
             }
         });
-        let array_dynamic = empty().to(ArraySuffix::Dynamic);
+        let array_dynamic = empty().to(TypeSuffix::ArrayDynamic);
 
         let array_suffix = open_bracket
             .ignore_then(choice((array_fixed, array_infer, array_dynamic)))
             .then_ignore(close_bracket);
 
-        let typ_with_array =
-            base_typ
-                .then(array_suffix.or_not())
-                .map(|(base, suffix)| match suffix {
-                    Some(ArraySuffix::Fixed(n)) => ast::Type::Array {
-                        elem: base.boxed(),
+        let optional_suffix = select! { (Token::Question, _) => TypeSuffix::Optional };
+
+        let suffix = choice((array_suffix, optional_suffix));
+
+        primary_type
+            .then(suffix.repeated().collect::<Vec<_>>())
+            .map(|(base, suffixes)| {
+                suffixes.into_iter().fold(base, |ty, sfx| match sfx {
+                    TypeSuffix::Optional => ast::Type::Optional(ty.boxed()),
+                    TypeSuffix::ArrayFixed(n) => ast::Type::Array {
+                        elem: ty.boxed(),
                         len: ast::ArrayLen::Fixed(n),
                     },
-                    Some(ArraySuffix::Dynamic) => ast::Type::Array {
-                        elem: base.boxed(),
+                    TypeSuffix::ArrayDynamic => ast::Type::Array {
+                        elem: ty.boxed(),
                         len: ast::ArrayLen::Dynamic,
                     },
-                    Some(ArraySuffix::Infer) => ast::Type::Array {
-                        elem: base.boxed(),
+                    TypeSuffix::ArrayInfer => ast::Type::Array {
+                        elem: ty.boxed(),
                         len: ast::ArrayLen::Infer,
                     },
-                    None => base,
-                });
-
-        typ_with_array
-            .then(select! { (Token::Question, _) => () }.or_not())
-            .map(|(ty, q)| {
-                if q.is_some() {
-                    ast::Type::Optional(ty.boxed())
-                } else {
-                    ty
-                }
+                })
             })
     })
     .labelled("type")
@@ -2486,5 +2480,102 @@ mod tests {
         expect_int(right, 1);
 
         expect_ident(len, "n");
+    }
+
+    #[test]
+    fn type_nested_optional_parses() {
+        let ty = parse_type("(int?)?");
+        match ty {
+            ast::Type::Optional(inner) => match *inner {
+                ast::Type::Optional(inner2) => {
+                    assert_eq!(*inner2, ast::Type::Int);
+                }
+                other => panic!("expected Optional(Int), found {other:?}"),
+            },
+            other => panic!("expected Optional(Optional(Int)), found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn type_optional_array_infer_parses() {
+        let ty = parse_type("int?[_]");
+        match ty {
+            ast::Type::Array { elem, len } => {
+                assert_eq!(len, ast::ArrayLen::Infer);
+                match *elem {
+                    ast::Type::Optional(inner) => {
+                        assert_eq!(*inner, ast::Type::Int);
+                    }
+                    other => panic!("expected Optional(Int), found {other:?}"),
+                }
+            }
+            other => panic!("expected Array(Optional(Int), Infer), found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn type_optional_array_dynamic_parses() {
+        let ty = parse_type("int?[]");
+        match ty {
+            ast::Type::Array { elem, len } => {
+                assert_eq!(len, ast::ArrayLen::Dynamic);
+                match *elem {
+                    ast::Type::Optional(inner) => {
+                        assert_eq!(*inner, ast::Type::Int);
+                    }
+                    other => panic!("expected Optional(Int), found {other:?}"),
+                }
+            }
+            other => panic!("expected Array(Optional(Int), Dynamic), found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn type_array_dynamic_optional_parses() {
+        let ty = parse_type("int[]?");
+        match ty {
+            ast::Type::Optional(inner) => match *inner {
+                ast::Type::Array { elem, len } => {
+                    assert_eq!(*elem, ast::Type::Int);
+                    assert_eq!(len, ast::ArrayLen::Dynamic);
+                }
+                other => panic!("expected Array(Int, Dynamic), found {other:?}"),
+            },
+            other => panic!("expected Optional(Array(Int, Dynamic)), found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn type_paren_optional_array_infer_parses() {
+        let ty = parse_type("(int?)[_]");
+        match ty {
+            ast::Type::Array { elem, len } => {
+                assert_eq!(len, ast::ArrayLen::Infer);
+                match *elem {
+                    ast::Type::Optional(inner) => {
+                        assert_eq!(*inner, ast::Type::Int);
+                    }
+                    other => panic!("expected Optional(Int), found {other:?}"),
+                }
+            }
+            other => panic!("expected Array(Optional(Int), Infer), found {other:?}"),
+        }
+    }
+
+    #[test]
+    fn type_optional_array_fixed_parses() {
+        let ty = parse_type("int?[3]");
+        match ty {
+            ast::Type::Array { elem, len } => {
+                assert_eq!(len, ast::ArrayLen::Fixed(3));
+                match *elem {
+                    ast::Type::Optional(inner) => {
+                        assert_eq!(*inner, ast::Type::Int);
+                    }
+                    other => panic!("expected Optional(Int), found {other:?}"),
+                }
+            }
+            other => panic!("expected Array(Optional(Int), Fixed(3)), found {other:?}"),
+        }
     }
 }

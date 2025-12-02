@@ -1,0 +1,20 @@
+// @skip: needs fix
+// @mode: check
+// @expect: success
+
+fn main() {
+    let fixed_opt: int[3]? = [1, 2, 3];
+    let maybe_fixed: int[3]? = nil;
+
+    let inferred_opt: int?[_] = [1, nil];
+    let some_opt: int? = 1;
+    let dynamic_opt: int?[] = [nil, some_opt];
+    let optional_dynamic: int[]? = [1, 2];
+    let nested_chain: int?[]? = dynamic_opt;
+
+    let alias_fixed: int[3]? = fixed_opt;
+    let alias_inferred: int?[_] = inferred_opt;
+    let alias_dynamic: int?[] = dynamic_opt;
+    let alias_optional_dynamic: int[]? = optional_dynamic;
+    let alias_nested: int?[]? = nested_chain;
+}
