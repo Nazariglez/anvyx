@@ -235,6 +235,14 @@ pub fn report_typecheck_errors(
                 "array fill length must be an integer literal".to_string(),
                 "the length in `[expr; len]` must be a compile-time integer literal".to_string(),
             ),
+            TypeErrKind::IndexOnNonArray { found } => (
+                "cannot index non-array type".to_string(),
+                format!("expression has type '{found}', which is not an array or list"),
+            ),
+            TypeErrKind::IndexNotInt { found } => (
+                "index must be an integer".to_string(),
+                format!("expected 'int', found '{found}'"),
+            ),
         };
 
         emit_report(src, file_path, byte_range, title, body);

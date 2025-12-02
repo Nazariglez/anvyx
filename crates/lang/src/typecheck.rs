@@ -2,9 +2,10 @@ use crate::{
     ast::{
         ArrayFillNode, ArrayLen, ArrayLiteralNode, AssignNode, AssignOp, BinaryNode, BinaryOp,
         BindingNode, BlockNode, CallNode, ExprId, ExprKind, ExprNode, FieldAccessNode, ForNode,
-        Func, FuncNode, Ident, IfNode, Lit, MethodReceiver, Param, Pattern, PatternNode, Program,
-        RangeNode, ReturnNode, Stmt, StmtNode, StructDeclNode, StructField, StructLiteralNode,
-        TupleIndexNode, Type, TypeParam, TypeVarId, UnaryNode, UnaryOp, WhileNode,
+        Func, FuncNode, Ident, IfNode, IndexNode, Lit, MethodReceiver, Param, Pattern, PatternNode,
+        Program, RangeNode, ReturnNode, Stmt, StmtNode, StructDeclNode, StructField,
+        StructLiteralNode, TupleIndexNode, Type, TypeParam, TypeVarId, UnaryNode, UnaryOp,
+        WhileNode,
     },
     span::Span,
 };
@@ -484,6 +485,12 @@ pub enum TypeErrKind {
     },
     ArrayAllNilAmbiguous,
     ArrayFillLengthNotLiteral,
+    IndexOnNonArray {
+        found: Type,
+    },
+    IndexNotInt {
+        found: Type,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -1267,6 +1274,7 @@ fn check_expr(
         ExprKind::Range(range_node) => check_range(range_node, type_checker, errors),
         ExprKind::ArrayLiteral(lit_node) => check_array_literal(lit_node, type_checker, errors),
         ExprKind::ArrayFill(fill_node) => check_array_fill(fill_node, type_checker, errors),
+        ExprKind::Index(index_node) => check_index(index_node, type_checker, errors),
     };
 
     type_checker.set_type(expr_node.node.id, ty.clone(), expr_node.span);
@@ -1374,6 +1382,45 @@ fn check_array_fill(
     Type::Array {
         elem: value_ty.boxed(),
         len,
+    }
+}
+
+fn indexable_element_type(ty: &Type) -> Option<Type> {
+    match ty {
+        Type::Array {
+            elem,
+            len: ArrayLen::Fixed(_) | ArrayLen::Dynamic,
+        } => Some((**elem).clone()),
+        _ => None,
+    }
+}
+
+fn check_index(
+    index_node: &IndexNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let node = &index_node.node;
+    let target_ty = check_expr(&node.target, type_checker, errors);
+    let index_ty = check_expr(&node.index, type_checker, errors);
+
+    let index_is_int = matches!(index_ty, Type::Int | Type::Infer);
+    if !index_is_int {
+        errors.push(TypeErr {
+            span: node.index.span,
+            kind: TypeErrKind::IndexNotInt { found: index_ty },
+        });
+    }
+
+    match indexable_element_type(&target_ty) {
+        Some(elem_ty) => elem_ty,
+        None => {
+            errors.push(TypeErr {
+                span: node.target.span,
+                kind: TypeErrKind::IndexOnNonArray { found: target_ty },
+            });
+            Type::Infer
+        }
     }
 }
 
@@ -5541,6 +5588,23 @@ mod tests {
         }
     }
 
+    fn index_expr(target: ExprNode, index: ExprNode) -> ExprNode {
+        use crate::ast::{Index, IndexNode};
+        ExprNode {
+            node: Expr::new(
+                ExprKind::Index(IndexNode {
+                    node: Index {
+                        target: Box::new(target),
+                        index: Box::new(index),
+                    },
+                    span: dummy_span(),
+                }),
+                next_expr_id(),
+            ),
+            span: dummy_span(),
+        }
+    }
+
     #[test]
     fn test_array_literal_unannotated_int() {
         reset_expr_ids();
@@ -5946,5 +6010,177 @@ mod tests {
                 len: ArrayLen::Dynamic,
             },
         );
+    }
+
+    #[test]
+    fn test_array_index_fixed_ok() {
+        reset_expr_ids();
+
+        // let a: int[3] = [1, 2, 3];
+        // let x = a[0];
+        let arr = array_literal(vec![lit_int(1), lit_int(2), lit_int(3)]);
+        let arr_annot = Type::Array {
+            elem: Type::Int.boxed(),
+            len: ArrayLen::Fixed(3),
+        };
+        let arr_binding = let_binding("a", Some(arr_annot), arr);
+
+        let idx = index_expr(ident_expr("a"), lit_int(0));
+        let idx_id = get_expr_id(&idx);
+        let x_binding = let_binding("x", None, idx);
+
+        let prog = program(vec![arr_binding, x_binding]);
+        let tcx = run_ok(prog);
+
+        assert_expr_type(&tcx, idx_id, Type::Int);
+    }
+
+    #[test]
+    fn test_array_index_dynamic_ok() {
+        reset_expr_ids();
+
+        // let b: float[] = [1.0, 2.0];
+        // let y = b[1];
+        let arr = array_literal(vec![lit_float(1.0), lit_float(2.0)]);
+        let arr_annot = Type::Array {
+            elem: Type::Float.boxed(),
+            len: ArrayLen::Dynamic,
+        };
+        let arr_binding = let_binding("b", Some(arr_annot), arr);
+
+        let idx = index_expr(ident_expr("b"), lit_int(1));
+        let idx_id = get_expr_id(&idx);
+        let y_binding = let_binding("y", None, idx);
+
+        let prog = program(vec![arr_binding, y_binding]);
+        let tcx = run_ok(prog);
+
+        assert_expr_type(&tcx, idx_id, Type::Float);
+    }
+
+    #[test]
+    fn test_array_index_inferred_ok() {
+        reset_expr_ids();
+
+        // let a = [1, 2, 3];
+        // let x = a[2];
+        let arr = array_literal(vec![lit_int(1), lit_int(2), lit_int(3)]);
+        let arr_binding = let_binding("a", None, arr);
+
+        let idx = index_expr(ident_expr("a"), lit_int(2));
+        let idx_id = get_expr_id(&idx);
+        let x_binding = let_binding("x", None, idx);
+
+        let prog = program(vec![arr_binding, x_binding]);
+        let tcx = run_ok(prog);
+
+        assert_expr_type(&tcx, idx_id, Type::Int);
+    }
+
+    #[test]
+    fn test_array_index_non_int_index_error() {
+        reset_expr_ids();
+
+        // let a = [1, 2, 3];
+        // let i = 1.0;
+        // let x = a[i];
+        let arr = array_literal(vec![lit_int(1), lit_int(2), lit_int(3)]);
+        let arr_binding = let_binding("a", None, arr);
+        let i_binding = let_binding("i", None, lit_float(1.0));
+        let idx = index_expr(ident_expr("a"), ident_expr("i"));
+        let x_binding = let_binding("x", None, idx);
+
+        let prog = program(vec![arr_binding, i_binding, x_binding]);
+        let errors = run_err(prog);
+
+        assert!(!errors.is_empty(), "Expected type error for non-int index");
+        assert!(
+            errors.iter().any(
+                |e| matches!(&e.kind, TypeErrKind::IndexNotInt { found } if *found == Type::Float)
+            ),
+            "Expected IndexNotInt error with found=float, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn test_index_on_non_array_error() {
+        reset_expr_ids();
+
+        // let x = 10;
+        // let y = x[0];
+        let x_binding = let_binding("x", None, lit_int(10));
+        let idx = index_expr(ident_expr("x"), lit_int(0));
+        let y_binding = let_binding("y", None, idx);
+
+        let prog = program(vec![x_binding, y_binding]);
+        let errors = run_err(prog);
+
+        assert!(
+            !errors.is_empty(),
+            "Expected type error for indexing non-array"
+        );
+        assert!(
+            errors.iter().any(
+                |e| matches!(&e.kind, TypeErrKind::IndexOnNonArray { found } if *found == Type::Int)
+            ),
+            "Expected IndexOnNonArray error with found=int, got: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn test_nested_array_index_ok() {
+        reset_expr_ids();
+
+        // let a: int[3][2] = [[1, 2, 3], [4, 5, 6]];
+        // let x = a[0][1];
+        let inner1 = array_literal(vec![lit_int(1), lit_int(2), lit_int(3)]);
+        let inner2 = array_literal(vec![lit_int(4), lit_int(5), lit_int(6)]);
+        let outer = array_literal(vec![inner1, inner2]);
+
+        let arr_annot = Type::Array {
+            elem: Type::Array {
+                elem: Type::Int.boxed(),
+                len: ArrayLen::Fixed(3),
+            }
+            .boxed(),
+            len: ArrayLen::Fixed(2),
+        };
+        let arr_binding = let_binding("a", Some(arr_annot), outer);
+
+        let idx1 = index_expr(ident_expr("a"), lit_int(0));
+        let idx2 = index_expr(idx1, lit_int(1));
+        let idx2_id = get_expr_id(&idx2);
+        let x_binding = let_binding("x", None, idx2);
+
+        let prog = program(vec![arr_binding, x_binding]);
+        let tcx = run_ok(prog);
+
+        assert_expr_type(&tcx, idx2_id, Type::Int);
+    }
+
+    #[test]
+    fn test_array_index_assignment_ok() {
+        reset_expr_ids();
+
+        // var a: int[3] = [1, 2, 3];
+        // a[0] = 10;
+        let arr = array_literal(vec![lit_int(1), lit_int(2), lit_int(3)]);
+        let arr_annot = Type::Array {
+            elem: Type::Int.boxed(),
+            len: ArrayLen::Fixed(3),
+        };
+        let arr_binding = var_binding("a", Some(arr_annot), arr);
+
+        let idx = index_expr(ident_expr("a"), lit_int(0));
+        let assign = assign_expr(idx, AssignOp::Assign, lit_int(10));
+        let assign_stmt = StmtNode {
+            node: Stmt::Expr(assign),
+            span: dummy_span(),
+        };
+
+        let prog = program(vec![arr_binding, assign_stmt]);
+        let _ = run_ok(prog);
     }
 }

@@ -939,6 +939,7 @@ enum PostfixOp {
     },
     Field(ast::Ident),
     TupleIndices(Vec<u32>),
+    Index(ast::ExprNode),
 }
 
 fn postfix_expr<'src>(
@@ -946,7 +947,7 @@ fn postfix_expr<'src>(
     expr: impl AnvParser<'src, ast::ExprNode>,
 ) -> BoxedParser<'src, ast::ExprNode> {
     let call_suffix = call_type_args()
-        .then(fn_call_args(expr))
+        .then(fn_call_args(expr.clone()))
         .map(|(type_args, args)| PostfixOp::Call { type_args, args });
 
     let single_index = select! {
@@ -979,7 +980,18 @@ fn postfix_expr<'src>(
     .ignore_then(identifier())
     .map(PostfixOp::Field);
 
-    let postfix_op = choice((call_suffix, chained_index, single_index, field_access));
+    let index_suffix = select! { (Token::Open(Delimiter::Bracket), _) => () }
+        .ignore_then(expr)
+        .then_ignore(select! { (Token::Close(Delimiter::Bracket), _) => () })
+        .map(PostfixOp::Index);
+
+    let postfix_op = choice((
+        call_suffix,
+        index_suffix,
+        chained_index,
+        single_index,
+        field_access,
+    ));
 
     atom.foldl_with(postfix_op.repeated(), |target, op, e| {
         let s = e.span();
@@ -1033,6 +1045,23 @@ fn postfix_expr<'src>(
                 let expr_id = e.state().new_expr_id();
                 let expr = ast::Expr::new(ast::ExprKind::Field(field_node), expr_id);
                 Spanned::new(expr, span)
+            }
+            PostfixOp::Index(index_expr) => {
+                let start = target.span.start;
+                let end = span.end;
+                let index_span = Span::new(start, end);
+
+                let index_node = Spanned::new(
+                    ast::Index {
+                        target: Box::new(target),
+                        index: Box::new(index_expr),
+                    },
+                    index_span,
+                );
+
+                let expr_id = e.state().new_expr_id();
+                let expr = ast::Expr::new(ast::ExprKind::Index(index_node), expr_id);
+                Spanned::new(expr, index_span)
             }
         }
     })

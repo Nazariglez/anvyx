@@ -23,6 +23,7 @@ pub type StructLiteralNode = Spanned<StructLiteral>;
 pub type RangeNode = Spanned<Range>;
 pub type ArrayLiteralNode = Spanned<ArrayLiteral>;
 pub type ArrayFillNode = Spanned<ArrayFill>;
+pub type IndexNode = Spanned<Index>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -75,6 +76,7 @@ pub enum ExprKind {
     Range(RangeNode),
     ArrayLiteral(ArrayLiteralNode),
     ArrayFill(ArrayFillNode),
+    Index(IndexNode),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Hash, Eq)]
@@ -460,6 +462,12 @@ pub struct If {
 pub struct TupleIndex {
     pub target: Box<ExprNode>,
     pub index: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Index {
+    pub target: Box<ExprNode>,
+    pub index: Box<ExprNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
