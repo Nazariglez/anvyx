@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: view types are only allowed in function parameters
+
+fn bad() -> [int; ..] {
+    [1, 2, 3]
+}
+
+fn main() {
+}
+

@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+fn takes_ints(xs: [int; ..]) {
+}
+
+fn main() {
+    let strs = ["a", "b"];
+    takes_ints(strs);
+}
+

@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: view types are only allowed in function parameters
+
+struct Bad {
+    xs: [int; ..]
+}
+
+fn main() {
+}
+

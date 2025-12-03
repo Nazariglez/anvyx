@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+fn get_second(xs: [int; ..]) -> int {
+    xs[1]
+}
+
+fn main() {
+    let arr = [10, 20, 30];
+    let second = get_second(arr);
+}
+

@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+fn head(xs: [int; ..]) -> int {
+    xs[0]
+}
+
+fn main() {
+    let lst: [int] = [1, 2, 3];
+    let _ = head(lst);
+}
+

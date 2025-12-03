@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+fn avg(xs: [float; ..]) -> float {
+    xs[0]
+}
+
+fn main() {
+    let floats = [1.0, 2.0, 3.0];
+    let _ = avg(floats);
+}
+
