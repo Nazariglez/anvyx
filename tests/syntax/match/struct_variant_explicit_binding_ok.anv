@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: success
+
+enum Event { Move { dx: int, dy: int } }
+
+fn main() {
+    let e = Event.Move { dx: 1, dy: 2 };
+    match e {
+        Event.Move { dx: x, dy: y } => {
+            let sum: int = x + y;
+        },
+    }
+}

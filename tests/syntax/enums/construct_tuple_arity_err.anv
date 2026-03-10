@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: Wrong number of arguments for variant 'Message.Ping'
+
+enum Message {
+    Ping(int),
+}
+
+fn main() {
+    let m = Message.Ping(1, 2);
+}

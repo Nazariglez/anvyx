@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: Missing field 'dy' in variant 'Event.Move'
+
+enum Event {
+    Move { dx: int, dy: int },
+}
+
+fn main() {
+    let e = Event.Move { dx: 5 };
+}

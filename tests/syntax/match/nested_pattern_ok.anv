@@ -1,0 +1,17 @@
+// @mode: check
+// @expect: success
+
+enum Option<T> { None, Some(T) }
+enum Wrapper<T> { Empty, Value(T) }
+
+fn main() {
+    let opt: Option<int> = Option.Some(42);
+    let w: Wrapper<Option<int>> = Wrapper.Value(opt);
+    match w {
+        Wrapper.Value(Option.Some(x)) => {
+            let y: int = x;
+        },
+        Wrapper.Value(Option.None) => {},
+        Wrapper.Empty => {},
+    }
+}

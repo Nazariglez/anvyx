@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: is not a struct variant
+
+enum Message {
+    Ping(int),
+}
+
+fn main() {
+    let m = Message.Ping { value: 42 };
+}

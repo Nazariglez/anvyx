@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown field 'dz' for variant 'Event.Move'
+
+enum Event {
+    Move { dx: int, dy: int },
+}
+
+fn main() {
+    let e = Event.Move { dx: 5, dy: 10, dz: 15 };
+}

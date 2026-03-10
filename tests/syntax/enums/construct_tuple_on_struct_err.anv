@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: is not a tuple variant
+
+enum Event {
+    Move { dx: int, dy: int },
+}
+
+fn main() {
+    let e = Event.Move(5, 10);
+}

@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: Wrong number of arguments
+
+enum Message { Data(int, int) }
+
+fn main() {
+    let m = Message.Data(1, 2);
+    match m {
+        Message.Data(x) => {},
+    }
+}

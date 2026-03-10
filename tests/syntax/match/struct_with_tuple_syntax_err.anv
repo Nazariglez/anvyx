@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: not a tuple variant
+
+enum Event { Move { dx: int } }
+
+fn main() {
+    let e = Event.Move { dx: 1 };
+    match e {
+        Event.Move(x) => {},
+    }
+}

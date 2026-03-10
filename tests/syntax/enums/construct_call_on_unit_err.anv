@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: is not a tuple variant
+
+enum Color {
+    Red,
+}
+
+fn main() {
+    let c = Color.Red(42);
+}

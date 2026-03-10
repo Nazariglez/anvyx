@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+enum Message {
+    Ping(int),
+}
+
+fn main() {
+    let m = Message.Ping("hello");
+}

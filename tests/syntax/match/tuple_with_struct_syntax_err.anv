@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: not a struct variant
+
+enum Message { Data(int) }
+
+fn main() {
+    let m = Message.Data(42);
+    match m {
+        Message.Data { x } => {},
+    }
+}

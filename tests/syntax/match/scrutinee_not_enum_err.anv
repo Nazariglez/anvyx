@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: match scrutinee must be an enum type
+
+fn main() {
+    let x = 42;
+    match x {
+        _ => {},
+    }
+}

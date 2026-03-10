@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+enum Message {
+    Ping(int),
+    Move(int, int),
+    Data(string),
+}
+
+fn main() {}

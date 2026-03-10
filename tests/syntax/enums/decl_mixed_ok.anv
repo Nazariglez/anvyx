@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+enum GameEvent {
+    Quit,
+    Ping(int),
+    Hit { target: int, damage: int },
+}
+
+fn main() {}

@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: non-exhaustive match
+
+enum Color { Red, Green, Blue }
+
+fn main() {
+    let c = Color.Red;
+    match c {
+        Color.Red => {},
+        Color.Green => {},
+    }
+}

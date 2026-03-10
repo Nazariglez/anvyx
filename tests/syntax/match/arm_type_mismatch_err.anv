@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: match arm type mismatch
+
+enum State { A, B }
+
+fn main() {
+    let s = State.A;
+    let x: int = match s {
+        State.A => 42,
+        State.B => "hello",
+    };
+}

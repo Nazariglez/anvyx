@@ -1,0 +1,14 @@
+// @mode: check
+// @expect: error
+// @contains: pattern does not match scrutinee enum
+
+enum Color { Red, Green }
+enum Size { Small, Large }
+
+fn main() {
+    let c = Color.Red;
+    match c {
+        Size.Small => {},
+        _ => {},
+    }
+}

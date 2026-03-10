@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+enum Color {
+    Red,
+}
+
+enum Shape {
+    Circle,
+}
+
+fn main() {
+    let c: Color = Shape.Circle;
+}

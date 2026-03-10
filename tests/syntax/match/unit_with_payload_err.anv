@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: not a tuple variant
+
+enum State { Idle }
+
+fn main() {
+    let s = State.Idle;
+    match s {
+        State.Idle(x) => {},
+    }
+}
