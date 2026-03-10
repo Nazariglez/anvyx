@@ -3,6 +3,6 @@
 // @contains: Invalid operand type
 
 fn main() {
-    let i: string = "hola";
+    var i: string = "hola";
     i *= "adios";
 }

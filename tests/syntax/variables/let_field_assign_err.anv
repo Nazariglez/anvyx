@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: immutable
+
+struct Player {
+    hp: int,
+    name: string,
+}
+
+fn main() {
+    let p = Player { hp: 100, name: "Naza" };
+    p.hp = 10;
+}

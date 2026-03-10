@@ -2,7 +2,7 @@
 // @expect: success 
 
 fn main() {
-    let i: int = 10;
+    var i: int = 10;
     i = 20;
     i += 10;
     i -= 10;
@@ -13,7 +13,7 @@ fn main() {
     i /= i - 5;
     i *= i + i;
 
-    let f: float = 10.0;
+    var f: float = 10.0;
     f = 20.0;
     f += 10.0;
     f -= 10.0;

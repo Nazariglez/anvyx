@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: immutable
+
+fn foo(x: int) {
+    x = 10;
+}
+
+fn main() {
+    var a = 5;
+    foo(a);
+}

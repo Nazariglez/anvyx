@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: immutable
+
+fn main() {
+    let a = 10;
+    a = 20;
+}
