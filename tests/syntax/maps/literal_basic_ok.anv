@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let m = ["hp": 100, "mp": 50];
+    let n = [1: "one", 2: "two"];
+    let o = [true: 1, false: 0];
+}

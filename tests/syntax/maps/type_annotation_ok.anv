@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let m: [string: int] = ["hp": 100];
+    let n: [int: string] = [1: "one"];
+}

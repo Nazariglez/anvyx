@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+fn main() {
+    let m = ["a": 1];
+    let v = m[0];
+}

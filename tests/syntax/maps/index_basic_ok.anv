@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let stats = ["hp": 100, "mp": 50];
+    let hp = stats["hp"];
+    let hp_val = stats["hp"] ?? 0;
+}

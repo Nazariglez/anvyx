@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let m: [string: int] = [:];
+    let n: [int: bool] = [:];
+}

@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: not keyable
+
+fn main() {
+    let key = [1, 2, 3];
+    let m = [key: "value"];
+}
