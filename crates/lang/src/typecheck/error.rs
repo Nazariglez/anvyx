@@ -1,0 +1,214 @@
+use crate::{
+    ast::{Ident, Type},
+    span::Span,
+};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeErr {
+    pub span: Span,
+    pub kind: TypeErrKind,
+    pub help: Option<String>,
+    pub notes: Vec<String>,
+    pub secondary: Vec<(Span, String)>,
+}
+
+impl TypeErr {
+    pub fn new(span: Span, kind: TypeErrKind) -> Self {
+        Self {
+            span,
+            kind,
+            help: None,
+            notes: vec![],
+            secondary: vec![],
+        }
+    }
+
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.help = Some(help.into());
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeErrKind {
+    UnknownVariable {
+        name: Ident,
+    },
+    MismatchedTypes {
+        expected: Type,
+        found: Type,
+    },
+    InvalidOperand {
+        op: String,
+        operand_type: Type,
+    },
+    UnknownFunction {
+        name: Ident,
+    },
+    UnresolvedInfer,
+    NotAFunction {
+        expr_type: Type,
+    },
+    GenericArgNumMismatch {
+        expected: usize,
+        found: usize,
+    },
+    NotGenericFunction,
+    IfConditionNotBool {
+        found: Type,
+    },
+    IfMissingElse,
+    WhileConditionNotBool {
+        found: Type,
+    },
+    BreakOutsideLoop,
+    ContinueOutsideLoop,
+    TupleIndexOnNonTuple {
+        found: Type,
+        index: u32,
+    },
+    TupleIndexOutOfBounds {
+        tuple_type: Type,
+        index: u32,
+        len: usize,
+    },
+    TuplePatternArityMismatch {
+        expected: usize,
+        found: usize,
+    },
+    NonTupleInTuplePattern {
+        found: Type,
+        pattern_arity: usize,
+    },
+    TuplePatternLabelMismatch {
+        expected: Ident,
+        found: Ident,
+    },
+    NamedPatternOnPositionalTuple,
+    DuplicateTupleLabel {
+        label: Ident,
+    },
+    NoSuchFieldOnTuple {
+        field: Ident,
+        tuple_type: Type,
+    },
+    FieldAccessOnNonNamedTuple {
+        field: Ident,
+        found: Type,
+    },
+    UnknownStruct {
+        name: Ident,
+    },
+    StructMissingField {
+        struct_name: Ident,
+        field: Ident,
+    },
+    StructUnknownField {
+        struct_name: Ident,
+        field: Ident,
+    },
+    StructDuplicateField {
+        struct_name: Ident,
+        field: Ident,
+    },
+    UnknownMethod {
+        struct_name: Ident,
+        method: Ident,
+    },
+    StaticMethodOnValue {
+        struct_name: Ident,
+        method: Ident,
+    },
+    InstanceMethodOnType {
+        struct_name: Ident,
+        method: Ident,
+    },
+    ReadonlySelfMutation {
+        struct_name: Ident,
+        field: Ident,
+    },
+
+    UnknownEnum {
+        name: Ident,
+    },
+    UnknownEnumVariant {
+        enum_name: Ident,
+        variant_name: Ident,
+    },
+    EnumVariantArityMismatch {
+        enum_name: Ident,
+        variant_name: Ident,
+        expected: usize,
+        found: usize,
+    },
+    EnumVariantNotTuple {
+        enum_name: Ident,
+        variant_name: Ident,
+    },
+    EnumVariantNotStruct {
+        enum_name: Ident,
+        variant_name: Ident,
+    },
+    EnumVariantNotUnit {
+        enum_name: Ident,
+        variant_name: Ident,
+    },
+    EnumVariantMissingField {
+        enum_name: Ident,
+        variant_name: Ident,
+        field: Ident,
+    },
+    EnumVariantUnknownField {
+        enum_name: Ident,
+        variant_name: Ident,
+        field: Ident,
+    },
+    EnumVariantDuplicateField {
+        enum_name: Ident,
+        variant_name: Ident,
+        field: Ident,
+    },
+
+    ForIterableNotRange {
+        found: Type,
+    },
+    ForStepNotInt {
+        item_ty: Type,
+        step_ty: Type,
+    },
+    ArrayAllNilAmbiguous,
+    ArrayFillLengthNotLiteral,
+    IndexOnNonArray {
+        found: Type,
+    },
+    IndexNotInt {
+        found: Type,
+    },
+    OptionalChainingOnNonOpt {
+        found: Type,
+    },
+
+    MatchScrutineeNotEnum {
+        found: Type,
+    },
+    NonExhaustiveMatch {
+        missing: Vec<Ident>,
+    },
+    MatchArmTypeMismatch {
+        expected: Type,
+        found: Type,
+    },
+    MatchPatternEnumMismatch {
+        expected_enum: Ident,
+        pattern_enum: Ident,
+    },
+
+    MapEmptyLiteralNoContext,
+    MapKeyNotKeyable {
+        found: Type,
+    },
+    MapOptionalKeyNotAllowed {
+        found: Type,
+    },
+    MapDuplicateKey,
+}

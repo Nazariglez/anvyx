@@ -20,10 +20,14 @@ pub type PatternNode = Spanned<Pattern>;
 pub type FieldAccessNode = Spanned<FieldAccess>;
 pub type StructDeclNode = Spanned<StructDecl>;
 pub type StructLiteralNode = Spanned<StructLiteral>;
+pub type EnumDeclNode = Spanned<EnumDecl>;
 pub type RangeNode = Spanned<Range>;
 pub type ArrayLiteralNode = Spanned<ArrayLiteral>;
 pub type ArrayFillNode = Spanned<ArrayFill>;
+pub type MapLiteralNode = Spanned<MapLiteral>;
 pub type IndexNode = Spanned<Index>;
+pub type MatchNode = Spanned<Match>;
+pub type MatchArmNode = Spanned<MatchArm>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -34,6 +38,7 @@ pub struct Program {
 pub enum Stmt {
     Func(FuncNode),
     Struct(StructDeclNode),
+    Enum(EnumDeclNode),
     Expr(ExprNode),
     Binding(BindingNode),
     Return(ReturnNode),
@@ -76,7 +81,9 @@ pub enum ExprKind {
     Range(RangeNode),
     ArrayLiteral(ArrayLiteralNode),
     ArrayFill(ArrayFillNode),
+    MapLiteral(MapLiteralNode),
     Index(IndexNode),
+    Match(MatchNode),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Hash, Eq)]
@@ -139,6 +146,8 @@ pub enum Type {
     NamedTuple(Vec<(Ident, Type)>),
     /// Struct type
     Struct { name: Ident, type_args: Vec<Type> },
+    /// Enum type
+    Enum { name: Ident, type_args: Vec<Type> },
     /// List are dynamic arrays
     List { elem: Box<Type> },
     /// Arrays are fixed length [T; N] or [T; _]
@@ -192,6 +201,10 @@ impl Type {
 
     pub fn is_struct(&self) -> bool {
         matches!(self, Type::Struct { .. })
+    }
+
+    pub fn is_enum(&self) -> bool {
+        matches!(self, Type::Enum { .. })
     }
 
     pub fn is_list(&self) -> bool {
@@ -281,6 +294,18 @@ impl Display for Type {
                     write!(f, "{name}<{args}>")
                 }
             }
+            Type::Enum { name, type_args } => {
+                if type_args.is_empty() {
+                    write!(f, "{name}")
+                } else {
+                    let args = type_args
+                        .iter()
+                        .map(|t| t.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    write!(f, "{name}<{args}>")
+                }
+            }
             Type::List { elem } => write!(f, "[{elem}]"),
             Type::Array { elem, len } => match len {
                 ArrayLen::Fixed(n) => write!(f, "[{elem}; {n}]"),
@@ -318,6 +343,20 @@ pub enum Pattern {
     Tuple(Vec<PatternNode>),
     NamedTuple(Vec<(Ident, PatternNode)>),
     Wildcard,
+    EnumUnit {
+        qualifier: Ident,
+        variant: Ident,
+    },
+    EnumTuple {
+        qualifier: Ident,
+        variant: Ident,
+        fields: Vec<PatternNode>,
+    },
+    EnumStruct {
+        qualifier: Ident,
+        variant: Ident,
+        fields: Vec<(Ident, PatternNode)>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -534,8 +573,30 @@ pub struct Method {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructLiteral {
+    /// Struct name is the struct name, but enums name is the variant while qualigier is the type name.
+    pub qualifier: Option<Ident>,
     pub name: Ident,
     pub fields: Vec<(Ident, ExprNode)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum VariantKind {
+    Unit,
+    Tuple(Vec<Type>),
+    Struct(Vec<StructField>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariant {
+    pub name: Ident,
+    pub kind: VariantKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumDecl {
+    pub name: Ident,
+    pub type_params: Vec<TypeParam>,
+    pub variants: Vec<EnumVariant>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -554,4 +615,21 @@ pub struct ArrayLiteral {
 pub struct ArrayFill {
     pub value: Box<ExprNode>,
     pub len: Box<ExprNode>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapLiteral {
+    pub entries: Vec<(ExprNode, ExprNode)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Match {
+    pub scrutinee: Box<ExprNode>,
+    pub arms: Vec<MatchArmNode>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: PatternNode,
+    pub body: ExprNode,
 }

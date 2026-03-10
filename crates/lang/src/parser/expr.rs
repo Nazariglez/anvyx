@@ -1,0 +1,896 @@
+use crate::{
+    ast,
+    lexer::{Delimiter, Keyword, LitToken, Op, Token},
+    span::{Span, Spanned},
+};
+use chumsky::{error::Rich, prelude::*};
+
+use super::common::{TupleShapeResult, block_stmt, identifier, literal, validate_tuple_shape_raw};
+use super::ops::{
+    add_sub_op, and_op, assign_op, cmp_op, coalesce_op, eq_op, infix_left, mul_div_op, or_op,
+};
+use super::pattern::pattern;
+use super::types::type_ident;
+use super::{AnvParser, BoxedParser};
+
+pub(super) fn expression<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    recursive(|expr| {
+        let atom = atom_expr(stmt, expr.clone());
+        let postfix = postfix_expr(atom, expr.clone());
+        let unary = unary_expr(postfix);
+        let binary = binary_expr(unary);
+        let ternary = ternary_expr(binary, expr.clone());
+        assignment_expr(ternary)
+    })
+    .boxed()
+}
+
+pub(super) fn cond_expression<'src>() -> BoxedParser<'src, ast::ExprNode> {
+    recursive(|cond_expr| {
+        let atom = cond_atom_expr(cond_expr.clone());
+        let postfix = postfix_expr(atom, cond_expr.clone());
+        let unary = unary_expr(postfix);
+        let binary = binary_expr(unary);
+        let ternary = ternary_expr(binary, cond_expr.clone());
+        assignment_expr(ternary)
+    })
+    .boxed()
+}
+
+fn if_expr<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'src, ast::ExprNode> {
+    recursive(|if_parser| {
+        let cond_expr = cond_expression();
+
+        let else_branch = select! {
+            (Token::Keyword(Keyword::Else), _) => (),
+        }
+        .ignore_then(choice((
+            // else-if wraps the nested if in a block
+            if_parser.map_with(|if_expr: ast::ExprNode, _| {
+                let span = if_expr.span;
+                let stmt = Spanned::new(ast::Stmt::Expr(if_expr), span);
+                Spanned::new(ast::Block { stmts: vec![stmt] }, span)
+            }),
+            // else { ... }
+            block_stmt(stmt.clone()),
+        )))
+        .or_not();
+
+        select! {
+            (Token::Keyword(Keyword::If), _) => (),
+        }
+        .ignore_then(cond_expr)
+        .then(block_stmt(stmt.clone()))
+        .then(else_branch)
+        .map_with(|((cond, then_block), else_block), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let if_node = Spanned::new(
+                ast::If {
+                    cond: Box::new(cond),
+                    then_block,
+                    else_block,
+                },
+                span,
+            );
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::If(if_node), expr_id);
+            Spanned::new(expr, span)
+        })
+    })
+    .labelled("if expression")
+    .as_context()
+    .boxed()
+}
+
+fn match_expr<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let comma = select! { (Token::Comma, _) => () };
+    let open_brace = select! { (Token::Open(Delimiter::Brace), _) => () };
+    let close_brace = select! { (Token::Close(Delimiter::Brace), _) => () };
+    let fat_arrow = select! { (Token::Op(Op::FatArrow), _) => () };
+
+    let arm_body = choice((
+        block_stmt(stmt.clone()).map_with(|block_node, e| {
+            let span = block_node.span;
+            let id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Block(block_node), id);
+            Spanned::new(expr, span)
+        }),
+        expr.clone(),
+    ));
+
+    let match_arm = pattern()
+        .then_ignore(fat_arrow)
+        .then(arm_body)
+        .map_with(|(pat, body), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            Spanned::new(ast::MatchArm { pattern: pat, body }, span)
+        });
+
+    let cond_expr = cond_expression();
+
+    select! { (Token::Keyword(Keyword::Match), _) => () }
+        .ignore_then(cond_expr)
+        .then(
+            open_brace
+                .ignore_then(
+                    match_arm
+                        .separated_by(comma)
+                        .allow_trailing()
+                        .collect::<Vec<_>>(),
+                )
+                .then_ignore(close_brace),
+        )
+        .map_with(|(scrutinee, arms), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let match_node = Spanned::new(
+                ast::Match {
+                    scrutinee: Box::new(scrutinee),
+                    arms,
+                },
+                span,
+            );
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Match(match_node), expr_id);
+            Spanned::new(expr, span)
+        })
+        .labelled("match expression")
+        .as_context()
+        .boxed()
+}
+
+fn struct_literal<'src>(
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let field_init = identifier()
+        .then_ignore(select! { (Token::Colon, _) => () })
+        .then(expr)
+        .map(|(name, value)| (name, value));
+
+    // parse qualified name like Enum.Variant or Struct
+    let qualified_name = identifier()
+        .then(
+            select! { (Token::Dot, _) => () }
+                .ignore_then(identifier())
+                .or_not(),
+        )
+        .map(|(first, second)| match second {
+            Some(name) => (Some(first), name), // is a enum variant
+            None => (None, first),             // struc
+        });
+
+    qualified_name
+        .then(
+            select! { (Token::Open(Delimiter::Brace), _) => () }
+                .ignore_then(
+                    field_init
+                        .separated_by(select! { (Token::Comma, _) => () })
+                        .allow_trailing()
+                        .collect::<Vec<_>>(),
+                )
+                .then_ignore(select! { (Token::Close(Delimiter::Brace), _) => () }),
+        )
+        .map_with(|((qualifier, name), fields), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let lit_node = Spanned::new(
+                ast::StructLiteral {
+                    qualifier,
+                    name,
+                    fields,
+                },
+                span,
+            );
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::StructLiteral(lit_node), expr_id);
+            Spanned::new(expr, span)
+        })
+        .labelled("struct literal")
+        .as_context()
+        .boxed()
+}
+
+fn array_literal<'src>(
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let open_bracket = select! { (Token::Open(Delimiter::Bracket), _) => () };
+    let close_bracket = select! { (Token::Close(Delimiter::Bracket), _) => () };
+    let comma = select! { (Token::Comma, _) => () };
+    let semicolon = select! { (Token::Semicolon, _) => () };
+    let colon = select! { (Token::Colon, _) => () };
+
+    // array fill literal [value; len]
+    let fill_literal = open_bracket
+        .ignore_then(expr.clone())
+        .then_ignore(semicolon)
+        .then(expr.clone())
+        .then_ignore(close_bracket)
+        .map_with(|(value, len), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let fill_node = Spanned::new(
+                ast::ArrayFill {
+                    value: Box::new(value),
+                    len: Box::new(len),
+                },
+                span,
+            );
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::ArrayFill(fill_node), expr_id);
+            Spanned::new(expr, span)
+        });
+
+    // map entry 'key: value'
+    let map_entry = expr.clone().then_ignore(colon).then(expr.clone());
+
+    // non empty map literal [key: value, ...]
+    let map_literal = open_bracket
+        .ignore_then(
+            map_entry
+                .separated_by(comma)
+                .allow_trailing()
+                .at_least(1)
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(close_bracket)
+        .map_with(|entries, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let lit_node = Spanned::new(ast::MapLiteral { entries }, span);
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::MapLiteral(lit_node), expr_id);
+            Spanned::new(expr, span)
+        });
+
+    // empty map literal [:]
+    // use a dummy nil literal to provide type context for the parser
+    let empty_map = open_bracket
+        .ignore_then(colon)
+        .ignore_then(close_bracket)
+        .to(ast::Lit::Nil)
+        .map_with(|_, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let lit_node = Spanned::new(ast::MapLiteral { entries: vec![] }, span);
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::MapLiteral(lit_node), expr_id);
+            Spanned::new(expr, span)
+        });
+
+    // array/list literal [elem, ...] or []
+    let element_list = open_bracket
+        .ignore_then(
+            expr.separated_by(comma)
+                .allow_trailing()
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(close_bracket)
+        .map_with(|elements, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let lit_node = Spanned::new(ast::ArrayLiteral { elements }, span);
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::ArrayLiteral(lit_node), expr_id);
+            Spanned::new(expr, span)
+        });
+
+    // the order matters here, i need to put more specific patterns first
+    // [v; n] -> [:] -> [k: v, ...] -> ([e, ...] or [])
+    choice((fill_literal, empty_map, map_literal, element_list))
+        .labelled("array or map literal")
+        .as_context()
+        .boxed()
+}
+
+fn atom_expr<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    choice((
+        literal().map_with(|lit, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Lit(lit), id);
+            Spanned::new(expr, span)
+        }),
+        struct_literal(expr.clone()),
+        array_literal(expr.clone()),
+        identifier().map_with(|ident, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Ident(ident), expr_id);
+            Spanned::new(expr, span)
+        }),
+        if_expr(stmt.clone()),
+        match_expr(stmt.clone(), expr.clone()),
+        block_stmt(stmt).map_with(|block_node, e| {
+            let span = block_node.span;
+            let id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Block(block_node), id);
+            Spanned::new(expr, span)
+        }),
+        grouped_or_tuple_expr(expr),
+    ))
+    .labelled("atom")
+    .boxed()
+}
+
+fn cond_atom_expr<'src>(
+    cond_expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    choice((
+        literal().map_with(|lit, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Lit(lit), id);
+            Spanned::new(expr, span)
+        }),
+        array_literal(cond_expr.clone()),
+        identifier().map_with(|ident, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Ident(ident), expr_id);
+            Spanned::new(expr, span)
+        }),
+        grouped_or_tuple_expr(cond_expr),
+    ))
+    .labelled("condition atom")
+    .boxed()
+}
+
+enum TupleExprElem {
+    Pos(ast::ExprNode),
+    Labeled(ast::Ident, ast::ExprNode),
+}
+
+fn grouped_or_tuple_expr<'src>(
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let comma = select! { (Token::Comma, _) => () };
+    let open_paren = select! { (Token::Open(Delimiter::Parent), _) => () };
+    let close_paren = select! { (Token::Close(Delimiter::Parent), _) => () };
+    let colon = select! { (Token::Colon, _) => () };
+
+    let labeled_elem = identifier()
+        .then_ignore(colon)
+        .then(expr.clone())
+        .map(|(name, e)| TupleExprElem::Labeled(name, e));
+
+    let pos_elem = expr.map(TupleExprElem::Pos);
+    let elem = choice((labeled_elem, pos_elem));
+
+    let first_elem = elem.clone();
+    let rest_elems = comma.ignore_then(elem).repeated().collect::<Vec<_>>();
+
+    open_paren
+        .ignore_then(first_elem.or_not())
+        .then(rest_elems)
+        .then(comma.or_not())
+        .then_ignore(close_paren)
+        .validate(|((first, rest), trailing_comma), e, emitter| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let expr_id = e.state().new_expr_id();
+
+            match validate_tuple_shape_raw(first, rest, trailing_comma.is_some()) {
+                TupleShapeResult::Empty => {
+                    emitter.emit(Rich::custom(s, "empty tuples are not supported"));
+                    let dummy = ast::Expr::new(ast::ExprKind::Lit(ast::Lit::Nil), expr_id);
+                    Spanned::new(dummy, span)
+                }
+                TupleShapeResult::OneTupleError(elem) => {
+                    emitter.emit(Rich::custom(s, "1-tuples are not supported"));
+                    match elem {
+                        TupleExprElem::Pos(e) => e,
+                        TupleExprElem::Labeled(_, e) => e,
+                    }
+                }
+                TupleShapeResult::Grouped(elem) => match elem {
+                    TupleExprElem::Pos(e) => e,
+                    TupleExprElem::Labeled(_, e) => e,
+                },
+                TupleShapeResult::Tuple(elems) => {
+                    let all_pos = elems.iter().all(|e| matches!(e, TupleExprElem::Pos(_)));
+                    let all_labeled = elems
+                        .iter()
+                        .all(|e| matches!(e, TupleExprElem::Labeled(_, _)));
+
+                    if all_pos {
+                        let exprs: Vec<ast::ExprNode> = elems
+                            .into_iter()
+                            .map(|e| match e {
+                                TupleExprElem::Pos(expr) => expr,
+                                TupleExprElem::Labeled(_, expr) => expr,
+                            })
+                            .collect();
+                        let tuple_expr = ast::Expr::new(ast::ExprKind::Tuple(exprs), expr_id);
+                        return Spanned::new(tuple_expr, span);
+                    }
+
+                    if all_labeled {
+                        let fields: Vec<(ast::Ident, ast::ExprNode)> = elems
+                            .into_iter()
+                            .map(|e| match e {
+                                TupleExprElem::Labeled(name, expr) => (name, expr),
+                                TupleExprElem::Pos(_) => unreachable!(),
+                            })
+                            .collect();
+                        let named_tuple_expr =
+                            ast::Expr::new(ast::ExprKind::NamedTuple(fields), expr_id);
+                        return Spanned::new(named_tuple_expr, span);
+                    }
+
+                    emitter.emit(Rich::custom(
+                        s,
+                        "cannot mix labeled and unlabeled elements in tuple literal",
+                    ));
+                    let dummy = ast::Expr::new(ast::ExprKind::Lit(ast::Lit::Nil), expr_id);
+                    Spanned::new(dummy, span)
+                }
+                TupleShapeResult::UnexpectedComma => {
+                    emitter.emit(Rich::custom(s, "unexpected comma"));
+                    let dummy = ast::Expr::new(ast::ExprKind::Lit(ast::Lit::Nil), expr_id);
+                    Spanned::new(dummy, span)
+                }
+            }
+        })
+        .labelled("tuple or grouped expression")
+        .as_context()
+        .boxed()
+}
+
+fn fn_call_args<'src>(
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, Vec<ast::ExprNode>> {
+    select! {
+        (Token::Open(Delimiter::Parent), _) => (),
+    }
+    .ignore_then(
+        expr.separated_by(select! {
+            (Token::Comma, _) => (),
+        })
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .or_not()
+        .map(|opt| opt.unwrap_or_default()),
+    )
+    .then_ignore(select! {
+        (Token::Close(Delimiter::Parent), _) => (),
+    })
+    .labelled("function call arguments")
+    .as_context()
+    .boxed()
+}
+
+fn call_type_args<'src>() -> BoxedParser<'src, Vec<ast::Type>> {
+    // lookahead for optional generic type arguments (<int, ..>)
+    // and rewind to avoid consuming < when its a comparsion op (a < b)
+    let generic_lookahead = select! {
+        (Token::Op(Op::LessThan), _) => (),
+    }
+    .ignore_then(
+        type_ident()
+            .separated_by(select! {
+                (Token::Comma, _) => (),
+            })
+            .allow_trailing()
+            .collect::<Vec<_>>(),
+    )
+    .then_ignore(select! {
+        (Token::Op(Op::GreaterThan), _) => (),
+    })
+    .then_ignore(select! {
+        (Token::Open(Delimiter::Parent), _) => (),
+    })
+    .rewind();
+
+    let generic_list = select! {
+        (Token::Op(Op::LessThan), _) => (),
+    }
+    .ignore_then(
+        type_ident()
+            .separated_by(select! {
+                (Token::Comma, _) => (),
+            })
+            .allow_trailing()
+            .collect::<Vec<_>>(),
+    )
+    .then_ignore(select! {
+        (Token::Op(Op::GreaterThan), _) => (),
+    });
+
+    generic_lookahead
+        .ignore_then(generic_list)
+        .or_not()
+        .map(|opt| opt.unwrap_or_default())
+        .labelled("type arguments")
+        .as_context()
+        .boxed()
+}
+
+enum PostfixOp {
+    Call {
+        type_args: Vec<ast::Type>,
+        args: Vec<ast::ExprNode>,
+        safe: bool,
+    },
+    Field {
+        ident: ast::Ident,
+        safe: bool,
+    },
+    TupleIndices(Vec<u32>),
+    Index {
+        expr: ast::ExprNode,
+        safe: bool,
+    },
+}
+
+fn postfix_expr<'src>(
+    atom: impl AnvParser<'src, ast::ExprNode>,
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let call_suffix = call_type_args()
+        .then(fn_call_args(expr.clone()))
+        .map(|(type_args, args)| PostfixOp::Call {
+            type_args,
+            args,
+            safe: false,
+        });
+
+    let safe_call_suffix = select! { (Token::Question, _) => () }
+        .ignore_then(call_type_args())
+        .then(fn_call_args(expr.clone()))
+        .map(|(type_args, args)| PostfixOp::Call {
+            type_args,
+            args,
+            safe: true,
+        });
+
+    let single_index = select! {
+        (Token::Dot, _) => (),
+    }
+    .ignore_then(select! {
+        (Token::Literal(LitToken::Number(n)), _) => PostfixOp::TupleIndices(vec![n as u32]),
+    });
+
+    let chained_index = select! {
+        (Token::Dot, _) => (),
+    }
+    .ignore_then(select! {
+        (Token::Literal(LitToken::Float(s)), _) => s,
+    })
+    .try_map(|s, span| {
+        let parts = s.as_ref().split('.').collect::<Vec<_>>();
+        let indices = parts
+            .iter()
+            .map(|p| p.parse::<u32>())
+            .collect::<Result<Vec<_>, _>>();
+        indices
+            .map(PostfixOp::TupleIndices)
+            .map_err(|_| Rich::custom(span, "invalid tuple index"))
+    });
+
+    let safe_field_access = select! { (Token::Question, _) => () }
+        .ignore_then(select! { (Token::Dot, _) => () })
+        .ignore_then(identifier())
+        .map(|ident| PostfixOp::Field { ident, safe: true });
+
+    let field_access = select! {
+        (Token::Dot, _) => (),
+    }
+    .ignore_then(identifier())
+    .map(|ident| PostfixOp::Field { ident, safe: false });
+
+    let safe_index_suffix = select! { (Token::Question, _) => () }
+        .ignore_then(select! { (Token::Open(Delimiter::Bracket), _) => () })
+        .ignore_then(expr.clone())
+        .then_ignore(select! { (Token::Close(Delimiter::Bracket), _) => () })
+        .map(|index_expr| PostfixOp::Index {
+            expr: index_expr,
+            safe: true,
+        });
+
+    let index_suffix = select! { (Token::Open(Delimiter::Bracket), _) => () }
+        .ignore_then(expr)
+        .then_ignore(select! { (Token::Close(Delimiter::Bracket), _) => () })
+        .map(|index_expr| PostfixOp::Index {
+            expr: index_expr,
+            safe: false,
+        });
+
+    let postfix_op = choice((
+        safe_call_suffix,
+        call_suffix,
+        safe_index_suffix,
+        index_suffix,
+        chained_index,
+        single_index,
+        safe_field_access,
+        field_access,
+    ));
+
+    atom.foldl_with(postfix_op.repeated(), |target, op, e| {
+        let s = e.span();
+        let span = Span::new(s.start, s.end);
+
+        match op {
+            PostfixOp::Call {
+                type_args,
+                args,
+                safe,
+            } => {
+                let start = target.span.start;
+                let end = args.last().map(|a| a.span.end).unwrap_or(target.span.end);
+                let call_span = Span::new(start, end);
+
+                let call_node = Spanned::new(
+                    ast::Call {
+                        func: Box::new(target),
+                        args,
+                        type_args,
+                        safe,
+                    },
+                    call_span,
+                );
+
+                let expr_id = e.state().new_expr_id();
+                let expr = ast::Expr::new(ast::ExprKind::Call(call_node), expr_id);
+                Spanned::new(expr, call_span)
+            }
+            PostfixOp::TupleIndices(indices) => {
+                let mut current = target;
+                for index in indices {
+                    let index_node = Spanned::new(
+                        ast::TupleIndex {
+                            target: Box::new(current),
+                            index,
+                        },
+                        span,
+                    );
+
+                    let expr_id = e.state().new_expr_id();
+                    let expr = ast::Expr::new(ast::ExprKind::TupleIndex(index_node), expr_id);
+                    current = Spanned::new(expr, span);
+                }
+                current
+            }
+            PostfixOp::Field { ident: field, safe } => {
+                let field_node = Spanned::new(
+                    ast::FieldAccess {
+                        target: Box::new(target),
+                        field,
+                        safe,
+                    },
+                    span,
+                );
+
+                let expr_id = e.state().new_expr_id();
+                let expr = ast::Expr::new(ast::ExprKind::Field(field_node), expr_id);
+                Spanned::new(expr, span)
+            }
+            PostfixOp::Index {
+                expr: index_expr,
+                safe,
+            } => {
+                let start = target.span.start;
+                let end = span.end;
+                let index_span = Span::new(start, end);
+
+                let index_node = Spanned::new(
+                    ast::Index {
+                        target: Box::new(target),
+                        index: Box::new(index_expr),
+                        safe,
+                    },
+                    index_span,
+                );
+
+                let expr_id = e.state().new_expr_id();
+                let expr = ast::Expr::new(ast::ExprKind::Index(index_node), expr_id);
+                Spanned::new(expr, index_span)
+            }
+        }
+    })
+    .labelled("postfix expression")
+    .as_context()
+    .boxed()
+}
+
+fn unary_expr<'src>(expr: impl AnvParser<'src, ast::ExprNode>) -> BoxedParser<'src, ast::ExprNode> {
+    select! {
+        (Token::Op(Op::Sub), _) => ast::UnaryOp::Neg,
+        (Token::Op(Op::Not), _) => ast::UnaryOp::Not,
+    }
+    .repeated()
+    .collect::<Vec<_>>()
+    .then(expr)
+    .map_with(|(ops, expr), e| {
+        let s = e.span();
+        let span = Span::new(s.start, s.end);
+
+        let mut expr_node = expr;
+        for op in ops.into_iter().rev() {
+            let unary_node = Spanned::new(
+                ast::Unary {
+                    op,
+                    expr: Box::new(expr_node),
+                },
+                span,
+            );
+            let expr_id = e.state().new_expr_id();
+            expr_node = Spanned::new(
+                ast::Expr::new(ast::ExprKind::Unary(unary_node), expr_id),
+                span,
+            );
+        }
+
+        expr_node
+    })
+    .labelled("unary")
+    .as_context()
+    .boxed()
+}
+
+fn binary_expr<'src>(
+    unary: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let mul = infix_left(unary, mul_div_op());
+    let add = infix_left(mul, add_sub_op());
+    let range = range_expr(add);
+    let cmp = infix_left(range, cmp_op());
+    let eq = infix_left(cmp, eq_op());
+    let and = infix_left(eq, and_op());
+    let coal = infix_left(and, coalesce_op());
+    let or = infix_left(coal, or_op());
+    or.labelled("expression").as_context().boxed()
+}
+
+fn range_expr<'src>(
+    lower: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let op_rhs = select! {
+        (Token::Range, _) => false,
+        (Token::RangeEq, _) => true,
+    }
+    .then(lower.clone());
+
+    lower
+        .foldl_with(op_rhs.repeated(), |start, (inclusive, end), e| {
+            let span = Span::new(start.span.start, end.span.end);
+            let range_node = Spanned::new(
+                ast::Range {
+                    start: Box::new(start),
+                    end: Box::new(end),
+                    inclusive,
+                },
+                span,
+            );
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Range(range_node), expr_id);
+            Spanned::new(expr, span)
+        })
+        .boxed()
+}
+
+fn ternary_expr<'src>(
+    lower: impl AnvParser<'src, ast::ExprNode>,
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let ternary_suffix = select! {
+        (Token::Question, _) => (),
+    }
+    .ignore_then(expr.clone())
+    .then_ignore(select! {
+        (Token::Colon, _) => (),
+    })
+    .then(expr);
+
+    lower
+        .foldl_with(
+            ternary_suffix.repeated(),
+            |cond, (then_expr, else_expr), e| {
+                let span = Span::new(cond.span.start, else_expr.span.end);
+
+                let then_stmt = Spanned::new(ast::Stmt::Expr(then_expr.clone()), then_expr.span);
+                let then_block = Spanned::new(
+                    ast::Block {
+                        stmts: vec![then_stmt],
+                    },
+                    then_expr.span,
+                );
+
+                let else_stmt = Spanned::new(ast::Stmt::Expr(else_expr.clone()), else_expr.span);
+                let else_block = Spanned::new(
+                    ast::Block {
+                        stmts: vec![else_stmt],
+                    },
+                    else_expr.span,
+                );
+
+                let if_node = Spanned::new(
+                    ast::If {
+                        cond: Box::new(cond),
+                        then_block,
+                        else_block: Some(else_block),
+                    },
+                    span,
+                );
+
+                let expr_id = e.state().new_expr_id();
+                let expr = ast::Expr::new(ast::ExprKind::If(if_node), expr_id);
+                Spanned::new(expr, span)
+            },
+        )
+        .labelled("ternary")
+        .as_context()
+        .boxed()
+}
+
+fn lvalue_expr<'src>() -> BoxedParser<'src, ast::ExprNode> {
+    let base = identifier().map_with(|ident, e| {
+        let s = e.span();
+        let span = Span::new(s.start, s.end);
+        let expr_id = e.state().new_expr_id();
+        let expr = ast::Expr::new(ast::ExprKind::Ident(ident), expr_id);
+        Spanned::new(expr, span)
+    });
+
+    let field_suffix = select! { (Token::Dot, _) => () }.ignore_then(identifier());
+
+    base.foldl_with(field_suffix.repeated(), |target, field, e| {
+        let s = e.span();
+        let span = Span::new(s.start, s.end);
+        let field_node = Spanned::new(
+            ast::FieldAccess {
+                target: Box::new(target),
+                field,
+                safe: false,
+            },
+            span,
+        );
+        let expr_id = e.state().new_expr_id();
+        let expr = ast::Expr::new(ast::ExprKind::Field(field_node), expr_id);
+        Spanned::new(expr, span)
+    })
+    .labelled("left value expr")
+    .as_context()
+    .boxed()
+}
+
+fn assignment_expr<'src>(
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    lvalue_expr()
+        .then(assign_op().then(expr.clone()))
+        .map_with(|(target, (op, value)), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let assign_node = Spanned::new(
+                ast::Assign {
+                    target: Box::new(target),
+                    op,
+                    value: Box::new(value),
+                },
+                span,
+            );
+
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Assign(assign_node), expr_id);
+            Spanned::new(expr, span)
+        })
+        .or(expr)
+        .labelled("assignment")
+        .as_context()
+        .boxed()
+}

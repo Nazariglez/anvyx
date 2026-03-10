@@ -95,6 +95,7 @@ pub enum Keyword {
     Match,
     Pub,
     Struct,
+    Enum,
 }
 
 impl Display for Keyword {
@@ -122,6 +123,7 @@ impl Display for Keyword {
             Keyword::Match => write!(f, "match"),
             Keyword::Pub => write!(f, "pub"),
             Keyword::Struct => write!(f, "struct"),
+            Keyword::Enum => write!(f, "enum"),
         }
     }
 }
@@ -254,13 +256,14 @@ fn lit_string<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
     just("\"")
         .ignore_then(none_of("\"").repeated().collect::<String>())
         .then_ignore(just("\""))
-        .map(|s| Intern::new(s))
+        .map(Intern::new)
         .map(LitToken::String)
 }
 
 fn ident<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
     text::ident().map(|s: &str| match s {
         "struct" => Token::Keyword(Keyword::Struct),
+        "enum" => Token::Keyword(Keyword::Enum),
         "string" => Token::Keyword(Keyword::String),
         "pub" => Token::Keyword(Keyword::Pub),
         "let" => Token::Keyword(Keyword::Let),

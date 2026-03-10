@@ -1,0 +1,467 @@
+use std::collections::HashSet;
+
+use crate::ast::{Ident, Pattern, PatternNode, Type, TypeParam, TypeVarId, VariantKind};
+
+use super::{
+    error::{TypeErr, TypeErrKind},
+    types::{EnumDef, TypeChecker},
+};
+
+pub(super) fn check_pattern(
+    pattern: &PatternNode,
+    value_ty: &Type,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    check_pattern_inner(pattern, value_ty, None, type_checker, errors);
+}
+
+pub(super) fn check_match_pattern(
+    pattern: &PatternNode,
+    scrutinee_ty: &Type,
+    enum_def: &EnumDef,
+    covered_variants: &mut HashSet<Ident>,
+    has_wildcard: &mut bool,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    check_pattern_inner(
+        pattern,
+        scrutinee_ty,
+        Some((enum_def, covered_variants, has_wildcard)),
+        type_checker,
+        errors,
+    );
+}
+
+fn check_pattern_inner(
+    pattern: &PatternNode,
+    value_ty: &Type,
+    match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    match &pattern.node {
+        Pattern::Ident(name) => {
+            type_checker.set_var(*name, value_ty.clone());
+            if let Some((_, _, has_wildcard)) = match_ctx {
+                *has_wildcard = true;
+            }
+        }
+        Pattern::Wildcard => {
+            if let Some((_, _, has_wildcard)) = match_ctx {
+                *has_wildcard = true;
+            }
+        }
+        Pattern::Tuple(subpatterns) => {
+            let Some(elem_types) = value_ty.tuple_element_types() else {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::NonTupleInTuplePattern {
+                        found: value_ty.clone(),
+                        pattern_arity: subpatterns.len(),
+                    },
+                ));
+                return;
+            };
+
+            let same_arity = subpatterns.len() == elem_types.len();
+            if !same_arity {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::TuplePatternArityMismatch {
+                        expected: elem_types.len(),
+                        found: subpatterns.len(),
+                    },
+                ));
+                return;
+            }
+
+            for (subpat, elem_ty) in subpatterns.iter().zip(elem_types.iter()) {
+                check_pattern_inner(subpat, elem_ty, None, type_checker, errors);
+            }
+        }
+        Pattern::NamedTuple(elems) => {
+            let Some(elem_types) = value_ty.tuple_element_types() else {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::NonTupleInTuplePattern {
+                        found: value_ty.clone(),
+                        pattern_arity: elems.len(),
+                    },
+                ));
+                return;
+            };
+
+            let value_labels: Option<Vec<Ident>> = match value_ty {
+                Type::NamedTuple(fields) => Some(fields.iter().map(|(name, _)| *name).collect()),
+                _ => None,
+            };
+
+            let same_arity = elems.len() == elem_types.len();
+            if !same_arity {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::TuplePatternArityMismatch {
+                        expected: elem_types.len(),
+                        found: elems.len(),
+                    },
+                ));
+                return;
+            }
+
+            let Some(labels) = value_labels else {
+                errors.push(
+                    TypeErr::new(pattern.span, TypeErrKind::NamedPatternOnPositionalTuple)
+                        .with_help("use positional pattern `(a, b, ...)` instead"),
+                );
+                return;
+            };
+
+            for ((pat_label, _), ty_label) in elems.iter().zip(labels.iter()) {
+                if *pat_label != *ty_label {
+                    errors.push(TypeErr::new(
+                        pattern.span,
+                        TypeErrKind::TuplePatternLabelMismatch {
+                            expected: *ty_label,
+                            found: *pat_label,
+                        },
+                    ));
+                }
+            }
+
+            for ((_, subpat), elem_ty) in elems.iter().zip(elem_types.iter()) {
+                check_pattern_inner(subpat, elem_ty, None, type_checker, errors);
+            }
+        }
+        Pattern::EnumUnit { qualifier, variant } => {
+            check_enum_pattern(
+                pattern,
+                *qualifier,
+                *variant,
+                &[],
+                value_ty,
+                match_ctx,
+                type_checker,
+                errors,
+            );
+        }
+        Pattern::EnumTuple {
+            qualifier,
+            variant,
+            fields,
+        } => {
+            check_enum_pattern(
+                pattern,
+                *qualifier,
+                *variant,
+                fields,
+                value_ty,
+                match_ctx,
+                type_checker,
+                errors,
+            );
+        }
+        Pattern::EnumStruct {
+            qualifier,
+            variant,
+            fields,
+        } => {
+            check_enum_struct_pattern(
+                pattern,
+                *qualifier,
+                *variant,
+                fields,
+                value_ty,
+                match_ctx,
+                type_checker,
+                errors,
+            );
+        }
+    }
+}
+
+fn check_enum_pattern(
+    pattern: &PatternNode,
+    qualifier: Ident,
+    variant_name: Ident,
+    fields: &[PatternNode],
+    value_ty: &Type,
+    match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    let Type::Enum {
+        name: enum_name,
+        type_args,
+    } = value_ty
+    else {
+        errors.push(TypeErr::new(
+            pattern.span,
+            TypeErrKind::MismatchedTypes {
+                expected: value_ty.clone(),
+                found: Type::Enum {
+                    name: qualifier,
+                    type_args: vec![],
+                },
+            },
+        ));
+        return;
+    };
+
+    if qualifier != *enum_name {
+        errors.push(TypeErr::new(
+            pattern.span,
+            TypeErrKind::MatchPatternEnumMismatch {
+                expected_enum: *enum_name,
+                pattern_enum: qualifier,
+            },
+        ));
+        return;
+    }
+
+    let Some(enum_def) = type_checker.get_enum(qualifier) else {
+        errors.push(TypeErr::new(
+            pattern.span,
+            TypeErrKind::UnknownEnum { name: qualifier },
+        ));
+        return;
+    };
+    let enum_def = enum_def.clone();
+
+    let Some(variant_def) = enum_def.variants.iter().find(|v| v.name == variant_name) else {
+        errors.push(TypeErr::new(
+            pattern.span,
+            TypeErrKind::UnknownEnumVariant {
+                enum_name: qualifier,
+                variant_name,
+            },
+        ));
+        return;
+    };
+
+    if let Some((_, covered_variants, _)) = match_ctx {
+        covered_variants.insert(variant_name);
+    }
+
+    match &variant_def.kind {
+        VariantKind::Unit => {
+            if !fields.is_empty() {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::EnumVariantNotTuple {
+                        enum_name: qualifier,
+                        variant_name,
+                    },
+                ));
+            }
+        }
+        VariantKind::Tuple(expected_types) => {
+            if fields.len() != expected_types.len() {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::EnumVariantArityMismatch {
+                        enum_name: qualifier,
+                        variant_name,
+                        expected: expected_types.len(),
+                        found: fields.len(),
+                    },
+                ));
+                return;
+            }
+
+            let subst = build_type_subst(&enum_def.type_params, type_args);
+
+            for (subpat, expected_ty) in fields.iter().zip(expected_types.iter()) {
+                let resolved_ty = substitute_type(expected_ty, &subst);
+                check_pattern_inner(subpat, &resolved_ty, None, type_checker, errors);
+            }
+        }
+        VariantKind::Struct(_) => {
+            errors.push(TypeErr::new(
+                pattern.span,
+                TypeErrKind::EnumVariantNotTuple {
+                    enum_name: qualifier,
+                    variant_name,
+                },
+            ));
+        }
+    }
+}
+
+fn check_enum_struct_pattern(
+    pattern: &PatternNode,
+    qualifier: Ident,
+    variant_name: Ident,
+    fields: &[(Ident, PatternNode)],
+    value_ty: &Type,
+    match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    let Type::Enum {
+        name: enum_name,
+        type_args,
+    } = value_ty
+    else {
+        errors.push(TypeErr::new(
+            pattern.span,
+            TypeErrKind::MismatchedTypes {
+                expected: value_ty.clone(),
+                found: Type::Enum {
+                    name: qualifier,
+                    type_args: vec![],
+                },
+            },
+        ));
+        return;
+    };
+
+    if qualifier != *enum_name {
+        errors.push(TypeErr::new(
+            pattern.span,
+            TypeErrKind::MatchPatternEnumMismatch {
+                expected_enum: *enum_name,
+                pattern_enum: qualifier,
+            },
+        ));
+        return;
+    }
+
+    let Some(enum_def) = type_checker.get_enum(qualifier) else {
+        errors.push(TypeErr::new(
+            pattern.span,
+            TypeErrKind::UnknownEnum { name: qualifier },
+        ));
+        return;
+    };
+    let enum_def = enum_def.clone();
+
+    let Some(variant_def) = enum_def.variants.iter().find(|v| v.name == variant_name) else {
+        errors.push(TypeErr::new(
+            pattern.span,
+            TypeErrKind::UnknownEnumVariant {
+                enum_name: qualifier,
+                variant_name,
+            },
+        ));
+        return;
+    };
+
+    if let Some((_, covered_variants, _)) = match_ctx {
+        covered_variants.insert(variant_name);
+    }
+
+    let VariantKind::Struct(expected_fields) = &variant_def.kind else {
+        errors.push(TypeErr::new(
+            pattern.span,
+            TypeErrKind::EnumVariantNotStruct {
+                enum_name: qualifier,
+                variant_name,
+            },
+        ));
+        return;
+    };
+
+    let subst = build_type_subst(&enum_def.type_params, type_args);
+
+    let mut seen_fields = HashSet::new();
+    for (field_name, subpat) in fields {
+        if !seen_fields.insert(*field_name) {
+            errors.push(TypeErr::new(
+                pattern.span,
+                TypeErrKind::EnumVariantDuplicateField {
+                    enum_name: qualifier,
+                    variant_name,
+                    field: *field_name,
+                },
+            ));
+            continue;
+        }
+
+        let Some(expected_field) = expected_fields.iter().find(|f| f.name == *field_name) else {
+            errors.push(TypeErr::new(
+                pattern.span,
+                TypeErrKind::EnumVariantUnknownField {
+                    enum_name: qualifier,
+                    variant_name,
+                    field: *field_name,
+                },
+            ));
+            continue;
+        };
+
+        let resolved_ty = substitute_type(&expected_field.ty, &subst);
+        check_pattern_inner(subpat, &resolved_ty, None, type_checker, errors);
+    }
+
+    for expected_field in expected_fields {
+        if !seen_fields.contains(&expected_field.name) {
+            errors.push(TypeErr::new(
+                pattern.span,
+                TypeErrKind::EnumVariantMissingField {
+                    enum_name: qualifier,
+                    variant_name,
+                    field: expected_field.name,
+                },
+            ));
+        }
+    }
+}
+
+fn build_type_subst(type_params: &[TypeParam], type_args: &[Type]) -> Vec<(TypeVarId, Type)> {
+    type_params
+        .iter()
+        .zip(type_args.iter())
+        .map(|(param, arg)| (param.id, arg.clone()))
+        .collect()
+}
+
+fn substitute_type(ty: &Type, subst: &[(TypeVarId, Type)]) -> Type {
+    match ty {
+        Type::Var(var_id) => {
+            for (param_id, arg) in subst {
+                if var_id == param_id {
+                    return arg.clone();
+                }
+            }
+            ty.clone()
+        }
+        Type::UnresolvedName(_) => {
+            // Unresolved names are left as-is (shouldn't normally happen)
+            ty.clone()
+        }
+        Type::Optional(inner) => Type::Optional(Box::new(substitute_type(inner, subst))),
+        Type::Tuple(elems) => {
+            Type::Tuple(elems.iter().map(|t| substitute_type(t, subst)).collect())
+        }
+        Type::NamedTuple(fields) => Type::NamedTuple(
+            fields
+                .iter()
+                .map(|(n, t)| (*n, substitute_type(t, subst)))
+                .collect(),
+        ),
+        Type::List { elem } => Type::List {
+            elem: Box::new(substitute_type(elem, subst)),
+        },
+        Type::Array { elem, len } => Type::Array {
+            elem: Box::new(substitute_type(elem, subst)),
+            len: *len,
+        },
+        Type::Struct { name, type_args } => Type::Struct {
+            name: *name,
+            type_args: type_args
+                .iter()
+                .map(|t| substitute_type(t, subst))
+                .collect(),
+        },
+        Type::Enum { name, type_args } => Type::Enum {
+            name: *name,
+            type_args: type_args
+                .iter()
+                .map(|t| substitute_type(t, subst))
+                .collect(),
+        },
+        _ => ty.clone(),
+    }
+}

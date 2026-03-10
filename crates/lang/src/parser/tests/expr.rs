@@ -1,0 +1,385 @@
+use crate::ast;
+use super::helpers::*;
+
+#[test]
+fn multiplication_outbinds_addition() {
+    let expr = parse_expr("1 + 2 * 3");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::Add);
+    expect_int(left, 1);
+    let (mul_left, mul_right) = expect_binary(right, ast::BinaryOp::Mul);
+    expect_int(mul_left, 2);
+    expect_int(mul_right, 3);
+}
+
+#[test]
+fn subtraction_is_left_associative() {
+    let expr = parse_expr("a - b - c");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::Sub);
+    let (first_left, first_right) = expect_binary(left, ast::BinaryOp::Sub);
+    expect_ident(first_left, "a");
+    expect_ident(first_right, "b");
+    expect_ident(right, "c");
+}
+
+#[test]
+fn comparison_is_looser_than_arithmetic() {
+    let expr = parse_expr("a + b < c * d");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::LessThan);
+    let (add_left, add_right) = expect_binary(left, ast::BinaryOp::Add);
+    expect_ident(add_left, "a");
+    expect_ident(add_right, "b");
+    let (mul_left, mul_right) = expect_binary(right, ast::BinaryOp::Mul);
+    expect_ident(mul_left, "c");
+    expect_ident(mul_right, "d");
+}
+
+#[test]
+fn equality_is_looser_than_multiplication_and_left_assoc() {
+    let expr = parse_expr("a * b == c + d");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::Eq);
+    let (mul_left, mul_right) = expect_binary(left, ast::BinaryOp::Mul);
+    expect_ident(mul_left, "a");
+    expect_ident(mul_right, "b");
+    let (add_left, add_right) = expect_binary(right, ast::BinaryOp::Add);
+    expect_ident(add_left, "c");
+    expect_ident(add_right, "d");
+
+    let chain = parse_expr("x == y == z");
+    let (first, tail) = expect_binary(&chain, ast::BinaryOp::Eq);
+    let (lhs, rhs) = expect_binary(first, ast::BinaryOp::Eq);
+    expect_ident(lhs, "x");
+    expect_ident(rhs, "y");
+    expect_ident(tail, "z");
+}
+
+#[test]
+fn logical_and_has_higher_precedence_than_or() {
+    let expr = parse_expr("a && b || c");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::Or);
+    let (and_left, and_right) = expect_binary(left, ast::BinaryOp::And);
+    expect_ident(and_left, "a");
+    expect_ident(and_right, "b");
+    expect_ident(right, "c");
+}
+
+#[test]
+fn coalesce_sits_between_and_and_or() {
+    let expr = parse_expr("a ?? b || c");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::Or);
+    let (coal_left, coal_right) = expect_binary(left, ast::BinaryOp::Coalesce);
+    expect_ident(coal_left, "a");
+    expect_ident(coal_right, "b");
+    expect_ident(right, "c");
+
+    let expr = parse_expr("a && b ?? c");
+    let (coal_left, coal_right) = expect_binary(&expr, ast::BinaryOp::Coalesce);
+    let (and_left, and_right) = expect_binary(coal_left, ast::BinaryOp::And);
+    expect_ident(and_left, "a");
+    expect_ident(and_right, "b");
+    expect_ident(coal_right, "c");
+}
+
+#[test]
+fn coalesce_vs_and_and_chain() {
+    let expr = parse_expr("a ?? b && c");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::Coalesce);
+    expect_ident(left, "a");
+    let (and_left, and_right) = expect_binary(right, ast::BinaryOp::And);
+    expect_ident(and_left, "b");
+    expect_ident(and_right, "c");
+
+    let expr = parse_expr("a ?? b ?? c");
+    let (first, tail) = expect_binary(&expr, ast::BinaryOp::Coalesce);
+    let (left_left, left_right) = expect_binary(first, ast::BinaryOp::Coalesce);
+    expect_ident(left_left, "a");
+    expect_ident(left_right, "b");
+    expect_ident(tail, "c");
+}
+
+#[test]
+fn coalesce_interacts_with_equality() {
+    let expr = parse_expr("x == y ?? z");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::Coalesce);
+    let (eq_left, eq_right) = expect_binary(left, ast::BinaryOp::Eq);
+    expect_ident(eq_left, "x");
+    expect_ident(eq_right, "y");
+    expect_ident(right, "z");
+
+    let expr = parse_expr("x ?? y == z");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::Coalesce);
+    expect_ident(left, "x");
+    let (eq_left, eq_right) = expect_binary(right, ast::BinaryOp::Eq);
+    expect_ident(eq_left, "y");
+    expect_ident(eq_right, "z");
+}
+
+#[test]
+fn complex_expression_respects_all_levels() {
+    let expr = parse_expr("a + b ?? c * d && e || f");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::Or);
+    expect_ident(right, "f");
+
+    let (coal_left, coal_right) = expect_binary(left, ast::BinaryOp::Coalesce);
+    let (add_left, add_right) = expect_binary(coal_left, ast::BinaryOp::Add);
+    expect_ident(add_left, "a");
+    expect_ident(add_right, "b");
+
+    let (and_left, and_right) = expect_binary(coal_right, ast::BinaryOp::And);
+    let (mul_left, mul_right) = expect_binary(and_left, ast::BinaryOp::Mul);
+    expect_ident(mul_left, "c");
+    expect_ident(mul_right, "d");
+    expect_ident(and_right, "e");
+}
+
+#[test]
+fn range_has_lower_precedence_than_addition() {
+    let expr = parse_expr("1 + 2 .. 3");
+    let (start, end) = expect_range(&expr, false);
+    let (add_left, add_right) = expect_binary(start, ast::BinaryOp::Add);
+    expect_int(add_left, 1);
+    expect_int(add_right, 2);
+    expect_int(end, 3);
+}
+
+#[test]
+fn range_has_higher_precedence_than_comparison() {
+    let expr = parse_expr("a..b < c");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::LessThan);
+    let (start, end) = expect_range(left, false);
+    expect_ident(start, "a");
+    expect_ident(end, "b");
+    expect_ident(right, "c");
+}
+
+#[test]
+fn inclusive_range_parses() {
+    let expr = parse_expr("0..=10");
+    let (start, end) = expect_range(&expr, true);
+    expect_int(start, 0);
+    expect_int(end, 10);
+}
+
+#[test]
+fn range_in_complex_expression_respects_all_levels() {
+    let expr = parse_expr("a + b .. c < d && e ?? f || g");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::Or);
+    expect_ident(right, "g");
+
+    let (coal_left, coal_right) = expect_binary(left, ast::BinaryOp::Coalesce);
+    expect_ident(coal_right, "f");
+
+    let (and_left, and_right) = expect_binary(coal_left, ast::BinaryOp::And);
+    expect_ident(and_right, "e");
+
+    let (cmp_left, cmp_right) = expect_binary(and_left, ast::BinaryOp::LessThan);
+    expect_ident(cmp_right, "d");
+
+    let (range_start, range_end) = expect_range(cmp_left, false);
+    let (add_left, add_right) = expect_binary(range_start, ast::BinaryOp::Add);
+    expect_ident(add_left, "a");
+    expect_ident(add_right, "b");
+    expect_ident(range_end, "c");
+}
+
+#[test]
+fn optional_field_flags() {
+    let expr = parse_expr("foo?.bar");
+    let target = expect_field(&expr, "bar", true);
+    expect_ident(target, "foo");
+}
+
+#[test]
+fn optional_field_chain_mixed() {
+    let expr = parse_expr("foo?.bar.baz");
+    let first = expect_field(&expr, "baz", false);
+    let base = expect_field(first, "bar", true);
+    expect_ident(base, "foo");
+
+    let expr = parse_expr("foo.bar?.baz");
+    let first = expect_field(&expr, "baz", true);
+    let base = expect_field(first, "bar", false);
+    expect_ident(base, "foo");
+}
+
+#[test]
+fn optional_index_and_field_mix() {
+    let expr = parse_expr("arr?[0]");
+    let (target, index_expr) = expect_index(&expr, true);
+    expect_ident(target, "arr");
+    expect_int(index_expr, 0);
+
+    let expr = parse_expr("arr?[i].field");
+    let field_target = expect_field(&expr, "field", false);
+    let (target, index_expr) = expect_index(field_target, true);
+    expect_ident(target, "arr");
+    expect_ident(index_expr, "i");
+}
+
+#[test]
+fn optional_map_index() {
+    let expr = parse_expr(r#"map?["key"]"#);
+    let (target, index_expr) = expect_index(&expr, true);
+    expect_ident(target, "map");
+    match &index_expr.node.kind {
+        ast::ExprKind::Lit(ast::Lit::String(s)) => assert_eq!(s, "key"),
+        other => panic!("expected string literal key, found {other:?}"),
+    }
+}
+
+#[test]
+fn optional_call_suffix() {
+    let expr = parse_expr("foo?()");
+    let (target, args) = expect_call(&expr, true);
+    expect_ident(target, "foo");
+    assert!(args.is_empty());
+}
+
+#[test]
+fn optional_chain_precedence_with_coalesce() {
+    let expr = parse_expr("foo?.bar ?? default");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::Coalesce);
+    expect_ident(right, "default");
+    let field_target = expect_field(left, "bar", true);
+    expect_ident(field_target, "foo");
+
+    let expr = parse_expr("foo?.bar?.baz ?? y");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::Coalesce);
+    expect_ident(right, "y");
+    let baz_target = expect_field(left, "baz", true);
+    let bar_target = expect_field(baz_target, "bar", true);
+    expect_ident(bar_target, "foo");
+}
+
+#[test]
+fn array_literal_basic_parses() {
+    let expr = parse_expr("[1, 2, 3]");
+    let elements = expect_array_literal(&expr);
+    assert_eq!(elements.len(), 3);
+    expect_int(&elements[0], 1);
+    expect_int(&elements[1], 2);
+    expect_int(&elements[2], 3);
+}
+
+#[test]
+fn array_literal_trailing_comma_parses() {
+    let expr = parse_expr("[1, 2, 3,]");
+    let elements = expect_array_literal(&expr);
+    assert_eq!(elements.len(), 3);
+    expect_int(&elements[0], 1);
+    expect_int(&elements[1], 2);
+    expect_int(&elements[2], 3);
+}
+
+#[test]
+fn array_literal_empty_parses() {
+    let expr = parse_expr("[]");
+    let elements = expect_array_literal(&expr);
+    assert_eq!(elements.len(), 0);
+}
+
+#[test]
+fn array_literal_nested_parses() {
+    let expr = parse_expr("[[1, 2], [3, 4]]");
+    let outer_elements = expect_array_literal(&expr);
+    assert_eq!(outer_elements.len(), 2);
+
+    let inner1 = expect_array_literal(&outer_elements[0]);
+    assert_eq!(inner1.len(), 2);
+    expect_int(&inner1[0], 1);
+    expect_int(&inner1[1], 2);
+
+    let inner2 = expect_array_literal(&outer_elements[1]);
+    assert_eq!(inner2.len(), 2);
+    expect_int(&inner2[0], 3);
+    expect_int(&inner2[1], 4);
+}
+
+#[test]
+fn array_fill_literal_basic_parses() {
+    let expr = parse_expr("[0; 3]");
+    let (value, len) = expect_array_fill(&expr);
+    expect_int(value, 0);
+    expect_int(len, 3);
+}
+
+#[test]
+fn array_fill_literal_with_expr_len_parses() {
+    let expr = parse_expr("[x + 1; n]");
+    let (value, len) = expect_array_fill(&expr);
+
+    let (left, right) = expect_binary(value, ast::BinaryOp::Add);
+    expect_ident(left, "x");
+    expect_int(right, 1);
+
+    expect_ident(len, "n");
+}
+
+#[test]
+fn empty_map_literal_parses() {
+    let expr = parse_expr("[:]");
+    let entries = expect_map_literal(&expr);
+    assert!(entries.is_empty());
+}
+
+#[test]
+fn single_entry_map_literal_parses() {
+    let expr = parse_expr(r#"["hp": 100]"#);
+    let entries = expect_map_literal(&expr);
+    assert_eq!(entries.len(), 1);
+    expect_string(&entries[0].0, "hp");
+    expect_int(&entries[0].1, 100);
+}
+
+#[test]
+fn multi_entry_map_literal_parses() {
+    let expr = parse_expr(r#"["hp": 100, "mp": 50]"#);
+    let entries = expect_map_literal(&expr);
+    assert_eq!(entries.len(), 2);
+    expect_string(&entries[0].0, "hp");
+    expect_int(&entries[0].1, 100);
+    expect_string(&entries[1].0, "mp");
+    expect_int(&entries[1].1, 50);
+}
+
+#[test]
+fn map_literal_trailing_comma_parses() {
+    let expr = parse_expr(r#"["a": 1,]"#);
+    let entries = expect_map_literal(&expr);
+    assert_eq!(entries.len(), 1);
+    expect_string(&entries[0].0, "a");
+    expect_int(&entries[0].1, 1);
+}
+
+#[test]
+fn map_literal_int_keys_parses() {
+    let expr = parse_expr(r#"[1: "one", 2: "two"]"#);
+    let entries = expect_map_literal(&expr);
+    assert_eq!(entries.len(), 2);
+    expect_int(&entries[0].0, 1);
+    expect_string(&entries[0].1, "one");
+    expect_int(&entries[1].0, 2);
+    expect_string(&entries[1].1, "two");
+}
+
+#[test]
+fn map_literal_nested_parses() {
+    let expr = parse_expr(r#"["outer": ["inner": 1]]"#);
+    let outer = expect_map_literal(&expr);
+    assert_eq!(outer.len(), 1);
+    expect_string(&outer[0].0, "outer");
+    let inner = expect_map_literal(&outer[0].1);
+    assert_eq!(inner.len(), 1);
+    expect_string(&inner[0].0, "inner");
+    expect_int(&inner[0].1, 1);
+}
+
+#[test]
+fn map_literal_expr_values_parses() {
+    let expr = parse_expr(r#"["sum": 1 + 2]"#);
+    let entries = expect_map_literal(&expr);
+    assert_eq!(entries.len(), 1);
+    expect_string(&entries[0].0, "sum");
+    let (left, right) = expect_binary(&entries[0].1, ast::BinaryOp::Add);
+    expect_int(left, 1);
+    expect_int(right, 2);
+}

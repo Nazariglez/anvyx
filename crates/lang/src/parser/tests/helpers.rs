@@ -1,0 +1,188 @@
+use crate::ast;
+use crate::lexer;
+use crate::parser::expr::expression;
+use crate::parser::stmt::statement;
+use crate::parser::types::{param_type_ident, type_ident};
+use crate::parser::{parser, ParserState};
+use chumsky::extra::SimpleState;
+use chumsky::prelude::*;
+
+pub(super) fn parse_expr(src: &str) -> ast::ExprNode {
+    let tokens = lexer::tokenize(src)
+        .unwrap_or_else(|errs| panic!("failed to tokenize '{src}': {errs:?}"));
+    let stmt_parser = statement();
+    let expr_parser = expression(stmt_parser.clone()).then_ignore(end());
+    let mut state = SimpleState(ParserState::default());
+    expr_parser
+        .parse_with_state(&tokens, &mut state)
+        .into_result()
+        .unwrap_or_else(|errs| panic!("failed to parse '{src}': {errs:?}"))
+}
+
+pub(super) fn parse_program(src: &str) -> ast::Program {
+    let tokens = lexer::tokenize(src)
+        .unwrap_or_else(|errs| panic!("failed to tokenize '{src}': {errs:?}"));
+    let mut state = SimpleState(ParserState::default());
+    parser()
+        .parse_with_state(&tokens, &mut state)
+        .into_result()
+        .unwrap_or_else(|errs| panic!("failed to parse '{src}': {errs:?}"))
+}
+
+pub(super) fn parse_type(src: &str) -> ast::Type {
+    let tokens = lexer::tokenize(src)
+        .unwrap_or_else(|errs| panic!("failed to tokenize type '{src}': {errs:?}"));
+    let mut state = SimpleState(ParserState::default());
+    type_ident()
+        .then_ignore(end())
+        .parse_with_state(&tokens, &mut state)
+        .into_result()
+        .unwrap_or_else(|errs| panic!("failed to parse type '{src}': {errs:?}"))
+}
+
+pub(super) fn parse_param_type(src: &str) -> ast::Type {
+    let tokens = lexer::tokenize(src)
+        .unwrap_or_else(|errs| panic!("failed to tokenize type '{src}': {errs:?}"));
+    let mut state = SimpleState(ParserState::default());
+    param_type_ident()
+        .then_ignore(end())
+        .parse_with_state(&tokens, &mut state)
+        .into_result()
+        .unwrap_or_else(|errs| panic!("failed to parse param type '{src}': {errs:?}"))
+}
+
+pub(super) fn expect_binary<'a>(
+    expr: &'a ast::ExprNode,
+    op: ast::BinaryOp,
+) -> (&'a ast::ExprNode, &'a ast::ExprNode) {
+    match &expr.node().kind {
+        ast::ExprKind::Binary(bin_node) => {
+            let binary = bin_node.node();
+            assert_eq!(
+                binary.op, op,
+                "expected binary op {:?}, found {:?}",
+                op, binary.op
+            );
+            (binary.left.as_ref(), binary.right.as_ref())
+        }
+        other => panic!("expected binary op {op:?}, found {other:?}"),
+    }
+}
+
+pub(super) fn expect_range<'a>(
+    expr: &'a ast::ExprNode,
+    inclusive: bool,
+) -> (&'a ast::ExprNode, &'a ast::ExprNode) {
+    match &expr.node().kind {
+        ast::ExprKind::Range(range_node) => {
+            let range = range_node.node();
+            assert_eq!(
+                range.inclusive, inclusive,
+                "expected inclusive={inclusive}, found {}",
+                range.inclusive
+            );
+            (&range.start, &range.end)
+        }
+        other => panic!("expected range expr, found {other:?}"),
+    }
+}
+
+pub(super) fn expect_ident(expr: &ast::ExprNode, name: &str) {
+    match &expr.node().kind {
+        ast::ExprKind::Ident(ident) => {
+            assert_eq!(ident.0.as_ref(), name, "expected ident '{name}'");
+        }
+        other => panic!("expected ident '{name}', found {other:?}"),
+    }
+}
+
+pub(super) fn expect_int(expr: &ast::ExprNode, value: i64) {
+    match &expr.node().kind {
+        ast::ExprKind::Lit(ast::Lit::Int(v)) => {
+            assert_eq!(v, &value, "expected int literal {value}");
+        }
+        other => panic!("expected int literal {value}, found {other:?}"),
+    }
+}
+
+pub(super) fn expect_field<'a>(expr: &'a ast::ExprNode, name: &str, safe: bool) -> &'a ast::ExprNode {
+    match &expr.node.kind {
+        ast::ExprKind::Field(field_node) => {
+            let node = field_node.node();
+            assert_eq!(node.field.0.as_ref(), name, "expected field '{name}'");
+            assert_eq!(
+                node.safe, safe,
+                "expected field '{name}' safe={safe}, found {}",
+                node.safe
+            );
+            node.target.as_ref()
+        }
+        other => panic!("expected field access '{name}', found {other:?}"),
+    }
+}
+
+pub(super) fn expect_index<'a>(
+    expr: &'a ast::ExprNode,
+    safe: bool,
+) -> (&'a ast::ExprNode, &'a ast::ExprNode) {
+    match &expr.node.kind {
+        ast::ExprKind::Index(index_node) => {
+            let node = index_node.node();
+            assert_eq!(
+                node.safe, safe,
+                "expected index safe={safe}, found {}",
+                node.safe
+            );
+            (node.target.as_ref(), node.index.as_ref())
+        }
+        other => panic!("expected index expr, found {other:?}"),
+    }
+}
+
+pub(super) fn expect_call<'a>(
+    expr: &'a ast::ExprNode,
+    safe: bool,
+) -> (&'a ast::ExprNode, &'a [ast::ExprNode]) {
+    match &expr.node.kind {
+        ast::ExprKind::Call(call_node) => {
+            let node = call_node.node();
+            assert_eq!(
+                node.safe, safe,
+                "expected call safe={safe}, found {}",
+                node.safe
+            );
+            (node.func.as_ref(), node.args.as_slice())
+        }
+        other => panic!("expected call expr, found {other:?}"),
+    }
+}
+
+pub(super) fn expect_array_literal(expr: &ast::ExprNode) -> &[ast::ExprNode] {
+    match &expr.node.kind {
+        ast::ExprKind::ArrayLiteral(lit) => &lit.node.elements,
+        other => panic!("expected ArrayLiteral, found {other:?}"),
+    }
+}
+
+pub(super) fn expect_array_fill(expr: &ast::ExprNode) -> (&ast::ExprNode, &ast::ExprNode) {
+    match &expr.node.kind {
+        ast::ExprKind::ArrayFill(fill) => (&fill.node.value, &fill.node.len),
+        other => panic!("expected ArrayFill, found {other:?}"),
+    }
+}
+
+pub(super) fn expect_map_literal(expr: &ast::ExprNode) -> &[(ast::ExprNode, ast::ExprNode)] {
+    match &expr.node.kind {
+        ast::ExprKind::MapLiteral(lit) => &lit.node.entries,
+        other => panic!("expected MapLiteral, found {other:?}"),
+    }
+}
+
+pub(super) fn expect_string(expr: &ast::ExprNode, value: &str) {
+    match &expr.node.kind {
+        ast::ExprKind::Lit(ast::Lit::String(s)) => {
+            assert_eq!(s, value, "expected string literal '{value}'");
+        }
+        other => panic!("expected string literal '{value}', found {other:?}"),
+    }
+}
