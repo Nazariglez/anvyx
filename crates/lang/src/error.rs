@@ -251,7 +251,7 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
         TypeErrKind::ReadonlySelfMutation { struct_name, field } => (
             format!("Cannot assign to field '{field}' in readonly method"),
             format!(
-                "'self' is readonly in this method of '{struct_name}'; use '&self' for mutating methods"
+                "'self' is readonly in this method of '{struct_name}'; use 'var self' for mutating methods"
             ),
         ),
         TypeErrKind::ForIterableNotRange { found } => (
