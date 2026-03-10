@@ -1,5 +1,8 @@
 use crate::{
-    ast::{CallNode, ExprKind, ExprNode, FieldAccessNode, Ident, Type, TypeVarId, VariantKind},
+    ast::{
+        CallNode, ExprKind, ExprNode, FieldAccessNode, Ident, MethodReceiver, Mutability, Type,
+        TypeVarId, VariantKind,
+    },
     span::Span,
 };
 use std::collections::HashMap;
@@ -15,6 +18,88 @@ use super::{
     },
     types::{EnumDef, SpecializationKey, SpecializationResult, StructDef, TypeChecker},
 };
+
+fn root_ident(expr: &ExprNode) -> Option<Ident> {
+    match &expr.node.kind {
+        ExprKind::Ident(name) => Some(*name),
+        ExprKind::Field(field) => root_ident(&field.node.target),
+        ExprKind::Index(index) => root_ident(&index.node.target),
+        _ => None,
+    }
+}
+
+fn check_var_param_args(
+    params: &[(Ident, Mutability)],
+    args: &[ExprNode],
+    type_checker: &TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    for ((param_name, mutability), arg) in params.iter().zip(args.iter()) {
+        if *mutability != Mutability::Mutable {
+            continue;
+        }
+
+        let Some(root) = root_ident(arg) else {
+            errors.push(
+                TypeErr::new(arg.span, TypeErrKind::VarParamNotLvalue { param: *param_name })
+                    .with_help("pass a variable declared with 'var', not a literal or expression"),
+            );
+            continue;
+        };
+
+        let Some(info) = type_checker.get_var(root) else {
+            continue;
+        };
+
+        if !info.mutable {
+            errors.push(
+                TypeErr::new(
+                    arg.span,
+                    TypeErrKind::VarParamImmutableBinding {
+                        param: *param_name,
+                        binding: root,
+                    },
+                )
+                .with_help("declare with 'var' to allow mutation"),
+            );
+        }
+    }
+}
+
+fn check_mutating_receiver(
+    target: &ExprNode,
+    struct_name: Ident,
+    method_name: Ident,
+    receiver: Option<MethodReceiver>,
+    type_checker: &TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    let is_mutating = matches!(receiver, Some(MethodReceiver::Var));
+    if !is_mutating {
+        return;
+    }
+
+    let Some(root) = root_ident(target) else {
+        return;
+    };
+
+    let Some(info) = type_checker.get_var(root) else {
+        return;
+    };
+
+    if !info.mutable {
+        errors.push(
+            TypeErr::new(
+                target.span,
+                TypeErrKind::MutatingMethodOnImmutable {
+                    struct_name,
+                    method: method_name,
+                },
+            )
+            .with_help("declare with 'var' to allow calling mutating methods"),
+        );
+    }
+}
 
 pub(super) fn check_call(
     call: &CallNode,
@@ -88,7 +173,10 @@ pub(super) fn check_call(
                 return Type::Infer;
             };
 
-            // now instantiate and check the function body with the inferred types
+            if let Some(param_info) = type_checker.func_param_info.get(&name).cloned() {
+                check_var_param_args(&param_info, &node.args, type_checker, errors);
+            }
+
             return instantiate_and_check_fn(
                 name,
                 &inferred_type_args,
@@ -172,7 +260,10 @@ pub(super) fn check_call(
                 type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
             }
 
-            // now instantiate and check the function body with the explicit types
+            if let Some(param_info) = type_checker.func_param_info.get(&name).cloned() {
+                check_var_param_args(&param_info, &node.args, type_checker, errors);
+            }
+
             return instantiate_and_check_fn(
                 name,
                 &node.type_args,
@@ -187,7 +278,15 @@ pub(super) fn check_call(
     }
 
     // fallback to normal call
-    check_call_with_type(call, func_ty, type_checker, errors)
+    let result = check_call_with_type(call, func_ty, type_checker, errors);
+
+    if let Some(name) = func_name {
+        if let Some(param_info) = type_checker.func_param_info.get(&name).cloned() {
+            check_var_param_args(&param_info, &node.args, type_checker, errors);
+        }
+    }
+
+    result
 }
 
 pub(super) fn check_call_signature(
@@ -306,6 +405,7 @@ pub(super) fn try_check_method_call(
             method_name,
             type_args,
             &struct_def,
+            Some(target),
             type_checker,
             errors,
         ));
@@ -409,7 +509,7 @@ fn check_enum_tuple_variant(
                     let slot_name = slots.get(&param.id).expect("slot exists");
                     type_checker
                         .get_var(*slot_name)
-                        .cloned()
+                        .map(|info| info.ty.clone())
                         .unwrap_or(Type::Infer)
                 })
                 .collect::<Vec<_>>()
@@ -489,7 +589,7 @@ pub(super) fn check_static_method_call(
         .map(|p| p.ty.clone())
         .collect::<Vec<_>>();
     let ret_type = method.ret.clone();
-    check_call_signature(
+    let result = check_call_signature(
         call.span,
         &param_types,
         &ret_type,
@@ -497,7 +597,16 @@ pub(super) fn check_static_method_call(
         None,
         type_checker,
         errors,
-    )
+    );
+
+    let param_info: Vec<_> = method
+        .params
+        .iter()
+        .map(|p| (p.name, p.mutability))
+        .collect();
+    check_var_param_args(&param_info, &node.args, type_checker, errors);
+
+    result
 }
 
 pub(super) fn check_instance_method_call(
@@ -506,6 +615,7 @@ pub(super) fn check_instance_method_call(
     method_name: Ident,
     type_args: &[Type],
     struct_def: &StructDef,
+    target: Option<&ExprNode>,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
@@ -531,6 +641,10 @@ pub(super) fn check_instance_method_call(
         return Type::Infer;
     }
 
+    if let Some(target) = target {
+        check_mutating_receiver(target, struct_name, method_name, method.receiver, type_checker, errors);
+    }
+
     let node = &call.node;
 
     let subst: HashMap<TypeVarId, Type> = struct_def
@@ -547,7 +661,7 @@ pub(super) fn check_instance_method_call(
         .collect();
     let ret_type = subst_type(&method.ret, &subst);
 
-    check_call_signature(
+    let result = check_call_signature(
         call.span,
         &param_types,
         &ret_type,
@@ -555,7 +669,16 @@ pub(super) fn check_instance_method_call(
         None,
         type_checker,
         errors,
-    )
+    );
+
+    let param_info: Vec<_> = method
+        .params
+        .iter()
+        .map(|p| (p.name, p.mutability))
+        .collect();
+    check_var_param_args(&param_info, &node.args, type_checker, errors);
+
+    result
 }
 
 /// Instantiates a generic function with concrete type arguments and typechecks the specialized body

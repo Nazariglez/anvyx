@@ -34,7 +34,7 @@ pub(super) fn check_expr(
     let expr = &expr_node.node;
     let ty = match &expr.kind {
         ExprKind::Ident(ident) => match type_checker.get_var(*ident) {
-            Some(ty) => ty.clone(),
+            Some(info) => info.ty.clone(),
             None => {
                 errors.push(TypeErr::new(
                     expr_node.span,

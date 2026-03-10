@@ -65,6 +65,7 @@ pub(super) fn check_postfix_chain(
             i,
             &current_ty,
             chain_is_optional,
+            base,
             type_checker,
             errors,
         ) {
@@ -155,6 +156,7 @@ fn handle_method_call_if_applicable(
     index: usize,
     current_ty: &Type,
     chain_is_optional: bool,
+    base: &ExprNode,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Option<MethodCallOutcome> {
@@ -242,6 +244,7 @@ fn handle_method_call_if_applicable(
         field_node.node.field,
         &struct_type_args,
         &struct_def,
+        Some(base),
         type_checker,
         errors,
     );

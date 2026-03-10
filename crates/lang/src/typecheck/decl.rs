@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Func, FuncNode, Ident, StructDeclNode, Type},
+    ast::{Func, FuncNode, Ident, MethodReceiver, Mutability, StructDeclNode, Type},
     span::Span,
 };
 use internment::Intern;
@@ -25,7 +25,8 @@ pub(super) fn check_fn_body(
 
     // bind parameters into scope with the provided types
     for (param, ty) in func.params.iter().zip(param_types.iter()) {
-        type_checker.set_var(param.name, ty.clone());
+        let mutable = matches!(param.mutability, Mutability::Mutable);
+        type_checker.set_var(param.name, ty.clone(), mutable);
     }
 
     // treat the block as an expression for implicit returns
@@ -92,13 +93,15 @@ pub(super) fn check_method_body(
         receiver: method.receiver,
     });
 
-    if method.receiver.is_some() {
+    if let Some(receiver) = method.receiver {
         let self_ident = Ident(Intern::new("self".to_string()));
-        type_checker.set_var(self_ident, self_type);
+        let self_mutable = matches!(receiver, MethodReceiver::Var);
+        type_checker.set_var(self_ident, self_type, self_mutable);
     }
 
     for param in &method.params {
-        type_checker.set_var(param.name, param.ty.clone());
+        let mutable = matches!(param.mutability, Mutability::Mutable);
+        type_checker.set_var(param.name, param.ty.clone(), mutable);
     }
 
     let (body_ty, last_expr_id) = check_block_expr(&method.body, type_checker, errors);
@@ -147,7 +150,7 @@ pub(super) fn check_func(
         return;
     }
 
-    let Some(ty) = type_checker.get_var(func.name) else {
+    let Some(info) = type_checker.get_var(func.name) else {
         errors.push(TypeErr::new(
             fn_node.span,
             TypeErrKind::UnknownFunction { name: func.name },
@@ -155,6 +158,7 @@ pub(super) fn check_func(
 
         return;
     };
+    let ty = &info.ty;
 
     if !matches!(ty, Type::Func { .. }) {
         errors.push(TypeErr::new(

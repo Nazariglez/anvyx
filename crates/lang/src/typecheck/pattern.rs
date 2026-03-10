@@ -10,10 +10,11 @@ use super::{
 pub(super) fn check_pattern(
     pattern: &PatternNode,
     value_ty: &Type,
+    mutable: bool,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) {
-    check_pattern_inner(pattern, value_ty, None, type_checker, errors);
+    check_pattern_inner(pattern, value_ty, mutable, None, type_checker, errors);
 }
 
 pub(super) fn check_match_pattern(
@@ -28,6 +29,7 @@ pub(super) fn check_match_pattern(
     check_pattern_inner(
         pattern,
         scrutinee_ty,
+        false,
         Some((enum_def, covered_variants, has_wildcard)),
         type_checker,
         errors,
@@ -37,13 +39,14 @@ pub(super) fn check_match_pattern(
 fn check_pattern_inner(
     pattern: &PatternNode,
     value_ty: &Type,
+    mutable: bool,
     match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) {
     match &pattern.node {
         Pattern::Ident(name) => {
-            type_checker.set_var(*name, value_ty.clone());
+            type_checker.set_var(*name, value_ty.clone(), mutable);
             if let Some((_, _, has_wildcard)) = match_ctx {
                 *has_wildcard = true;
             }
@@ -78,7 +81,7 @@ fn check_pattern_inner(
             }
 
             for (subpat, elem_ty) in subpatterns.iter().zip(elem_types.iter()) {
-                check_pattern_inner(subpat, elem_ty, None, type_checker, errors);
+                check_pattern_inner(subpat, elem_ty, mutable, None, type_checker, errors);
             }
         }
         Pattern::NamedTuple(elems) => {
@@ -131,7 +134,7 @@ fn check_pattern_inner(
             }
 
             for ((_, subpat), elem_ty) in elems.iter().zip(elem_types.iter()) {
-                check_pattern_inner(subpat, elem_ty, None, type_checker, errors);
+                check_pattern_inner(subpat, elem_ty, mutable, None, type_checker, errors);
             }
         }
         Pattern::EnumUnit { qualifier, variant } => {
@@ -141,6 +144,7 @@ fn check_pattern_inner(
                 *variant,
                 &[],
                 value_ty,
+                mutable,
                 match_ctx,
                 type_checker,
                 errors,
@@ -157,6 +161,7 @@ fn check_pattern_inner(
                 *variant,
                 fields,
                 value_ty,
+                mutable,
                 match_ctx,
                 type_checker,
                 errors,
@@ -173,6 +178,7 @@ fn check_pattern_inner(
                 *variant,
                 fields,
                 value_ty,
+                mutable,
                 match_ctx,
                 type_checker,
                 errors,
@@ -187,6 +193,7 @@ fn check_enum_pattern(
     variant_name: Ident,
     fields: &[PatternNode],
     value_ty: &Type,
+    mutable: bool,
     match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
@@ -274,7 +281,7 @@ fn check_enum_pattern(
 
             for (subpat, expected_ty) in fields.iter().zip(expected_types.iter()) {
                 let resolved_ty = substitute_type(expected_ty, &subst);
-                check_pattern_inner(subpat, &resolved_ty, None, type_checker, errors);
+                check_pattern_inner(subpat, &resolved_ty, mutable, None, type_checker, errors);
             }
         }
         VariantKind::Struct(_) => {
@@ -295,6 +302,7 @@ fn check_enum_struct_pattern(
     variant_name: Ident,
     fields: &[(Ident, PatternNode)],
     value_ty: &Type,
+    mutable: bool,
     match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
@@ -392,7 +400,7 @@ fn check_enum_struct_pattern(
         };
 
         let resolved_ty = substitute_type(&expected_field.ty, &subst);
-        check_pattern_inner(subpat, &resolved_ty, None, type_checker, errors);
+        check_pattern_inner(subpat, &resolved_ty, mutable, None, type_checker, errors);
     }
 
     for expected_field in expected_fields {

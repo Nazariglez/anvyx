@@ -203,6 +203,21 @@ pub enum TypeErrKind {
         pattern_enum: Ident,
     },
 
+    ImmutableAssignment {
+        name: Ident,
+    },
+    VarParamNotLvalue {
+        param: Ident,
+    },
+    VarParamImmutableBinding {
+        param: Ident,
+        binding: Ident,
+    },
+    MutatingMethodOnImmutable {
+        struct_name: Ident,
+        method: Ident,
+    },
+
     MapEmptyLiteralNoContext,
     MapKeyNotKeyable {
         found: Type,

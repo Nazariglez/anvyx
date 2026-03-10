@@ -378,6 +378,28 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("scrutinee is '{expected_enum}', but pattern uses '{pattern_enum}'"),
         ),
 
+        TypeErrKind::ImmutableAssignment { name } => (
+            format!("Cannot assign to immutable variable '{name}'"),
+            format!("'{name}' is declared with 'let'; use 'var' to allow mutation"),
+        ),
+        TypeErrKind::VarParamNotLvalue { param } => (
+            format!("Cannot pass non-lvalue to 'var' parameter '{param}'"),
+            format!("'var' parameter '{param}' requires a variable, not a literal or expression"),
+        ),
+        TypeErrKind::VarParamImmutableBinding { param, binding } => (
+            format!("Cannot pass immutable binding '{binding}' to 'var' parameter '{param}'"),
+            format!("'{binding}' is declared with 'let'; use 'var' to allow mutation"),
+        ),
+        TypeErrKind::MutatingMethodOnImmutable {
+            struct_name,
+            method,
+        } => (
+            format!("Cannot call mutating method '{method}' on immutable binding"),
+            format!(
+                "'{method}' on '{struct_name}' requires 'var self'; declare the binding with 'var'"
+            ),
+        ),
+
         TypeErrKind::MapEmptyLiteralNoContext => (
             "cannot infer key/value types of empty map".to_string(),
             "add a type annotation, e.g. `let m: [string: int] = [:];`".to_string(),

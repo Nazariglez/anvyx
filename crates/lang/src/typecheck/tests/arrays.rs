@@ -4,8 +4,8 @@ use super::helpers::{
     program, reset_expr_ids, run_err, run_ok, var_binding, view_type,
 };
 use crate::ast::{
-    ArrayLen, AssignOp, Block, BlockNode, Func, FuncNode, Ident, Param, Stmt, StmtNode, Type,
-    Visibility,
+    ArrayLen, AssignOp, Block, BlockNode, Func, FuncNode, Ident, Mutability, Param, Stmt, StmtNode,
+    Type, Visibility,
 };
 use crate::typecheck::error::TypeErrKind;
 use internment::Intern;
@@ -823,6 +823,7 @@ fn test_view_indexing_ok() {
             visibility: Visibility::Private,
             type_params: vec![],
             params: vec![Param {
+                mutability: Mutability::Immutable,
                 name: ident("xs"),
                 ty: view_param,
             }],

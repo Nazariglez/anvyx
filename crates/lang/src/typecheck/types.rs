@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         BlockNode, CallNode, ExprId, FieldAccessNode, FuncNode, Ident, IndexNode, MethodReceiver,
-        Param, StructField, Type, TypeParam, TypeVarId, VariantKind,
+        Mutability, Param, StructField, Type, TypeParam, TypeVarId, VariantKind,
     },
     span::Span,
 };
@@ -70,13 +70,19 @@ pub(super) struct SpecializationResult {
     pub err_kind: Option<TypeErrKind>,
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct VarInfo {
+    pub ty: Type,
+    pub mutable: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct TypeChecker {
     /// Resolved type for each expression
     pub(super) types: HashMap<ExprId, (Span, Type)>,
 
     /// Stack of scopes for variable lookup
-    pub(super) scopes: Vec<HashMap<Ident, Type>>,
+    pub(super) scopes: Vec<HashMap<Ident, VarInfo>>,
 
     /// Stack of return types for function calls
     pub(super) return_types: Vec<RetType>,
@@ -105,6 +111,9 @@ pub struct TypeChecker {
 
     /// Stores enum definitions (name -> variants)
     pub(super) enum_defs: HashMap<Ident, EnumDef>,
+
+    /// Stores param info for free functions
+    pub(super) func_param_info: HashMap<Ident, Vec<(Ident, Mutability)>>,
 
     /// Tracks depth of nested loops to validate break/continue usage
     pub(super) loop_depth: usize,
@@ -203,9 +212,9 @@ impl TypeChecker {
         self.types.iter()
     }
 
-    pub fn set_var(&mut self, name: Ident, ty: Type) {
+    pub(super) fn set_var(&mut self, name: Ident, ty: Type, mutable: bool) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name, ty);
+            scope.insert(name, VarInfo { ty, mutable });
         }
     }
 
@@ -221,10 +230,10 @@ impl TypeChecker {
         self.loop_depth > 0
     }
 
-    pub fn get_var(&self, name: Ident) -> Option<&Type> {
+    pub(super) fn get_var(&self, name: Ident) -> Option<&VarInfo> {
         for scope in self.scopes.iter().rev() {
-            if let Some(ty) = scope.get(&name) {
-                return Some(ty);
+            if let Some(info) = scope.get(&name) {
+                return Some(info);
             }
         }
         None
@@ -263,7 +272,7 @@ impl TypeChecker {
     pub(super) fn get_type_ref(&self, r: &TypeRef) -> Option<Type> {
         match r {
             TypeRef::Expr(id) => self.get_type(*id).map(|(_, ty)| ty.clone()),
-            TypeRef::Var(ident) => self.get_var(*ident).cloned(),
+            TypeRef::Var(ident) => self.get_var(*ident).map(|info| info.ty.clone()),
             TypeRef::Concrete(t) => Some(t.clone()),
         }
     }
@@ -271,7 +280,7 @@ impl TypeChecker {
     pub(super) fn set_type_ref(&mut self, r: &TypeRef, ty: Type, span: Span) {
         match r {
             TypeRef::Expr(id) => self.set_type(*id, ty, span),
-            TypeRef::Var(ident) => self.set_var(*ident, ty),
+            TypeRef::Var(ident) => self.set_var(*ident, ty, true),
             TypeRef::Concrete(_) => {} // Cannot write to concrete types
         }
     }

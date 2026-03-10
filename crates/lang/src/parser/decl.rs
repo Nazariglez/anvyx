@@ -57,7 +57,11 @@ pub(super) fn function<'src>(
             .into_iter()
             .map(|p| {
                 let ty = resolve_type_params(&p.ty, &type_param_map);
-                ast::Param { name: p.name, ty }
+                ast::Param {
+                    mutability: p.mutability,
+                    name: p.name,
+                    ty,
+                }
             })
             .collect();
 
@@ -124,7 +128,11 @@ fn struct_method<'src>(
                 .into_iter()
                 .map(|p| {
                     let ty = resolve_type_params(&p.ty, &type_param_map);
-                    ast::Param { name: p.name, ty }
+                    ast::Param {
+                        mutability: p.mutability,
+                        name: p.name,
+                        ty,
+                    }
                 })
                 .collect();
 
@@ -164,20 +172,29 @@ fn method_params<'src>() -> BoxedParser<'src, (Option<ast::MethodReceiver>, Vec<
     .boxed()
 }
 
-fn self_param<'src>() -> BoxedParser<'src, ()> {
-    identifier()
-        .try_map(|ident, span| {
+fn self_param<'src>() -> BoxedParser<'src, ast::MethodReceiver> {
+    let var_kw = select! {
+        (Token::Keyword(Keyword::Var), _) => (),
+    }
+    .or_not();
+
+    var_kw
+        .then(identifier().try_map(|ident, span| {
             if ident.0.as_ref() == "self" {
                 Ok(())
             } else {
                 Err(Rich::custom(span, "expected 'self'"))
             }
-        })
+        }))
         .then_ignore(
             select! { (Token::Colon, _) => () }
                 .ignore_then(type_ident())
                 .or_not(),
         )
+        .map(|(var_opt, _)| match var_opt {
+            Some(()) => ast::MethodReceiver::Var,
+            None => ast::MethodReceiver::Value,
+        })
         .boxed()
 }
 
@@ -194,7 +211,7 @@ fn method_param_list<'src>() -> BoxedParser<'src, (Option<ast::MethodReceiver>, 
                     .or_not()
                     .map(|opt| opt.unwrap_or_default()),
             )
-            .map(|(_, params)| (Some(ast::MethodReceiver::Value), params)),
+            .map(|(receiver, params)| (Some(receiver), params)),
         regular_params.map(|params| (None, params)),
     ))
     .boxed()
@@ -266,6 +283,7 @@ pub(super) fn struct_declaration<'src>(
                         .params
                         .iter()
                         .map(|p| ast::Param {
+                            mutability: p.mutability,
                             name: p.name,
                             ty: resolve_type_params_with_self(
                                 &p.ty,

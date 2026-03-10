@@ -1,4 +1,4 @@
-use crate::ast;
+use crate::ast::{self, Mutability, MethodReceiver};
 use super::helpers::parse_program;
 
 #[test]
@@ -184,4 +184,45 @@ fn for_parses_inclusive_range() {
         panic!("expected Range iterable");
     };
     assert!(range_node.node.inclusive);
+}
+
+#[test]
+fn test_var_param_parses() {
+    let prog = parse_program("fn f(var x: int) {}");
+    assert_eq!(prog.stmts.len(), 1);
+    let ast::Stmt::Func(func_node) = &prog.stmts[0].node else {
+        panic!("expected Func");
+    };
+    let params = &func_node.node.params;
+    assert_eq!(params.len(), 1);
+    assert_eq!(params[0].mutability, Mutability::Mutable);
+    assert_eq!(params[0].name.0.as_ref(), "x");
+}
+
+#[test]
+fn test_mixed_params_parse() {
+    let prog = parse_program("fn f(a: int, var b: int) {}");
+    assert_eq!(prog.stmts.len(), 1);
+    let ast::Stmt::Func(func_node) = &prog.stmts[0].node else {
+        panic!("expected Func");
+    };
+    let params = &func_node.node.params;
+    assert_eq!(params.len(), 2);
+    assert_eq!(params[0].mutability, Mutability::Immutable);
+    assert_eq!(params[0].name.0.as_ref(), "a");
+    assert_eq!(params[1].mutability, Mutability::Mutable);
+    assert_eq!(params[1].name.0.as_ref(), "b");
+}
+
+#[test]
+fn test_var_self_parses() {
+    let prog = parse_program("struct S { fn m(var self) {} }");
+    assert_eq!(prog.stmts.len(), 1);
+    let ast::Stmt::Struct(struct_node) = &prog.stmts[0].node else {
+        panic!("expected Struct");
+    };
+    let methods = &struct_node.node.methods;
+    assert_eq!(methods.len(), 1);
+    assert_eq!(methods[0].receiver, Some(MethodReceiver::Var));
+    assert_eq!(methods[0].name.0.as_ref(), "m");
 }

@@ -371,6 +371,7 @@ pub struct Func {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
+    pub mutability: Mutability,
     pub name: Ident,
     pub ty: Type,
 }
@@ -558,6 +559,7 @@ pub struct StructDecl {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum MethodReceiver {
     Value,
+    Var,
 }
 
 #[derive(Debug, Clone, PartialEq)]

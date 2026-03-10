@@ -1,5 +1,8 @@
 use crate::{
-    ast::{ArrayLen, BlockNode, ExprId, ExprKind, ExprNode, ReturnNode, Stmt, StmtNode, Type},
+    ast::{
+        ArrayLen, BlockNode, ExprId, ExprKind, ExprNode, Mutability, ReturnNode, Stmt, StmtNode,
+        Type,
+    },
     span::Span,
 };
 use std::collections::HashMap;
@@ -73,7 +76,11 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
         match &stmt.node {
             Stmt::Func(node) => {
                 let func = &node.node;
-                type_checker.set_var(func.name, type_from_fn(func));
+                type_checker.set_var(func.name, type_from_fn(func), false);
+
+                let param_info: Vec<_> =
+                    func.params.iter().map(|p| (p.name, p.mutability)).collect();
+                type_checker.func_param_info.insert(func.name, param_info);
 
                 // if the function is generic, store the type parameters and template
                 // because they are not fully typechecked at definition time until they are used
@@ -248,7 +255,8 @@ pub(super) fn check_binding(
         }
     };
 
-    check_pattern(&node.pattern, &binding_ty, type_checker, errors);
+    let mutable = matches!(node.mutability, Mutability::Mutable);
+    check_pattern(&node.pattern, &binding_ty, mutable, type_checker, errors);
 }
 
 fn is_array_literal_with_infer_elem(expr: &ExprNode, value_ty: &Type) -> bool {

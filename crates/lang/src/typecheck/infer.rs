@@ -96,7 +96,7 @@ pub(super) fn create_inference_slots(
             let infer_var_name = Ident(Intern::new(name));
 
             // initialize the inference slot
-            type_checker.set_var(infer_var_name, Type::Infer);
+            type_checker.set_var(infer_var_name, Type::Infer, true);
 
             // map the type variable id to its synthetic variable name
             (param.id, infer_var_name)
@@ -197,11 +197,12 @@ pub(super) fn infer_type_args_from_call(
     let mut inferred_type_args = Vec::with_capacity(type_params.len());
     let mut inference_failed = false;
     for param in type_params {
-        let slot_var = slots
+        let slot_ty = slots
             .get(&param.id)
-            .and_then(|slot_ident| type_checker.get_var(*slot_ident));
+            .and_then(|slot_ident| type_checker.get_var(*slot_ident))
+            .map(|info| &info.ty);
 
-        let ty = slot_var
+        let ty = slot_ty
             .filter(|ty| !contains_infer(ty))
             .cloned()
             .unwrap_or_else(|| {

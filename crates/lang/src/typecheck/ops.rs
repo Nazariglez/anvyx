@@ -1,5 +1,6 @@
 use crate::ast::{
-    AssignNode, AssignOp, BinaryNode, BinaryOp, ExprKind, MethodReceiver, Type, UnaryNode, UnaryOp,
+    AssignNode, AssignOp, BinaryNode, BinaryOp, ExprKind, ExprNode, Ident, MethodReceiver, Type,
+    UnaryNode, UnaryOp,
 };
 
 use super::{
@@ -186,6 +187,31 @@ pub(super) fn check_unary(
     }
 }
 
+fn root_ident(expr: &ExprNode) -> Option<Ident> {
+    match &expr.node.kind {
+        ExprKind::Ident(name) => Some(*name),
+        ExprKind::Field(field) => root_ident(&field.node.target),
+        ExprKind::Index(index) => root_ident(&index.node.target),
+        _ => None,
+    }
+}
+
+fn immutable_assignment_error(
+    assign: &AssignNode,
+    type_checker: &TypeChecker,
+) -> Option<TypeErr> {
+    let root = root_ident(&assign.node.target)?;
+    let info = type_checker.get_var(root)?;
+    if info.mutable {
+        return None;
+    }
+
+    Some(
+        TypeErr::new(assign.span, TypeErrKind::ImmutableAssignment { name: root })
+            .with_help("declare with 'var' to allow mutation"),
+    )
+}
+
 fn readonly_self_mutation_error(
     assign: &AssignNode,
     type_checker: &TypeChecker,
@@ -224,6 +250,11 @@ pub(super) fn check_assign(
 ) -> Type {
     let maybe_error = readonly_self_mutation_error(assign, type_checker);
     if let Some(error) = maybe_error {
+        errors.push(error);
+        return Type::Infer;
+    }
+
+    if let Some(error) = immutable_assignment_error(assign, type_checker) {
         errors.push(error);
         return Type::Infer;
     }

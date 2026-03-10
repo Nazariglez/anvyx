@@ -2,9 +2,11 @@ use crate::{
     ast::{
         ArrayFill, ArrayFillNode, ArrayLiteral, ArrayLiteralNode, Assign, AssignNode, AssignOp,
         Binary, BinaryNode, BinaryOp, Binding, BindingNode, Block, BlockNode, Call, CallNode, Expr,
-        ExprId, ExprKind, ExprNode, Func, FuncNode, Ident, Index, IndexNode, Lit, Mutability,
-        Param, Pattern, PatternNode, Program, Range, RangeNode, Return, ReturnNode, Stmt, StmtNode,
-        Type, TypeParam, TypeVarId, Unary, UnaryNode, UnaryOp, Visibility,
+        ExprId, ExprKind, ExprNode, FieldAccess, FieldAccessNode, Func, FuncNode, Ident, Index,
+        IndexNode, Lit, Method, MethodReceiver, Mutability, Param, Pattern, PatternNode, Program,
+        Range, RangeNode, Return, ReturnNode, Stmt, StmtNode, StructDecl, StructDeclNode,
+        StructField, StructLiteral, StructLiteralNode, Type, TypeParam, TypeVarId, Unary, UnaryNode,
+        UnaryOp, Visibility,
     },
     span::Span,
     typecheck::{check_program, error::TypeErr, types::TypeChecker},
@@ -299,6 +301,7 @@ pub(super) fn fn_decl(
                 params: params
                     .into_iter()
                     .map(|(n, t)| Param {
+                        mutability: Mutability::Immutable,
                         name: dummy_ident(n),
                         ty: t,
                     })
@@ -331,6 +334,7 @@ pub(super) fn generic_fn_decl(
                 params: params
                     .into_iter()
                     .map(|(n, t)| Param {
+                        mutability: Mutability::Immutable,
                         name: dummy_ident(n),
                         ty: t,
                     })
@@ -371,6 +375,7 @@ pub(super) fn func_decl(
                 params: params
                     .into_iter()
                     .map(|(n, t)| Param {
+                        mutability: Mutability::Immutable,
                         name: dummy_ident(n),
                         ty: t,
                     })
@@ -423,6 +428,136 @@ pub(super) fn type_param(name: &str, id: u32) -> TypeParam {
 
 pub(super) fn view_type(elem: Type) -> Type {
     Type::ArrayView { elem: elem.boxed() }
+}
+
+pub(super) fn field_expr(target: ExprNode, field: &str) -> ExprNode {
+    ExprNode {
+        node: Expr::new(
+            ExprKind::Field(FieldAccessNode {
+                node: FieldAccess {
+                    target: Box::new(target),
+                    field: dummy_ident(field),
+                    safe: false,
+                },
+                span: dummy_span(),
+            }),
+            next_expr_id(),
+        ),
+        span: dummy_span(),
+    }
+}
+
+pub(super) fn struct_literal_expr(name: &str, fields: Vec<(&str, ExprNode)>) -> ExprNode {
+    let field_pairs = fields
+        .into_iter()
+        .map(|(n, e)| (dummy_ident(n), e))
+        .collect();
+    ExprNode {
+        node: Expr::new(
+            ExprKind::StructLiteral(StructLiteralNode {
+                node: StructLiteral {
+                    qualifier: None,
+                    name: dummy_ident(name),
+                    fields: field_pairs,
+                },
+                span: dummy_span(),
+            }),
+            next_expr_id(),
+        ),
+        span: dummy_span(),
+    }
+}
+
+pub(super) fn method(
+    name: &str,
+    receiver: Option<MethodReceiver>,
+    params: Vec<(&str, Type)>,
+    ret: Type,
+    body: Vec<StmtNode>,
+) -> Method {
+    let param_list = params
+        .into_iter()
+        .map(|(n, ty)| Param {
+            name: dummy_ident(n),
+            ty,
+            mutability: Mutability::Immutable,
+        })
+        .collect();
+    Method {
+        name: dummy_ident(name),
+        visibility: Visibility::Private,
+        type_params: vec![],
+        receiver,
+        params: param_list,
+        ret,
+        body: BlockNode {
+            node: Block { stmts: body },
+            span: dummy_span(),
+        },
+    }
+}
+
+pub(super) fn struct_decl(
+    name: &str,
+    fields: Vec<(&str, Type)>,
+    methods: Vec<Method>,
+) -> StmtNode {
+    let struct_fields = fields
+        .into_iter()
+        .map(|(n, ty)| StructField {
+            name: dummy_ident(n),
+            ty,
+        })
+        .collect();
+    StmtNode {
+        node: Stmt::Struct(StructDeclNode {
+            node: StructDecl {
+                name: dummy_ident(name),
+                type_params: vec![],
+                fields: struct_fields,
+                methods,
+            },
+            span: dummy_span(),
+        }),
+        span: dummy_span(),
+    }
+}
+
+pub(super) fn fn_decl_var_params(
+    name: &str,
+    params: Vec<(&str, Type, bool)>,
+    ret: Type,
+    body: Vec<StmtNode>,
+) -> StmtNode {
+    let param_list = params
+        .into_iter()
+        .map(|(n, ty, mutable)| Param {
+            name: dummy_ident(n),
+            ty,
+            mutability: if mutable {
+                Mutability::Mutable
+            } else {
+                Mutability::Immutable
+            },
+        })
+        .collect();
+    StmtNode {
+        node: Stmt::Func(FuncNode {
+            node: Func {
+                name: dummy_ident(name),
+                visibility: Visibility::Private,
+                type_params: vec![],
+                params: param_list,
+                ret,
+                body: BlockNode {
+                    node: Block { stmts: body },
+                    span: dummy_span(),
+                },
+            },
+            span: dummy_span(),
+        }),
+        span: dummy_span(),
+    }
 }
 
 // ---- runner helpers ----

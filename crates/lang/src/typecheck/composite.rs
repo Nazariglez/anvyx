@@ -150,7 +150,7 @@ pub(super) fn check_struct_lit(
                     let slot_name = slots.get(&param.id).expect("slot exists");
                     type_checker
                         .get_var(*slot_name)
-                        .cloned()
+                        .map(|info| info.ty.clone())
                         .unwrap_or(Type::Infer)
                 })
                 .collect::<Vec<_>>()
@@ -707,7 +707,7 @@ fn check_enum_struct_variant(
                     let slot_name = slots.get(&param.id).expect("slot exists");
                     type_checker
                         .get_var(*slot_name)
-                        .cloned()
+                        .map(|info| info.ty.clone())
                         .unwrap_or(Type::Infer)
                 })
                 .collect::<Vec<_>>()

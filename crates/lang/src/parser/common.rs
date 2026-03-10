@@ -57,12 +57,26 @@ pub(super) fn params<'src>() -> BoxedParser<'src, Vec<ast::Param>> {
 }
 
 pub(super) fn param<'src>() -> BoxedParser<'src, ast::Param> {
-    identifier()
+    let var_kw = select! {
+        (Token::Keyword(Keyword::Var), _) => (),
+    }
+    .or_not()
+    .map(|opt| match opt {
+        Some(()) => ast::Mutability::Mutable,
+        None => ast::Mutability::Immutable,
+    });
+
+    var_kw
+        .then(identifier())
         .then_ignore(select! {
             (Token::Colon, _) => (),
         })
         .then(param_type_ident())
-        .map(|(name, ty)| ast::Param { name, ty })
+        .map(|((mutability, name), ty)| ast::Param {
+            mutability,
+            name,
+            ty,
+        })
         .labelled("parameter")
         .as_context()
         .boxed()

@@ -63,7 +63,7 @@ pub(super) fn check_for(
     type_checker.push_scope();
     type_checker.enter_loop();
 
-    check_pattern(&node.pattern, &item_ty, type_checker, errors);
+    check_pattern(&node.pattern, &item_ty, false, type_checker, errors);
 
     let _ = check_block_stmts(&node.body.node.stmts, type_checker, errors);
 
