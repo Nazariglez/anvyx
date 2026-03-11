@@ -5,9 +5,7 @@ mod parser;
 mod span;
 mod typecheck;
 
-// TODO: only ranges for now but eventually we will have more like
-// options or stdlib, we need to work on imports and exports first
-const CORE_PRELUDE: &str = include_str!("../core/ranges.anv");
+pub(crate) const CORE_PRELUDE: &str = include_str!("../core/prelude.anv");
 
 fn parse_source(
     source: &str,

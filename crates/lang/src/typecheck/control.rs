@@ -127,20 +127,20 @@ pub(super) fn check_if(
         return then_ty;
     }
 
-    // handle T vs Infer? case where one branch is nil
-    let then_is_nil = is_optional_with_infer(&then_ty);
-    let else_is_nil = is_optional_with_infer(&else_ty);
+    // handle T vs nil case where one branch is nil
+    let then_is_nil = then_ty.is_option_with_infer();
+    let else_is_nil = else_ty.is_option_with_infer();
 
-    if !then_ty.is_optional() && else_is_nil {
-        let result_ty = Type::Optional(then_ty.boxed());
+    if !then_ty.is_option() && else_is_nil {
+        let result_ty = Type::option_of(then_ty);
         if let Some(id) = else_expr_id {
             type_checker.set_type(id, result_ty.clone(), else_block.span);
         }
         return result_ty;
     }
 
-    if !else_ty.is_optional() && then_is_nil {
-        let result_ty = Type::Optional(else_ty.boxed());
+    if !else_ty.is_option() && then_is_nil {
+        let result_ty = Type::option_of(else_ty);
         if let Some(id) = then_expr_id {
             type_checker.set_type(id, result_ty.clone(), node.then_block.span);
         }
@@ -168,9 +168,6 @@ pub(super) fn check_if(
     }
 }
 
-pub(super) fn is_optional_with_infer(ty: &Type) -> bool {
-    matches!(ty, Type::Optional(inner) if inner.as_ref().is_infer())
-}
 
 pub(super) fn is_if_without_else(expr: &ExprNode) -> bool {
     match &expr.node.kind {

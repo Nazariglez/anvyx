@@ -1,4 +1,4 @@
-use super::helpers::type_var;
+use super::helpers::{opt_type, type_var};
 use crate::ast::Type;
 
 // ---- type variable display tests ----
@@ -15,7 +15,7 @@ fn test_type_var_display() {
 #[test]
 fn test_optional_type_var_display() {
     let t = type_var(0);
-    let opt_t = Type::Optional(t.boxed());
+    let opt_t = opt_type(t);
     assert_eq!(format!("{}", opt_t), "$0?");
 }
 

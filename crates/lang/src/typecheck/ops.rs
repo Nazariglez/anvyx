@@ -104,7 +104,7 @@ fn check_coalesce(
     let node = &bin.node;
 
     // left must be optional
-    let Type::Optional(left_inner) = left_ty.clone() else {
+    let Some(left_inner_ty) = left_ty.option_inner().cloned() else {
         errors.push(TypeErr::new(
             bin.span,
             TypeErrKind::InvalidOperand {
@@ -116,29 +116,23 @@ fn check_coalesce(
     };
 
     let right_ref = TypeRef::Expr(node.right.node.id);
-    let left_inner_ty = *left_inner;
 
     // if right is optional too then we're chaining optionals
-    if let Type::Optional(right_inner) = right_ty.clone() {
+    if right_ty.is_option() {
+        let right_inner_ty = right_ty.option_inner().cloned().unwrap_or(Type::Infer);
         // constrain the inner types if both are optional
         let left_inner_ref = TypeRef::Concrete(left_inner_ty.clone());
-        let right_inner_ref = TypeRef::Concrete(*right_inner.clone());
+        let right_inner_ref = TypeRef::Concrete(right_inner_ty);
         type_checker.constrain_equal(bin.span, left_inner_ref, right_inner_ref, errors);
 
         // get the unified inner type
         let unified_inner = type_checker
             .get_type_ref(&right_ref)
-            .and_then(|t| {
-                if let Type::Optional(inner) = t {
-                    Some(*inner)
-                } else {
-                    None
-                }
-            })
+            .and_then(|t| t.option_inner().cloned())
             .unwrap_or(left_inner_ty.clone());
 
         // set the left expression's type to the unified inner type
-        let ty = Type::Optional(Box::new(unified_inner));
+        let ty = Type::option_of(unified_inner);
         type_checker.set_type(node.left.node.id, ty.clone(), bin.span);
 
         return ty;
@@ -154,11 +148,7 @@ fn check_coalesce(
         .unwrap_or(left_inner_ty);
 
     // set the left expression's type to the unified inner type
-    type_checker.set_type(
-        node.left.node.id,
-        Type::Optional(Box::new(unified_inner.clone())),
-        bin.span,
-    );
+    type_checker.set_type(node.left.node.id, Type::option_of(unified_inner.clone()), bin.span);
 
     unified_inner
 }

@@ -481,7 +481,7 @@ pub(super) fn check_index(
         type_checker.constrain_equal(node.index.span, key_ref, expected_ref, errors);
 
         // return V?
-        return Type::Optional(value.clone());
+        return Type::option_of(*value.clone());
     }
 
     // arrays requires int index
@@ -567,7 +567,7 @@ pub(super) fn check_map_literal(
     // validate key type is keyable
     let is_type_infer = matches!(key_ty, Type::Infer);
     if !is_type_infer && !is_keyable(&key_ty) {
-        let is_optional = matches!(key_ty, Type::Optional(_));
+        let is_optional = key_ty.is_option();
         if is_optional {
             errors.push(TypeErr::new(
                 lit.span,

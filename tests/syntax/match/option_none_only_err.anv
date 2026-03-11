@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: non-exhaustive
+
+fn main() {
+    let x: int? = nil;
+    match x {
+        Option.None => {},
+    }
+}

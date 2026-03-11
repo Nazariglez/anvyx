@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let x: int? = 42;
+    match x {
+        Option.Some(v) => {
+            let n: int = v;
+        },
+        Option.None => {},
+    }
+}

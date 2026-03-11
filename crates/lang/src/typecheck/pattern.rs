@@ -439,7 +439,6 @@ fn substitute_type(ty: &Type, subst: &[(TypeVarId, Type)]) -> Type {
             // Unresolved names are left as-is (shouldn't normally happen)
             ty.clone()
         }
-        Type::Optional(inner) => Type::Optional(Box::new(substitute_type(inner, subst))),
         Type::Tuple(elems) => {
             Type::Tuple(elems.iter().map(|t| substitute_type(t, subst)).collect())
         }

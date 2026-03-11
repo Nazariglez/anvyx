@@ -1,7 +1,7 @@
 use super::helpers::{
     array_fill, array_literal, assert_expr_type, assign_expr, call_expr, dummy_span, func_decl,
     get_expr_id, ident_expr, index_expr, let_binding, lit_float, lit_int, lit_nil, lit_string,
-    program, reset_expr_ids, run_err, run_ok, var_binding, view_type,
+    opt_type, program, reset_expr_ids, run_err, run_ok, var_binding, view_type,
 };
 use crate::ast::{
     ArrayLen, AssignOp, Block, BlockNode, Func, FuncNode, Ident, Mutability, Param, Stmt, StmtNode,
@@ -183,7 +183,7 @@ fn test_array_literal_all_nil_annotated_ok() {
     let arr = array_literal(vec![lit_nil(), lit_nil()]);
     let arr_id = get_expr_id(&arr);
     let annot = Type::Array {
-        elem: Type::Optional(Type::Int.boxed()).boxed(),
+        elem: opt_type(Type::Int).boxed(),
         len: ArrayLen::Infer,
     };
     let prog = program(vec![let_binding("i", Some(annot), arr)]);
@@ -193,7 +193,7 @@ fn test_array_literal_all_nil_annotated_ok() {
         &tcx,
         arr_id,
         Type::Array {
-            elem: Type::Optional(Type::Int.boxed()).boxed(),
+            elem: opt_type(Type::Int).boxed(),
             len: ArrayLen::Fixed(2),
         },
     );
@@ -207,7 +207,7 @@ fn test_array_literal_optional_elements_mixed_order() {
     let arr_tail_nil = array_literal(vec![lit_int(1), lit_nil()]);
     let arr_tail_id = get_expr_id(&arr_tail_nil);
     let annot = Type::Array {
-        elem: Type::Optional(Type::Int.boxed()).boxed(),
+        elem: opt_type(Type::Int).boxed(),
         len: ArrayLen::Infer,
     };
     let prog = program(vec![let_binding("a", Some(annot.clone()), arr_tail_nil)]);
@@ -216,7 +216,7 @@ fn test_array_literal_optional_elements_mixed_order() {
         &tcx_tail,
         arr_tail_id,
         Type::Array {
-            elem: Type::Optional(Type::Int.boxed()).boxed(),
+            elem: opt_type(Type::Int).boxed(),
             len: ArrayLen::Fixed(2),
         },
     );
@@ -230,7 +230,7 @@ fn test_array_literal_optional_elements_mixed_order() {
         &tcx_head,
         arr_head_id,
         Type::Array {
-            elem: Type::Optional(Type::Int.boxed()).boxed(),
+            elem: opt_type(Type::Int).boxed(),
             len: ArrayLen::Fixed(2),
         },
     );
@@ -244,7 +244,7 @@ fn test_array_literal_optional_string_elements() {
     let arr = array_literal(vec![lit_nil(), lit_string("hola"), lit_nil()]);
     let arr_id = get_expr_id(&arr);
     let annot = Type::Array {
-        elem: Type::Optional(Type::String.boxed()).boxed(),
+        elem: opt_type(Type::String).boxed(),
         len: ArrayLen::Infer,
     };
     let prog = program(vec![let_binding("c", Some(annot.clone()), arr)]);
@@ -253,7 +253,7 @@ fn test_array_literal_optional_string_elements() {
         &tcx_annot,
         arr_id,
         Type::Array {
-            elem: Type::Optional(Type::String.boxed()).boxed(),
+            elem: opt_type(Type::String).boxed(),
             len: ArrayLen::Fixed(3),
         },
     );
@@ -267,7 +267,7 @@ fn test_array_literal_optional_string_elements() {
         &tcx_inferred,
         arr_inferred_id,
         Type::Array {
-            elem: Type::Optional(Type::String.boxed()).boxed(),
+            elem: opt_type(Type::String).boxed(),
             len: ArrayLen::Fixed(3),
         },
     );
@@ -280,7 +280,7 @@ fn test_array_literal_optional_mixed_error() {
     // let e: [string?; _] = [nil, "hola", 1];
     let arr = array_literal(vec![lit_nil(), lit_string("hola"), lit_int(1)]);
     let annot = Type::Array {
-        elem: Type::Optional(Type::String.boxed()).boxed(),
+        elem: opt_type(Type::String).boxed(),
         len: ArrayLen::Infer,
     };
     let prog = program(vec![let_binding("e", Some(annot), arr)]);
@@ -438,7 +438,7 @@ fn test_array_fill_optional_list_ok() {
     let arr = array_fill(lit_nil(), lit_int(3));
     let arr_id = get_expr_id(&arr);
     let annot = Type::List {
-        elem: Type::Optional(Type::Int.boxed()).boxed(),
+        elem: opt_type(Type::Int).boxed(),
     };
     let prog = program(vec![var_binding("xs", Some(annot.clone()), arr)]);
 
@@ -558,7 +558,7 @@ fn test_all_nil_annotated_list_ok() {
     let arr = array_literal(vec![lit_nil(), lit_nil()]);
     let arr_id = get_expr_id(&arr);
     let annot = Type::List {
-        elem: Type::Optional(Type::Int.boxed()).boxed(),
+        elem: opt_type(Type::Int).boxed(),
     };
     let prog = program(vec![var_binding("a", Some(annot), arr)]);
 
@@ -567,7 +567,7 @@ fn test_all_nil_annotated_list_ok() {
         &tcx,
         arr_id,
         Type::List {
-            elem: Type::Optional(Type::Int.boxed()).boxed(),
+            elem: opt_type(Type::Int).boxed(),
         },
     );
 }
@@ -656,9 +656,9 @@ fn test_array_index_non_int_index_error() {
 
     assert!(!errors.is_empty(), "Expected type error for non-int index");
     assert!(
-        errors
-            .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::IndexNotInt { found } if *found == Type::Float)),
+        errors.iter().any(
+            |e| matches!(&e.kind, TypeErrKind::IndexNotInt { found } if *found == Type::Float)
+        ),
         "Expected IndexNotInt error with found=float, got: {:?}",
         errors
     );
@@ -682,9 +682,9 @@ fn test_index_on_non_array_error() {
         "Expected type error for indexing non-array"
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::IndexOnNonArray { found } if *found == Type::Int)),
+        errors.iter().any(
+            |e| matches!(&e.kind, TypeErrKind::IndexOnNonArray { found } if *found == Type::Int)
+        ),
         "Expected IndexOnNonArray error with found=int, got: {:?}",
         errors
     );

@@ -5,8 +5,8 @@ use crate::{
         ExprId, ExprKind, ExprNode, FieldAccess, FieldAccessNode, Func, FuncNode, Ident, Index,
         IndexNode, Lit, Method, MethodReceiver, Mutability, Param, Pattern, PatternNode, Program,
         Range, RangeNode, Return, ReturnNode, Stmt, StmtNode, StructDecl, StructDeclNode,
-        StructField, StructLiteral, StructLiteralNode, Type, TypeParam, TypeVarId, Unary, UnaryNode,
-        UnaryOp, Visibility,
+        StructField, StructLiteral, StructLiteralNode, Type, TypeParam, TypeVarId, Unary,
+        UnaryNode, UnaryOp, Visibility,
     },
     span::Span,
     typecheck::{check_program, error::TypeErr, types::TypeChecker},
@@ -74,6 +74,10 @@ pub(super) fn lit_nil() -> ExprNode {
         node: Expr::new(ExprKind::Lit(Lit::Nil), next_expr_id()),
         span: dummy_span(),
     }
+}
+
+pub(super) fn opt_type(inner: Type) -> Type {
+    Type::option_of(inner)
 }
 
 pub(super) fn ident_expr(name: &str) -> ExprNode {
@@ -497,11 +501,7 @@ pub(super) fn method(
     }
 }
 
-pub(super) fn struct_decl(
-    name: &str,
-    fields: Vec<(&str, Type)>,
-    methods: Vec<Method>,
-) -> StmtNode {
+pub(super) fn struct_decl(name: &str, fields: Vec<(&str, Type)>, methods: Vec<Method>) -> StmtNode {
     let struct_fields = fields
         .into_iter()
         .map(|(n, ty)| StructField {
@@ -562,9 +562,17 @@ pub(super) fn fn_decl_var_params(
 
 // ---- runner helpers ----
 
+fn with_prelude(prog: Program) -> Program {
+    let tokens = crate::lexer::tokenize(crate::CORE_PRELUDE).expect("core prelude must tokenize");
+    let prelude = crate::parser::parse_ast(&tokens).expect("core prelude must parse");
+    let mut stmts = prelude.stmts;
+    stmts.extend(prog.stmts);
+    Program { stmts }
+}
+
 #[track_caller]
 pub(super) fn run_ok(prog: Program) -> TypeChecker {
-    match check_program(&prog) {
+    match check_program(&with_prelude(prog)) {
         Ok(tcx) => tcx,
         Err(errors) => {
             panic!("Expected Ok, got errors: {:?}", errors);
@@ -574,7 +582,7 @@ pub(super) fn run_ok(prog: Program) -> TypeChecker {
 
 #[track_caller]
 pub(super) fn run_err(prog: Program) -> Vec<TypeErr> {
-    match check_program(&prog) {
+    match check_program(&with_prelude(prog)) {
         Ok(_) => panic!("Expected Err, got Ok"),
         Err(errors) => errors,
     }

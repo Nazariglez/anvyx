@@ -448,9 +448,13 @@ fn resolve_type_params_with_self(
             ty.clone()
         }
 
-        Optional(inner) => {
-            Optional(resolve_type_params_with_self(inner, type_param_map, self_type).boxed())
-        }
+        Enum { name, type_args } => Enum {
+            name: *name,
+            type_args: type_args
+                .iter()
+                .map(|a| resolve_type_params_with_self(a, type_param_map, self_type))
+                .collect(),
+        },
 
         Func { params, ret } => {
             let resolved_params = params
@@ -490,17 +494,6 @@ fn resolve_type_params_with_self(
                 .map(|arg| resolve_type_params_with_self(arg, type_param_map, self_type))
                 .collect::<Vec<_>>();
             Struct {
-                name: *name,
-                type_args: resolved_args,
-            }
-        }
-
-        Enum { name, type_args } => {
-            let resolved_args = type_args
-                .iter()
-                .map(|arg| resolve_type_params_with_self(arg, type_param_map, self_type))
-                .collect::<Vec<_>>();
-            Enum {
                 name: *name,
                 type_args: resolved_args,
             }

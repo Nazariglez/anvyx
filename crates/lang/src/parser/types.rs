@@ -1,5 +1,5 @@
 use crate::{
-    ast,
+    ast::{self, Type},
     lexer::{Delimiter, Keyword, LitToken, Op, Token},
 };
 use chumsky::{error::Rich, prelude::*};
@@ -146,7 +146,7 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
             .then(type_suffix.repeated().collect::<Vec<_>>())
             .map(|(base, suffixes)| {
                 suffixes.into_iter().fold(base, |ty, sfx| match sfx {
-                    TypeSuffix::Optional => ast::Type::Optional(ty.boxed()),
+                    TypeSuffix::Optional => Type::option_of(ty),
                 })
             })
     })

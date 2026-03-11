@@ -78,6 +78,6 @@ pub(super) fn type_from_lit(lit: &Lit) -> Type {
         Lit::Float(_) => Type::Float,
         Lit::Bool(_) => Type::Bool,
         Lit::String(_) => Type::String,
-        Lit::Nil => Type::Optional(Box::new(Type::Infer)),
+        Lit::Nil => Type::option_of(Type::Infer),
     }
 }

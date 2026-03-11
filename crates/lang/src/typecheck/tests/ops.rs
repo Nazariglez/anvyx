@@ -1,7 +1,7 @@
 use super::helpers::{
     assert_expr_type, assign_expr, binary_expr, expr_stmt, get_expr_id, ident_expr, let_binding,
-    lit_bool, lit_float, lit_int, lit_nil, lit_string, program, reset_expr_ids, run_err, run_ok,
-    unary_expr, var_binding,
+    lit_bool, lit_float, lit_int, lit_nil, lit_string, opt_type, program, reset_expr_ids, run_err,
+    run_ok, unary_expr, var_binding,
 };
 use crate::ast::{AssignOp, BinaryOp, Type, UnaryOp};
 use crate::typecheck::error::TypeErrKind;
@@ -263,7 +263,7 @@ fn test_assignment_int_to_optional_var() {
     let ten_id = get_expr_id(&ten_expr);
     let assign = assign_expr(ident_expr("x"), AssignOp::Assign, ten_expr);
     let prog = program(vec![
-        var_binding("x", Some(Type::Optional(Box::new(Type::Int))), nil_expr),
+        var_binding("x", Some(opt_type(Type::Int)), nil_expr),
         expr_stmt(assign),
     ]);
 
@@ -280,7 +280,7 @@ fn test_assignment_string_to_optional_string() {
     let str_id = get_expr_id(&str_expr);
     let assign = assign_expr(ident_expr("c"), AssignOp::Assign, str_expr);
     let prog = program(vec![
-        var_binding("c", Some(Type::Optional(Box::new(Type::String))), nil_expr),
+        var_binding("c", Some(opt_type(Type::String)), nil_expr),
         expr_stmt(assign),
     ]);
 
@@ -296,7 +296,7 @@ fn test_assignment_float_to_optional_float() {
     let nil_expr = lit_nil();
     let assign = assign_expr(ident_expr("d"), AssignOp::Assign, nil_expr);
     let prog = program(vec![
-        var_binding("d", Some(Type::Optional(Box::new(Type::Float))), float_expr),
+        var_binding("d", Some(opt_type(Type::Float)), float_expr),
         expr_stmt(assign),
     ]);
 
@@ -311,7 +311,7 @@ fn test_coalesce_optional_with_concrete_fallback() {
     // let a: int? = nil;
     // let x: int = a ?? 10;
     let a_expr = lit_nil();
-    let a_binding = let_binding("a", Some(Type::Optional(Box::new(Type::Int))), a_expr);
+    let a_binding = let_binding("a", Some(opt_type(Type::Int)), a_expr);
     let coalesce = binary_expr(ident_expr("a"), BinaryOp::Coalesce, lit_int(10));
     let coalesce_id = get_expr_id(&coalesce);
     let x_binding = let_binding("x", Some(Type::Int), coalesce);
@@ -341,7 +341,7 @@ fn test_coalesce_mismatched_types() {
     reset_expr_ids();
     // let x: int? = nil;
     // let y = x ?? "s"; // int? ?? string should error
-    let x_binding = let_binding("x", Some(Type::Optional(Box::new(Type::Int))), lit_nil());
+    let x_binding = let_binding("x", Some(opt_type(Type::Int)), lit_nil());
     let coalesce = binary_expr(ident_expr("x"), BinaryOp::Coalesce, lit_string("s"));
     let y_binding = let_binding("y", None, coalesce);
     let prog = program(vec![x_binding, y_binding]);
@@ -366,7 +366,7 @@ fn test_coalesce_nil_with_int() {
     let prog = program(vec![let_binding("a", Some(Type::Int), coalesce)]);
 
     let tcx = run_ok(prog);
-    assert_expr_type(&tcx, nil_id, Type::Optional(Box::new(Type::Int)));
+    assert_expr_type(&tcx, nil_id, opt_type(Type::Int));
     assert_expr_type(&tcx, coalesce_id, Type::Int);
 }
 
@@ -396,7 +396,7 @@ fn test_coalesce_mismatched_inner_types() {
     let coalesce = binary_expr(nil_expr, BinaryOp::Coalesce, bool_expr);
     let prog = program(vec![let_binding(
         "a",
-        Some(Type::Optional(Box::new(Type::Int))),
+        Some(opt_type(Type::Int)),
         coalesce,
     )]);
 
@@ -414,7 +414,7 @@ fn test_coalesce_optional_string_with_string() {
     // let a: string? = nil;
     // let b: string = a ?? "fallback";
     let a_expr = lit_nil();
-    let a_binding = let_binding("a", Some(Type::Optional(Box::new(Type::String))), a_expr);
+    let a_binding = let_binding("a", Some(opt_type(Type::String)), a_expr);
     let coalesce = binary_expr(ident_expr("a"), BinaryOp::Coalesce, lit_string("fallback"));
     let coalesce_id = get_expr_id(&coalesce);
     let b_binding = let_binding("b", Some(Type::String), coalesce);
@@ -429,7 +429,7 @@ fn test_coalesce_optional_int_with_float_error() {
     reset_expr_ids();
     // let a: int? = nil;
     // let b = a ?? 1.5;  // error: int? ?? float mismatch
-    let a_binding = let_binding("a", Some(Type::Optional(Box::new(Type::Int))), lit_nil());
+    let a_binding = let_binding("a", Some(opt_type(Type::Int)), lit_nil());
     let coalesce = binary_expr(ident_expr("a"), BinaryOp::Coalesce, lit_float(1.5));
     let b_binding = let_binding("b", None, coalesce);
     let prog = program(vec![a_binding, b_binding]);

@@ -1,4 +1,4 @@
-use super::helpers::{dummy_span, type_param, type_var};
+use super::helpers::{dummy_span, opt_type, type_param, type_var};
 use crate::ast::{Type, TypeVarId};
 use crate::typecheck::error::TypeErrKind;
 use crate::typecheck::infer::{instantiate_func_type, subst_type};
@@ -21,12 +21,12 @@ fn test_subst_type_simple() {
 fn test_subst_type_optional() {
     // substitute T -> int in T?
     let t_var = type_var(0);
-    let opt_t = Type::Optional(Box::new(t_var));
+    let opt_t = opt_type(t_var);
     let mut subst = HashMap::new();
     subst.insert(TypeVarId(0), Type::Int);
 
     let result = subst_type(&opt_t, &subst);
-    assert_eq!(result, Type::Optional(Box::new(Type::Int)));
+    assert_eq!(result, opt_type(Type::Int));
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn test_instantiate_two_params() {
     let u_var = type_var(1);
     let template = Type::Func {
         params: vec![t_var.clone(), u_var],
-        ret: Box::new(Type::Optional(Box::new(t_var))),
+        ret: Box::new(opt_type(t_var)),
     };
     let type_args = vec![Type::Int, Type::Bool];
 
@@ -131,7 +131,7 @@ fn test_instantiate_two_params() {
         result,
         Some(Type::Func {
             params: vec![Type::Int, Type::Bool],
-            ret: Box::new(Type::Optional(Box::new(Type::Int))),
+            ret: Box::new(opt_type(Type::Int)),
         })
     );
 }

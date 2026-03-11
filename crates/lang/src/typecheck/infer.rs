@@ -27,7 +27,6 @@ pub(super) fn subst_type(ty: &Type, subst: &HashMap<TypeVarId, Type>) -> Type {
     use Type::*;
     match ty {
         Var(id) => subst.get(id).cloned().unwrap_or_else(|| ty.clone()),
-        Optional(inner) => Optional(subst_type(inner, subst).boxed()),
         Func { params, ret } => Func {
             params: params.iter().map(|p| subst_type(p, subst)).collect(),
             ret: subst_type(ret, subst).boxed(),
@@ -40,6 +39,10 @@ pub(super) fn subst_type(ty: &Type, subst: &HashMap<TypeVarId, Type>) -> Type {
                 .collect(),
         ),
         Struct { name, type_args } => Struct {
+            name: *name,
+            type_args: type_args.iter().map(|a| subst_type(a, subst)).collect(),
+        },
+        Enum { name, type_args } => Enum {
             name: *name,
             type_args: type_args.iter().map(|a| subst_type(a, subst)).collect(),
         },
@@ -124,7 +127,6 @@ pub(super) fn type_to_ref_with_inference(ty: &Type, slots: &InferenceSlots) -> T
 pub(super) fn substitute_vars_with_infer(ty: &Type, slots: &InferenceSlots) -> Type {
     match ty {
         Type::Var(id) if slots.contains_key(id) => Type::Infer,
-        Type::Optional(inner) => Type::Optional(substitute_vars_with_infer(inner, slots).boxed()),
         Type::Func { params, ret } => Type::Func {
             params: params
                 .iter()
@@ -145,6 +147,13 @@ pub(super) fn substitute_vars_with_infer(ty: &Type, slots: &InferenceSlots) -> T
                 .collect(),
         ),
         Type::Struct { name, type_args } => Type::Struct {
+            name: *name,
+            type_args: type_args
+                .iter()
+                .map(|a| substitute_vars_with_infer(a, slots))
+                .collect(),
+        },
+        Type::Enum { name, type_args } => Type::Enum {
             name: *name,
             type_args: type_args
                 .iter()

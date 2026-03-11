@@ -39,15 +39,14 @@ fn array_type_infer_len_parses() {
 #[test]
 fn array_type_can_be_optional() {
     let ty = parse_type("[int; 3]?");
-    match ty {
-        ast::Type::Optional(inner) => match *inner {
-            ast::Type::Array { elem, len } => {
-                assert_eq!(*elem, ast::Type::Int);
-                assert_eq!(len, ast::ArrayLen::Fixed(3));
-            }
-            other => panic!("expected inner array type, found {other:?}"),
-        },
-        other => panic!("expected optional array type, found {other:?}"),
+    assert!(ty.is_option(), "expected optional array type, found {ty:?}");
+    let inner = ty.option_inner().expect("is_option guarantees inner");
+    match inner {
+        ast::Type::Array { elem, len } => {
+            assert_eq!(**elem, ast::Type::Int);
+            assert_eq!(*len, ast::ArrayLen::Fixed(3));
+        }
+        other => panic!("expected inner array type, found {other:?}"),
     }
 }
 
@@ -95,15 +94,14 @@ fn function_type_parses() {
 #[test]
 fn optional_function_type_parses() {
     let ty = parse_type("(fn(float) -> int)?");
-    match ty {
-        ast::Type::Optional(inner) => match *inner {
-            ast::Type::Func { params, ret } => {
-                assert_eq!(params, vec![ast::Type::Float]);
-                assert_eq!(*ret, ast::Type::Int);
-            }
-            other => panic!("expected function type inside optional, found {other:?}"),
-        },
-        other => panic!("expected optional function type, found {other:?}"),
+    assert!(ty.is_option(), "expected optional function type, found {ty:?}");
+    let inner = ty.option_inner().expect("is_option guarantees inner");
+    match inner {
+        ast::Type::Func { params, ret } => {
+            assert_eq!(*params, vec![ast::Type::Float]);
+            assert_eq!(**ret, ast::Type::Int);
+        }
+        other => panic!("expected function type inside optional, found {other:?}"),
     }
 }
 
@@ -131,29 +129,22 @@ fn nested_array_type_parses() {
 #[test]
 fn type_nested_optional_parses() {
     let ty = parse_type("(int?)?");
-    match ty {
-        ast::Type::Optional(inner) => match *inner {
-            ast::Type::Optional(inner2) => {
-                assert_eq!(*inner2, ast::Type::Int);
-            }
-            other => panic!("expected Optional(Int), found {other:?}"),
-        },
-        other => panic!("expected Optional(Optional(Int)), found {other:?}"),
-    }
+    assert!(ty.is_option(), "expected optional type, found {ty:?}");
+    let inner = ty.option_inner().expect("is_option guarantees inner");
+    assert!(inner.is_option(), "expected Optional(Optional(Int)), found {inner:?}");
+    let inner2 = inner.option_inner().expect("is_option guarantees inner");
+    assert_eq!(*inner2, ast::Type::Int);
 }
 
 #[test]
 fn type_optional_array_infer_parses() {
     let ty = parse_type("[int?; _]");
     match ty {
-        ast::Type::Array { elem, len } => {
+        ast::Type::Array { ref elem, len } => {
             assert_eq!(len, ast::ArrayLen::Infer);
-            match *elem {
-                ast::Type::Optional(inner) => {
-                    assert_eq!(*inner, ast::Type::Int);
-                }
-                other => panic!("expected Optional(Int), found {other:?}"),
-            }
+            assert!(elem.is_option(), "expected Optional(Int), found {elem:?}");
+            let inner = elem.option_inner().expect("is_option guarantees inner");
+            assert_eq!(*inner, ast::Type::Int);
         }
         other => panic!("expected Array(Optional(Int), Infer), found {other:?}"),
     }
@@ -163,12 +154,11 @@ fn type_optional_array_infer_parses() {
 fn type_optional_list_parses() {
     let ty = parse_type("[int?]");
     match ty {
-        ast::Type::List { elem } => match *elem {
-            ast::Type::Optional(inner) => {
-                assert_eq!(*inner, ast::Type::Int);
-            }
-            other => panic!("expected Optional(Int), found {other:?}"),
-        },
+        ast::Type::List { ref elem } => {
+            assert!(elem.is_option(), "expected Optional(Int), found {elem:?}");
+            let inner = elem.option_inner().expect("is_option guarantees inner");
+            assert_eq!(*inner, ast::Type::Int);
+        }
         other => panic!("expected List(Optional(Int)), found {other:?}"),
     }
 }
@@ -176,14 +166,13 @@ fn type_optional_list_parses() {
 #[test]
 fn type_list_optional_parses() {
     let ty = parse_type("[int]?");
-    match ty {
-        ast::Type::Optional(inner) => match *inner {
-            ast::Type::List { elem } => {
-                assert_eq!(*elem, ast::Type::Int);
-            }
-            other => panic!("expected List(Int), found {other:?}"),
-        },
-        other => panic!("expected Optional(List(Int)), found {other:?}"),
+    assert!(ty.is_option(), "expected Optional(List(Int)), found {ty:?}");
+    let inner = ty.option_inner().expect("is_option guarantees inner");
+    match inner {
+        ast::Type::List { elem } => {
+            assert_eq!(**elem, ast::Type::Int);
+        }
+        other => panic!("expected List(Int), found {other:?}"),
     }
 }
 
@@ -191,14 +180,11 @@ fn type_list_optional_parses() {
 fn type_optional_array_fixed_parses() {
     let ty = parse_type("[int?; 3]");
     match ty {
-        ast::Type::Array { elem, len } => {
+        ast::Type::Array { ref elem, len } => {
             assert_eq!(len, ast::ArrayLen::Fixed(3));
-            match *elem {
-                ast::Type::Optional(inner) => {
-                    assert_eq!(*inner, ast::Type::Int);
-                }
-                other => panic!("expected Optional(Int), found {other:?}"),
-            }
+            assert!(elem.is_option(), "expected Optional(Int), found {elem:?}");
+            let inner = elem.option_inner().expect("is_option guarantees inner");
+            assert_eq!(*inner, ast::Type::Int);
         }
         other => panic!("expected Array(Optional(Int), Fixed(3)), found {other:?}"),
     }
@@ -258,13 +244,12 @@ fn view_type_list_parses() {
 #[test]
 fn view_type_optional_parses() {
     let ty = parse_param_type("[int; ..]?");
-    match ty {
-        ast::Type::Optional(inner) => match *inner {
-            ast::Type::ArrayView { elem } => {
-                assert_eq!(*elem, ast::Type::Int);
-            }
-            other => panic!("expected View(Int), found {other:?}"),
-        },
-        other => panic!("expected Optional(View(Int)), found {other:?}"),
+    assert!(ty.is_option(), "expected Optional(View(Int)), found {ty:?}");
+    let inner = ty.option_inner().expect("is_option guarantees inner");
+    match inner {
+        ast::Type::ArrayView { elem } => {
+            assert_eq!(**elem, ast::Type::Int);
+        }
+        other => panic!("expected View(Int), found {other:?}"),
     }
 }

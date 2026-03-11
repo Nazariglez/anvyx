@@ -12,11 +12,12 @@ use super::{
 pub(super) fn contains_infer(ty: &Type) -> bool {
     match ty {
         Type::Infer => true,
-        Type::Optional(inner) => contains_infer(inner),
         Type::Func { params, ret } => params.iter().any(contains_infer) || contains_infer(ret),
         Type::Tuple(elems) => elems.iter().any(contains_infer),
         Type::NamedTuple(fields) => fields.iter().any(|(_, t)| contains_infer(t)),
-        Type::Struct { type_args, .. } => type_args.iter().any(contains_infer),
+        Type::Struct { type_args, .. } | Type::Enum { type_args, .. } => {
+            type_args.iter().any(contains_infer)
+        }
         Type::Array { elem, .. } => contains_infer(elem),
         Type::ArrayView { elem } => contains_infer(elem),
         _ => false,
@@ -40,12 +41,36 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
     }
 
     match (from, to) {
-        // optional types needs to check the inner types
-        (Optional(inner_from), Optional(inner_to)) => is_assignable(inner_from, inner_to),
+        // optional types needs to unify the inner types
+        (from_ty, to_ty) if from_ty.is_option() && to_ty.is_option() => {
+            let inner_from = from_ty.option_inner().expect("is_option guarantees inner");
+            let inner_to = to_ty.option_inner().expect("is_option guarantees inner");
+            is_assignable(inner_from, inner_to)
+        }
 
-        // T to T? is assignable
-        (from_ty, Optional(inner_to)) if !matches!(from_ty, Optional(_)) => {
-            is_assignable(from_ty, inner_to)
+        // T -> T? is assignable
+        (from_ty, to_ty) if to_ty.is_option() && !from_ty.is_option() => {
+            let inner = to_ty.option_inner().expect("is_option guarantees inner");
+            is_assignable(from_ty, inner)
+        }
+
+        // T? -> T is not assignable, must unwrap first
+        (from_ty, to_ty) if from_ty.is_option() && !to_ty.is_option() => false,
+
+        // Enum<A> -> Enum<B> of same name is assignable if all type_args are assignable
+        (
+            Enum {
+                name: ln,
+                type_args: la,
+            },
+            Enum {
+                name: rn,
+                type_args: ra,
+            },
+        ) => {
+            ln == rn
+                && la.len() == ra.len()
+                && la.iter().zip(ra.iter()).all(|(a, b)| is_assignable(a, b))
         }
 
         // function types needs to check the signature (params + return type)
@@ -66,9 +91,6 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
                     .all(|(pf, pt)| is_assignable(pf, pt))
                 && is_assignable(ret_from, ret_to)
         }
-
-        // T? to T is not assignable, the value must be unwrapped first
-        (Optional(_), non_opt) if !matches!(non_opt, Optional(_)) => false,
 
         // array T[N] to T[M] requires the len and the element type to be assignable
         (
@@ -142,18 +164,55 @@ pub(super) fn unify_types(
         // if either side is Infer we use the concrete side
         (Infer, t) | (t, Infer) => Some(t.clone()),
 
-        // optional types needs to unify the inner types
-        (Optional(l), Optional(r)) => {
-            unify_types(l, r, span, errors).map(|inner| Optional(Box::new(inner)))
+        // A? B? unify the inner types
+        (l, r) if l.is_option() && r.is_option() => {
+            let li = l.option_inner().expect("is_option guarantees inner");
+            let ri = r.option_inner().expect("is_option guarantees inner");
+            unify_types(li, ri, span, errors).map(Type::option_of)
         }
 
-        (Optional(inner), other) if !other.is_optional() => {
-            unify_types(inner.as_ref(), other, span, errors)
-                .map(|inner_ty| Optional(Box::new(inner_ty)))
+        // enum types of same name unify if all type_args can unify
+        (
+            Enum {
+                name: ln,
+                type_args: la,
+            },
+            Enum {
+                name: rn,
+                type_args: ra,
+            },
+        ) => {
+            if ln != rn || la.len() != ra.len() {
+                errors.push(TypeErr::new(
+                    span,
+                    TypeErrKind::MismatchedTypes {
+                        expected: left.clone(),
+                        found: right.clone(),
+                    },
+                ));
+                return None;
+            }
+
+            let unified_args: Option<Vec<Type>> = la
+                .iter()
+                .zip(ra.iter())
+                .map(|(l_arg, r_arg)| unify_types(l_arg, r_arg, span, errors))
+                .collect();
+
+            unified_args.map(|type_args| Enum {
+                name: *ln,
+                type_args,
+            })
         }
-        (other, Optional(inner)) if !other.is_optional() => {
-            unify_types(other, inner.as_ref(), span, errors)
-                .map(|inner_ty| Optional(Box::new(inner_ty)))
+
+        // T with T? unifies to T?
+        (other, opt) if opt.is_option() && !other.is_option() => {
+            let inner = opt.option_inner().expect("is_option guarantees inner");
+            unify_types(other, inner, span, errors).map(Type::option_of)
+        }
+        (opt, other) if opt.is_option() && !other.is_option() => {
+            let inner = opt.option_inner().expect("is_option guarantees inner");
+            unify_types(inner, other, span, errors).map(Type::option_of)
         }
 
         // function types needs to unify the params and return type

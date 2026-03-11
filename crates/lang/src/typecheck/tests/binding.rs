@@ -1,7 +1,7 @@
 use super::helpers::{
     assert_expr_type, assign_expr, call_expr, expr_stmt, fn_decl, get_expr_id, ident_expr,
-    let_binding, lit_bool, lit_int, lit_nil, program, reset_expr_ids, return_stmt, run_err, run_ok,
-    var_binding,
+    let_binding, lit_bool, lit_int, lit_nil, opt_type, program, reset_expr_ids, return_stmt,
+    run_err, run_ok, var_binding,
 };
 use crate::ast::{AssignOp, Type};
 use crate::typecheck::error::TypeErrKind;
@@ -98,13 +98,13 @@ fn test_constraint_chain_resolves() {
     let b_expr = ident_expr("a");
     let b_id = get_expr_id(&b_expr);
     let prog = program(vec![
-        let_binding("a", Some(Type::Optional(Box::new(Type::Int))), a_expr),
-        let_binding("b", Some(Type::Optional(Box::new(Type::Int))), b_expr),
+        let_binding("a", Some(opt_type(Type::Int)), a_expr),
+        let_binding("b", Some(opt_type(Type::Int)), b_expr),
     ]);
 
     let tcx = run_ok(prog);
-    assert_expr_type(&tcx, a_id, Type::Optional(Box::new(Type::Int)));
-    assert_expr_type(&tcx, b_id, Type::Optional(Box::new(Type::Int)));
+    assert_expr_type(&tcx, a_id, opt_type(Type::Int));
+    assert_expr_type(&tcx, b_id, opt_type(Type::Int));
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn test_assignability_int_to_optional_int() {
     let value_id = get_expr_id(&value_expr);
     let prog = program(vec![let_binding(
         "x",
-        Some(Type::Optional(Box::new(Type::Int))),
+        Some(opt_type(Type::Int)),
         value_expr,
     )]);
 
@@ -164,12 +164,12 @@ fn test_assignability_nil_to_optional_int() {
     let value_id = get_expr_id(&value_expr);
     let prog = program(vec![let_binding(
         "x",
-        Some(Type::Optional(Box::new(Type::Int))),
+        Some(opt_type(Type::Int)),
         value_expr,
     )]);
 
     let tcx = run_ok(prog);
-    assert_expr_type(&tcx, value_id, Type::Optional(Box::new(Type::Int)));
+    assert_expr_type(&tcx, value_id, opt_type(Type::Int));
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn test_assignability_optional_to_non_optional_fails() {
     let a_expr = lit_nil();
     let b_expr = ident_expr("a");
     let prog = program(vec![
-        let_binding("a", Some(Type::Optional(Box::new(Type::Int))), a_expr),
+        let_binding("a", Some(opt_type(Type::Int)), a_expr),
         let_binding("b", Some(Type::Int), b_expr),
     ]);
 
@@ -187,7 +187,7 @@ fn test_assignability_optional_to_non_optional_fails() {
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
         TypeErrKind::MismatchedTypes { expected, found }
-        if *expected == Type::Int && *found == Type::Optional(Box::new(Type::Int))
+        if *expected == Type::Int && *found == opt_type(Type::Int)
     )));
 }
 
@@ -200,7 +200,7 @@ fn test_multiple_optional_assignments() {
     let ten_id = get_expr_id(&ten_expr);
     let assign = assign_expr(ident_expr("e"), AssignOp::Assign, ten_expr);
     let prog = program(vec![
-        var_binding("e", Some(Type::Optional(Box::new(Type::Int))), nil_expr),
+        var_binding("e", Some(opt_type(Type::Int)), nil_expr),
         expr_stmt(assign),
     ]);
 

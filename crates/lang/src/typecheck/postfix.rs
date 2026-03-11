@@ -102,11 +102,11 @@ pub(super) fn check_postfix_chain(
         };
 
         if op_safe {
-            match &current_ty {
-                Type::Optional(inner) => {
-                    base_ty = (**inner).clone();
+            match current_ty.option_inner() {
+                Some(inner) => {
+                    base_ty = inner.clone();
                 }
-                _ => {
+                None => {
                     errors.push(
                         TypeErr::new(
                             op.span(),
@@ -125,7 +125,7 @@ pub(super) fn check_postfix_chain(
 
         let op_result_inner = apply_postfix_op(op, &base_ty, type_checker, errors);
         if op_safe || chain_is_optional {
-            current_ty = Type::Optional(Box::new(op_result_inner.clone()));
+            current_ty = Type::option_of(op_result_inner.clone());
             chain_is_optional = true;
         } else {
             current_ty = op_result_inner.clone();
@@ -204,23 +204,18 @@ fn handle_method_call_if_applicable(
             call_op.span()
         };
 
-        match current_ty {
-            Type::Optional(inner) => {
-                let _ = inner;
-            }
-            _ => {
-                errors.push(
-                    TypeErr::new(
-                        error_span,
-                        TypeErrKind::OptionalChainingOnNonOpt {
-                            found: current_ty.clone(),
-                        },
-                    )
-                    .with_help("remove the `?` or make the base type optional"),
-                );
-                mark_remaining_ops_infer(chain, index, type_checker);
-                return Some(MethodCallOutcome::Abort);
-            }
+        if !current_ty.is_option() {
+            errors.push(
+                TypeErr::new(
+                    error_span,
+                    TypeErrKind::OptionalChainingOnNonOpt {
+                        found: current_ty.clone(),
+                    },
+                )
+                .with_help("remove the `?` or make the base type optional"),
+            );
+            mark_remaining_ops_infer(chain, index, type_checker);
+            return Some(MethodCallOutcome::Abort);
         }
     }
 
@@ -253,7 +248,7 @@ fn handle_method_call_if_applicable(
     let mut chain_optional = chain_is_optional;
     if op_safe || chain_is_optional {
         chain_optional = true;
-        result_ty = Type::Optional(result_ty.boxed());
+        result_ty = Type::option_of(result_ty);
     }
 
     Some(MethodCallOutcome::Handled {

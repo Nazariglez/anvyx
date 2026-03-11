@@ -207,7 +207,7 @@ pub(super) fn check_binding(
 
             // validate map type annotation are keyable
             if let Type::Map { key, .. } = &resolved_annot {
-                let is_optional_key = matches!(key.as_ref(), Type::Optional(_));
+                let is_optional_key = key.is_option();
                 let is_infer = matches!(key.as_ref(), Type::Infer);
                 if is_optional_key {
                     errors.push(TypeErr::new(
@@ -365,8 +365,9 @@ fn resolve_array_infer_annotation(annot_ty: &Type, value_ty: &Type) -> Type {
                 elem: resolved_elem,
             }
         }
-        Type::Optional(inner) => {
-            Type::Optional(resolve_array_infer_annotation(inner, value_ty).boxed())
+        annot_ty if annot_ty.is_option() => {
+            let inner = annot_ty.option_inner().expect("is_option guarantees inner");
+            Type::option_of(resolve_array_infer_annotation(inner, value_ty))
         }
         _ => annot_ty.clone(),
     }

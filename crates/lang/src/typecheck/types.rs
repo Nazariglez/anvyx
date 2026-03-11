@@ -169,7 +169,6 @@ impl TypeChecker {
                 name: *name,
                 type_args: type_args.iter().map(|t| self.resolve_type(t)).collect(),
             },
-            Type::Optional(inner) => Type::Optional(Box::new(self.resolve_type(inner))),
             Type::Tuple(elems) => Type::Tuple(elems.iter().map(|t| self.resolve_type(t)).collect()),
             Type::NamedTuple(fields) => Type::NamedTuple(
                 fields
@@ -333,20 +332,21 @@ impl TypeChecker {
         }
 
         // at this point at least one type is unresolved
-        // if both are optionals, constrain the inner types
-        if let (Type::Optional(inner_from), Type::Optional(inner_to)) = (&from_ty, &to_ty) {
-            let inner_from_ref = TypeRef::Concrete(*inner_from.clone());
-            let inner_to_ref = TypeRef::Concrete(*inner_to.clone());
+        // if both are options, constrain the inner types
+        if from_ty.is_option() && to_ty.is_option() {
+            let inner_from = from_ty.option_inner().cloned().unwrap_or(Type::Infer);
+            let inner_to = to_ty.option_inner().cloned().unwrap_or(Type::Infer);
+            let inner_from_ref = TypeRef::Concrete(inner_from);
+            let inner_to_ref = TypeRef::Concrete(inner_to.clone());
             self.constrain_equal(span, inner_from_ref, inner_to_ref, errors);
-            self.set_type_ref(&from, Type::Optional(inner_to.clone()), span);
+            self.set_type_ref(&from, Type::option_of(inner_to), span);
             return;
         }
 
-        // if to is an optional and from has inference, constrain from to the inner type of to
-        if let Type::Optional(inner_to) = &to_ty
-            && contains_infer(&from_ty)
-        {
-            self.constrain_equal(span, from, TypeRef::Concrete(*inner_to.clone()), errors);
+        // if to is an option and from has inference, constrain from to the inner type of to
+        if to_ty.is_option() && contains_infer(&from_ty) {
+            let inner_to = to_ty.option_inner().cloned().unwrap_or(Type::Infer);
+            self.constrain_equal(span, from, TypeRef::Concrete(inner_to), errors);
             return;
         }
 
@@ -573,10 +573,7 @@ pub(super) fn indexable_element_type(ty: &Type) -> Option<Type> {
 }
 
 pub(super) fn unwrap_opt_typ(ty: &Type) -> &Type {
-    match ty {
-        Type::Optional(inner) => inner.as_ref(),
-        _ => ty,
-    }
+    ty.option_inner().unwrap_or(ty)
 }
 
 pub(super) fn is_keyable(ty: &Type) -> bool {

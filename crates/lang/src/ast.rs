@@ -2,6 +2,8 @@ use crate::span::Spanned;
 use internment::Intern;
 use std::fmt::Display;
 
+pub const OPTION_ENUM_NAME: &str = "Option";
+
 pub type ExprNode = Spanned<Expr>;
 pub type StmtNode = Spanned<Stmt>;
 pub type FuncNode = Spanned<Func>;
@@ -132,8 +134,6 @@ pub enum Type {
     String,
     /// Void type
     Void,
-    /// Optional type (int? or T?)
-    Optional(Box<Type>),
     /// Function type
     Func { params: Vec<Type>, ret: Box<Type> },
     /// Generic type variable (T, U)
@@ -176,7 +176,37 @@ impl Type {
     }
 
     pub fn is_optional(&self) -> bool {
-        matches!(self, Type::Optional(_))
+        self.is_option()
+    }
+
+    pub fn is_option(&self) -> bool {
+        matches!(self, Type::Enum { name, .. } if name.0.as_ref() == OPTION_ENUM_NAME)
+    }
+
+    pub fn is_option_with_infer(&self) -> bool {
+        match self {
+            Type::Enum { name, type_args } if name.0.as_ref() == OPTION_ENUM_NAME => {
+                type_args.first().is_some_and(|t| t.is_infer())
+            }
+            _ => false,
+        }
+    }
+
+    pub fn option_inner(&self) -> Option<&Type> {
+        match self {
+            Type::Enum { name, type_args } if name.0.as_ref() == OPTION_ENUM_NAME => {
+                type_args.first()
+            }
+            _ => None,
+        }
+    }
+
+    pub fn option_of(inner: Type) -> Type {
+        let name = Ident(Intern::new(OPTION_ENUM_NAME.to_string()));
+        Type::Enum {
+            name,
+            type_args: vec![inner],
+        }
     }
 
     pub fn is_func(&self) -> bool {
@@ -252,7 +282,6 @@ impl Display for Type {
             Type::Bool => write!(f, "bool"),
             Type::String => write!(f, "string"),
             Type::Void => write!(f, "void"),
-            Type::Optional(ty) => write!(f, "{}?", ty),
             Type::Func { params, ret } => write!(
                 f,
                 "fn({}) -> {}",
@@ -295,6 +324,12 @@ impl Display for Type {
                 }
             }
             Type::Enum { name, type_args } => {
+                if name.0.as_ref() == OPTION_ENUM_NAME {
+                    if let Some(inner) = type_args.first() {
+                        write!(f, "{inner}?")?;
+                        return Ok(());
+                    }
+                }
                 if type_args.is_empty() {
                     write!(f, "{name}")
                 } else {
