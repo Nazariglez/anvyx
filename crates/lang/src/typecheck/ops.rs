@@ -22,6 +22,22 @@ pub(super) fn check_binary(
     let same_ty = left_ty == right_ty;
 
     match node.op {
+        // string concat
+        Add if left_ty.is_str() || right_ty.is_str() => {
+            if left_ty.is_str() && same_ty {
+                left_ty
+            } else {
+                errors.push(TypeErr::new(
+                    bin.span,
+                    TypeErrKind::MismatchedTypes {
+                        expected: left_ty.clone(),
+                        found: right_ty.clone(),
+                    },
+                ));
+                Type::Infer
+            }
+        }
+
         // numeric ops
         Add | Sub | Mul | Div | Rem => {
             if left_ty.is_num() && same_ty {
@@ -278,8 +294,9 @@ fn check_compound_assign_op(
         .get_type_ref(&target_ref)
         .unwrap_or(Type::Infer);
 
-    let is_numeric = target_ty.is_num() || target_ty.is_infer();
-    if !is_numeric {
+    let is_add_assign = assign.node.op == AssignOp::AddAssign;
+    let is_valid = target_ty.is_num() || target_ty.is_infer() || (is_add_assign && target_ty.is_str());
+    if !is_valid {
         errors.push(TypeErr::new(
             assign.span,
             TypeErrKind::InvalidOperand {

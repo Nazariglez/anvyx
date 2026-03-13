@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let a: string = "hello" + " " + "world";
+    var s = "x";
+    s += "y";
+    s += "z";
+    let b: string = s + "!";
+}
