@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let a: string = "hello\nworld";
+    let b: string = "col1\tcol2";
+    let c: string = "line\r";
+    let d: string = "path\\to";
+    let e: string = "say \"hi\"";
+    let f: string = "\{";
+    let g: string = "a\nb\tc\\d";
+    let h: string = "";
+}

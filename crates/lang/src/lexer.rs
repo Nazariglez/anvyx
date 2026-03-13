@@ -253,9 +253,20 @@ fn lit_float<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
 }
 
 fn lit_string<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
-    just("\"")
-        .ignore_then(none_of("\"").repeated().collect::<String>())
-        .then_ignore(just("\""))
+    let escape = just('\\').ignore_then(choice((
+        just('n').to('\n'),
+        just('t').to('\t'),
+        just('r').to('\r'),
+        just('\\').to('\\'),
+        just('"').to('"'),
+        just('{').to('{'),
+    )));
+
+    let string_char = choice((escape, none_of("\"\\")));
+
+    just('"')
+        .ignore_then(string_char.repeated().collect::<String>())
+        .then_ignore(just('"'))
         .map(Intern::new)
         .map(LitToken::String)
 }
@@ -336,4 +347,67 @@ fn punctuation<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
         just("?").to(Token::Question),
         just(".").to(Token::Dot),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tokenize_string(src: &str) -> Result<String, ()> {
+        let tokens = tokenize(src).map_err(|_| ())?;
+        match tokens.into_iter().next() {
+            Some((Token::Literal(LitToken::String(s)), _)) => Ok(s.to_string()),
+            _ => Err(()),
+        }
+    }
+
+    #[test]
+    fn test_string_literal_basic() {
+        assert_eq!(tokenize_string(r#""hello""#).unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_string_escape_newline() {
+        assert_eq!(tokenize_string(r#""hello\nworld""#).unwrap(), "hello\nworld");
+    }
+
+    #[test]
+    fn test_string_escape_tab() {
+        assert_eq!(tokenize_string(r#""col1\tcol2""#).unwrap(), "col1\tcol2");
+    }
+
+    #[test]
+    fn test_string_escape_carriage_return() {
+        assert_eq!(tokenize_string(r#""line\r""#).unwrap(), "line\r");
+    }
+
+    #[test]
+    fn test_string_escape_backslash() {
+        assert_eq!(tokenize_string(r#""path\\to""#).unwrap(), "path\\to");
+    }
+
+    #[test]
+    fn test_string_escape_quote() {
+        assert_eq!(tokenize_string(r#""say \"hi\"""#).unwrap(), r#"say "hi""#);
+    }
+
+    #[test]
+    fn test_string_escape_brace() {
+        assert_eq!(tokenize_string(r#""\{""#).unwrap(), "{");
+    }
+
+    #[test]
+    fn test_string_multiple_escapes() {
+        assert_eq!(tokenize_string(r#""a\nb\tc\\d""#).unwrap(), "a\nb\tc\\d");
+    }
+
+    #[test]
+    fn test_string_empty() {
+        assert_eq!(tokenize_string(r#""""#).unwrap(), "");
+    }
+
+    #[test]
+    fn test_string_invalid_escape_err() {
+        assert!(tokenize(r#""hello\z""#).is_err());
+    }
 }
