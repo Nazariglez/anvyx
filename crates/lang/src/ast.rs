@@ -87,6 +87,7 @@ pub enum ExprKind {
     Index(IndexNode),
     Match(MatchNode),
     StringInterp(Vec<StringPart>),
+    Cast(CastNode),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Hash, Eq)]
@@ -587,6 +588,14 @@ pub struct FieldAccess {
     pub field: Ident,
     pub safe: bool,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cast {
+    pub expr: Box<ExprNode>,
+    pub target: Type,
+}
+
+pub type CastNode = Spanned<Cast>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructField {

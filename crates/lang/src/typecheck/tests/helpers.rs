@@ -1,12 +1,12 @@
 use crate::{
     ast::{
         ArrayFill, ArrayFillNode, ArrayLiteral, ArrayLiteralNode, Assign, AssignNode, AssignOp,
-        Binary, BinaryNode, BinaryOp, Binding, BindingNode, Block, BlockNode, Call, CallNode, Expr,
-        ExprId, ExprKind, ExprNode, FieldAccess, FieldAccessNode, Func, FuncNode, Ident, Index,
-        IndexNode, Lit, MapLiteral, MapLiteralNode, Method, MethodReceiver, Mutability, Param,
-        Pattern, PatternNode, Program, Range, RangeNode, Return, ReturnNode, Stmt, StmtNode,
-        StringPart, StructDecl, StructDeclNode, StructField, StructLiteral, StructLiteralNode,
-        Type, TypeParam, TypeVarId, Unary, UnaryNode, UnaryOp, Visibility,
+        Binary, BinaryNode, BinaryOp, Binding, BindingNode, Block, BlockNode, Call, CallNode, Cast,
+        CastNode, Expr, ExprId, ExprKind, ExprNode, FieldAccess, FieldAccessNode, Func, FuncNode,
+        Ident, Index, IndexNode, Lit, MapLiteral, MapLiteralNode, Method, MethodReceiver,
+        Mutability, Param, Pattern, PatternNode, Program, Range, RangeNode, Return, ReturnNode,
+        Stmt, StmtNode, StringPart, StructDecl, StructDeclNode, StructField, StructLiteral,
+        StructLiteralNode, Type, TypeParam, TypeVarId, Unary, UnaryNode, UnaryOp, Visibility,
     },
     span::Span,
     typecheck::{check_program, error::TypeErr, types::TypeChecker},
@@ -649,4 +649,20 @@ pub(super) fn text_part(s: &str) -> StringPart {
 
 pub(super) fn expr_part(expr: ExprNode) -> StringPart {
     StringPart::Expr(expr)
+}
+
+pub(super) fn cast_expr_node(expr: ExprNode, target: Type) -> ExprNode {
+    use crate::span::Spanned;
+    let span = dummy_span();
+    let cast_node: CastNode = Spanned::new(
+        Cast {
+            expr: Box::new(expr),
+            target,
+        },
+        span,
+    );
+    ExprNode {
+        node: Expr::new(ExprKind::Cast(cast_node), next_expr_id()),
+        span,
+    }
 }

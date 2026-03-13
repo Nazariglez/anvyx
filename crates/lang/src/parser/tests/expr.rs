@@ -465,3 +465,51 @@ fn string_interp_escaped_brace_still_plain() {
     let expr = parse_expr(r#""\{not_interp}""#);
     expect_string(&expr, "{not_interp}");
 }
+
+#[test]
+fn cast_int_to_float_parses() {
+    let expr = parse_expr("42 as float");
+    let (inner, target) = expect_cast(&expr);
+    expect_int(inner, 42);
+    assert_eq!(*target, ast::Type::Float);
+}
+
+#[test]
+fn cast_float_to_int_parses() {
+    let expr = parse_expr("3.14 as int");
+    let (inner, target) = expect_cast(&expr);
+    expect_float(inner, 3.14);
+    assert_eq!(*target, ast::Type::Int);
+}
+
+#[test]
+fn cast_precedence_vs_binary() {
+    // "1 + x as float" should parse as Add(1, Cast(x, Float))
+    let expr = parse_expr("1 + x as float");
+    let (left, right) = expect_binary(&expr, ast::BinaryOp::Add);
+    expect_int(left, 1);
+    let (inner, target) = expect_cast(right);
+    expect_ident(inner, "x");
+    assert_eq!(*target, ast::Type::Float);
+}
+
+#[test]
+fn cast_precedence_vs_unary() {
+    // "-x as float" should parse as Cast(Neg(x), Float)
+    let expr = parse_expr("-x as float");
+    let (inner, target) = expect_cast(&expr);
+    let operand = expect_unary(inner, ast::UnaryOp::Neg);
+    expect_ident(operand, "x");
+    assert_eq!(*target, ast::Type::Float);
+}
+
+#[test]
+fn cast_chained() {
+    // "x as float as int" should parse as Cast(Cast(x, Float), Int)
+    let expr = parse_expr("x as float as int");
+    let (outer_inner, outer_target) = expect_cast(&expr);
+    assert_eq!(*outer_target, ast::Type::Int);
+    let (inner_inner, inner_target) = expect_cast(outer_inner);
+    expect_ident(inner_inner, "x");
+    assert_eq!(*inner_target, ast::Type::Float);
+}

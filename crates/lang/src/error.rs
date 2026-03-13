@@ -424,6 +424,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "duplicate key in map literal".to_string(),
             "this key appears more than once".to_string(),
         ),
+        TypeErrKind::InvalidCast { from, to } => (
+            "Invalid cast".to_string(),
+            format!("cannot cast '{from}' to '{to}'"),
+        ),
     }
 }
 

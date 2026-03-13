@@ -226,4 +226,9 @@ pub enum TypeErrKind {
         found: Type,
     },
     MapDuplicateKey,
+
+    InvalidCast {
+        from: Type,
+        to: Type,
+    },
 }

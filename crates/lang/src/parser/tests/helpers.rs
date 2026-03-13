@@ -105,6 +105,25 @@ pub(super) fn expect_int(expr: &ast::ExprNode, value: i64) {
     }
 }
 
+pub(super) fn expect_float(expr: &ast::ExprNode, value: f64) {
+    match &expr.node.kind {
+        ast::ExprKind::Lit(ast::Lit::Float(v)) => {
+            assert_eq!(*v, value, "expected float literal {value}");
+        }
+        other => panic!("expected float literal {value}, found {other:?}"),
+    }
+}
+
+pub(super) fn expect_unary<'a>(expr: &'a ast::ExprNode, op: ast::UnaryOp) -> &'a ast::ExprNode {
+    match &expr.node.kind {
+        ast::ExprKind::Unary(node) => {
+            assert_eq!(node.node.op, op, "expected unary op {op:?}");
+            node.node.expr.as_ref()
+        }
+        other => panic!("expected unary expression, found {other:?}"),
+    }
+}
+
 pub(super) fn expect_field<'a>(expr: &'a ast::ExprNode, name: &str, safe: bool) -> &'a ast::ExprNode {
     match &expr.node.kind {
         ast::ExprKind::Field(field_node) => {
@@ -191,5 +210,12 @@ pub(super) fn expect_string_interp(expr: &ast::ExprNode) -> &[ast::StringPart] {
     match &expr.node.kind {
         ast::ExprKind::StringInterp(parts) => parts.as_slice(),
         other => panic!("expected StringInterp, found {other:?}"),
+    }
+}
+
+pub(super) fn expect_cast<'a>(expr: &'a ast::ExprNode) -> (&'a ast::ExprNode, &'a ast::Type) {
+    match &expr.node.kind {
+        ast::ExprKind::Cast(node) => (node.node.expr.as_ref(), &node.node.target),
+        other => panic!("expected Cast, found {other:?}"),
     }
 }

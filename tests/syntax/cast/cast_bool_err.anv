@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: Invalid cast
+
+fn main() {
+    let a = true as int;
+}

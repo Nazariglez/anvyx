@@ -20,7 +20,8 @@ pub(super) fn expression<'src>(
         let atom = atom_expr(stmt, expr.clone());
         let postfix = postfix_expr(atom, expr.clone());
         let unary = unary_expr(postfix);
-        let binary = binary_expr(unary);
+        let cast = cast_expr(unary);
+        let binary = binary_expr(cast);
         let ternary = ternary_expr(binary, expr.clone());
         assignment_expr(ternary)
     })
@@ -734,6 +735,31 @@ fn postfix_expr<'src>(
     .labelled("postfix expression")
     .as_context()
     .boxed()
+}
+
+fn cast_expr<'src>(
+    unary: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let as_kw = select! { (Token::Keyword(Keyword::As), _) => () };
+    unary
+        .foldl_with(
+            as_kw.ignore_then(type_ident()).repeated(),
+            |expr, target, e| {
+                let s = e.span();
+                let span = Span::new(s.start, s.end);
+                let cast_node = Spanned::new(
+                    ast::Cast {
+                        expr: Box::new(expr),
+                        target,
+                    },
+                    span,
+                );
+                let id = e.state().new_expr_id();
+                let node = ast::Expr::new(ast::ExprKind::Cast(cast_node), id);
+                Spanned::new(node, span)
+            },
+        )
+        .boxed()
 }
 
 fn unary_expr<'src>(expr: impl AnvParser<'src, ast::ExprNode>) -> BoxedParser<'src, ast::ExprNode> {

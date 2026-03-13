@@ -1,6 +1,6 @@
 use super::helpers::{
-    assert_expr_type, assign_expr, binary_expr, expr_part, expr_stmt, get_expr_id, ident_expr,
-    let_binding, lit_bool, lit_float, lit_int, lit_nil, lit_string, opt_type, program,
+    assert_expr_type, assign_expr, binary_expr, cast_expr_node, expr_part, expr_stmt, get_expr_id,
+    ident_expr, let_binding, lit_bool, lit_float, lit_int, lit_nil, lit_string, opt_type, program,
     reset_expr_ids, run_err, run_ok, string_interp_expr, struct_decl, struct_literal_expr,
     text_part, unary_expr, var_binding,
 };
@@ -749,5 +749,101 @@ fn test_string_interp_with_struct_err() {
         &e.kind,
         TypeErrKind::MismatchedTypes { expected, .. }
         if *expected == Type::String
+    )));
+}
+
+// ---- cast expression tests ----
+
+#[test]
+fn test_cast_int_to_float_ok() {
+    reset_expr_ids();
+    let expr = cast_expr_node(lit_int(42), Type::Float);
+    let expr_id = get_expr_id(&expr);
+    let prog = program(vec![expr_stmt(expr)]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, expr_id, Type::Float);
+}
+
+#[test]
+fn test_cast_float_to_int_ok() {
+    reset_expr_ids();
+    let expr = cast_expr_node(lit_float(3.14), Type::Int);
+    let expr_id = get_expr_id(&expr);
+    let prog = program(vec![expr_stmt(expr)]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, expr_id, Type::Int);
+}
+
+#[test]
+fn test_cast_same_type_int_ok() {
+    reset_expr_ids();
+    let expr = cast_expr_node(lit_int(10), Type::Int);
+    let expr_id = get_expr_id(&expr);
+    let prog = program(vec![expr_stmt(expr)]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, expr_id, Type::Int);
+}
+
+#[test]
+fn test_cast_same_type_float_ok() {
+    reset_expr_ids();
+    let expr = cast_expr_node(lit_float(1.0), Type::Float);
+    let expr_id = get_expr_id(&expr);
+    let prog = program(vec![expr_stmt(expr)]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, expr_id, Type::Float);
+}
+
+#[test]
+fn test_cast_bool_to_int_err() {
+    reset_expr_ids();
+    let prog = program(vec![expr_stmt(cast_expr_node(lit_bool(true), Type::Int))]);
+    let errors = run_err(prog);
+    assert!(errors.iter().any(|e| matches!(
+        &e.kind,
+        TypeErrKind::InvalidCast { from, to }
+        if *from == Type::Bool && *to == Type::Int
+    )));
+}
+
+#[test]
+fn test_cast_string_to_int_err() {
+    reset_expr_ids();
+    let prog = program(vec![expr_stmt(cast_expr_node(
+        lit_string("hi"),
+        Type::Int,
+    ))]);
+    let errors = run_err(prog);
+    assert!(errors.iter().any(|e| matches!(
+        &e.kind,
+        TypeErrKind::InvalidCast { from, to }
+        if *from == Type::String && *to == Type::Int
+    )));
+}
+
+#[test]
+fn test_cast_int_to_bool_err() {
+    reset_expr_ids();
+    let prog = program(vec![expr_stmt(cast_expr_node(lit_int(1), Type::Bool))]);
+    let errors = run_err(prog);
+    assert!(errors.iter().any(|e| matches!(
+        &e.kind,
+        TypeErrKind::InvalidCast { from, to }
+        if *from == Type::Int && *to == Type::Bool
+    )));
+}
+
+#[test]
+fn test_cast_int_to_string_err() {
+    reset_expr_ids();
+    let prog = program(vec![expr_stmt(cast_expr_node(
+        lit_int(1),
+        Type::String,
+    ))]);
+    let errors = run_err(prog);
+    assert!(errors.iter().any(|e| matches!(
+        &e.kind,
+        TypeErrKind::InvalidCast { from, to }
+        if *from == Type::Int && *to == Type::String
     )));
 }

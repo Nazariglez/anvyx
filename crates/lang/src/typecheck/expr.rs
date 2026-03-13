@@ -1,4 +1,4 @@
-use crate::ast::{ExprKind, ExprNode, Ident, Lit, StringPart, Type};
+use crate::ast::{CastNode, ExprKind, ExprNode, Ident, Lit, StringPart, Type};
 
 use super::{
     composite::{
@@ -60,6 +60,7 @@ pub(super) fn check_expr(
         ExprKind::MapLiteral(lit_node) => check_map_literal(lit_node, type_checker, errors),
         ExprKind::Match(match_node) => check_match(match_node, type_checker, errors),
         ExprKind::StringInterp(parts) => check_string_interp(parts, type_checker, errors),
+        ExprKind::Cast(cast_node) => check_cast(cast_node, type_checker, errors),
         ExprKind::Field(_) | ExprKind::Index(_) | ExprKind::Call(_) => {
             unreachable!("postfix expressions should be routed through check_postfix_chain")
         }
@@ -86,6 +87,32 @@ pub(super) fn type_from_lit(lit: &Lit) -> Type {
         Lit::String(_) => Type::String,
         Lit::Nil => Type::option_of(Type::Infer),
     }
+}
+
+fn check_cast(
+    cast_node: &CastNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let from_ty = check_expr(&cast_node.node.expr, type_checker, errors);
+    let to_ty = &cast_node.node.target;
+
+    let valid = match (&from_ty, to_ty) {
+        (Type::Int, Type::Float) | (Type::Float, Type::Int) => true,
+        _ => from_ty == *to_ty,
+    };
+
+    if !valid {
+        errors.push(TypeErr::new(
+            cast_node.span,
+            TypeErrKind::InvalidCast {
+                from: from_ty,
+                to: to_ty.clone(),
+            },
+        ));
+    }
+
+    to_ty.clone()
 }
 
 fn check_string_interp(
