@@ -405,3 +405,84 @@ fn test_contains_infer_func_with_infer() {
     };
     assert!(contains_infer(&func_type));
 }
+
+#[test]
+fn test_contains_infer_list() {
+    // [<infer>] returns true
+    let list_infer = Type::List {
+        elem: Box::new(Type::Infer),
+    };
+    assert!(contains_infer(&list_infer));
+
+    // [int] returns false
+    let list_int = Type::List {
+        elem: Box::new(Type::Int),
+    };
+    assert!(!contains_infer(&list_int));
+}
+
+#[test]
+fn test_contains_infer_map() {
+    // [int: <infer>] returns true
+    let map_infer_val = Type::Map {
+        key: Box::new(Type::Int),
+        value: Box::new(Type::Infer),
+    };
+    assert!(contains_infer(&map_infer_val));
+
+    // [int: string] returns false
+    let map_concrete = Type::Map {
+        key: Box::new(Type::Int),
+        value: Box::new(Type::String),
+    };
+    assert!(!contains_infer(&map_concrete));
+}
+
+#[test]
+fn test_unify_struct_type_args_mismatch_no_panic() {
+    // Foo<int> vs Foo<string> should return None + error, not panic
+    let span = dummy_span();
+    let mut errors = vec![];
+
+    let foo_int = Type::Struct {
+        name: super::helpers::dummy_ident("Foo"),
+        type_args: vec![Type::Int],
+    };
+    let foo_string = Type::Struct {
+        name: super::helpers::dummy_ident("Foo"),
+        type_args: vec![Type::String],
+    };
+
+    let result = unify_types(&foo_int, &foo_string, span, &mut errors);
+    assert_eq!(result, None);
+    assert!(!errors.is_empty());
+    assert!(errors
+        .iter()
+        .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })));
+}
+
+#[test]
+fn test_unify_struct_same_type_args_ok() {
+    // Foo<int> vs Foo<int> should unify to Foo<int>
+    let span = dummy_span();
+    let mut errors = vec![];
+
+    let foo_int_a = Type::Struct {
+        name: super::helpers::dummy_ident("Foo"),
+        type_args: vec![Type::Int],
+    };
+    let foo_int_b = Type::Struct {
+        name: super::helpers::dummy_ident("Foo"),
+        type_args: vec![Type::Int],
+    };
+
+    let result = unify_types(&foo_int_a, &foo_int_b, span, &mut errors);
+    assert!(errors.is_empty());
+    assert_eq!(
+        result,
+        Some(Type::Struct {
+            name: super::helpers::dummy_ident("Foo"),
+            type_args: vec![Type::Int],
+        })
+    );
+}

@@ -20,6 +20,8 @@ pub(super) fn contains_infer(ty: &Type) -> bool {
         }
         Type::Array { elem, .. } => contains_infer(elem),
         Type::ArrayView { elem } => contains_infer(elem),
+        Type::List { elem } => contains_infer(elem),
+        Type::Map { key, value } => contains_infer(key) || contains_infer(value),
         _ => false,
     }
 }
@@ -269,15 +271,15 @@ pub(super) fn unify_types(
                 return None;
             }
 
-            let unified_args = la
+            let unified_args: Option<Vec<Type>> = la
                 .iter()
                 .zip(ra.iter())
-                .map(|(l_arg, r_arg)| unify_types(l_arg, r_arg, span, errors).unwrap())
+                .map(|(l_arg, r_arg)| unify_types(l_arg, r_arg, span, errors))
                 .collect();
 
-            Some(Struct {
+            unified_args.map(|type_args| Struct {
                 name: *ln,
-                type_args: unified_args,
+                type_args,
             })
         }
 

@@ -50,6 +50,16 @@ pub(super) fn subst_type(ty: &Type, subst: &HashMap<TypeVarId, Type>) -> Type {
             elem: subst_type(elem, subst).boxed(),
             len: *len,
         },
+        ArrayView { elem } => ArrayView {
+            elem: subst_type(elem, subst).boxed(),
+        },
+        List { elem } => List {
+            elem: subst_type(elem, subst).boxed(),
+        },
+        Map { key, value } => Map {
+            key: subst_type(key, subst).boxed(),
+            value: subst_type(value, subst).boxed(),
+        },
         _ => ty.clone(),
     }
 }
@@ -163,6 +173,16 @@ pub(super) fn substitute_vars_with_infer(ty: &Type, slots: &InferenceSlots) -> T
         Type::Array { elem, len } => Type::Array {
             elem: substitute_vars_with_infer(elem, slots).boxed(),
             len: *len,
+        },
+        Type::ArrayView { elem } => Type::ArrayView {
+            elem: substitute_vars_with_infer(elem, slots).boxed(),
+        },
+        Type::List { elem } => Type::List {
+            elem: substitute_vars_with_infer(elem, slots).boxed(),
+        },
+        Type::Map { key, value } => Type::Map {
+            key: substitute_vars_with_infer(key, slots).boxed(),
+            value: substitute_vars_with_infer(value, slots).boxed(),
         },
         _ => ty.clone(),
     }

@@ -508,6 +508,15 @@ fn resolve_type_params_with_self(
             elem: resolve_type_params_with_self(elem, type_param_map, self_type).boxed(),
         },
 
+        List { elem } => List {
+            elem: resolve_type_params_with_self(elem, type_param_map, self_type).boxed(),
+        },
+
+        Map { key, value } => Map {
+            key: resolve_type_params_with_self(key, type_param_map, self_type).boxed(),
+            value: resolve_type_params_with_self(value, type_param_map, self_type).boxed(),
+        },
+
         _ => ty.clone(),
     }
 }

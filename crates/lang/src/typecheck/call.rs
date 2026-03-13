@@ -11,22 +11,13 @@ use super::{
     constraint::TypeRef,
     decl::check_fn_body,
     error::{TypeErr, TypeErrKind},
-    expr::check_expr,
+    expr::{check_expr, root_ident},
     infer::{
         create_inference_slots, infer_type_args_from_call, instantiate_func_type, subst_type,
         type_to_ref_with_inference,
     },
     types::{EnumDef, SpecializationKey, SpecializationResult, StructDef, TypeChecker},
 };
-
-fn root_ident(expr: &ExprNode) -> Option<Ident> {
-    match &expr.node.kind {
-        ExprKind::Ident(name) => Some(*name),
-        ExprKind::Field(field) => root_ident(&field.node.target),
-        ExprKind::Index(index) => root_ident(&index.node.target),
-        _ => None,
-    }
-}
 
 fn check_var_param_args(
     params: &[(Ident, Mutability)],

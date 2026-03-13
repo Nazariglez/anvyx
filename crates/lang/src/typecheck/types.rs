@@ -187,6 +187,13 @@ impl TypeChecker {
             Type::ArrayView { elem } => Type::ArrayView {
                 elem: self.resolve_type(elem).boxed(),
             },
+            Type::List { elem } => Type::List {
+                elem: self.resolve_type(elem).boxed(),
+            },
+            Type::Map { key, value } => Type::Map {
+                key: self.resolve_type(key).boxed(),
+                value: self.resolve_type(value).boxed(),
+            },
             _ => ty.clone(),
         }
     }

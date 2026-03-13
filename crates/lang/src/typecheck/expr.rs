@@ -1,4 +1,4 @@
-use crate::ast::{ExprKind, ExprNode, Lit, Type};
+use crate::ast::{ExprKind, ExprNode, Ident, Lit, Type};
 
 use super::{
     call::check_call,
@@ -70,6 +70,15 @@ pub(super) fn check_expr(
 
     type_checker.set_type(expr_node.node.id, ty.clone(), expr_node.span);
     ty
+}
+
+pub(super) fn root_ident(expr: &ExprNode) -> Option<Ident> {
+    match &expr.node.kind {
+        ExprKind::Ident(name) => Some(*name),
+        ExprKind::Field(field) => root_ident(&field.node.target),
+        ExprKind::Index(index) => root_ident(&index.node.target),
+        _ => None,
+    }
 }
 
 pub(super) fn type_from_lit(lit: &Lit) -> Type {

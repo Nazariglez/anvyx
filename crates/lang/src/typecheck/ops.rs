@@ -1,12 +1,11 @@
 use crate::ast::{
-    AssignNode, AssignOp, BinaryNode, BinaryOp, ExprKind, ExprNode, Ident, MethodReceiver, Type,
-    UnaryNode, UnaryOp,
+    AssignNode, AssignOp, BinaryNode, BinaryOp, ExprKind, MethodReceiver, Type, UnaryNode, UnaryOp,
 };
 
 use super::{
     constraint::TypeRef,
     error::{TypeErr, TypeErrKind},
-    expr::check_expr,
+    expr::{check_expr, root_ident},
     types::TypeChecker,
 };
 
@@ -174,15 +173,6 @@ pub(super) fn check_unary(
             ));
             Type::Infer
         }
-    }
-}
-
-fn root_ident(expr: &ExprNode) -> Option<Ident> {
-    match &expr.node.kind {
-        ExprKind::Ident(name) => Some(*name),
-        ExprKind::Field(field) => root_ident(&field.node.target),
-        ExprKind::Index(index) => root_ident(&index.node.target),
-        _ => None,
     }
 }
 

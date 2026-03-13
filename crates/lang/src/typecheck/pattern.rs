@@ -1,9 +1,10 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::{Ident, Pattern, PatternNode, Type, TypeParam, TypeVarId, VariantKind};
 
 use super::{
     error::{TypeErr, TypeErrKind},
+    infer::subst_type,
     types::{EnumDef, TypeChecker},
 };
 
@@ -280,7 +281,7 @@ fn check_enum_pattern(
             let subst = build_type_subst(&enum_def.type_params, type_args);
 
             for (subpat, expected_ty) in fields.iter().zip(expected_types.iter()) {
-                let resolved_ty = substitute_type(expected_ty, &subst);
+                let resolved_ty = subst_type(expected_ty, &subst);
                 check_pattern_inner(subpat, &resolved_ty, mutable, None, type_checker, errors);
             }
         }
@@ -399,7 +400,7 @@ fn check_enum_struct_pattern(
             continue;
         };
 
-        let resolved_ty = substitute_type(&expected_field.ty, &subst);
+        let resolved_ty = subst_type(&expected_field.ty, &subst);
         check_pattern_inner(subpat, &resolved_ty, mutable, None, type_checker, errors);
     }
 
@@ -417,58 +418,10 @@ fn check_enum_struct_pattern(
     }
 }
 
-fn build_type_subst(type_params: &[TypeParam], type_args: &[Type]) -> Vec<(TypeVarId, Type)> {
+fn build_type_subst(type_params: &[TypeParam], type_args: &[Type]) -> HashMap<TypeVarId, Type> {
     type_params
         .iter()
         .zip(type_args.iter())
         .map(|(param, arg)| (param.id, arg.clone()))
         .collect()
-}
-
-fn substitute_type(ty: &Type, subst: &[(TypeVarId, Type)]) -> Type {
-    match ty {
-        Type::Var(var_id) => {
-            for (param_id, arg) in subst {
-                if var_id == param_id {
-                    return arg.clone();
-                }
-            }
-            ty.clone()
-        }
-        Type::UnresolvedName(_) => {
-            // Unresolved names are left as-is (shouldn't normally happen)
-            ty.clone()
-        }
-        Type::Tuple(elems) => {
-            Type::Tuple(elems.iter().map(|t| substitute_type(t, subst)).collect())
-        }
-        Type::NamedTuple(fields) => Type::NamedTuple(
-            fields
-                .iter()
-                .map(|(n, t)| (*n, substitute_type(t, subst)))
-                .collect(),
-        ),
-        Type::List { elem } => Type::List {
-            elem: Box::new(substitute_type(elem, subst)),
-        },
-        Type::Array { elem, len } => Type::Array {
-            elem: Box::new(substitute_type(elem, subst)),
-            len: *len,
-        },
-        Type::Struct { name, type_args } => Type::Struct {
-            name: *name,
-            type_args: type_args
-                .iter()
-                .map(|t| substitute_type(t, subst))
-                .collect(),
-        },
-        Type::Enum { name, type_args } => Type::Enum {
-            name: *name,
-            type_args: type_args
-                .iter()
-                .map(|t| substitute_type(t, subst))
-                .collect(),
-        },
-        _ => ty.clone(),
-    }
 }

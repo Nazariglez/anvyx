@@ -185,3 +185,52 @@ fn test_instantiate_arity_mismatch_too_many() {
         }
     ));
 }
+
+// ---- subst_type: List / Map / ArrayView ----
+
+#[test]
+fn test_subst_type_list() {
+    // substitute T -> int in [T], expect [int]
+    let mut subst = HashMap::new();
+    subst.insert(TypeVarId(0), Type::Int);
+
+    let list_t = Type::List {
+        elem: Box::new(type_var(0)),
+    };
+    let result = subst_type(&list_t, &subst);
+    assert_eq!(result, Type::List { elem: Box::new(Type::Int) });
+}
+
+#[test]
+fn test_subst_type_map() {
+    // substitute T -> int, U -> string in [T: U], expect [int: string]
+    let mut subst = HashMap::new();
+    subst.insert(TypeVarId(0), Type::Int);
+    subst.insert(TypeVarId(1), Type::String);
+
+    let map_tu = Type::Map {
+        key: Box::new(type_var(0)),
+        value: Box::new(type_var(1)),
+    };
+    let result = subst_type(&map_tu, &subst);
+    assert_eq!(
+        result,
+        Type::Map {
+            key: Box::new(Type::Int),
+            value: Box::new(Type::String),
+        }
+    );
+}
+
+#[test]
+fn test_subst_type_array_view() {
+    // substitute T -> int in [T; ..], expect [int; ..]
+    let mut subst = HashMap::new();
+    subst.insert(TypeVarId(0), Type::Int);
+
+    let view_t = Type::ArrayView {
+        elem: Box::new(type_var(0)),
+    };
+    let result = subst_type(&view_t, &subst);
+    assert_eq!(result, Type::ArrayView { elem: Box::new(Type::Int) });
+}
