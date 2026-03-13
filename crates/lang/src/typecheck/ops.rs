@@ -22,10 +22,14 @@ pub(super) fn check_binary(
     let same_ty = left_ty == right_ty;
 
     match node.op {
-        // string concat
+        // string concat and string + primitive coercion
         Add if left_ty.is_str() || right_ty.is_str() => {
-            if left_ty.is_str() && same_ty {
-                left_ty
+            let both_str = left_ty.is_str() && same_ty;
+            let left_str_right_prim = left_ty.is_str() && right_ty.is_stringable_primitive();
+            let right_str_left_prim = right_ty.is_str() && left_ty.is_stringable_primitive();
+            let is_valid = both_str || left_str_right_prim || right_str_left_prim;
+            if is_valid {
+                Type::String
             } else {
                 errors.push(TypeErr::new(
                     bin.span,
@@ -68,9 +72,10 @@ pub(super) fn check_binary(
             Type::Bool
         }
 
-        // comparison ops must be numeric
+        // comparison ops must be numeric or string
         LessThan | GreaterThan | LessThanEq | GreaterThanEq => {
-            if left_ty.is_num() && same_ty {
+            let is_comparable = (left_ty.is_num() || left_ty.is_str()) && same_ty;
+            if is_comparable {
                 Type::Bool
             } else {
                 errors.push(TypeErr::new(
@@ -288,13 +293,25 @@ fn check_compound_assign_op(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
-    type_checker.constrain_equal(assign.span, target_ref.clone(), value_ref, errors);
+    let target_ty = type_checker
+        .get_type_ref(&target_ref)
+        .unwrap_or(Type::Infer);
+    let value_ty = type_checker
+        .get_type_ref(&value_ref)
+        .unwrap_or(Type::Infer);
+
+    let is_add_assign = assign.node.op == AssignOp::AddAssign;
+    let is_str_concat = is_add_assign
+        && target_ty.is_str()
+        && (value_ty.is_str() || value_ty.is_stringable_primitive());
+
+    if !is_str_concat {
+        type_checker.constrain_equal(assign.span, target_ref.clone(), value_ref, errors);
+    }
 
     let target_ty = type_checker
         .get_type_ref(&target_ref)
         .unwrap_or(Type::Infer);
-
-    let is_add_assign = assign.node.op == AssignOp::AddAssign;
     let is_valid = target_ty.is_num() || target_ty.is_infer() || (is_add_assign && target_ty.is_str());
     if !is_valid {
         errors.push(TypeErr::new(

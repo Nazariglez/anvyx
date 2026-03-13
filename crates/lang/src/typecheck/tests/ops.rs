@@ -1,7 +1,7 @@
 use super::helpers::{
     assert_expr_type, assign_expr, binary_expr, expr_stmt, get_expr_id, ident_expr, let_binding,
     lit_bool, lit_float, lit_int, lit_nil, lit_string, opt_type, program, reset_expr_ids, run_err,
-    run_ok, unary_expr, var_binding,
+    run_ok, struct_decl, struct_literal_expr, unary_expr, var_binding,
 };
 use crate::ast::{AssignOp, BinaryOp, Type, UnaryOp};
 use crate::typecheck::error::TypeErrKind;
@@ -112,6 +112,62 @@ fn test_binary_comparison_mismatch() {
             .iter()
             .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
     );
+}
+
+#[test]
+fn test_binary_string_comparison_ok() {
+    reset_expr_ids();
+    // "a" < "b"
+    let expr = binary_expr(lit_string("a"), BinaryOp::LessThan, lit_string("b"));
+    let expr_id = get_expr_id(&expr);
+    let prog = program(vec![expr_stmt(expr)]);
+
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, expr_id, Type::Bool);
+}
+
+#[test]
+fn test_binary_string_comparison_all_ops_ok() {
+    reset_expr_ids();
+    // "a" < "b", "z" > "a", "abc" <= "abd", "xyz" >= "xyz"
+    let lt = binary_expr(lit_string("a"), BinaryOp::LessThan, lit_string("b"));
+    let gt = binary_expr(lit_string("z"), BinaryOp::GreaterThan, lit_string("a"));
+    let lte = binary_expr(lit_string("abc"), BinaryOp::LessThanEq, lit_string("abd"));
+    let gte = binary_expr(lit_string("xyz"), BinaryOp::GreaterThanEq, lit_string("xyz"));
+    let lt_id = get_expr_id(&lt);
+    let gt_id = get_expr_id(&gt);
+    let lte_id = get_expr_id(&lte);
+    let gte_id = get_expr_id(&gte);
+    let prog = program(vec![
+        expr_stmt(lt),
+        expr_stmt(gt),
+        expr_stmt(lte),
+        expr_stmt(gte),
+    ]);
+
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, lt_id, Type::Bool);
+    assert_expr_type(&tcx, gt_id, Type::Bool);
+    assert_expr_type(&tcx, lte_id, Type::Bool);
+    assert_expr_type(&tcx, gte_id, Type::Bool);
+}
+
+#[test]
+fn test_binary_string_comparison_mismatch() {
+    reset_expr_ids();
+    // "a" < 1
+    let prog = program(vec![expr_stmt(binary_expr(
+        lit_string("a"),
+        BinaryOp::LessThan,
+        lit_int(1),
+    ))]);
+
+    let errors = run_err(prog);
+    assert!(errors.iter().any(|e| matches!(
+        &e.kind,
+        TypeErrKind::MismatchedTypes { expected, found }
+        if *expected == Type::String && *found == Type::Int
+    )));
 }
 
 // ---- unary tests ----
@@ -234,24 +290,18 @@ fn test_assignment_compound_ok() {
 }
 
 #[test]
-fn test_assignment_compound_non_numeric() {
+fn test_assignment_string_add_assign_int_ok() {
     reset_expr_ids();
     // var x: string = "a"; x += 1;
+    let assign = assign_expr(ident_expr("x"), AssignOp::AddAssign, lit_int(1));
+    let assign_id = get_expr_id(&assign);
     let prog = program(vec![
         var_binding("x", Some(Type::String), lit_string("a")),
-        expr_stmt(assign_expr(
-            ident_expr("x"),
-            AssignOp::AddAssign,
-            lit_int(1),
-        )),
+        expr_stmt(assign),
     ]);
 
-    let errors = run_err(prog);
-    assert!(errors.iter().any(|e| matches!(
-        &e.kind,
-        TypeErrKind::MismatchedTypes { expected, found }
-        if *expected == Type::String && *found == Type::Int
-    )));
+    let stmts = run_ok(prog);
+    assert_expr_type(&stmts, assign_id, Type::Void);
 }
 
 #[test]
@@ -475,21 +525,15 @@ fn test_binary_string_sub_err() {
 }
 
 #[test]
-fn test_binary_string_add_int_err() {
+fn test_binary_string_add_int_ok() {
     reset_expr_ids();
     // "a" + 1
-    let prog = program(vec![expr_stmt(binary_expr(
-        lit_string("a"),
-        BinaryOp::Add,
-        lit_int(1),
-    ))]);
+    let expr = binary_expr(lit_string("a"), BinaryOp::Add, lit_int(1));
+    let expr_id = get_expr_id(&expr);
+    let prog = program(vec![expr_stmt(expr)]);
 
-    let errors = run_err(prog);
-    assert!(errors.iter().any(|e| matches!(
-        &e.kind,
-        TypeErrKind::MismatchedTypes { expected, found }
-        if *expected == Type::String && *found == Type::Int
-    )));
+    let stmts = run_ok(prog);
+    assert_expr_type(&stmts, expr_id, Type::String);
 }
 
 #[test]
@@ -526,4 +570,92 @@ fn test_assignment_string_sub_assign_err() {
         TypeErrKind::InvalidOperand { op, operand_type }
         if op == "-=" && *operand_type == Type::String
     )));
+}
+
+#[test]
+fn test_binary_string_add_float_ok() {
+    reset_expr_ids();
+    // "val: " + 3.14
+    let expr = binary_expr(lit_string("val: "), BinaryOp::Add, lit_float(3.14));
+    let expr_id = get_expr_id(&expr);
+    let prog = program(vec![expr_stmt(expr)]);
+
+    let stmts = run_ok(prog);
+    assert_expr_type(&stmts, expr_id, Type::String);
+}
+
+#[test]
+fn test_binary_string_add_bool_ok() {
+    reset_expr_ids();
+    // "flag: " + true
+    let expr = binary_expr(lit_string("flag: "), BinaryOp::Add, lit_bool(true));
+    let expr_id = get_expr_id(&expr);
+    let prog = program(vec![expr_stmt(expr)]);
+
+    let stmts = run_ok(prog);
+    assert_expr_type(&stmts, expr_id, Type::String);
+}
+
+#[test]
+fn test_binary_int_add_string_ok() {
+    reset_expr_ids();
+    // 10 + " points"
+    let expr = binary_expr(lit_int(10), BinaryOp::Add, lit_string(" points"));
+    let expr_id = get_expr_id(&expr);
+    let prog = program(vec![expr_stmt(expr)]);
+
+    let stmts = run_ok(prog);
+    assert_expr_type(&stmts, expr_id, Type::String);
+}
+
+#[test]
+fn test_binary_string_add_struct_err() {
+    reset_expr_ids();
+    // struct Point { x: int } let a = "pos: " + Point { x: 0 };
+    let point_decl = struct_decl("Point", vec![("x", Type::Int)], vec![]);
+    let prog = program(vec![
+        point_decl,
+        expr_stmt(binary_expr(
+            lit_string("pos: "),
+            BinaryOp::Add,
+            struct_literal_expr("Point", vec![("x", lit_int(0))]),
+        )),
+    ]);
+
+    let errors = run_err(prog);
+    assert!(errors.iter().any(|e| matches!(
+        &e.kind,
+        TypeErrKind::MismatchedTypes { expected, .. }
+        if *expected == Type::String
+    )));
+}
+
+#[test]
+fn test_assignment_string_add_assign_int_ok_var() {
+    reset_expr_ids();
+    // var s = "x"; s += 10;
+    let assign = assign_expr(ident_expr("s"), AssignOp::AddAssign, lit_int(10));
+    let assign_id = get_expr_id(&assign);
+    let prog = program(vec![
+        var_binding("s", Some(Type::String), lit_string("x")),
+        expr_stmt(assign),
+    ]);
+
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, assign_id, Type::Void);
+}
+
+#[test]
+fn test_assignment_string_add_assign_bool_ok() {
+    reset_expr_ids();
+    // var s = "x"; s += true;
+    let assign = assign_expr(ident_expr("s"), AssignOp::AddAssign, lit_bool(true));
+    let assign_id = get_expr_id(&assign);
+    let prog = program(vec![
+        var_binding("s", Some(Type::String), lit_string("x")),
+        expr_stmt(assign),
+    ]);
+
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, assign_id, Type::Void);
 }

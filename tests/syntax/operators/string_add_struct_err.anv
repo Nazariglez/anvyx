@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+struct Point {
+    x: int,
+}
+
+fn main() {
+    let a = "pos: " + Point { x: 0 };
+}

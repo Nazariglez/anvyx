@@ -175,6 +175,10 @@ impl Type {
         matches!(self, Type::Void)
     }
 
+    pub fn is_stringable_primitive(&self) -> bool {
+        matches!(self, Type::Int | Type::Float | Type::Bool)
+    }
+
     pub fn is_optional(&self) -> bool {
         self.is_option()
     }

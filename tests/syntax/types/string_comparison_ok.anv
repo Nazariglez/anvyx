@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let a: bool = "apple" < "banana";
+    let b: bool = "z" > "a";
+    let c: bool = "abc" <= "abd";
+    let d: bool = "xyz" >= "xyz";
+}

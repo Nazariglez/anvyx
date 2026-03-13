@@ -7,4 +7,10 @@ fn main() {
     s += "y";
     s += "z";
     let b: string = s + "!";
+    let c: string = "score: " + 42;
+    let d: string = 10 + " points";
+    let e: string = "pi: " + 3.14;
+    let f: string = "flag: " + true;
+    var g = "count: ";
+    g += 100;
 }

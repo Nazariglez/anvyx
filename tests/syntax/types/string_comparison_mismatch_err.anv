@@ -3,5 +3,5 @@
 // @contains: Mismatched types
 
 fn main() {
-    let a = "hello" + 1;
+    let a: bool = "hello" < 1;
 }
