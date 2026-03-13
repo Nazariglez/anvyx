@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let hp = 100;
+    let name: string = "Link";
+    let x = 1.5;
+    let alive = true;
+
+    let a: string = "HP: {hp}";
+    let b: string = "{name} has {hp} HP";
+    let c: string = "pos: {x}";
+    let d: string = "alive: {alive}";
+    let e: string = "{hp + 1}";
+    let f: string = "escaped \{brace}";
+}

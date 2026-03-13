@@ -383,3 +383,85 @@ fn map_literal_expr_values_parses() {
     expect_int(left, 1);
     expect_int(right, 2);
 }
+
+// ---- string interpolation tests ----
+
+#[test]
+fn string_interp_single_var_parses() {
+    let expr = parse_expr(r#""HP: {hp}""#);
+    let parts = expect_string_interp(&expr);
+    assert_eq!(parts.len(), 2);
+    match &parts[0] {
+        ast::StringPart::Text(s) => assert_eq!(s, "HP: "),
+        other => panic!("expected Text, found {other:?}"),
+    }
+    match &parts[1] {
+        ast::StringPart::Expr(e) => expect_ident(e, "hp"),
+        other => panic!("expected Expr, found {other:?}"),
+    }
+}
+
+#[test]
+fn string_interp_expression_parses() {
+    let expr = parse_expr(r#""a {x + y} b""#);
+    let parts = expect_string_interp(&expr);
+    assert_eq!(parts.len(), 3);
+    match &parts[0] {
+        ast::StringPart::Text(s) => assert_eq!(s, "a "),
+        other => panic!("expected Text, found {other:?}"),
+    }
+    match &parts[1] {
+        ast::StringPart::Expr(e) => {
+            let (left, right) = expect_binary(e, ast::BinaryOp::Add);
+            expect_ident(left, "x");
+            expect_ident(right, "y");
+        }
+        other => panic!("expected Expr, found {other:?}"),
+    }
+    match &parts[2] {
+        ast::StringPart::Text(s) => assert_eq!(s, " b"),
+        other => panic!("expected Text, found {other:?}"),
+    }
+}
+
+#[test]
+fn string_interp_multiple_exprs_parses() {
+    let expr = parse_expr(r#""{a} and {b}""#);
+    let parts = expect_string_interp(&expr);
+    assert_eq!(parts.len(), 3);
+    match &parts[0] {
+        ast::StringPart::Expr(e) => expect_ident(e, "a"),
+        other => panic!("expected Expr, found {other:?}"),
+    }
+    match &parts[1] {
+        ast::StringPart::Text(s) => assert_eq!(s, " and "),
+        other => panic!("expected Text, found {other:?}"),
+    }
+    match &parts[2] {
+        ast::StringPart::Expr(e) => expect_ident(e, "b"),
+        other => panic!("expected Expr, found {other:?}"),
+    }
+}
+
+#[test]
+fn string_interp_only_expr_parses() {
+    let expr = parse_expr(r#""{x}""#);
+    let parts = expect_string_interp(&expr);
+    assert_eq!(parts.len(), 1);
+    match &parts[0] {
+        ast::StringPart::Expr(e) => expect_ident(e, "x"),
+        other => panic!("expected Expr, found {other:?}"),
+    }
+}
+
+#[test]
+fn string_interp_plain_string_still_lit() {
+    let expr = parse_expr(r#""just text""#);
+    expect_string(&expr, "just text");
+}
+
+#[test]
+fn string_interp_escaped_brace_still_plain() {
+    let expr = parse_expr(r#""\{not_interp}""#);
+    expect_string(&expr, "{not_interp}");
+}

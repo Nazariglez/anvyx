@@ -86,6 +86,7 @@ pub enum ExprKind {
     MapLiteral(MapLiteralNode),
     Index(IndexNode),
     Match(MatchNode),
+    StringInterp(Vec<StringPart>),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Hash, Eq)]
@@ -427,6 +428,12 @@ pub enum Lit {
     Bool(bool),
     String(String),
     Nil,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StringPart {
+    Text(String),
+    Expr(ExprNode),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

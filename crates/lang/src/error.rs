@@ -15,7 +15,15 @@ pub fn report_lexer_errors(src: &str, file_path: &str, errors: Vec<Rich<'_, char
         let last_context = last_ctx(&e)
             .map(|s| format!("while lexing a {}", s))
             .unwrap_or_default();
-        let (msg_title, msg_body) = if let Some(found_char) = e.found() {
+
+        let custom_msg = match e.reason() {
+            RichReason::Custom(msg) => Some(msg.to_string()),
+            _ => None,
+        };
+
+        let (msg_title, msg_body) = if let Some(msg) = custom_msg {
+            (msg, String::new())
+        } else if let Some(found_char) = e.found() {
             (
                 format!("Unexpected character {}", last_context),
                 format!("'{}'", found_char),

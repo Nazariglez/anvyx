@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: invalid expression in string interpolation
+
+fn main() {
+    let s: string = "{oops";
+}

@@ -1,7 +1,8 @@
 use super::helpers::{
-    assert_expr_type, assign_expr, binary_expr, expr_stmt, get_expr_id, ident_expr, let_binding,
-    lit_bool, lit_float, lit_int, lit_nil, lit_string, opt_type, program, reset_expr_ids, run_err,
-    run_ok, struct_decl, struct_literal_expr, unary_expr, var_binding,
+    assert_expr_type, assign_expr, binary_expr, expr_part, expr_stmt, get_expr_id, ident_expr,
+    let_binding, lit_bool, lit_float, lit_int, lit_nil, lit_string, opt_type, program,
+    reset_expr_ids, run_err, run_ok, string_interp_expr, struct_decl, struct_literal_expr,
+    text_part, unary_expr, var_binding,
 };
 use crate::ast::{AssignOp, BinaryOp, Type, UnaryOp};
 use crate::typecheck::error::TypeErrKind;
@@ -658,4 +659,95 @@ fn test_assignment_string_add_assign_bool_ok() {
 
     let tcx = run_ok(prog);
     assert_expr_type(&tcx, assign_id, Type::Void);
+}
+
+// ---- string interpolation tests ----
+
+#[test]
+fn test_string_interp_text_only_ok() {
+    reset_expr_ids();
+    let interp = string_interp_expr(vec![text_part("hello")]);
+    let interp_id = get_expr_id(&interp);
+    let prog = program(vec![expr_stmt(interp)]);
+
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, interp_id, Type::String);
+}
+
+#[test]
+fn test_string_interp_with_string_var_ok() {
+    reset_expr_ids();
+    let interp = string_interp_expr(vec![
+        text_part("val: "),
+        expr_part(ident_expr("x")),
+    ]);
+    let interp_id = get_expr_id(&interp);
+    let prog = program(vec![
+        let_binding("x", Some(Type::String), lit_string("a")),
+        expr_stmt(interp),
+    ]);
+
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, interp_id, Type::String);
+}
+
+#[test]
+fn test_string_interp_with_int_ok() {
+    reset_expr_ids();
+    let interp = string_interp_expr(vec![
+        text_part("n="),
+        expr_part(lit_int(42)),
+    ]);
+    let interp_id = get_expr_id(&interp);
+    let prog = program(vec![expr_stmt(interp)]);
+
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, interp_id, Type::String);
+}
+
+#[test]
+fn test_string_interp_with_float_ok() {
+    reset_expr_ids();
+    let interp = string_interp_expr(vec![
+        text_part("f="),
+        expr_part(lit_float(3.14)),
+    ]);
+    let interp_id = get_expr_id(&interp);
+    let prog = program(vec![expr_stmt(interp)]);
+
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, interp_id, Type::String);
+}
+
+#[test]
+fn test_string_interp_with_bool_ok() {
+    reset_expr_ids();
+    let interp = string_interp_expr(vec![expr_part(lit_bool(true))]);
+    let interp_id = get_expr_id(&interp);
+    let prog = program(vec![expr_stmt(interp)]);
+
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, interp_id, Type::String);
+}
+
+#[test]
+fn test_string_interp_with_struct_err() {
+    reset_expr_ids();
+    let interp = string_interp_expr(vec![expr_part(ident_expr("p"))]);
+    let prog = program(vec![
+        struct_decl("Point", vec![("x", Type::Int), ("y", Type::Int)], vec![]),
+        let_binding(
+            "p",
+            None,
+            struct_literal_expr("Point", vec![("x", lit_int(1)), ("y", lit_int(2))]),
+        ),
+        expr_stmt(interp),
+    ]);
+
+    let errors = run_err(prog);
+    assert!(errors.iter().any(|e| matches!(
+        &e.kind,
+        TypeErrKind::MismatchedTypes { expected, .. }
+        if *expected == Type::String
+    )));
 }

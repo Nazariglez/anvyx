@@ -186,3 +186,10 @@ pub(super) fn expect_string(expr: &ast::ExprNode, value: &str) {
         other => panic!("expected string literal '{value}', found {other:?}"),
     }
 }
+
+pub(super) fn expect_string_interp(expr: &ast::ExprNode) -> &[ast::StringPart] {
+    match &expr.node.kind {
+        ast::ExprKind::StringInterp(parts) => parts.as_slice(),
+        other => panic!("expected StringInterp, found {other:?}"),
+    }
+}

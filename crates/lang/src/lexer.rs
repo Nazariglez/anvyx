@@ -1,4 +1,5 @@
-use chumsky::{Parser, error::Rich, extra, prelude::*};
+use chumsky::{Parser, error::Rich, extra, input::InputRef, prelude::*};
+use chumsky::input::Cursor;
 use internment::Intern;
 use std::fmt::Display;
 
@@ -12,6 +13,7 @@ pub enum Token {
     Ident(ast::Ident),
     Literal(LitToken),
     Op(Op),
+    Interp(InterpToken),
     Colon,
     Semicolon,
     Comma,
@@ -43,6 +45,7 @@ impl Display for Token {
             Token::Dot => write!(f, "."),
             Token::Range => write!(f, ".."),
             Token::RangeEq => write!(f, "..="),
+            Token::Interp(interp) => write!(f, "{}", interp),
         }
     }
 }
@@ -60,6 +63,27 @@ impl Display for LitToken {
             LitToken::Number(n) => write!(f, "{}", n),
             LitToken::Float(s) => write!(f, "{}", s),
             LitToken::String(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InterpToken {
+    Start,
+    Text(Intern<String>),
+    ExprStart,
+    ExprEnd,
+    End,
+}
+
+impl Display for InterpToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InterpToken::Start => write!(f, "\"..."),
+            InterpToken::Text(s) => write!(f, "{}", s),
+            InterpToken::ExprStart => write!(f, "{{"),
+            InterpToken::ExprEnd => write!(f, "}}"),
+            InterpToken::End => write!(f, "...\""),
         }
     }
 }
@@ -188,14 +212,19 @@ pub fn tokenize(program: &str) -> Result<Vec<SpannedToken>, Vec<Rich<'_, char>>>
 }
 
 type Extra<'src> = extra::Full<Rich<'src, char>, (), ()>;
+type LexErr<'src> = Rich<'src, char>;
 
 fn lexer<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Extra<'src>> {
-    choice((line_comment().to(None), token().map(Some)))
-        .padded()
-        .repeated()
-        .collect::<Vec<_>>()
-        .map(|items| items.into_iter().flatten().collect::<Vec<_>>())
-        .then_ignore(end())
+    choice((
+        line_comment().to(vec![]),
+        string_literal(),
+        token().map(|t| vec![t]),
+    ))
+    .padded()
+    .repeated()
+    .collect::<Vec<_>>()
+    .map(|items| items.into_iter().flatten().collect())
+    .then_ignore(end())
 }
 
 fn token<'src>() -> impl Parser<'src, &'src str, SpannedToken, Extra<'src>> {
@@ -208,6 +237,154 @@ fn token<'src>() -> impl Parser<'src, &'src str, SpannedToken, Extra<'src>> {
                 end: span.end,
             },
         )
+    })
+}
+
+fn scan_escape<'src, 'p>(
+    input: &mut InputRef<'src, 'p, &'src str, Extra<'src>>,
+    char_cursor: &Cursor<'src, 'p, &'src str>,
+    text_buf: &mut String,
+) -> Result<(), LexErr<'src>> {
+    match input.next() {
+        Some('n') => text_buf.push('\n'),
+        Some('t') => text_buf.push('\t'),
+        Some('r') => text_buf.push('\r'),
+        Some('\\') => text_buf.push('\\'),
+        Some('"') => text_buf.push('"'),
+        Some('{') => text_buf.push('{'),
+        _ => {
+            return Err(Rich::custom(
+                input.span_since(char_cursor),
+                "Unexpected character",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn scan_interp_body<'src, 'p>(
+    input: &mut InputRef<'src, 'p, &'src str, Extra<'src>>,
+    str_open: &Cursor<'src, 'p, &'src str>,
+) -> Result<String, LexErr<'src>> {
+    let mut expr_str = String::new();
+    let mut depth = 1usize;
+    loop {
+        match input.next() {
+            None => {
+                return Err(Rich::custom(
+                    input.span_since(str_open),
+                    "unterminated string interpolation",
+                ));
+            }
+            Some('{') => {
+                depth += 1;
+                expr_str.push('{');
+            }
+            Some('}') => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+                expr_str.push('}');
+            }
+            Some(c) => expr_str.push(c),
+        }
+    }
+    Ok(expr_str)
+}
+
+fn tokenize_interp_expr<'src, 'p>(
+    input: &mut InputRef<'src, 'p, &'src str, Extra<'src>>,
+    str_open: &Cursor<'src, 'p, &'src str>,
+    expr_str: &str,
+    expr_start_offset: usize,
+) -> Result<Vec<SpannedToken>, LexErr<'src>> {
+    match tokenize(expr_str) {
+        Ok(expr_tokens) => Ok(expr_tokens
+            .into_iter()
+            .map(|(tok, span)| {
+                (
+                    tok,
+                    Span {
+                        start: span.start + expr_start_offset,
+                        end: span.end + expr_start_offset,
+                    },
+                )
+            })
+            .collect()),
+        Err(_) => Err(Rich::custom(
+            input.span_since(str_open),
+            "invalid expression in string interpolation",
+        )),
+    }
+}
+
+fn string_literal<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Extra<'src>> {
+    custom(|input: &mut InputRef<'src, '_, &'src str, Extra<'src>>| {
+        let str_open = input.cursor();
+        match input.peek() {
+            Some('"') => input.skip(),
+            _ => return Err(Rich::custom(input.span_since(&str_open), "expected string literal")),
+        }
+
+        let mut tokens: Vec<SpannedToken> = vec![];
+        let mut text_buf = String::new();
+        let mut text_src_start = input.span_since(&str_open).end;
+        let mut is_interpolated = false;
+
+        loop {
+            let char_cursor = input.cursor();
+            match input.next() {
+                None => return Err(Rich::custom(input.span_since(&str_open), "unterminated string literal")),
+                Some('"') => break,
+                Some('\\') => scan_escape(input, &char_cursor, &mut text_buf)?,
+                Some('{') => {
+                    is_interpolated = true;
+                    let after_brace = input.span_since(&str_open);
+                    let brace_pos = after_brace.end - 1;
+
+                    if !text_buf.is_empty() {
+                        tokens.push((
+                            Token::Interp(InterpToken::Text(Intern::new(std::mem::take(&mut text_buf)))),
+                            Span { start: text_src_start, end: brace_pos },
+                        ));
+                    }
+                    tokens.push((Token::Interp(InterpToken::ExprStart), Span { start: brace_pos, end: brace_pos + 1 }));
+
+                    let expr_start_offset = after_brace.end;
+                    let expr_str = scan_interp_body(input, &str_open)?;
+
+                    let after_close = input.span_since(&str_open);
+                    let close_pos = after_close.end - 1;
+
+                    let expr_tokens = tokenize_interp_expr(input, &str_open, &expr_str, expr_start_offset)?;
+                    tokens.extend(expr_tokens);
+                    tokens.push((Token::Interp(InterpToken::ExprEnd), Span { start: close_pos, end: close_pos + 1 }));
+
+                    text_src_start = after_close.end;
+                }
+                Some(c) => text_buf.push(c),
+            }
+        }
+
+        let full = input.span_since(&str_open);
+        let full_span = Span { start: full.start, end: full.end };
+
+        if is_interpolated {
+            if !text_buf.is_empty() {
+                let text_end = full_span.end - 1;
+                tokens.push((
+                    Token::Interp(InterpToken::Text(Intern::new(text_buf))),
+                    Span { start: text_src_start, end: text_end },
+                ));
+            }
+            let mut result = vec![(Token::Interp(InterpToken::Start), Span { start: full_span.start, end: full_span.start + 1 })];
+            result.extend(tokens);
+            result.push((Token::Interp(InterpToken::End), Span { start: full_span.end - 1, end: full_span.end }));
+            Ok(result)
+        } else {
+            Ok(vec![(Token::Literal(LitToken::String(Intern::new(text_buf))), full_span)])
+        }
     })
 }
 
@@ -234,7 +411,7 @@ fn close_delimiter<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
 }
 
 fn literal<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
-    choice((lit_float(), lit_integer(), lit_string())).map(Token::Literal)
+    choice((lit_float(), lit_integer())).map(Token::Literal)
 }
 
 fn lit_integer<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
@@ -250,25 +427,6 @@ fn lit_float<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
         .to_slice()
         .map(|s: &str| Intern::new(s.to_string()))
         .map(LitToken::Float)
-}
-
-fn lit_string<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
-    let escape = just('\\').ignore_then(choice((
-        just('n').to('\n'),
-        just('t').to('\t'),
-        just('r').to('\r'),
-        just('\\').to('\\'),
-        just('"').to('"'),
-        just('{').to('{'),
-    )));
-
-    let string_char = choice((escape, none_of("\"\\")));
-
-    just('"')
-        .ignore_then(string_char.repeated().collect::<String>())
-        .then_ignore(just('"'))
-        .map(Intern::new)
-        .map(LitToken::String)
 }
 
 fn ident<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
@@ -361,6 +519,22 @@ mod tests {
         }
     }
 
+    fn tokenize_tokens(src: &str) -> Vec<Token> {
+        tokenize(src)
+            .unwrap_or_else(|_| panic!("tokenize failed for: {src}"))
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect()
+    }
+
+    fn ident_tok(name: &str) -> Token {
+        Token::Ident(ast::Ident(Intern::new(name.to_string())))
+    }
+
+    fn str_text(s: &str) -> Token {
+        Token::Interp(InterpToken::Text(Intern::new(s.to_string())))
+    }
+
     #[test]
     fn test_string_literal_basic() {
         assert_eq!(tokenize_string(r#""hello""#).unwrap(), "hello");
@@ -409,5 +583,99 @@ mod tests {
     #[test]
     fn test_string_invalid_escape_err() {
         assert!(tokenize(r#""hello\z""#).is_err());
+    }
+
+    #[test]
+    fn test_interp_string_only_expr() {
+        let tokens = tokenize_tokens(r#""{x}""#);
+        assert_eq!(tokens, vec![
+            Token::Interp(InterpToken::Start),
+            Token::Interp(InterpToken::ExprStart),
+            ident_tok("x"),
+            Token::Interp(InterpToken::ExprEnd),
+            Token::Interp(InterpToken::End),
+        ]);
+    }
+
+    #[test]
+    fn test_interp_string_single_var() {
+        let tokens = tokenize_tokens(r#""HP: {hp}""#);
+        assert_eq!(tokens, vec![
+            Token::Interp(InterpToken::Start),
+            str_text("HP: "),
+            Token::Interp(InterpToken::ExprStart),
+            ident_tok("hp"),
+            Token::Interp(InterpToken::ExprEnd),
+            Token::Interp(InterpToken::End),
+        ]);
+    }
+
+    #[test]
+    fn test_interp_string_expression() {
+        let tokens = tokenize_tokens(r#""a {x + y} b""#);
+        assert_eq!(tokens, vec![
+            Token::Interp(InterpToken::Start),
+            str_text("a "),
+            Token::Interp(InterpToken::ExprStart),
+            ident_tok("x"),
+            Token::Op(Op::Add),
+            ident_tok("y"),
+            Token::Interp(InterpToken::ExprEnd),
+            str_text(" b"),
+            Token::Interp(InterpToken::End),
+        ]);
+    }
+
+    #[test]
+    fn test_interp_string_multiple_parts() {
+        let tokens = tokenize_tokens(r#""{a} and {b}""#);
+        assert_eq!(tokens, vec![
+            Token::Interp(InterpToken::Start),
+            Token::Interp(InterpToken::ExprStart),
+            ident_tok("a"),
+            Token::Interp(InterpToken::ExprEnd),
+            str_text(" and "),
+            Token::Interp(InterpToken::ExprStart),
+            ident_tok("b"),
+            Token::Interp(InterpToken::ExprEnd),
+            Token::Interp(InterpToken::End),
+        ]);
+    }
+
+    #[test]
+    fn test_interp_string_adjacent() {
+        let tokens = tokenize_tokens(r#""{a}{b}""#);
+        assert_eq!(tokens, vec![
+            Token::Interp(InterpToken::Start),
+            Token::Interp(InterpToken::ExprStart),
+            ident_tok("a"),
+            Token::Interp(InterpToken::ExprEnd),
+            Token::Interp(InterpToken::ExprStart),
+            ident_tok("b"),
+            Token::Interp(InterpToken::ExprEnd),
+            Token::Interp(InterpToken::End),
+        ]);
+    }
+
+    #[test]
+    fn test_interp_string_text_only_still_plain() {
+        let tokens = tokenize_tokens(r#""just text""#);
+        assert_eq!(tokens, vec![
+            Token::Literal(LitToken::String(Intern::new("just text".to_string()))),
+        ]);
+    }
+
+    #[test]
+    fn test_interp_string_escaped_brace_no_interp() {
+        // \{ is an escape that produces a literal `{` — no interpolation
+        let tokens = tokenize_tokens(r#""\{not_interp}""#);
+        assert_eq!(tokens, vec![
+            Token::Literal(LitToken::String(Intern::new("{not_interp}".to_string()))),
+        ]);
+    }
+
+    #[test]
+    fn test_interp_string_unterminated_expr_err() {
+        assert!(tokenize(r#""hello {oops""#).is_err());
     }
 }

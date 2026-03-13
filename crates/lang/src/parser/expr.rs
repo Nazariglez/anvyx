@@ -1,6 +1,6 @@
 use crate::{
     ast,
-    lexer::{Delimiter, Keyword, LitToken, Op, Token},
+    lexer::{Delimiter, InterpToken, Keyword, LitToken, Op, Token},
     span::{Span, Spanned},
 };
 use chumsky::{error::Rich, prelude::*};
@@ -289,11 +289,40 @@ fn array_literal<'src>(
         .boxed()
 }
 
+fn string_interp<'src>(
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let interp_start = select! { (Token::Interp(InterpToken::Start), _) => () };
+    let interp_end = select! { (Token::Interp(InterpToken::End), _) => () };
+    let expr_start = select! { (Token::Interp(InterpToken::ExprStart), _) => () };
+    let expr_end = select! { (Token::Interp(InterpToken::ExprEnd), _) => () };
+    let text_part = select! {
+        (Token::Interp(InterpToken::Text(s)), _) => ast::StringPart::Text(s.to_string()),
+    };
+    let expr_part = expr_start
+        .ignore_then(expr)
+        .then_ignore(expr_end)
+        .map(ast::StringPart::Expr);
+
+    interp_start
+        .ignore_then(choice((text_part, expr_part)).repeated().collect::<Vec<_>>())
+        .then_ignore(interp_end)
+        .map_with(|parts, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::StringInterp(parts), id);
+            Spanned::new(expr, span)
+        })
+        .boxed()
+}
+
 fn atom_expr<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
     expr: impl AnvParser<'src, ast::ExprNode>,
 ) -> BoxedParser<'src, ast::ExprNode> {
     choice((
+        string_interp(expr.clone()),
         literal().map_with(|lit, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);

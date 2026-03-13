@@ -1,4 +1,4 @@
-use crate::ast::{ExprKind, ExprNode, Ident, Lit, Type};
+use crate::ast::{ExprKind, ExprNode, Ident, Lit, StringPart, Type};
 
 use super::{
     composite::{
@@ -59,6 +59,7 @@ pub(super) fn check_expr(
         ExprKind::ArrayFill(fill_node) => check_array_fill(fill_node, type_checker, errors),
         ExprKind::MapLiteral(lit_node) => check_map_literal(lit_node, type_checker, errors),
         ExprKind::Match(match_node) => check_match(match_node, type_checker, errors),
+        ExprKind::StringInterp(parts) => check_string_interp(parts, type_checker, errors),
         ExprKind::Field(_) | ExprKind::Index(_) | ExprKind::Call(_) => {
             unreachable!("postfix expressions should be routed through check_postfix_chain")
         }
@@ -85,4 +86,30 @@ pub(super) fn type_from_lit(lit: &Lit) -> Type {
         Lit::String(_) => Type::String,
         Lit::Nil => Type::option_of(Type::Infer),
     }
+}
+
+fn check_string_interp(
+    parts: &[StringPart],
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    for part in parts {
+        let StringPart::Expr(expr_node) = part else {
+            continue;
+        };
+        let expr_ty = check_expr(expr_node, type_checker, errors);
+        let is_valid = expr_ty.is_str()
+            || expr_ty.is_stringable_primitive()
+            || expr_ty.is_infer();
+        if !is_valid {
+            errors.push(TypeErr::new(
+                expr_node.span,
+                TypeErrKind::MismatchedTypes {
+                    expected: Type::String,
+                    found: expr_ty,
+                },
+            ));
+        }
+    }
+    Type::String
 }

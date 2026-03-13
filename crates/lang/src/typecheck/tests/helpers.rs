@@ -5,8 +5,8 @@ use crate::{
         ExprId, ExprKind, ExprNode, FieldAccess, FieldAccessNode, Func, FuncNode, Ident, Index,
         IndexNode, Lit, MapLiteral, MapLiteralNode, Method, MethodReceiver, Mutability, Param,
         Pattern, PatternNode, Program, Range, RangeNode, Return, ReturnNode, Stmt, StmtNode,
-        StructDecl, StructDeclNode, StructField, StructLiteral, StructLiteralNode, Type, TypeParam,
-        TypeVarId, Unary, UnaryNode, UnaryOp, Visibility,
+        StringPart, StructDecl, StructDeclNode, StructField, StructLiteral, StructLiteralNode,
+        Type, TypeParam, TypeVarId, Unary, UnaryNode, UnaryOp, Visibility,
     },
     span::Span,
     typecheck::{check_program, error::TypeErr, types::TypeChecker},
@@ -634,4 +634,19 @@ pub(super) fn assert_expr_type(tcx: &TypeChecker, id: ExprId, expected: Type) {
 
 pub(super) fn get_expr_id(expr: &ExprNode) -> ExprId {
     expr.node.id
+}
+
+pub(super) fn string_interp_expr(parts: Vec<StringPart>) -> ExprNode {
+    ExprNode {
+        node: Expr::new(ExprKind::StringInterp(parts), next_expr_id()),
+        span: dummy_span(),
+    }
+}
+
+pub(super) fn text_part(s: &str) -> StringPart {
+    StringPart::Text(s.to_string())
+}
+
+pub(super) fn expr_part(expr: ExprNode) -> StringPart {
+    StringPart::Expr(expr)
 }
