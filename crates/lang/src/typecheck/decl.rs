@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Func, FuncNode, Ident, MethodReceiver, Mutability, StructDeclNode, Type},
+    ast::{BlockNode, Func, FuncNode, Ident, MethodReceiver, Mutability, StructDeclNode, Type},
     span::Span,
 };
 use internment::Intern;
@@ -12,10 +12,10 @@ use super::{
     types::{MethodContext, MethodDef, StructDef, TypeChecker},
 };
 
-pub(super) fn check_fn_body(
-    func: &Func,
-    param_types: &[Type],
-    ret_ty: Type,
+fn check_body_common(
+    params: &[(Ident, Type, bool)],
+    body: &BlockNode,
+    ret_ty: &Type,
     error_span: Span,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
@@ -23,18 +23,14 @@ pub(super) fn check_fn_body(
     type_checker.push_scope();
     type_checker.push_return_type(ret_ty.clone(), None);
 
-    // bind parameters into scope with the provided types
-    for (param, ty) in func.params.iter().zip(param_types.iter()) {
-        let mutable = matches!(param.mutability, Mutability::Mutable);
-        type_checker.set_var(param.name, ty.clone(), mutable);
+    for (name, ty, mutable) in params {
+        type_checker.set_var(*name, ty.clone(), *mutable);
     }
 
-    // treat the block as an expression for implicit returns
-    let (body_ty, last_expr_id) = check_block_expr(&func.body, type_checker, errors);
+    let (body_ty, last_expr_id) = check_block_expr(body, type_checker, errors);
+    let had_explicit_return = type_checker.has_explicit_return();
 
-    // void fn cannot have trailing expressions (at least they are void too)
-    let is_void_fn = ret_ty.is_void();
-    if is_void_fn {
+    if ret_ty.is_void() {
         if !body_ty.is_void() {
             errors.push(TypeErr::new(
                 error_span,
@@ -45,16 +41,14 @@ pub(super) fn check_fn_body(
             ));
         }
     } else if let Some(last_id) = last_expr_id {
-        // if there is a last expression, it must be assignable to return type
         let expr_ref = TypeRef::Expr(last_id);
         let ret_ref = TypeRef::Concrete(ret_ty.clone());
         type_checker.constrain_assignable(error_span, expr_ref, ret_ref, errors);
-    } else if !type_checker.has_explicit_return() {
-        // no implicit or explicit return, fn with non-void return is invalid
+    } else if !had_explicit_return {
         errors.push(TypeErr::new(
             error_span,
             TypeErrKind::MismatchedTypes {
-                expected: ret_ty,
+                expected: ret_ty.clone(),
                 found: Type::Void,
             },
         ));
@@ -62,6 +56,37 @@ pub(super) fn check_fn_body(
 
     type_checker.pop_return_type();
     type_checker.pop_scope();
+}
+
+pub(super) fn check_fn_body(
+    func: &Func,
+    param_types: &[Type],
+    ret_ty: Type,
+    error_span: Span,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    let params: Vec<(Ident, Type, bool)> = func
+        .params
+        .iter()
+        .zip(param_types.iter())
+        .map(|(param, ty)| {
+            (
+                param.name,
+                ty.clone(),
+                matches!(param.mutability, Mutability::Mutable),
+            )
+        })
+        .collect();
+
+    check_body_common(
+        &params,
+        &func.body,
+        &ret_ty,
+        error_span,
+        type_checker,
+        errors,
+    );
 }
 
 pub(super) fn check_method_body(
@@ -86,54 +111,36 @@ pub(super) fn check_method_body(
             .collect(),
     };
 
-    type_checker.push_scope();
-    type_checker.push_return_type(method.ret.clone(), None);
+    // build the param list, prepending self when there is a receiver
+    let mut params: Vec<(Ident, Type, bool)> = vec![];
+    if let Some(receiver) = method.receiver {
+        let self_ident = Ident(Intern::new("self".to_string()));
+        let self_mutable = matches!(receiver, MethodReceiver::Var);
+        params.push((self_ident, self_type, self_mutable));
+    }
+    for param in &method.params {
+        params.push((
+            param.name,
+            param.ty.clone(),
+            matches!(param.mutability, Mutability::Mutable),
+        ));
+    }
+
     type_checker.push_method_context(MethodContext {
         struct_name,
         receiver: method.receiver,
     });
 
-    if let Some(receiver) = method.receiver {
-        let self_ident = Ident(Intern::new("self".to_string()));
-        let self_mutable = matches!(receiver, MethodReceiver::Var);
-        type_checker.set_var(self_ident, self_type, self_mutable);
-    }
-
-    for param in &method.params {
-        let mutable = matches!(param.mutability, Mutability::Mutable);
-        type_checker.set_var(param.name, param.ty.clone(), mutable);
-    }
-
-    let (body_ty, last_expr_id) = check_block_expr(&method.body, type_checker, errors);
-    let had_explicit_return = type_checker.has_explicit_return();
-
-    if method.ret.is_void() {
-        if !body_ty.is_void() {
-            errors.push(TypeErr::new(
-                error_span,
-                TypeErrKind::MismatchedTypes {
-                    expected: Type::Void,
-                    found: body_ty,
-                },
-            ));
-        }
-    } else if let Some(last_id) = last_expr_id {
-        let expr_ref = TypeRef::Expr(last_id);
-        let ret_ref = TypeRef::Concrete(method.ret.clone());
-        type_checker.constrain_assignable(error_span, expr_ref, ret_ref, errors);
-    } else if !had_explicit_return {
-        errors.push(TypeErr::new(
-            error_span,
-            TypeErrKind::MismatchedTypes {
-                expected: method.ret.clone(),
-                found: Type::Void,
-            },
-        ));
-    }
+    check_body_common(
+        &params,
+        &method.body,
+        &method.ret,
+        error_span,
+        type_checker,
+        errors,
+    );
 
     type_checker.pop_method_context();
-    type_checker.pop_return_type();
-    type_checker.pop_scope();
 }
 
 pub(super) fn check_func(

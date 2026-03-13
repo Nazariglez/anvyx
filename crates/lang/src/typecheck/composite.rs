@@ -1,20 +1,19 @@
 use crate::{
     ast::{
-        ArrayFillNode, ArrayLen, ArrayLiteralNode, ExprKind, ExprNode, FieldAccessNode, Ident,
-        IndexNode, Lit, MapLiteralNode, RangeNode, StructLiteralNode, TupleIndexNode, Type,
-        VariantKind,
+        ArrayFillNode, ArrayLen, ArrayLiteralNode, ExprKind, ExprNode, Ident, Lit, MapLiteralNode,
+        RangeNode, StructField, StructLiteralNode, TupleIndexNode, Type, VariantKind,
     },
     span::Span,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use super::{
     constraint::TypeRef,
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
-    infer::{create_inference_slots, subst_type, type_to_ref_with_inference},
+    infer::{create_inference_slots, type_to_ref_with_inference},
     range::{range_inclusive_type, range_type},
-    types::{EnumDef, TypeChecker, indexable_element_type, is_keyable},
+    types::{TypeChecker, is_keyable},
 };
 
 pub(super) fn check_tuple(
@@ -55,6 +54,47 @@ pub(super) fn check_named_tuple(
     Type::NamedTuple(fields)
 }
 
+pub(super) fn validate_field_names<'a>(
+    provided: &[(Ident, Span)],
+    container_span: Span,
+    expected: &'a [StructField],
+    on_duplicate: impl Fn(Ident) -> TypeErrKind,
+    on_unknown: impl Fn(Ident) -> TypeErrKind,
+    on_missing: impl Fn(Ident) -> TypeErrKind,
+    errors: &mut Vec<TypeErr>,
+) -> Vec<Option<&'a StructField>> {
+    let mut seen = HashSet::new();
+    let mut matched_names = HashSet::new();
+
+    let results = provided
+        .iter()
+        .map(|(name, span)| {
+            if !seen.insert(*name) {
+                errors.push(TypeErr::new(*span, on_duplicate(*name)));
+                return None;
+            }
+            match expected.iter().find(|f| f.name == *name) {
+                None => {
+                    errors.push(TypeErr::new(*span, on_unknown(*name)));
+                    None
+                }
+                Some(def) => {
+                    matched_names.insert(*name);
+                    Some(def)
+                }
+            }
+        })
+        .collect();
+
+    for field in expected {
+        if !matched_names.contains(&field.name) {
+            errors.push(TypeErr::new(container_span, on_missing(field.name)));
+        }
+    }
+
+    results
+}
+
 pub(super) fn check_struct_lit(
     lit_node: &StructLiteralNode,
     type_checker: &mut TypeChecker,
@@ -67,7 +107,6 @@ pub(super) fn check_struct_lit(
         return check_enum_struct_variant(lit_node, enum_name, lit.name, type_checker, errors);
     }
 
-    // otherwise it's a regular struct literal
     let struct_name = lit.name;
 
     let Some(struct_def) = type_checker.get_struct(struct_name).cloned() else {
@@ -86,59 +125,33 @@ pub(super) fn check_struct_lit(
         })
         .unwrap_or_default();
 
-    let mut seen_fields = HashSet::new();
-    let mut provided_fields = HashMap::new();
+    // typecheck all field expressions before name validation
+    for (_, field_expr) in &lit.fields {
+        check_expr(field_expr, type_checker, errors);
+    }
 
-    for (field_name, field_expr) in &lit.fields {
-        let field_ty = check_expr(field_expr, type_checker, errors);
+    let provided: Vec<(Ident, Span)> = lit.fields.iter().map(|(n, e)| (*n, e.span)).collect();
+    let matched = validate_field_names(
+        &provided,
+        lit_node.span,
+        &struct_def.fields,
+        |field| TypeErrKind::StructDuplicateField { struct_name, field },
+        |field| TypeErrKind::StructUnknownField { struct_name, field },
+        |field| TypeErrKind::StructMissingField { struct_name, field },
+        errors,
+    );
 
-        let is_new = seen_fields.insert(*field_name);
-        if !is_new {
-            errors.push(TypeErr::new(
-                field_expr.span,
-                TypeErrKind::StructDuplicateField {
-                    struct_name,
-                    field: *field_name,
-                },
-            ));
-            continue;
-        }
-
-        let expected_field = struct_def.fields.iter().find(|f| f.name == *field_name);
-        let Some(expected) = expected_field else {
-            errors.push(TypeErr::new(
-                field_expr.span,
-                TypeErrKind::StructUnknownField {
-                    struct_name,
-                    field: *field_name,
-                },
-            ));
+    for ((_, field_expr), matched_def) in lit.fields.iter().zip(matched.iter()) {
+        let Some(expected) = matched_def else {
             continue;
         };
-
         let field_ref = TypeRef::Expr(field_expr.node.id);
         let expected_ref = if is_generic {
             type_to_ref_with_inference(&expected.ty, &slots)
         } else {
-            let resolved = type_checker.resolve_type(&expected.ty);
-            TypeRef::Concrete(resolved)
+            TypeRef::Concrete(type_checker.resolve_type(&expected.ty))
         };
         type_checker.constrain_assignable(field_expr.span, field_ref, expected_ref, errors);
-
-        provided_fields.insert(*field_name, field_ty);
-    }
-
-    for struct_field in &struct_def.fields {
-        let contains_field = provided_fields.contains_key(&struct_field.name);
-        if !contains_field {
-            errors.push(TypeErr::new(
-                lit_node.span,
-                TypeErrKind::StructMissingField {
-                    struct_name,
-                    field: struct_field.name,
-                },
-            ));
-        }
     }
 
     let type_args = is_generic
@@ -201,153 +214,6 @@ pub(super) fn check_tuple_index(
             },
         ));
         Type::Infer
-    }
-}
-
-pub(super) fn try_check_enum_unit_variant(
-    field_node: &FieldAccessNode,
-    type_checker: &TypeChecker,
-    errors: &mut Vec<TypeErr>,
-) -> Option<Type> {
-    let node = &field_node.node;
-
-    let ExprKind::Ident(type_name) = &node.target.node.kind else {
-        return None;
-    };
-
-    let Some(enum_def) = type_checker.get_enum(*type_name).cloned() else {
-        return None;
-    };
-
-    let variant_name = node.field;
-    let variant = enum_def.variants.iter().find(|v| v.name == variant_name);
-
-    let Some(variant) = variant else {
-        errors.push(TypeErr::new(
-            field_node.span,
-            TypeErrKind::UnknownEnumVariant {
-                enum_name: *type_name,
-                variant_name,
-            },
-        ));
-        return Some(Type::Infer);
-    };
-
-    match &variant.kind {
-        VariantKind::Unit => {
-            let type_args = build_enum_type_args(&enum_def, type_checker);
-            Some(Type::Enum {
-                name: *type_name,
-                type_args,
-            })
-        }
-        VariantKind::Tuple(_) => {
-            errors.push(TypeErr::new(
-                field_node.span,
-                TypeErrKind::EnumVariantNotUnit {
-                    enum_name: *type_name,
-                    variant_name,
-                },
-            ));
-            Some(Type::Infer)
-        }
-        VariantKind::Struct(_) => {
-            errors.push(TypeErr::new(
-                field_node.span,
-                TypeErrKind::EnumVariantNotUnit {
-                    enum_name: *type_name,
-                    variant_name,
-                },
-            ));
-            Some(Type::Infer)
-        }
-    }
-}
-
-fn build_enum_type_args(enum_def: &EnumDef, _type_checker: &TypeChecker) -> Vec<Type> {
-    if enum_def.type_params.is_empty() {
-        vec![]
-    } else {
-        enum_def.type_params.iter().map(|_| Type::Infer).collect()
-    }
-}
-
-pub(super) fn check_field_access(
-    field_node: &FieldAccessNode,
-    type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
-) -> Type {
-    // check if this is an enum unit variant construction first
-    if let Some(enum_ty) = try_check_enum_unit_variant(field_node, type_checker, errors) {
-        return enum_ty;
-    }
-
-    let node = &field_node.node;
-    let target_ty = check_expr(&node.target, type_checker, errors);
-    let field = node.field;
-
-    match &target_ty {
-        Type::NamedTuple(fields) => {
-            for (label, ty) in fields {
-                if *label == field {
-                    return ty.clone();
-                }
-            }
-            errors.push(TypeErr::new(
-                field_node.span,
-                TypeErrKind::NoSuchFieldOnTuple {
-                    field,
-                    tuple_type: target_ty.clone(),
-                },
-            ));
-            Type::Infer
-        }
-        Type::Struct {
-            name: struct_name,
-            type_args,
-        } => {
-            let Some(struct_def) = type_checker.get_struct(*struct_name).cloned() else {
-                errors.push(TypeErr::new(
-                    field_node.span,
-                    TypeErrKind::UnknownStruct { name: *struct_name },
-                ));
-                return Type::Infer;
-            };
-
-            let subst = struct_def
-                .type_params
-                .iter()
-                .zip(type_args.iter())
-                .map(|(param, arg)| (param.id, arg.clone()))
-                .collect::<HashMap<_, _>>();
-
-            for struct_field in &struct_def.fields {
-                if struct_field.name == field {
-                    let field_ty = subst_type(&struct_field.ty, &subst);
-                    return type_checker.resolve_type(&field_ty);
-                }
-            }
-
-            errors.push(TypeErr::new(
-                field_node.span,
-                TypeErrKind::StructUnknownField {
-                    struct_name: *struct_name,
-                    field,
-                },
-            ));
-            Type::Infer
-        }
-        Type::Infer => Type::Infer,
-        _ => {
-            errors.push(TypeErr::new(
-                field_node.span,
-                TypeErrKind::FieldAccessOnNonNamedTuple {
-                    field,
-                    found: target_ty.clone(),
-                },
-            ));
-            Type::Infer
-        }
     }
 }
 
@@ -464,47 +330,6 @@ pub(super) fn check_array_fill(
     }
 }
 
-pub(super) fn check_index(
-    index_node: &IndexNode,
-    type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
-) -> Type {
-    let node = &index_node.node;
-    let target_ty = check_expr(&node.target, type_checker, errors);
-    let index_ty = check_expr(&node.index, type_checker, errors);
-
-    // handle map indexing
-    if let Type::Map { key, value } = &target_ty {
-        // check key type matches
-        let key_ref = TypeRef::Expr(node.index.node.id);
-        let expected_ref = TypeRef::Concrete((**key).clone());
-        type_checker.constrain_equal(node.index.span, key_ref, expected_ref, errors);
-
-        // return V?
-        return Type::option_of(*value.clone());
-    }
-
-    // arrays requires int index
-    let index_is_int = matches!(index_ty, Type::Int | Type::Infer);
-    if !index_is_int {
-        errors.push(TypeErr::new(
-            node.index.span,
-            TypeErrKind::IndexNotInt { found: index_ty },
-        ));
-    }
-
-    match indexable_element_type(&target_ty) {
-        Some(elem_ty) => elem_ty,
-        None => {
-            errors.push(TypeErr::new(
-                node.target.span,
-                TypeErrKind::IndexOnNonArray { found: target_ty },
-            ));
-            Type::Infer
-        }
-    }
-}
-
 pub(super) fn check_map_literal(
     lit: &MapLiteralNode,
     type_checker: &mut TypeChecker,
@@ -608,9 +433,7 @@ fn check_enum_struct_variant(
         return Type::Infer;
     };
 
-    let variant = enum_def.variants.iter().find(|v| v.name == variant_name);
-
-    let Some(variant) = variant else {
+    let Some(variant) = enum_def.variants.iter().find(|v| v.name == variant_name) else {
         errors.push(TypeErr::new(
             lit_node.span,
             TypeErrKind::UnknownEnumVariant {
@@ -640,62 +463,45 @@ fn check_enum_struct_variant(
         })
         .unwrap_or_default();
 
-    let mut seen_fields = HashSet::new();
-    let mut provided_fields = HashMap::new();
+    // typecheck all field expressions before name validation
+    for (_, field_expr) in &lit.fields {
+        check_expr(field_expr, type_checker, errors);
+    }
 
-    for (field_name, field_expr) in &lit.fields {
-        let field_ty = check_expr(field_expr, type_checker, errors);
+    let provided: Vec<(Ident, Span)> = lit.fields.iter().map(|(n, e)| (*n, e.span)).collect();
+    let matched = validate_field_names(
+        &provided,
+        lit_node.span,
+        expected_fields,
+        |field| TypeErrKind::EnumVariantDuplicateField {
+            enum_name,
+            variant_name,
+            field,
+        },
+        |field| TypeErrKind::EnumVariantUnknownField {
+            enum_name,
+            variant_name,
+            field,
+        },
+        |field| TypeErrKind::EnumVariantMissingField {
+            enum_name,
+            variant_name,
+            field,
+        },
+        errors,
+    );
 
-        let is_new = seen_fields.insert(*field_name);
-        if !is_new {
-            errors.push(TypeErr::new(
-                field_expr.span,
-                TypeErrKind::EnumVariantDuplicateField {
-                    enum_name,
-                    variant_name,
-                    field: *field_name,
-                },
-            ));
-            continue;
-        }
-
-        let expected_field = expected_fields.iter().find(|f| f.name == *field_name);
-        let Some(expected) = expected_field else {
-            errors.push(TypeErr::new(
-                field_expr.span,
-                TypeErrKind::EnumVariantUnknownField {
-                    enum_name,
-                    variant_name,
-                    field: *field_name,
-                },
-            ));
+    for ((_, field_expr), matched_def) in lit.fields.iter().zip(matched.iter()) {
+        let Some(expected) = matched_def else {
             continue;
         };
-
         let field_ref = TypeRef::Expr(field_expr.node.id);
         let expected_ref = if is_generic {
             type_to_ref_with_inference(&expected.ty, &slots)
         } else {
-            let resolved = type_checker.resolve_type(&expected.ty);
-            TypeRef::Concrete(resolved)
+            TypeRef::Concrete(type_checker.resolve_type(&expected.ty))
         };
         type_checker.constrain_assignable(field_expr.span, field_ref, expected_ref, errors);
-
-        provided_fields.insert(*field_name, field_ty);
-    }
-
-    for expected_field in expected_fields {
-        let contains_field = provided_fields.contains_key(&expected_field.name);
-        if !contains_field {
-            errors.push(TypeErr::new(
-                lit_node.span,
-                TypeErrKind::EnumVariantMissingField {
-                    enum_name,
-                    variant_name,
-                    field: expected_field.name,
-                },
-            ));
-        }
     }
 
     let type_args = is_generic

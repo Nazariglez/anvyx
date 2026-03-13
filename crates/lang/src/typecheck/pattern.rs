@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{Ident, Pattern, PatternNode, Type, TypeParam, TypeVarId, VariantKind};
 
 use super::{
+    composite::validate_field_names,
     error::{TypeErr, TypeErrKind},
     infer::subst_type,
     types::{EnumDef, TypeChecker},
@@ -374,47 +375,35 @@ fn check_enum_struct_pattern(
 
     let subst = build_type_subst(&enum_def.type_params, type_args);
 
-    let mut seen_fields = HashSet::new();
-    for (field_name, subpat) in fields {
-        if !seen_fields.insert(*field_name) {
-            errors.push(TypeErr::new(
-                pattern.span,
-                TypeErrKind::EnumVariantDuplicateField {
-                    enum_name: qualifier,
-                    variant_name,
-                    field: *field_name,
-                },
-            ));
-            continue;
-        }
+    let provided: Vec<(Ident, _)> = fields.iter().map(|(n, _)| (*n, pattern.span)).collect();
+    let matched = validate_field_names(
+        &provided,
+        pattern.span,
+        expected_fields,
+        |field| TypeErrKind::EnumVariantDuplicateField {
+            enum_name: qualifier,
+            variant_name,
+            field,
+        },
+        |field| TypeErrKind::EnumVariantUnknownField {
+            enum_name: qualifier,
+            variant_name,
+            field,
+        },
+        |field| TypeErrKind::EnumVariantMissingField {
+            enum_name: qualifier,
+            variant_name,
+            field,
+        },
+        errors,
+    );
 
-        let Some(expected_field) = expected_fields.iter().find(|f| f.name == *field_name) else {
-            errors.push(TypeErr::new(
-                pattern.span,
-                TypeErrKind::EnumVariantUnknownField {
-                    enum_name: qualifier,
-                    variant_name,
-                    field: *field_name,
-                },
-            ));
+    for ((_, subpat), matched_def) in fields.iter().zip(matched.iter()) {
+        let Some(expected_field) = matched_def else {
             continue;
         };
-
         let resolved_ty = subst_type(&expected_field.ty, &subst);
         check_pattern_inner(subpat, &resolved_ty, mutable, None, type_checker, errors);
-    }
-
-    for expected_field in expected_fields {
-        if !seen_fields.contains(&expected_field.name) {
-            errors.push(TypeErr::new(
-                pattern.span,
-                TypeErrKind::EnumVariantMissingField {
-                    enum_name: qualifier,
-                    variant_name,
-                    field: expected_field.name,
-                },
-            ));
-        }
     }
 }
 

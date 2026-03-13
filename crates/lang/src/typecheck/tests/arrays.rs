@@ -1,7 +1,8 @@
 use super::helpers::{
     array_fill, array_literal, assert_expr_type, assign_expr, call_expr, dummy_span, func_decl,
     get_expr_id, ident_expr, index_expr, let_binding, lit_float, lit_int, lit_nil, lit_string,
-    opt_type, program, reset_expr_ids, run_err, run_ok, var_binding, view_type,
+    map_literal_expr, opt_type, program, reset_expr_ids, run_err, run_ok, safe_index_expr,
+    var_binding, view_type,
 };
 use crate::ast::{
     ArrayLen, AssignOp, Block, BlockNode, Func, FuncNode, Ident, Mutability, Param, Stmt, StmtNode,
@@ -878,4 +879,54 @@ fn test_view_mismatched_element_type_err() {
         "Expected MismatchedTypes error, got: {:?}",
         errors
     );
+}
+
+// ---- safe map indexing (map?[key]) ----
+
+#[test]
+fn test_safe_map_index_returns_optional_value() {
+    reset_expr_ids();
+
+    // let m: [string: int]? = ["a": 1];
+    // let v = m?["a"];   -- optional map indexed safely; should type as int?
+    let map = map_literal_expr(vec![(lit_string("a"), lit_int(1))]);
+    let map_annot = opt_type(Type::Map {
+        key: Box::new(Type::String),
+        value: Box::new(Type::Int),
+    });
+    let m_binding = let_binding("m", Some(map_annot), map);
+
+    let idx = safe_index_expr(ident_expr("m"), lit_string("a"));
+    let idx_id = get_expr_id(&idx);
+    let v_binding = let_binding("v", None, idx);
+
+    let prog = program(vec![m_binding, v_binding]);
+    let tcx = run_ok(prog);
+
+    let expected = opt_type(Type::Int);
+    assert_expr_type(&tcx, idx_id, expected);
+}
+
+#[test]
+fn test_map_index_ok() {
+    reset_expr_ids();
+
+    // let m: [string: int] = ["a": 1];
+    // let v = m["a"];   -- non-safe, returns int?
+    let map = map_literal_expr(vec![(lit_string("a"), lit_int(1))]);
+    let map_annot = Type::Map {
+        key: Box::new(Type::String),
+        value: Box::new(Type::Int),
+    };
+    let m_binding = let_binding("m", Some(map_annot), map);
+
+    let idx = index_expr(ident_expr("m"), lit_string("a"));
+    let idx_id = get_expr_id(&idx);
+    let v_binding = let_binding("v", None, idx);
+
+    let prog = program(vec![m_binding, v_binding]);
+    let tcx = run_ok(prog);
+
+    let expected = opt_type(Type::Int);
+    assert_expr_type(&tcx, idx_id, expected);
 }

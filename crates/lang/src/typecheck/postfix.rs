@@ -1,10 +1,10 @@
 use crate::ast::{ExprId, ExprKind, ExprNode, Type};
 
 use super::{
-    call::{check_instance_method_call, type_call_on_base},
+    call::{check_call, check_instance_method_call, check_var_param_args, type_call_on_base},
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
-    types::{type_field_on_base, type_index_on_base, PostfixNodeRef, TypeChecker, unwrap_opt_typ},
+    types::{PostfixNodeRef, TypeChecker, type_field_on_base, type_index_on_base, unwrap_opt_typ},
 };
 
 pub(super) fn collect_postfix_chain<'a>(
@@ -44,10 +44,6 @@ pub(super) fn collect_postfix_chain<'a>(
     (current, chain)
 }
 
-pub(super) fn chain_has_safe_op(chain: &[PostfixNodeRef<'_>]) -> bool {
-    chain.iter().any(|op| op.safe())
-}
-
 pub(super) fn check_postfix_chain(
     expr_node: &ExprNode,
     base: &ExprNode,
@@ -55,8 +51,58 @@ pub(super) fn check_postfix_chain(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
-    let mut current_ty = check_expr(base, type_checker, errors);
-    let mut chain_is_optional = false;
+    // handle type name postfixes without looking them up as value variables
+    if let Some(outcome) = try_type_name_dispatch(base, chain, type_checker, errors) {
+        let (ty, steps_consumed, safe) = outcome;
+        let current_ty = if safe {
+            Type::option_of(ty.clone())
+        } else {
+            ty.clone()
+        };
+        // set types for all consumed ops
+        for op in &chain[..steps_consumed] {
+            set_op_type(op, current_ty.clone(), type_checker);
+        }
+        // if all steps were consumed, we are done
+        if steps_consumed == chain.len() {
+            type_checker.set_type(expr_node.node.id, current_ty.clone(), expr_node.span);
+            return current_ty;
+        }
+        // otherwise continue the chain from where we left off
+        return continue_postfix_chain(
+            expr_node,
+            base,
+            &chain[steps_consumed..],
+            current_ty,
+            safe,
+            type_checker,
+            errors,
+        );
+    }
+
+    let current_ty = check_expr(base, type_checker, errors);
+    continue_postfix_chain(
+        expr_node,
+        base,
+        chain,
+        current_ty,
+        false,
+        type_checker,
+        errors,
+    )
+}
+
+fn continue_postfix_chain(
+    expr_node: &ExprNode,
+    base: &ExprNode,
+    chain: &[PostfixNodeRef<'_>],
+    initial_ty: Type,
+    initial_optional: bool,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let mut current_ty = initial_ty;
+    let mut chain_is_optional = initial_optional;
     let mut i = 0;
 
     while i < chain.len() {
@@ -124,8 +170,17 @@ pub(super) fn check_postfix_chain(
         }
 
         let op_result_inner = apply_postfix_op(op, &base_ty, type_checker, errors);
+        // map indexing already returns an optional value, so dont wrap it twice
+        let map_index = matches!(
+            (op, &base_ty),
+            (PostfixNodeRef::Index { .. }, Type::Map { .. })
+        ) && !matches!(op_result_inner, Type::Infer);
         if op_safe || chain_is_optional {
-            current_ty = Type::option_of(op_result_inner.clone());
+            current_ty = if map_index {
+                op_result_inner.clone()
+            } else {
+                Type::option_of(op_result_inner.clone())
+            };
             chain_is_optional = true;
         } else {
             current_ty = op_result_inner.clone();
@@ -274,6 +329,136 @@ fn set_op_type(op: &PostfixNodeRef<'_>, ty: Type, type_checker: &mut TypeChecker
     type_checker.set_type(op.expr_id(), ty, op.span());
 }
 
+/// For chains that start with a type-name identifier (enum or struct), dispatches
+/// without evaluating the identifier as a value variable. Returns the result type,
+/// the number of chain steps consumed, and whether any safe operator was used.
+fn try_type_name_dispatch(
+    base: &ExprNode,
+    chain: &[PostfixNodeRef<'_>],
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Option<(Type, usize, bool)> {
+    let ExprKind::Ident(type_name) = &base.node.kind else {
+        return None;
+    };
+
+    // single Field step: may be an enum unit variant access
+    if let [
+        PostfixNodeRef::Field {
+            node: field_node, ..
+        },
+        rest @ ..,
+    ] = chain
+    {
+        let call_follows = matches!(rest.first(), Some(PostfixNodeRef::Call { .. }));
+
+        if !call_follows {
+            // enum unit variant: EnumName.Variant
+            if let Some(enum_def) = type_checker.get_enum(*type_name).cloned() {
+                let ty = resolve_enum_unit_variant(*type_name, field_node, &enum_def, errors);
+                let safe = field_node.node.safe;
+                return Some((ty, 1, safe));
+            }
+            return None;
+        }
+
+        // Field+Call: enum tuple variant or static method
+        let call_op = rest[0];
+        let PostfixNodeRef::Call {
+            node: call_node, ..
+        } = call_op
+        else {
+            unreachable!()
+        };
+
+        let op_safe = field_node.node.safe || call_op.safe();
+
+        if let Some(enum_def) = type_checker.get_enum(*type_name).cloned() {
+            let ty = check_call(call_node, type_checker, errors);
+            let _ = enum_def;
+            return Some((ty, 2, op_safe));
+        }
+
+        if let Some(struct_def) = type_checker.get_struct(*type_name).cloned() {
+            let ty = check_static_method_call_outer(
+                call_node,
+                *type_name,
+                field_node.node.field,
+                &struct_def,
+                type_checker,
+                errors,
+            );
+            return Some((ty, 2, op_safe));
+        }
+    }
+
+    None
+}
+
+fn resolve_enum_unit_variant(
+    enum_name: crate::ast::Ident,
+    field_node: &crate::ast::FieldAccessNode,
+    enum_def: &super::types::EnumDef,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    use crate::ast::VariantKind;
+    let variant_name = field_node.node.field;
+    let variant = enum_def.variants.iter().find(|v| v.name == variant_name);
+
+    let Some(variant) = variant else {
+        errors.push(TypeErr::new(
+            field_node.span,
+            TypeErrKind::UnknownEnumVariant {
+                enum_name,
+                variant_name,
+            },
+        ));
+        return Type::Infer;
+    };
+
+    match &variant.kind {
+        VariantKind::Unit => {
+            let type_args = if enum_def.type_params.is_empty() {
+                vec![]
+            } else {
+                enum_def.type_params.iter().map(|_| Type::Infer).collect()
+            };
+            Type::Enum {
+                name: enum_name,
+                type_args,
+            }
+        }
+        VariantKind::Tuple(_) | VariantKind::Struct(_) => {
+            errors.push(TypeErr::new(
+                field_node.span,
+                TypeErrKind::EnumVariantNotUnit {
+                    enum_name,
+                    variant_name,
+                },
+            ));
+            Type::Infer
+        }
+    }
+}
+
+fn check_static_method_call_outer(
+    call_node: &crate::ast::CallNode,
+    struct_name: crate::ast::Ident,
+    method_name: crate::ast::Ident,
+    struct_def: &super::types::StructDef,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    super::call::check_static_method_call(
+        call_node,
+        struct_name,
+        method_name,
+        struct_def,
+        type_checker,
+        errors,
+    )
+}
+
 fn apply_postfix_op(
     op: &PostfixNodeRef<'_>,
     base_ty: &Type,
@@ -294,18 +479,44 @@ fn apply_postfix_op(
             node: index_node, ..
         } => {
             let index_ty = check_expr(&index_node.node.index, type_checker, errors);
-            type_index_on_base(
+            let result = type_index_on_base(
                 base_ty,
                 &index_ty,
+                index_node.node.index.node.id,
                 index_node.span,
                 index_node.node.index.span,
+                type_checker,
                 errors,
-            )
+            );
+            // map indexing always returns an optional value, the chain handles the wrapping
+            // for safe operators, and we wrap here for the non-safe case
+            if matches!(base_ty, Type::Map { .. }) && !matches!(result, Type::Infer) {
+                Type::option_of(result)
+            } else {
+                result
+            }
         }
         PostfixNodeRef::Call {
             node: call_node, ..
         } => {
-            // ror calls we need to check arguments and compute return type
+            if let ExprKind::Ident(name) = &call_node.node.func.node.kind {
+                let is_generic = type_checker
+                    .func_type_params
+                    .get(name)
+                    .is_some_and(|p| !p.is_empty());
+                let has_type_args = !call_node.node.type_args.is_empty();
+                // delegate generic and explicit type ar calls to check_call
+                if is_generic || has_type_args {
+                    return check_call(call_node, type_checker, errors);
+                }
+                // for plain ident calls use base_ty and check var-params separately
+                let result = type_call_on_base(base_ty, call_node, type_checker, errors);
+                if let Some(param_info) = type_checker.func_param_info.get(name).cloned() {
+                    check_var_param_args(&param_info, &call_node.node.args, type_checker, errors);
+                }
+                return result;
+            }
+            // for other callables use base_ty directly
             type_call_on_base(base_ty, call_node, type_checker, errors)
         }
     }

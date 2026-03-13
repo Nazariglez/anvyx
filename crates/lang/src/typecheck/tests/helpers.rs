@@ -3,10 +3,10 @@ use crate::{
         ArrayFill, ArrayFillNode, ArrayLiteral, ArrayLiteralNode, Assign, AssignNode, AssignOp,
         Binary, BinaryNode, BinaryOp, Binding, BindingNode, Block, BlockNode, Call, CallNode, Expr,
         ExprId, ExprKind, ExprNode, FieldAccess, FieldAccessNode, Func, FuncNode, Ident, Index,
-        IndexNode, Lit, Method, MethodReceiver, Mutability, Param, Pattern, PatternNode, Program,
-        Range, RangeNode, Return, ReturnNode, Stmt, StmtNode, StructDecl, StructDeclNode,
-        StructField, StructLiteral, StructLiteralNode, Type, TypeParam, TypeVarId, Unary,
-        UnaryNode, UnaryOp, Visibility,
+        IndexNode, Lit, MapLiteral, MapLiteralNode, Method, MethodReceiver, Mutability, Param,
+        Pattern, PatternNode, Program, Range, RangeNode, Return, ReturnNode, Stmt, StmtNode,
+        StructDecl, StructDeclNode, StructField, StructLiteral, StructLiteralNode, Type, TypeParam,
+        TypeVarId, Unary, UnaryNode, UnaryOp, Visibility,
     },
     span::Span,
     typecheck::{check_program, error::TypeErr, types::TypeChecker},
@@ -245,6 +245,36 @@ pub(super) fn index_expr(target: ExprNode, index: ExprNode) -> ExprNode {
                     index: Box::new(index),
                     safe: false,
                 },
+                span: dummy_span(),
+            }),
+            next_expr_id(),
+        ),
+        span: dummy_span(),
+    }
+}
+
+pub(super) fn safe_index_expr(target: ExprNode, index: ExprNode) -> ExprNode {
+    ExprNode {
+        node: Expr::new(
+            ExprKind::Index(IndexNode {
+                node: Index {
+                    target: Box::new(target),
+                    index: Box::new(index),
+                    safe: true,
+                },
+                span: dummy_span(),
+            }),
+            next_expr_id(),
+        ),
+        span: dummy_span(),
+    }
+}
+
+pub(super) fn map_literal_expr(entries: Vec<(ExprNode, ExprNode)>) -> ExprNode {
+    ExprNode {
+        node: Expr::new(
+            ExprKind::MapLiteral(MapLiteralNode {
+                node: MapLiteral { entries },
                 span: dummy_span(),
             }),
             next_expr_id(),

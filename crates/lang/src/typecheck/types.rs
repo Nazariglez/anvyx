@@ -541,10 +541,19 @@ pub(super) fn type_field_on_base(
 pub(super) fn type_index_on_base(
     base_ty: &Type,
     index_ty: &Type,
+    index_expr_id: ExprId,
     span: Span,
     index_span: Span,
+    type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
+    if let Type::Map { key, value } = base_ty {
+        let key_ref = TypeRef::Expr(index_expr_id);
+        let expected_ref = TypeRef::Concrete((**key).clone());
+        type_checker.constrain_equal(index_span, key_ref, expected_ref, errors);
+        return (**value).clone();
+    }
+
     let maybe_int = matches!(index_ty, Type::Int | Type::Infer);
     if !maybe_int {
         errors.push(TypeErr::new(

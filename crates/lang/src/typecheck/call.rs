@@ -19,7 +19,7 @@ use super::{
     types::{EnumDef, SpecializationKey, SpecializationResult, StructDef, TypeChecker},
 };
 
-fn check_var_param_args(
+pub(super) fn check_var_param_args(
     params: &[(Ident, Mutability)],
     args: &[ExprNode],
     type_checker: &TypeChecker,
