@@ -13,7 +13,7 @@ use super::{
     expr::check_expr,
     infer::{create_inference_slots, type_to_ref_with_inference},
     range::{range_inclusive_type, range_type},
-    types::{TypeChecker, is_keyable},
+    types::{TypeChecker, is_keyable, keyable_reason},
 };
 
 pub(super) fn check_tuple(
@@ -391,8 +391,9 @@ pub(super) fn check_map_literal(
 
     // validate key type is keyable
     let is_type_infer = matches!(key_ty, Type::Infer);
-    if !is_type_infer && !is_keyable(&key_ty) {
+    if !is_type_infer && !is_keyable(&key_ty, type_checker) {
         let is_optional = key_ty.is_option();
+        let is_float = matches!(key_ty, Type::Float);
         if is_optional {
             errors.push(TypeErr::new(
                 lit.span,
@@ -400,13 +401,19 @@ pub(super) fn check_map_literal(
                     found: key_ty.clone(),
                 },
             ));
+        } else if is_float {
+            errors.push(TypeErr::new(lit.span, TypeErrKind::MapKeyFloat));
         } else {
-            errors.push(TypeErr::new(
+            let mut err = TypeErr::new(
                 lit.span,
                 TypeErrKind::MapKeyNotKeyable {
                     found: key_ty.clone(),
                 },
-            ));
+            );
+            if let Some(reason) = keyable_reason(&key_ty, type_checker) {
+                err.notes.push(reason);
+            }
+            errors.push(err);
         }
     }
 

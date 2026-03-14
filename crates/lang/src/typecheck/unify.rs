@@ -75,6 +75,22 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
                 && la.iter().zip(ra.iter()).all(|(a, b)| is_assignable(a, b))
         }
 
+        // Struct<A> -> Struct<B> of same symbol is assignable if all type_args are assignable
+        (
+            Struct {
+                name: ln,
+                type_args: la,
+            },
+            Struct {
+                name: rn,
+                type_args: ra,
+            },
+        ) => {
+            ln == rn
+                && la.len() == ra.len()
+                && la.iter().zip(ra.iter()).all(|(a, b)| is_assignable(a, b))
+        }
+
         // function types needs to check the signature (params + return type)
         (
             Func {

@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: not equatable
+
+fn foo() -> int { 0 }
+fn bar() -> int { 1 }
+
+fn main() {
+    let a: fn() -> int = foo;
+    let b: fn() -> int = bar;
+    let eq = a == b;
+}

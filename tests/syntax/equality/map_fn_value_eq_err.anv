@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: not equatable
+
+fn foo() -> void {}
+
+fn main() {
+    let a: [int: fn() -> void] = [1: foo];
+    let b: [int: fn() -> void] = [1: foo];
+    let eq = a == b;
+}

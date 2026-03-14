@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: success
+
+struct Vec2i {
+    x: int,
+    y: int,
+}
+
+fn main() {
+    let origin = Vec2i { x: 0, y: 0 };
+    let tiles: [Vec2i: string] = [:];
+    let m = [origin: "spawn"];
+}

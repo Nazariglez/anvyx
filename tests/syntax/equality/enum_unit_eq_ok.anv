@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+enum Dir {
+    N,
+    S,
+    E,
+    W,
+}
+
+fn main() {
+    let a = Dir.N;
+    let b = Dir.S;
+    let same = a == b;
+}

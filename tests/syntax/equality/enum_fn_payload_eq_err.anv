@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: error
+// @contains: not equatable
+
+fn my_fn() -> void {}
+
+enum Foo {
+    A(fn() -> void),
+}
+
+fn main() {
+    let a = Foo.A(my_fn);
+    let b = Foo.A(my_fn);
+    let eq = a == b;
+}

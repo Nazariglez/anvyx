@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: not equatable
+
+fn compare(a: [int; ..], b: [int; ..]) -> bool {
+    a == b
+}
+
+fn main() {
+    let x: [int; 2] = [1, 2];
+    let y: [int; 2] = [3, 4];
+    let eq = compare(x, y);
+}

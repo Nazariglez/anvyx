@@ -3,10 +3,11 @@ use crate::{
         ArrayFill, ArrayFillNode, ArrayLiteral, ArrayLiteralNode, Assign, AssignNode, AssignOp,
         Binary, BinaryNode, BinaryOp, Binding, BindingNode, Block, BlockNode, Call, CallNode, Cast,
         CastNode, Expr, ExprId, ExprKind, ExprNode, FieldAccess, FieldAccessNode, Func, FuncNode,
-        Ident, Index, IndexNode, Lit, MapLiteral, MapLiteralNode, Method, MethodReceiver,
-        Mutability, Param, Pattern, PatternNode, Program, Range, RangeNode, Return, ReturnNode,
-        Stmt, StmtNode, StringPart, StructDecl, StructDeclNode, StructField, StructLiteral,
-        StructLiteralNode, Type, TypeParam, TypeVarId, Unary, UnaryNode, UnaryOp, Visibility,
+        EnumDecl, EnumDeclNode, EnumVariant, Ident, Index, IndexNode, Lit, MapLiteral,
+        MapLiteralNode, Method, MethodReceiver, Mutability, Param, Pattern, PatternNode, Program,
+        Range, RangeNode, Return, ReturnNode, Stmt, StmtNode, StringPart, StructDecl,
+        StructDeclNode, StructField, StructLiteral, StructLiteralNode, Type, TypeParam, TypeVarId,
+        Unary, UnaryNode, UnaryOp, VariantKind, Visibility,
     },
     span::Span,
     typecheck::{check_program, error::TypeErr, types::TypeChecker},
@@ -531,6 +532,36 @@ pub(super) fn method(
     }
 }
 
+pub(super) fn generic_method(
+    name: &str,
+    type_params: Vec<TypeParam>,
+    receiver: Option<MethodReceiver>,
+    params: Vec<(&str, Type)>,
+    ret: Type,
+    body: Vec<StmtNode>,
+) -> Method {
+    let param_list = params
+        .into_iter()
+        .map(|(n, ty)| Param {
+            name: dummy_ident(n),
+            ty,
+            mutability: Mutability::Immutable,
+        })
+        .collect();
+    Method {
+        name: dummy_ident(name),
+        visibility: Visibility::Private,
+        type_params,
+        receiver,
+        params: param_list,
+        ret,
+        body: BlockNode {
+            node: Block { stmts: body },
+            span: dummy_span(),
+        },
+    }
+}
+
 pub(super) fn struct_decl(name: &str, fields: Vec<(&str, Type)>, methods: Vec<Method>) -> StmtNode {
     let struct_fields = fields
         .into_iter()
@@ -546,6 +577,27 @@ pub(super) fn struct_decl(name: &str, fields: Vec<(&str, Type)>, methods: Vec<Me
                 type_params: vec![],
                 fields: struct_fields,
                 methods,
+            },
+            span: dummy_span(),
+        }),
+        span: dummy_span(),
+    }
+}
+
+pub(super) fn enum_decl(name: &str, variants: Vec<(&str, VariantKind)>) -> StmtNode {
+    let enum_variants = variants
+        .into_iter()
+        .map(|(n, kind)| EnumVariant {
+            name: dummy_ident(n),
+            kind,
+        })
+        .collect();
+    StmtNode {
+        node: Stmt::Enum(EnumDeclNode {
+            node: EnumDecl {
+                name: dummy_ident(name),
+                type_params: vec![],
+                variants: enum_variants,
             },
             span: dummy_span(),
         }),

@@ -6,7 +6,7 @@ use super::{
     constraint::TypeRef,
     error::{TypeErr, TypeErrKind},
     expr::{check_expr, root_ident},
-    types::TypeChecker,
+    types::{TypeChecker, equatable_reason, is_equatable},
 };
 
 pub(super) fn check_binary(
@@ -58,7 +58,7 @@ pub(super) fn check_binary(
             }
         }
 
-        // equal ops must be the same type
+        // equal ops must be the same type and both sides must be equatable
         Eq | NotEq => {
             if !same_ty {
                 errors.push(TypeErr::new(
@@ -68,6 +68,13 @@ pub(super) fn check_binary(
                         found: right_ty.clone(),
                     },
                 ));
+            } else if !left_ty.is_infer() && !is_equatable(&left_ty, type_checker) {
+                let mut err =
+                    TypeErr::new(bin.span, TypeErrKind::NotEquatable { ty: left_ty.clone() });
+                if let Some(reason) = equatable_reason(&left_ty, type_checker) {
+                    err.notes.push(reason);
+                }
+                errors.push(err);
             }
             Type::Bool
         }

@@ -12,3 +12,6 @@ mod functions;
 mod arrays;
 mod blocks;
 mod mutability;
+mod constraint;
+mod equality;
+mod keyable;

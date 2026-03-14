@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: generic methods are not yet supported
+
+struct Foo {
+    fn bar<T>(self, x: T) -> T {
+        x
+    },
+}
+
+fn main() {
+    let f = Foo {};
+}

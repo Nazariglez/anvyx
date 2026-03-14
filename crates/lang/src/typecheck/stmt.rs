@@ -16,8 +16,7 @@ use super::{
     expr::check_expr,
     infer::type_from_fn,
     pattern::check_pattern,
-    types::is_keyable,
-    types::{EnumDef, EnumVariantDef, MethodDef, StructDef, TypeChecker, unwrap_opt_typ},
+    types::{EnumDef, EnumVariantDef, MethodDef, StructDef, TypeChecker, is_keyable, keyable_reason, unwrap_opt_typ},
     unify::contains_infer,
 };
 
@@ -209,6 +208,7 @@ pub(super) fn check_binding(
             if let Type::Map { key, .. } = &resolved_annot {
                 let is_optional_key = key.is_option();
                 let is_infer = matches!(key.as_ref(), Type::Infer);
+                let is_float_key = matches!(key.as_ref(), Type::Float);
                 if is_optional_key {
                     errors.push(TypeErr::new(
                         binding.span,
@@ -216,13 +216,19 @@ pub(super) fn check_binding(
                             found: (**key).clone(),
                         },
                     ));
-                } else if !is_keyable(key) && !is_infer {
-                    errors.push(TypeErr::new(
+                } else if is_float_key {
+                    errors.push(TypeErr::new(binding.span, TypeErrKind::MapKeyFloat));
+                } else if !is_keyable(key, type_checker) && !is_infer {
+                    let mut err = TypeErr::new(
                         binding.span,
                         TypeErrKind::MapKeyNotKeyable {
                             found: (**key).clone(),
                         },
-                    ));
+                    );
+                    if let Some(reason) = keyable_reason(key, type_checker) {
+                        err.notes.push(reason);
+                    }
+                    errors.push(err);
                 }
             }
 

@@ -412,9 +412,14 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "cannot infer key/value types of empty map".to_string(),
             "add a type annotation, e.g. `let m: [string: int] = [:];`".to_string(),
         ),
+        TypeErrKind::MapKeyFloat => (
+            "float cannot be used as map key".to_string(),
+            "float keys are unreliable due to NaN and precision; use int or string instead"
+                .to_string(),
+        ),
         TypeErrKind::MapKeyNotKeyable { found } => (
             "type cannot be used as map key".to_string(),
-            format!("'{found}' is not keyable; only primitives, enums, and tuples of keyable types are allowed"),
+            format!("'{found}' is not keyable; map keys must be int, bool, string, or structs/enums/tuples whose fields are all keyable"),
         ),
         TypeErrKind::MapOptionalKeyNotAllowed { found } => (
             "optional type cannot be used as map key".to_string(),
@@ -427,6 +432,14 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
         TypeErrKind::InvalidCast { from, to } => (
             "Invalid cast".to_string(),
             format!("cannot cast '{from}' to '{to}'"),
+        ),
+        TypeErrKind::GenericMethodNotSupported { struct_name, method } => (
+            "generic methods are not yet supported".to_string(),
+            format!("method '{method}' on struct '{struct_name}' declares its own type parameters"),
+        ),
+        TypeErrKind::NotEquatable { ty } => (
+            "type is not equatable".to_string(),
+            format!("type '{ty}' does not support '==' or '!='"),
         ),
     }
 }

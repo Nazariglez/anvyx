@@ -456,9 +456,11 @@ fn test_unify_struct_type_args_mismatch_no_panic() {
     let result = unify_types(&foo_int, &foo_string, span, &mut errors);
     assert_eq!(result, None);
     assert!(!errors.is_empty());
-    assert!(errors
-        .iter()
-        .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })));
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
+    );
 }
 
 #[test]
@@ -485,4 +487,85 @@ fn test_unify_struct_same_type_args_ok() {
             type_args: vec![Type::Int],
         })
     );
+}
+
+// ---- is_assignable tests for struct ----
+
+#[test]
+fn test_assignable_struct_same_name_same_concrete_type_args() {
+    let foo_int_a = Type::Struct {
+        name: super::helpers::dummy_ident("Foo"),
+        type_args: vec![Type::Int],
+    };
+    let foo_int_b = Type::Struct {
+        name: super::helpers::dummy_ident("Foo"),
+        type_args: vec![Type::Int],
+    };
+    assert!(is_assignable(&foo_int_a, &foo_int_b));
+}
+
+#[test]
+fn test_assignable_struct_same_name_different_concrete_type_args() {
+    let foo_int = Type::Struct {
+        name: super::helpers::dummy_ident("Foo"),
+        type_args: vec![Type::Int],
+    };
+    let foo_string = Type::Struct {
+        name: super::helpers::dummy_ident("Foo"),
+        type_args: vec![Type::String],
+    };
+    assert!(!is_assignable(&foo_int, &foo_string));
+}
+
+#[test]
+fn test_assignable_struct_different_names_same_type_args() {
+    let foo_int = Type::Struct {
+        name: super::helpers::dummy_ident("Foo"),
+        type_args: vec![Type::Int],
+    };
+    let bar_int = Type::Struct {
+        name: super::helpers::dummy_ident("Bar"),
+        type_args: vec![Type::Int],
+    };
+    assert!(!is_assignable(&foo_int, &bar_int));
+}
+
+#[test]
+fn test_assignable_struct_infer_type_arg_to_concrete() {
+    // Foo<_> is assignable to Foo<int> — the bug case
+    let foo_infer = Type::Struct {
+        name: super::helpers::dummy_ident("Foo"),
+        type_args: vec![Type::Infer],
+    };
+    let foo_int = Type::Struct {
+        name: super::helpers::dummy_ident("Foo"),
+        type_args: vec![Type::Int],
+    };
+    assert!(is_assignable(&foo_infer, &foo_int));
+}
+
+#[test]
+fn test_assignable_struct_no_type_args_same_name() {
+    let point_a = Type::Struct {
+        name: super::helpers::dummy_ident("Point"),
+        type_args: vec![],
+    };
+    let point_b = Type::Struct {
+        name: super::helpers::dummy_ident("Point"),
+        type_args: vec![],
+    };
+    assert!(is_assignable(&point_a, &point_b));
+}
+
+#[test]
+fn test_assignable_struct_no_type_args_different_names() {
+    let point = Type::Struct {
+        name: super::helpers::dummy_ident("Point"),
+        type_args: vec![],
+    };
+    let rect = Type::Struct {
+        name: super::helpers::dummy_ident("Rect"),
+        type_args: vec![],
+    };
+    assert!(!is_assignable(&point, &rect));
 }

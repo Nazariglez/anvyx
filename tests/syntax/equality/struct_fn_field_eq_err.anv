@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: error
+// @contains: field 'cb'
+
+fn my_fn() -> void {}
+
+struct Handler {
+    cb: fn() -> void,
+}
+
+fn main() {
+    let a = Handler { cb: my_fn };
+    let b = Handler { cb: my_fn };
+    let eq = a == b;
+}

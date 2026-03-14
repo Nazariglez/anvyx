@@ -219,6 +219,7 @@ pub enum TypeErrKind {
     },
 
     MapEmptyLiteralNoContext,
+    MapKeyFloat,
     MapKeyNotKeyable {
         found: Type,
     },
@@ -230,5 +231,14 @@ pub enum TypeErrKind {
     InvalidCast {
         from: Type,
         to: Type,
+    },
+
+    GenericMethodNotSupported {
+        struct_name: Ident,
+        method: Ident,
+    },
+
+    NotEquatable {
+        ty: Type,
     },
 }

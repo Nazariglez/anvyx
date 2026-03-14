@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: not keyable
+
+struct Pos {
+    x: float,
+    y: float,
+}
+
+fn main() {
+    let p = Pos { x: 1.0, y: 2.0 };
+    let m = [p: "position"];
+}

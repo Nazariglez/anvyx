@@ -91,6 +91,7 @@ pub(super) fn check_fn_body(
 
 pub(super) fn check_method_body(
     struct_name: Ident,
+    method_name: Ident,
     struct_def: &StructDef,
     method: &MethodDef,
     error_span: Span,
@@ -98,7 +99,13 @@ pub(super) fn check_method_body(
     errors: &mut Vec<TypeErr>,
 ) {
     if !method.type_params.is_empty() {
-        // FIXME: method generics are not supported yet
+        errors.push(TypeErr::new(
+            error_span,
+            TypeErrKind::GenericMethodNotSupported {
+                struct_name,
+                method: method_name,
+            },
+        ));
         return;
     }
 
@@ -208,6 +215,7 @@ pub(super) fn check_struct(
         if let Some(method_def) = struct_def.methods.get(&method.name) {
             check_method_body(
                 struct_name,
+                method.name,
                 &struct_def,
                 method_def,
                 method.body.span,

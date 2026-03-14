@@ -1,0 +1,17 @@
+// @mode: check
+// @expect: success
+
+struct Wrapper<T> {
+    value: T,
+
+    fn new(value: T) -> Self {
+        Wrapper { value: value }
+    },
+}
+
+fn main() {
+    let w = Wrapper.new(42);
+    let x: Wrapper<int> = w;
+    let s = Wrapper.new("hello");
+    let y: Wrapper<string> = s;
+}

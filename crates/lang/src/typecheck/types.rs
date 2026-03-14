@@ -592,12 +592,298 @@ pub(super) fn unwrap_opt_typ(ty: &Type) -> &Type {
     ty.option_inner().unwrap_or(ty)
 }
 
-pub(super) fn is_keyable(ty: &Type) -> bool {
+pub(super) fn is_keyable(ty: &Type, tc: &TypeChecker) -> bool {
     match ty {
-        Type::Int | Type::Float | Type::Bool | Type::String => true,
-        Type::Enum { .. } => true, // TODO: should we check the payloads?
-        Type::Tuple(elems) => elems.iter().all(is_keyable),
-        Type::NamedTuple(fields) => fields.iter().all(|(_, ty)| is_keyable(ty)),
+        Type::Int | Type::Bool | Type::String => true,
+        Type::Tuple(elems) => elems.iter().all(|t| is_keyable(t, tc)),
+        Type::NamedTuple(fields) => fields.iter().all(|(_, t)| is_keyable(t, tc)),
+        Type::Enum { name, type_args } => {
+            if ty.is_option() {
+                return false;
+            }
+            let Some(enum_def) = tc.enum_defs.get(name).cloned() else {
+                return false;
+            };
+            let subst: HashMap<_, _> = enum_def
+                .type_params
+                .iter()
+                .zip(type_args.iter())
+                .map(|(param, arg)| (param.id, arg.clone()))
+                .collect();
+            enum_def.variants.iter().all(|v| match &v.kind {
+                VariantKind::Unit => true,
+                VariantKind::Tuple(types) => {
+                    types.iter().all(|t| is_keyable(&subst_type(t, &subst), tc))
+                }
+                VariantKind::Struct(fields) => {
+                    fields.iter().all(|f| is_keyable(&subst_type(&f.ty, &subst), tc))
+                }
+            })
+        }
+        Type::Struct { name, type_args } => {
+            let Some(struct_def) = tc.struct_defs.get(name).cloned() else {
+                return false;
+            };
+            let subst: HashMap<_, _> = struct_def
+                .type_params
+                .iter()
+                .zip(type_args.iter())
+                .map(|(param, arg)| (param.id, arg.clone()))
+                .collect();
+            struct_def
+                .fields
+                .iter()
+                .all(|f| is_keyable(&subst_type(&f.ty, &subst), tc))
+        }
         _ => false,
+    }
+}
+
+pub(super) fn is_equatable(ty: &Type, tc: &TypeChecker) -> bool {
+    match ty {
+        Type::Infer => true,
+        Type::Int | Type::Float | Type::Bool | Type::String => true,
+        Type::Tuple(elems) => elems.iter().all(|t| is_equatable(t, tc)),
+        Type::NamedTuple(fields) => fields.iter().all(|(_, t)| is_equatable(t, tc)),
+        Type::Enum { name, type_args } => {
+            if ty.is_option() {
+                let inner = ty.option_inner().map(|t| t.clone()).unwrap_or(Type::Infer);
+                return is_equatable(&inner, tc);
+            }
+            let Some(enum_def) = tc.enum_defs.get(name).cloned() else {
+                return false;
+            };
+            let subst: HashMap<_, _> = enum_def
+                .type_params
+                .iter()
+                .zip(type_args.iter())
+                .map(|(param, arg)| (param.id, arg.clone()))
+                .collect();
+            enum_def.variants.iter().all(|v| match &v.kind {
+                VariantKind::Unit => true,
+                VariantKind::Tuple(types) => {
+                    types.iter().all(|t| is_equatable(&subst_type(t, &subst), tc))
+                }
+                VariantKind::Struct(fields) => {
+                    fields.iter().all(|f| is_equatable(&subst_type(&f.ty, &subst), tc))
+                }
+            })
+        }
+        Type::Struct { name, type_args } => {
+            let Some(struct_def) = tc.struct_defs.get(name).cloned() else {
+                return false;
+            };
+            let subst: HashMap<_, _> = struct_def
+                .type_params
+                .iter()
+                .zip(type_args.iter())
+                .map(|(param, arg)| (param.id, arg.clone()))
+                .collect();
+            struct_def
+                .fields
+                .iter()
+                .all(|f| is_equatable(&subst_type(&f.ty, &subst), tc))
+        }
+        Type::List { elem } => is_equatable(elem, tc),
+        Type::Array { elem, .. } => is_equatable(elem, tc),
+        Type::Map { key, value } => is_equatable(key, tc) && is_equatable(value, tc),
+        _ => false,
+    }
+}
+
+pub(super) fn equatable_reason(ty: &Type, tc: &TypeChecker) -> Option<String> {
+    match ty {
+        Type::Infer | Type::Int | Type::Float | Type::Bool | Type::String => None,
+        Type::Tuple(elems) => elems.iter().enumerate().find_map(|(i, t)| {
+            if !is_equatable(t, tc) {
+                Some(format!(
+                    "tuple element {i} has type '{t}' which is not equatable"
+                ))
+            } else {
+                None
+            }
+        }),
+        Type::NamedTuple(fields) => fields.iter().find_map(|(label, t)| {
+            if !is_equatable(t, tc) {
+                Some(format!(
+                    "field '{label}' has type '{t}' which is not equatable"
+                ))
+            } else {
+                None
+            }
+        }),
+        Type::Enum { name, type_args } => {
+            if ty.is_option() {
+                let inner = ty.option_inner().map(|t| t.clone()).unwrap_or(Type::Infer);
+                return equatable_reason(&inner, tc);
+            }
+            let Some(enum_def) = tc.enum_defs.get(name).cloned() else {
+                return Some(format!("enum '{name}' is not known"));
+            };
+            let subst: HashMap<_, _> = enum_def
+                .type_params
+                .iter()
+                .zip(type_args.iter())
+                .map(|(param, arg)| (param.id, arg.clone()))
+                .collect();
+            enum_def.variants.iter().find_map(|v| {
+                let offending = match &v.kind {
+                    VariantKind::Unit => None,
+                    VariantKind::Tuple(types) => types.iter().find_map(|t| {
+                        let resolved = subst_type(t, &subst);
+                        if !is_equatable(&resolved, tc) {
+                            Some(resolved)
+                        } else {
+                            None
+                        }
+                    }),
+                    VariantKind::Struct(fields) => fields.iter().find_map(|f| {
+                        let resolved = subst_type(&f.ty, &subst);
+                        if !is_equatable(&resolved, tc) {
+                            Some(resolved)
+                        } else {
+                            None
+                        }
+                    }),
+                };
+                offending.map(|bad_ty| {
+                    format!(
+                        "variant '{}' has payload type '{bad_ty}' which is not equatable",
+                        v.name
+                    )
+                })
+            })
+        }
+        Type::Struct { name, type_args } => {
+            let Some(struct_def) = tc.struct_defs.get(name).cloned() else {
+                return Some(format!("struct '{name}' is not known"));
+            };
+            let subst: HashMap<_, _> = struct_def
+                .type_params
+                .iter()
+                .zip(type_args.iter())
+                .map(|(param, arg)| (param.id, arg.clone()))
+                .collect();
+            struct_def.fields.iter().find_map(|f| {
+                let resolved = subst_type(&f.ty, &subst);
+                if !is_equatable(&resolved, tc) {
+                    Some(format!(
+                        "field '{}' has type '{resolved}' which is not equatable",
+                        f.name
+                    ))
+                } else {
+                    None
+                }
+            })
+        }
+        Type::List { elem } | Type::Array { elem, .. } => {
+            if !is_equatable(elem, tc) {
+                Some(format!("element type '{elem}' is not equatable"))
+            } else {
+                None
+            }
+        }
+        Type::Map { key, value } => {
+            if !is_equatable(key, tc) {
+                Some(format!("key type '{key}' is not equatable"))
+            } else if !is_equatable(value, tc) {
+                Some(format!("value type '{value}' is not equatable"))
+            } else {
+                None
+            }
+        }
+        other => Some(format!("type '{other}' is not equatable")),
+    }
+}
+
+pub(super) fn keyable_reason(ty: &Type, tc: &TypeChecker) -> Option<String> {
+    match ty {
+        Type::Int | Type::Bool | Type::String => None,
+        Type::Float => Some(
+            "float is not keyable due to NaN and precision issues; use int or string instead"
+                .to_string(),
+        ),
+        Type::Tuple(elems) => elems.iter().enumerate().find_map(|(i, t)| {
+            if !is_keyable(t, tc) {
+                Some(format!(
+                    "tuple element {i} has type '{t}' which is not keyable"
+                ))
+            } else {
+                None
+            }
+        }),
+        Type::NamedTuple(fields) => fields.iter().find_map(|(label, t)| {
+            if !is_keyable(t, tc) {
+                Some(format!(
+                    "field '{label}' has type '{t}' which is not keyable"
+                ))
+            } else {
+                None
+            }
+        }),
+        Type::Enum { name, type_args } => {
+            if ty.is_option() {
+                return Some("optional types cannot be used as map keys".to_string());
+            }
+            let Some(enum_def) = tc.enum_defs.get(name).cloned() else {
+                return Some(format!("enum '{name}' is not known"));
+            };
+            let subst: HashMap<_, _> = enum_def
+                .type_params
+                .iter()
+                .zip(type_args.iter())
+                .map(|(param, arg)| (param.id, arg.clone()))
+                .collect();
+            enum_def.variants.iter().find_map(|v| {
+                let offending = match &v.kind {
+                    VariantKind::Unit => None,
+                    VariantKind::Tuple(types) => types.iter().find_map(|t| {
+                        let resolved = subst_type(t, &subst);
+                        if !is_keyable(&resolved, tc) {
+                            Some(resolved)
+                        } else {
+                            None
+                        }
+                    }),
+                    VariantKind::Struct(fields) => fields.iter().find_map(|f| {
+                        let resolved = subst_type(&f.ty, &subst);
+                        if !is_keyable(&resolved, tc) {
+                            Some(resolved)
+                        } else {
+                            None
+                        }
+                    }),
+                };
+                offending.map(|bad_ty| {
+                    format!(
+                        "variant '{}' has payload type '{bad_ty}' which is not keyable",
+                        v.name
+                    )
+                })
+            })
+        }
+        Type::Struct { name, type_args } => {
+            let Some(struct_def) = tc.struct_defs.get(name).cloned() else {
+                return Some(format!("struct '{name}' is not known"));
+            };
+            let subst: HashMap<_, _> = struct_def
+                .type_params
+                .iter()
+                .zip(type_args.iter())
+                .map(|(param, arg)| (param.id, arg.clone()))
+                .collect();
+            struct_def.fields.iter().find_map(|f| {
+                let resolved = subst_type(&f.ty, &subst);
+                if !is_keyable(&resolved, tc) {
+                    Some(format!(
+                        "field '{}' has type '{resolved}' which is not keyable",
+                        f.name
+                    ))
+                } else {
+                    None
+                }
+            })
+        }
+        other => Some(format!("type '{other}' is not keyable")),
     }
 }
