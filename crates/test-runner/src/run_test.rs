@@ -38,23 +38,34 @@ pub fn run_test_file(
     let elapsed = start_time.elapsed();
 
     let res = match (outcome, directives.expect) {
-        (ProcessOutcome::Pass { output }, ExpectedResult::Success) => {
-            match_output(&output, &directives)?
+        (ProcessOutcome::Pass { stdout, stderr }, ExpectedResult::Success) => {
+            let merged = format!("{stdout}{stderr}");
+            match_output(&merged, &directives)?
         }
         (ProcessOutcome::Pass { .. }, ExpectedResult::Error) => TestResult::Fail {
             message: format!("Expected error but got success"),
         },
-        (ProcessOutcome::Pass { output }, ExpectedResult::Timeout) => TestResult::Fail {
-            message: format!("Expected timeout but got success:\n{output}"),
-        },
-        (ProcessOutcome::Fail { message }, ExpectedResult::Success) => TestResult::Fail {
-            message: format!("Expected success but got error:\n{message}"),
-        },
-        (ProcessOutcome::Fail { message }, ExpectedResult::Timeout) => TestResult::Fail {
-            message: format!("Expected timeout but got error:\n{message}"),
-        },
-        (ProcessOutcome::Fail { message }, ExpectedResult::Error) => {
-            match_output(&message, &directives)?
+        (ProcessOutcome::Pass { stdout, stderr }, ExpectedResult::Timeout) => {
+            let merged = format!("{stdout}{stderr}");
+            TestResult::Fail {
+                message: format!("Expected timeout but got success:\n{merged}"),
+            }
+        }
+        (ProcessOutcome::Fail { stdout, stderr }, ExpectedResult::Success) => {
+            let merged = format!("{stdout}{stderr}");
+            TestResult::Fail {
+                message: format!("Expected success but got error:\n{merged}"),
+            }
+        }
+        (ProcessOutcome::Fail { stdout, stderr }, ExpectedResult::Timeout) => {
+            let merged = format!("{stdout}{stderr}");
+            TestResult::Fail {
+                message: format!("Expected timeout but got error:\n{merged}"),
+            }
+        }
+        (ProcessOutcome::Fail { stdout, stderr }, ExpectedResult::Error) => {
+            let merged = format!("{stdout}{stderr}");
+            match_output(&merged, &directives)?
         }
         (ProcessOutcome::Timeout, ExpectedResult::Success) => TestResult::Timeout,
         (ProcessOutcome::Timeout, ExpectedResult::Error) => TestResult::Timeout,
@@ -170,8 +181,8 @@ pub enum TestResult {
 
 #[derive(Debug)]
 enum ProcessOutcome {
-    Pass { output: String },
-    Fail { message: String },
+    Pass { stdout: String, stderr: String },
+    Fail { stdout: String, stderr: String },
     Timeout,
 }
 
@@ -227,19 +238,20 @@ fn spawn_test_process(
     let res = child.wait_timeout(timeout).map_err(|e| e.to_string())?;
     match res {
         Some(status) => {
-            let mut msg = String::new();
+            let mut stdout = String::new();
+            let mut stderr = String::new();
 
-            if let Some(mut output) = child.stdout.take() {
-                let _ = output.read_to_string(&mut msg);
+            if let Some(mut out) = child.stdout.take() {
+                let _ = out.read_to_string(&mut stdout);
             }
-            if let Some(mut stderr) = child.stderr.take() {
-                let _ = stderr.read_to_string(&mut msg);
+            if let Some(mut err) = child.stderr.take() {
+                let _ = err.read_to_string(&mut stderr);
             }
 
             if status.success() {
-                Ok(ProcessOutcome::Pass { output: msg })
+                Ok(ProcessOutcome::Pass { stdout, stderr })
             } else {
-                Ok(ProcessOutcome::Fail { message: msg })
+                Ok(ProcessOutcome::Fail { stdout, stderr })
             }
         }
         None => {
