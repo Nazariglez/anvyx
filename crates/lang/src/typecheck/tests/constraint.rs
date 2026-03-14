@@ -1,10 +1,13 @@
 use super::helpers::{
     array_literal, assert_expr_type, binary_expr, call_expr, call_expr_with_type_args, dummy_ident,
-    field_expr, fn_decl, generic_method, generic_struct_decl, get_expr_id, ident_expr, let_binding,
-    lit_int, lit_string, map_literal_expr, program, reset_expr_ids, return_stmt, run_err, run_ok,
-    struct_decl, struct_literal_expr, type_param,
+    dummy_span, field_expr, fn_decl, generic_method, generic_struct_decl, get_expr_id, ident_expr,
+    let_binding, lit_int, lit_string, map_literal_expr, program, reset_expr_ids, return_stmt,
+    run_err, run_ok, struct_decl, struct_literal_expr, type_param,
 };
-use crate::ast::{BinaryOp, MethodReceiver, Type, TypeVarId};
+use crate::ast::{
+    BinaryOp, EnumDecl, EnumDeclNode, EnumVariant, MethodReceiver, Stmt, StmtNode, Type, TypeParam,
+    TypeVarId, VariantKind,
+};
 use crate::typecheck::error::TypeErrKind;
 
 // ---- list constrain_assignable tests ----
@@ -440,7 +443,10 @@ fn test_generic_method_call_on_generic_struct() {
         None,
         struct_literal_expr("Wrapper", vec![("value", lit_int(42))]),
     );
-    let call = call_expr(field_expr(ident_expr("w"), "convert"), vec![lit_string("hello")]);
+    let call = call_expr(
+        field_expr(ident_expr("w"), "convert"),
+        vec![lit_string("hello")],
+    );
     let call_id = get_expr_id(&call);
     let result_binding = let_binding("result", None, call);
 
@@ -561,7 +567,10 @@ fn test_static_generic_method_on_generic_struct_inferred() {
         "with_extra",
         vec![type_param("U", 1)],
         None,
-        vec![("val", Type::Var(struct_t_id)), ("extra", method_u_type.clone())],
+        vec![
+            ("val", Type::Var(struct_t_id)),
+            ("extra", method_u_type.clone()),
+        ],
         method_u_type,
         vec![return_stmt(Some(ident_expr("extra")))],
     );
@@ -654,7 +663,10 @@ fn test_generic_method_returns_struct_instantiation() {
         None,
         struct_literal_expr("Container", vec![("value", lit_int(42))]),
     );
-    let call = call_expr(field_expr(ident_expr("c"), "wrap"), vec![lit_string("hello")]);
+    let call = call_expr(
+        field_expr(ident_expr("c"), "wrap"),
+        vec![lit_string("hello")],
+    );
     let call_id = get_expr_id(&call);
     let result_binding = let_binding("result", None, call);
 
@@ -696,5 +708,318 @@ fn test_generic_method_body_type_error() {
     assert!(
         !errors.is_empty(),
         "Expected body type error, got no errors"
+    );
+}
+
+// ---- constrain_assignable: new container branches ----
+
+#[test]
+fn test_constrain_list_inferred_elem_from_annotation() {
+    reset_expr_ids();
+
+    // let xs: [int] = [1, 2, 3];
+    // -- list literal starts as [Infer], annotation drives elem to int
+    let arr = array_literal(vec![lit_int(1), lit_int(2), lit_int(3)]);
+    let arr_id = get_expr_id(&arr);
+    let binding = let_binding(
+        "xs",
+        Some(Type::List {
+            elem: Type::Int.boxed(),
+        }),
+        arr,
+    );
+
+    let prog = program(vec![binding]);
+    let tcx = run_ok(prog);
+    assert_expr_type(
+        &tcx,
+        arr_id,
+        Type::List {
+            elem: Type::Int.boxed(),
+        },
+    );
+}
+
+#[test]
+fn test_constrain_list_inferred_elem_mismatch_errors() {
+    reset_expr_ids();
+
+    // fn get_strings() -> [string] { ["a", "b"] }
+    // let xs: [int] = get_strings();  -- ERROR
+    let get_strings = fn_decl(
+        "get_strings",
+        vec![],
+        Type::List {
+            elem: Type::String.boxed(),
+        },
+        vec![return_stmt(Some(array_literal(vec![lit_string("a")])))],
+    );
+
+    let call = call_expr(ident_expr("get_strings"), vec![]);
+    let binding = let_binding(
+        "xs",
+        Some(Type::List {
+            elem: Type::Int.boxed(),
+        }),
+        call,
+    );
+
+    let prog = program(vec![get_strings, binding]);
+    let errors = run_err(prog);
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+        "Expected MismatchedTypes, got: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_constrain_map_inferred_key_value_from_annotation() {
+    reset_expr_ids();
+
+    // let m: [string: int] = ["a": 1];
+    let map = map_literal_expr(vec![(lit_string("a"), lit_int(1))]);
+    let map_id = get_expr_id(&map);
+    let binding = let_binding(
+        "m",
+        Some(Type::Map {
+            key: Type::String.boxed(),
+            value: Type::Int.boxed(),
+        }),
+        map,
+    );
+
+    let prog = program(vec![binding]);
+    let tcx = run_ok(prog);
+    assert_expr_type(
+        &tcx,
+        map_id,
+        Type::Map {
+            key: Type::String.boxed(),
+            value: Type::Int.boxed(),
+        },
+    );
+}
+
+#[test]
+fn test_constrain_map_inferred_value_mismatch_errors() {
+    reset_expr_ids();
+
+    // fn get_map() -> [int: string] { [1: "a"] }
+    // let m: [int: int] = get_map();  -- ERROR
+    let get_map = fn_decl(
+        "get_map",
+        vec![],
+        Type::Map {
+            key: Type::Int.boxed(),
+            value: Type::String.boxed(),
+        },
+        vec![return_stmt(Some(map_literal_expr(vec![(
+            lit_int(1),
+            lit_string("a"),
+        )])))],
+    );
+
+    let call = call_expr(ident_expr("get_map"), vec![]);
+    let binding = let_binding(
+        "m",
+        Some(Type::Map {
+            key: Type::Int.boxed(),
+            value: Type::Int.boxed(),
+        }),
+        call,
+    );
+
+    let prog = program(vec![get_map, binding]);
+    let errors = run_err(prog);
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+        "Expected MismatchedTypes, got: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_constrain_generic_struct_type_arg_inferred_from_annotation() {
+    reset_expr_ids();
+
+    // struct Wrapper<T> { value: T }
+    // fn make() -> Wrapper<int> { Wrapper { value: 42 } }
+    // let w: Wrapper<int> = make();  -- Wrapper<Infer> constrained to Wrapper<int>
+    let t_id = TypeVarId(0);
+    let wrapper_decl = generic_struct_decl(
+        "Wrapper",
+        vec![type_param("T", 0)],
+        vec![("value", Type::Var(t_id))],
+        vec![],
+    );
+
+    let wrapper_int = Type::Struct {
+        name: dummy_ident("Wrapper"),
+        type_args: vec![Type::Int],
+    };
+    let make_fn = fn_decl(
+        "make",
+        vec![],
+        wrapper_int.clone(),
+        vec![return_stmt(Some(struct_literal_expr(
+            "Wrapper",
+            vec![("value", lit_int(42))],
+        )))],
+    );
+
+    let call = call_expr(ident_expr("make"), vec![]);
+    let call_id = get_expr_id(&call);
+    let binding = let_binding("w", Some(wrapper_int.clone()), call);
+
+    let prog = program(vec![wrapper_decl, make_fn, binding]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, call_id, wrapper_int);
+}
+
+#[test]
+fn test_constrain_generic_struct_type_arg_mismatch_errors() {
+    reset_expr_ids();
+
+    // struct Wrapper<T> { value: T }
+    // fn make_int() -> Wrapper<int> { Wrapper { value: 1 } }
+    // let w: Wrapper<string> = make_int();  -- ERROR
+    let t_id = TypeVarId(0);
+    let wrapper_decl = generic_struct_decl(
+        "Wrapper",
+        vec![type_param("T", 0)],
+        vec![("value", Type::Var(t_id))],
+        vec![],
+    );
+
+    let make_int = fn_decl(
+        "make_int",
+        vec![],
+        Type::Struct {
+            name: dummy_ident("Wrapper"),
+            type_args: vec![Type::Int],
+        },
+        vec![return_stmt(Some(struct_literal_expr(
+            "Wrapper",
+            vec![("value", lit_int(1))],
+        )))],
+    );
+
+    let call = call_expr(ident_expr("make_int"), vec![]);
+    let binding = let_binding(
+        "w",
+        Some(Type::Struct {
+            name: dummy_ident("Wrapper"),
+            type_args: vec![Type::String],
+        }),
+        call,
+    );
+
+    let prog = program(vec![wrapper_decl, make_int, binding]);
+    let errors = run_err(prog);
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+        "Expected MismatchedTypes, got: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_constrain_generic_enum_type_arg_assignable() {
+    reset_expr_ids();
+
+    // enum Box<T> { Wrap(T) }
+    // fn use_box(x: Box<int>) { let b: Box<int> = x; } - Box<int> assignable to Box<int>
+    let t_id = TypeVarId(0);
+    let box_decl = StmtNode {
+        node: Stmt::Enum(EnumDeclNode {
+            node: EnumDecl {
+                name: dummy_ident("Box"),
+                type_params: vec![TypeParam {
+                    name: dummy_ident("T"),
+                    id: t_id,
+                }],
+                variants: vec![EnumVariant {
+                    name: dummy_ident("Wrap"),
+                    kind: VariantKind::Tuple(vec![Type::Var(t_id)]),
+                }],
+            },
+            span: dummy_span(),
+        }),
+        span: dummy_span(),
+    };
+
+    let box_int = Type::Enum {
+        name: dummy_ident("Box"),
+        type_args: vec![Type::Int],
+    };
+    let inner_binding = let_binding("b", Some(box_int.clone()), ident_expr("x"));
+    let use_box_fn = fn_decl(
+        "use_box",
+        vec![("x", box_int)],
+        Type::Void,
+        vec![inner_binding],
+    );
+
+    let prog = program(vec![box_decl, use_box_fn]);
+    let _ = run_ok(prog);
+}
+
+#[test]
+fn test_constrain_generic_enum_type_arg_mismatch_errors() {
+    reset_expr_ids();
+
+    // enum Box<T> { Wrap(T) }
+    // fn make_int() -> Box<int> { ... }
+    // let b: Box<string> = make_int();  -- ERROR
+    let t_id = TypeVarId(0);
+    let box_decl = StmtNode {
+        node: Stmt::Enum(EnumDeclNode {
+            node: EnumDecl {
+                name: dummy_ident("Box"),
+                type_params: vec![TypeParam {
+                    name: dummy_ident("T"),
+                    id: t_id,
+                }],
+                variants: vec![EnumVariant {
+                    name: dummy_ident("Wrap"),
+                    kind: VariantKind::Tuple(vec![Type::Var(t_id)]),
+                }],
+            },
+            span: dummy_span(),
+        }),
+        span: dummy_span(),
+    };
+
+    let box_int = Type::Enum {
+        name: dummy_ident("Box"),
+        type_args: vec![Type::Int],
+    };
+    let box_string = Type::Enum {
+        name: dummy_ident("Box"),
+        type_args: vec![Type::String],
+    };
+    let inner_binding = let_binding("b", Some(box_string), ident_expr("x"));
+    let use_box_fn = fn_decl(
+        "use_box",
+        vec![("x", box_int)],
+        Type::Void,
+        vec![inner_binding],
+    );
+
+    let prog = program(vec![box_decl, use_box_fn]);
+    let errors = run_err(prog);
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+        "Expected MismatchedTypes, got: {:?}",
+        errors
     );
 }

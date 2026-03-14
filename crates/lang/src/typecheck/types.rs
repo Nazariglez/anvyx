@@ -431,6 +431,96 @@ impl TypeChecker {
             return;
         }
 
+        // if both are lists, constrain element types
+        // skip when either side has Infer, constrain_equal handles unification
+        if let (Type::List { elem: elem_from }, Type::List { elem: elem_to }) = (&from_ty, &to_ty) {
+            let has_infer = contains_infer(elem_from) || contains_infer(elem_to);
+            if !has_infer {
+                let elem_from_ref = TypeRef::Concrete(*elem_from.clone());
+                let elem_to_ref = TypeRef::Concrete(*elem_to.clone());
+                self.constrain_assignable(span, elem_from_ref, elem_to_ref, errors);
+                return;
+            }
+        }
+
+        // if both are maps, constrain key and value types
+        // skip when any inner type has Infer, constrain_equal handles unification
+        if let (
+            Type::Map {
+                key: key_from,
+                value: val_from,
+            },
+            Type::Map {
+                key: key_to,
+                value: val_to,
+            },
+        ) = (&from_ty, &to_ty)
+        {
+            let has_infer = contains_infer(key_from)
+                || contains_infer(key_to)
+                || contains_infer(val_from)
+                || contains_infer(val_to);
+            if !has_infer {
+                let key_from_ref = TypeRef::Concrete(*key_from.clone());
+                let key_to_ref = TypeRef::Concrete(*key_to.clone());
+                self.constrain_assignable(span, key_from_ref, key_to_ref, errors);
+                let val_from_ref = TypeRef::Concrete(*val_from.clone());
+                let val_to_ref = TypeRef::Concrete(*val_to.clone());
+                self.constrain_assignable(span, val_from_ref, val_to_ref, errors);
+                return;
+            }
+        }
+
+        // if both are structs with the same name, constrain type args pairwise
+        // skip when any type arg has Infen, constrain_equal handles unification
+        if let (
+            Type::Struct {
+                name: name_from,
+                type_args: args_from,
+            },
+            Type::Struct {
+                name: name_to,
+                type_args: args_to,
+            },
+        ) = (&from_ty, &to_ty)
+        {
+            let has_infer =
+                args_from.iter().any(contains_infer) || args_to.iter().any(contains_infer);
+            if name_from == name_to && args_from.len() == args_to.len() && !has_infer {
+                for (arg_from, arg_to) in args_from.iter().zip(args_to.iter()) {
+                    let arg_from_ref = TypeRef::Concrete(arg_from.clone());
+                    let arg_to_ref = TypeRef::Concrete(arg_to.clone());
+                    self.constrain_assignable(span, arg_from_ref, arg_to_ref, errors);
+                }
+                return;
+            }
+        }
+
+        // if both are enums with the same name, constrain type args pairwise
+        // skip when any type arg has Infer, constrain_equal handles unification
+        if let (
+            Type::Enum {
+                name: name_from,
+                type_args: args_from,
+            },
+            Type::Enum {
+                name: name_to,
+                type_args: args_to,
+            },
+        ) = (&from_ty, &to_ty)
+        {
+            let has_infer =
+                args_from.iter().any(contains_infer) || args_to.iter().any(contains_infer);
+            if name_from == name_to && args_from.len() == args_to.len() && !has_infer {
+                for (arg_from, arg_to) in args_from.iter().zip(args_to.iter()) {
+                    let arg_from_ref = TypeRef::Concrete(arg_from.clone());
+                    let arg_to_ref = TypeRef::Concrete(arg_to.clone());
+                    self.constrain_assignable(span, arg_from_ref, arg_to_ref, errors);
+                }
+                return;
+            }
+        }
+
         // otherwise just constrain them to be the same as fallback
         self.constrain_equal(span, from, to, errors);
     }
@@ -627,9 +717,9 @@ pub(super) fn is_keyable(ty: &Type, tc: &TypeChecker) -> bool {
                 VariantKind::Tuple(types) => {
                     types.iter().all(|t| is_keyable(&subst_type(t, &subst), tc))
                 }
-                VariantKind::Struct(fields) => {
-                    fields.iter().all(|f| is_keyable(&subst_type(&f.ty, &subst), tc))
-                }
+                VariantKind::Struct(fields) => fields
+                    .iter()
+                    .all(|f| is_keyable(&subst_type(&f.ty, &subst), tc)),
             })
         }
         Type::Struct { name, type_args } => {
@@ -673,12 +763,12 @@ pub(super) fn is_equatable(ty: &Type, tc: &TypeChecker) -> bool {
                 .collect();
             enum_def.variants.iter().all(|v| match &v.kind {
                 VariantKind::Unit => true,
-                VariantKind::Tuple(types) => {
-                    types.iter().all(|t| is_equatable(&subst_type(t, &subst), tc))
-                }
-                VariantKind::Struct(fields) => {
-                    fields.iter().all(|f| is_equatable(&subst_type(&f.ty, &subst), tc))
-                }
+                VariantKind::Tuple(types) => types
+                    .iter()
+                    .all(|t| is_equatable(&subst_type(t, &subst), tc)),
+                VariantKind::Struct(fields) => fields
+                    .iter()
+                    .all(|f| is_equatable(&subst_type(&f.ty, &subst), tc)),
             })
         }
         Type::Struct { name, type_args } => {
