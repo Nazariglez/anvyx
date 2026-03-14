@@ -12,7 +12,7 @@ use super::{
     types::{MethodContext, MethodDef, StructDef, TypeChecker},
 };
 
-fn check_body_common(
+pub(super) fn check_body_common(
     params: &[(Ident, Type, bool)],
     body: &BlockNode,
     ret_ty: &Type,
@@ -99,13 +99,22 @@ pub(super) fn check_method_body(
     errors: &mut Vec<TypeErr>,
 ) {
     if !method.type_params.is_empty() {
-        errors.push(TypeErr::new(
-            error_span,
-            TypeErrKind::GenericMethodNotSupported {
-                struct_name,
-                method: method_name,
-            },
-        ));
+        for method_param in &method.type_params {
+            let shadows_struct = struct_def
+                .type_params
+                .iter()
+                .any(|sp| sp.name == method_param.name);
+            if shadows_struct {
+                errors.push(TypeErr::new(
+                    error_span,
+                    TypeErrKind::MethodTypeParamShadowsStruct {
+                        struct_name,
+                        method: method_name,
+                        param: method_param.name,
+                    },
+                ));
+            }
+        }
         return;
     }
 

@@ -64,6 +64,15 @@ pub(super) struct SpecializationKey {
     pub type_args: Vec<Type>,
 }
 
+/// Key for caching specialized generic method bodies
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(super) struct MethodSpecKey {
+    pub struct_name: Ident,
+    pub method_name: Ident,
+    /// Struct type args concatenated with method type args
+    pub type_args: Vec<Type>,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct SpecializationResult {
     pub ret_ty: Type,
@@ -105,6 +114,9 @@ pub struct TypeChecker {
 
     /// Stores specialized functions avoiding re-checking for same type arguments
     pub(super) specialization_cache: HashMap<SpecializationKey, SpecializationResult>,
+
+    /// Stores specialized generic method bodies avoiding re-checking for same type arguments
+    pub(super) method_spec_cache: HashMap<MethodSpecKey, SpecializationResult>,
 
     /// Stores struct definitions (name -> fields)
     pub(super) struct_defs: HashMap<Ident, StructDef>,

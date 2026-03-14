@@ -563,6 +563,15 @@ pub(super) fn generic_method(
 }
 
 pub(super) fn struct_decl(name: &str, fields: Vec<(&str, Type)>, methods: Vec<Method>) -> StmtNode {
+    generic_struct_decl(name, vec![], fields, methods)
+}
+
+pub(super) fn generic_struct_decl(
+    name: &str,
+    type_params: Vec<TypeParam>,
+    fields: Vec<(&str, Type)>,
+    methods: Vec<Method>,
+) -> StmtNode {
     let struct_fields = fields
         .into_iter()
         .map(|(n, ty)| StructField {
@@ -574,7 +583,7 @@ pub(super) fn struct_decl(name: &str, fields: Vec<(&str, Type)>, methods: Vec<Me
         node: Stmt::Struct(StructDeclNode {
             node: StructDecl {
                 name: dummy_ident(name),
-                type_params: vec![],
+                type_params,
                 fields: struct_fields,
                 methods,
             },

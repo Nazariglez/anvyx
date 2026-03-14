@@ -1,6 +1,5 @@
 // @mode: check
-// @expect: error
-// @contains: generic methods are not yet supported
+// @expect: success
 
 struct Foo {
     fn bar<T>(self, x: T) -> T {
@@ -10,4 +9,6 @@ struct Foo {
 
 fn main() {
     let f = Foo {};
+    let a: int = f.bar<int>(42);
+    let b: string = f.bar<string>("hello");
 }

@@ -1,0 +1,20 @@
+// @mode: check
+// @expect: success
+
+struct Wrapper<T> {
+    value: T,
+
+    fn get(self) -> T {
+        self.value
+    },
+
+    fn convert<U>(self, x: U) -> U {
+        x
+    },
+}
+
+fn main() {
+    let w = Wrapper { value: 42 };
+    let a: int = w.get();
+    let b: string = w.convert("hello");
+}

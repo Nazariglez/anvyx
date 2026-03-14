@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: success
+
+struct Foo {
+    fn make<T>(x: T) -> T {
+        x
+    },
+}
+
+fn main() {
+    let a: int = Foo.make(42);
+    let b: string = Foo.make("hello");
+}

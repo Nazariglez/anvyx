@@ -1,9 +1,10 @@
 use super::helpers::{
-    array_literal, assert_expr_type, call_expr, dummy_ident, expr_stmt, fn_decl, generic_method,
-    get_expr_id, ident_expr, let_binding, lit_int, lit_string, map_literal_expr, method, program,
-    reset_expr_ids, return_stmt, run_err, run_ok, struct_decl, struct_literal_expr,
+    array_literal, assert_expr_type, binary_expr, call_expr, call_expr_with_type_args, dummy_ident,
+    field_expr, fn_decl, generic_method, generic_struct_decl, get_expr_id, ident_expr, let_binding,
+    lit_int, lit_string, map_literal_expr, program, reset_expr_ids, return_stmt, run_err, run_ok,
+    struct_decl, struct_literal_expr, type_param,
 };
-use crate::ast::{MethodReceiver, Type, TypeParam, TypeVarId};
+use crate::ast::{BinaryOp, MethodReceiver, Type, TypeVarId};
 use crate::typecheck::error::TypeErrKind;
 
 // ---- list constrain_assignable tests ----
@@ -298,23 +299,52 @@ fn test_constrain_map_literal_annotated_binding() {
     );
 }
 
-// ---- generic method rejection ----
+// ---- generic method declaration tests ----
 
 #[test]
-fn test_generic_method_on_struct_errors() {
+fn test_generic_method_type_param_shadows_struct_errors() {
+    reset_expr_ids();
+
+    // struct Foo<T> {}
+    // with fn bar<T>(self, x: T) -> T { ... }
+    // T on the method shadows T on the struct — should error.
+    let struct_t_id = TypeVarId(0);
+    let method_t_id = TypeVarId(1);
+    let method_t_type = Type::Var(method_t_id);
+    let gm = generic_method(
+        "bar",
+        vec![type_param("T", 1)],
+        Some(MethodReceiver::Value),
+        vec![("x", method_t_type.clone())],
+        method_t_type,
+        vec![return_stmt(Some(ident_expr("x")))],
+    );
+    let foo_decl = generic_struct_decl("Foo", vec![type_param("T", 0)], vec![], vec![gm]);
+
+    let prog = program(vec![foo_decl]);
+    let errors = run_err(prog);
+    assert!(!errors.is_empty());
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(&e.kind, TypeErrKind::MethodTypeParamShadowsStruct { .. })),
+        "Expected MethodTypeParamShadowsStruct, got: {:?}",
+        errors
+    );
+    let _ = struct_t_id; // used indirectly via type_param
+}
+
+#[test]
+fn test_generic_method_declaration_ok() {
     reset_expr_ids();
 
     // struct Foo {}
     // with fn bar<T>(self, x: T) -> T { ... }
-    // Should produce GenericMethodNotSupported error.
-    let t_id = TypeVarId(0);
-    let t_type = Type::Var(t_id);
+    // Generic method on a non-generic struct — no shadowing, should be accepted.
+    let t_type = Type::Var(TypeVarId(0));
     let gm = generic_method(
         "bar",
-        vec![TypeParam {
-            name: dummy_ident("T"),
-            id: t_id,
-        }],
+        vec![type_param("T", 0)],
         Some(MethodReceiver::Value),
         vec![("x", t_type.clone())],
         t_type,
@@ -323,33 +353,348 @@ fn test_generic_method_on_struct_errors() {
     let foo_decl = struct_decl("Foo", vec![], vec![gm]);
 
     let prog = program(vec![foo_decl]);
+    let _ = run_ok(prog);
+}
+
+#[test]
+fn test_generic_method_on_generic_struct_no_shadow_ok() {
+    reset_expr_ids();
+
+    // struct Wrapper<T> {}
+    // with fn convert<U>(self, x: U) -> U { ... }
+    // T and U are different names — no shadowing, should be accepted.
+    let u_type = Type::Var(TypeVarId(1));
+    let gm = generic_method(
+        "convert",
+        vec![type_param("U", 1)],
+        Some(MethodReceiver::Value),
+        vec![("x", u_type.clone())],
+        u_type,
+        vec![return_stmt(Some(ident_expr("x")))],
+    );
+    let wrapper_decl = generic_struct_decl("Wrapper", vec![type_param("T", 0)], vec![], vec![gm]);
+
+    let prog = program(vec![wrapper_decl]);
+    let _ = run_ok(prog);
+}
+
+// ---- generic method call tests ----
+
+#[test]
+fn test_generic_method_call_on_non_generic_struct() {
+    reset_expr_ids();
+
+    // struct Foo {}
+    // with fn bar<T>(self, x: T) -> T { x }
+    // let f = Foo {};
+    // let result = f.bar(42);  -- should infer T = int, result type = int
+    let t_type = Type::Var(TypeVarId(0));
+    let gm = generic_method(
+        "bar",
+        vec![type_param("T", 0)],
+        Some(MethodReceiver::Value),
+        vec![("x", t_type.clone())],
+        t_type,
+        vec![return_stmt(Some(ident_expr("x")))],
+    );
+    let foo_decl = struct_decl("Foo", vec![], vec![gm]);
+
+    let f_binding = let_binding("f", None, struct_literal_expr("Foo", vec![]));
+    let call = call_expr(field_expr(ident_expr("f"), "bar"), vec![lit_int(42)]);
+    let call_id = get_expr_id(&call);
+    let result_binding = let_binding("result", None, call);
+
+    let prog = program(vec![foo_decl, f_binding, result_binding]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, call_id, Type::Int);
+}
+
+#[test]
+fn test_generic_method_call_on_generic_struct() {
+    reset_expr_ids();
+
+    // struct Wrapper<T> { value: T }
+    // with fn convert<U>(self, x: U) -> U { x }
+    // let w = Wrapper { value: 42 };
+    // let result = w.convert("hello");  -- infers T=int (from struct), U=string (from arg)
+    let struct_t_id = TypeVarId(0);
+    let method_u_id = TypeVarId(1);
+    let method_u_type = Type::Var(method_u_id);
+    let gm = generic_method(
+        "convert",
+        vec![type_param("U", 1)],
+        Some(MethodReceiver::Value),
+        vec![("x", method_u_type.clone())],
+        method_u_type,
+        vec![return_stmt(Some(ident_expr("x")))],
+    );
+    let wrapper_decl = generic_struct_decl(
+        "Wrapper",
+        vec![type_param("T", 0)],
+        vec![("value", Type::Var(struct_t_id))],
+        vec![gm],
+    );
+
+    let w_binding = let_binding(
+        "w",
+        None,
+        struct_literal_expr("Wrapper", vec![("value", lit_int(42))]),
+    );
+    let call = call_expr(field_expr(ident_expr("w"), "convert"), vec![lit_string("hello")]);
+    let call_id = get_expr_id(&call);
+    let result_binding = let_binding("result", None, call);
+
+    let prog = program(vec![wrapper_decl, w_binding, result_binding]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, call_id, Type::String);
+}
+
+#[test]
+fn test_generic_method_call_explicit_type_args() {
+    reset_expr_ids();
+
+    // struct Foo {}
+    // with fn bar<T>(self, x: T) -> T { x }
+    // let f = Foo {};
+    // let result = f.bar<int>(42);  -- explicit T = int
+    let t_type = Type::Var(TypeVarId(0));
+    let gm = generic_method(
+        "bar",
+        vec![type_param("T", 0)],
+        Some(MethodReceiver::Value),
+        vec![("x", t_type.clone())],
+        t_type,
+        vec![return_stmt(Some(ident_expr("x")))],
+    );
+    let foo_decl = struct_decl("Foo", vec![], vec![gm]);
+
+    let f_binding = let_binding("f", None, struct_literal_expr("Foo", vec![]));
+    let call = call_expr_with_type_args(
+        field_expr(ident_expr("f"), "bar"),
+        vec![lit_int(42)],
+        vec![Type::Int],
+    );
+    let call_id = get_expr_id(&call);
+    let result_binding = let_binding("result", None, call);
+
+    let prog = program(vec![foo_decl, f_binding, result_binding]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, call_id, Type::Int);
+}
+
+#[test]
+fn test_generic_method_call_explicit_type_arg_arity_mismatch() {
+    reset_expr_ids();
+
+    // struct Foo {}
+    // with fn bar<T>(self, x: T) -> T { x }
+    // let f = Foo {};
+    // f.bar<int, string>(42);  -- too many type args => GenericArgNumMismatch
+    let t_type = Type::Var(TypeVarId(0));
+    let gm = generic_method(
+        "bar",
+        vec![type_param("T", 0)],
+        Some(MethodReceiver::Value),
+        vec![("x", t_type.clone())],
+        t_type,
+        vec![return_stmt(Some(ident_expr("x")))],
+    );
+    let foo_decl = struct_decl("Foo", vec![], vec![gm]);
+
+    let f_binding = let_binding("f", None, struct_literal_expr("Foo", vec![]));
+    let call = call_expr_with_type_args(
+        field_expr(ident_expr("f"), "bar"),
+        vec![lit_int(42)],
+        vec![Type::Int, Type::String],
+    );
+    let result_binding = let_binding("result", None, call);
+
+    let prog = program(vec![foo_decl, f_binding, result_binding]);
     let errors = run_err(prog);
-    assert!(!errors.is_empty());
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::GenericMethodNotSupported { .. })),
-        "Expected GenericMethodNotSupported, got: {:?}",
+            .any(|e| matches!(&e.kind, TypeErrKind::GenericArgNumMismatch { .. })),
+        "Expected GenericArgNumMismatch, got: {:?}",
         errors
     );
 }
 
 #[test]
-fn test_non_generic_method_on_struct_ok() {
+fn test_static_generic_method_inferred() {
     reset_expr_ids();
 
     // struct Foo {}
-    // with fn get_zero(self) -> int { 0 }
-    // Should succeed — non-generic methods are fine.
-    let m = method(
-        "get_zero",
-        Some(MethodReceiver::Value),
-        vec![],
-        Type::Int,
-        vec![expr_stmt(lit_int(0))],
+    // with static fn make<T>(x: T) -> T { x }
+    // let result = Foo.make(42);  -- infers T = int
+    let t_type = Type::Var(TypeVarId(0));
+    let gm = generic_method(
+        "make",
+        vec![type_param("T", 0)],
+        None,
+        vec![("x", t_type.clone())],
+        t_type,
+        vec![return_stmt(Some(ident_expr("x")))],
     );
-    let foo_decl = struct_decl("Foo", vec![], vec![m]);
+    let foo_decl = struct_decl("Foo", vec![], vec![gm]);
 
-    let prog = program(vec![foo_decl]);
-    let _ = run_ok(prog);
+    let call = call_expr(field_expr(ident_expr("Foo"), "make"), vec![lit_int(42)]);
+    let call_id = get_expr_id(&call);
+    let result_binding = let_binding("result", None, call);
+
+    let prog = program(vec![foo_decl, result_binding]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, call_id, Type::Int);
+}
+
+#[test]
+fn test_static_generic_method_on_generic_struct_inferred() {
+    reset_expr_ids();
+
+    // struct Wrapper<T> { value: T }
+    // with static fn with_extra<U>(val: T, extra: U) -> U { extra }
+    // let result = Wrapper.with_extra(42, "hello");  -- infers T=int, U=string
+    let struct_t_id = TypeVarId(0);
+    let method_u_id = TypeVarId(1);
+    let method_u_type = Type::Var(method_u_id);
+    let gm = generic_method(
+        "with_extra",
+        vec![type_param("U", 1)],
+        None,
+        vec![("val", Type::Var(struct_t_id)), ("extra", method_u_type.clone())],
+        method_u_type,
+        vec![return_stmt(Some(ident_expr("extra")))],
+    );
+    let wrapper_decl = generic_struct_decl(
+        "Wrapper",
+        vec![type_param("T", 0)],
+        vec![("value", Type::Var(struct_t_id))],
+        vec![gm],
+    );
+
+    let call = call_expr(
+        field_expr(ident_expr("Wrapper"), "with_extra"),
+        vec![lit_int(42), lit_string("hello")],
+    );
+    let call_id = get_expr_id(&call);
+    let result_binding = let_binding("result", None, call);
+
+    let prog = program(vec![wrapper_decl, result_binding]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, call_id, Type::String);
+}
+
+#[test]
+fn test_generic_method_multiple_type_params() {
+    reset_expr_ids();
+
+    // struct Foo {}
+    // with fn pair<A, B>(self, a: A, b: B) -> B { b }
+    // let f = Foo {};
+    // let result = f.pair(42, "hello");  -- infers A=int, B=string, result type = string
+    let a_type = Type::Var(TypeVarId(0));
+    let b_type = Type::Var(TypeVarId(1));
+    let gm = generic_method(
+        "pair",
+        vec![type_param("A", 0), type_param("B", 1)],
+        Some(MethodReceiver::Value),
+        vec![("a", a_type), ("b", b_type.clone())],
+        b_type,
+        vec![return_stmt(Some(ident_expr("b")))],
+    );
+    let foo_decl = struct_decl("Foo", vec![], vec![gm]);
+
+    let f_binding = let_binding("f", None, struct_literal_expr("Foo", vec![]));
+    let call = call_expr(
+        field_expr(ident_expr("f"), "pair"),
+        vec![lit_int(42), lit_string("hello")],
+    );
+    let call_id = get_expr_id(&call);
+    let result_binding = let_binding("result", None, call);
+
+    let prog = program(vec![foo_decl, f_binding, result_binding]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, call_id, Type::String);
+}
+
+#[test]
+fn test_generic_method_returns_struct_instantiation() {
+    reset_expr_ids();
+
+    // struct Container<T> { value: T }
+    // with fn wrap<U>(self, x: U) -> Container<U> { Container { value: x } }
+    // let c = Container { value: 42 };
+    // let result = c.wrap("hello");  -- infers T=int (struct), U=string (method), result = Container<string>
+    let struct_t_id = TypeVarId(0);
+    let method_u_id = TypeVarId(1);
+    let container_of_u = Type::Struct {
+        name: dummy_ident("Container"),
+        type_args: vec![Type::Var(method_u_id)],
+    };
+    let gm = generic_method(
+        "wrap",
+        vec![type_param("U", 1)],
+        Some(MethodReceiver::Value),
+        vec![("x", Type::Var(method_u_id))],
+        container_of_u.clone(),
+        vec![return_stmt(Some(struct_literal_expr(
+            "Container",
+            vec![("value", ident_expr("x"))],
+        )))],
+    );
+    let container_decl = generic_struct_decl(
+        "Container",
+        vec![type_param("T", 0)],
+        vec![("value", Type::Var(struct_t_id))],
+        vec![gm],
+    );
+
+    let c_binding = let_binding(
+        "c",
+        None,
+        struct_literal_expr("Container", vec![("value", lit_int(42))]),
+    );
+    let call = call_expr(field_expr(ident_expr("c"), "wrap"), vec![lit_string("hello")]);
+    let call_id = get_expr_id(&call);
+    let result_binding = let_binding("result", None, call);
+
+    let prog = program(vec![container_decl, c_binding, result_binding]);
+    let tcx = run_ok(prog);
+    let expected = Type::Struct {
+        name: dummy_ident("Container"),
+        type_args: vec![Type::String],
+    };
+    assert_expr_type(&tcx, call_id, expected);
+}
+
+#[test]
+fn test_generic_method_body_type_error() {
+    reset_expr_ids();
+
+    // struct Foo {}
+    // with fn bad<T>(self, x: T) -> T { x - x }  (Sub only valid for numeric types)
+    // let f = Foo {};
+    // f.bad("oops");  -- T=string, body tries string - string => type error
+    let t_type = Type::Var(TypeVarId(0));
+    let body_sub = binary_expr(ident_expr("x"), BinaryOp::Sub, ident_expr("x"));
+    let gm = generic_method(
+        "bad",
+        vec![type_param("T", 0)],
+        Some(MethodReceiver::Value),
+        vec![("x", t_type.clone())],
+        t_type,
+        vec![return_stmt(Some(body_sub))],
+    );
+    let foo_decl = struct_decl("Foo", vec![], vec![gm]);
+
+    let f_binding = let_binding("f", None, struct_literal_expr("Foo", vec![]));
+    let call = call_expr(field_expr(ident_expr("f"), "bad"), vec![lit_string("oops")]);
+    let result_binding = let_binding("result", None, call);
+
+    let prog = program(vec![foo_decl, f_binding, result_binding]);
+    let errors = run_err(prog);
+    assert!(
+        !errors.is_empty(),
+        "Expected body type error, got no errors"
+    );
 }

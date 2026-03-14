@@ -433,9 +433,9 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "Invalid cast".to_string(),
             format!("cannot cast '{from}' to '{to}'"),
         ),
-        TypeErrKind::GenericMethodNotSupported { struct_name, method } => (
-            "generic methods are not yet supported".to_string(),
-            format!("method '{method}' on struct '{struct_name}' declares its own type parameters"),
+        TypeErrKind::MethodTypeParamShadowsStruct { struct_name, method, param } => (
+            "method type parameter shadows struct type parameter".to_string(),
+            format!("method '{method}' on struct '{struct_name}' declares type parameter '{param}' which shadows a struct type parameter"),
         ),
         TypeErrKind::NotEquatable { ty } => (
             "type is not equatable".to_string(),

@@ -233,9 +233,10 @@ pub enum TypeErrKind {
         to: Type,
     },
 
-    GenericMethodNotSupported {
+    MethodTypeParamShadowsStruct {
         struct_name: Ident,
         method: Ident,
+        param: Ident,
     },
 
     NotEquatable {

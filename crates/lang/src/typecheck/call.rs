@@ -9,14 +9,17 @@ use std::collections::HashMap;
 
 use super::{
     constraint::TypeRef,
-    decl::check_fn_body,
+    decl::{check_body_common, check_fn_body},
     error::{TypeErr, TypeErrKind},
     expr::{check_expr, root_ident},
     infer::{
         create_inference_slots, infer_type_args_from_call, instantiate_func_type, subst_type,
         type_to_ref_with_inference,
     },
-    types::{EnumDef, SpecializationKey, SpecializationResult, StructDef, TypeChecker},
+    types::{
+        EnumDef, MethodContext, MethodDef, MethodSpecKey, SpecializationKey, SpecializationResult,
+        StructDef, TypeChecker,
+    },
 };
 
 pub(super) fn check_var_param_args(
@@ -32,8 +35,11 @@ pub(super) fn check_var_param_args(
 
         let Some(root) = root_ident(arg) else {
             errors.push(
-                TypeErr::new(arg.span, TypeErrKind::VarParamNotLvalue { param: *param_name })
-                    .with_help("pass a variable declared with 'var', not a literal or expression"),
+                TypeErr::new(
+                    arg.span,
+                    TypeErrKind::VarParamNotLvalue { param: *param_name },
+                )
+                .with_help("pass a variable declared with 'var', not a literal or expression"),
             );
             continue;
         };
@@ -544,8 +550,104 @@ pub(super) fn check_static_method_call(
     }
 
     let node = &call.node;
-    let is_generic = !struct_def.type_params.is_empty();
-    if is_generic {
+    let has_method_type_params = !method.type_params.is_empty();
+    let is_struct_generic = !struct_def.type_params.is_empty();
+
+    if has_method_type_params {
+        let has_explicit_type_args = !node.type_args.is_empty();
+        let method = method.clone();
+
+        let (struct_type_args, method_type_args) = if has_explicit_type_args {
+            let same_count = node.type_args.len() == method.type_params.len();
+            if !same_count {
+                errors.push(TypeErr::new(
+                    call.span,
+                    TypeErrKind::GenericArgNumMismatch {
+                        expected: method.type_params.len(),
+                        found: node.type_args.len(),
+                    },
+                ));
+                return Type::Infer;
+            }
+
+            let struct_type_args = if is_struct_generic {
+                let param_templates: Vec<Type> =
+                    method.params.iter().map(|p| p.ty.clone()).collect();
+                let expected_ty = Type::Func {
+                    params: param_templates.clone(),
+                    ret: Box::new(method.ret.clone()),
+                };
+                let Some(inferred) = infer_type_args_from_call(
+                    call.span,
+                    &struct_def.type_params,
+                    &param_templates,
+                    &node.args,
+                    expected_ty,
+                    type_checker,
+                    errors,
+                ) else {
+                    return Type::Infer;
+                };
+                inferred
+            } else {
+                vec![]
+            };
+
+            (struct_type_args, node.type_args.clone())
+        } else {
+            let all_type_params: Vec<_> = struct_def
+                .type_params
+                .iter()
+                .chain(method.type_params.iter())
+                .cloned()
+                .collect();
+
+            let param_templates: Vec<Type> =
+                method.params.iter().map(|p| p.ty.clone()).collect();
+            let expected_ty = Type::Func {
+                params: param_templates.clone(),
+                ret: Box::new(method.ret.clone()),
+            };
+
+            let Some(all_inferred) = infer_type_args_from_call(
+                call.span,
+                &all_type_params,
+                &param_templates,
+                &node.args,
+                expected_ty,
+                type_checker,
+                errors,
+            ) else {
+                return Type::Infer;
+            };
+
+            let n_struct = struct_def.type_params.len();
+            let struct_type_args = all_inferred[..n_struct].to_vec();
+            let method_type_args = all_inferred[n_struct..].to_vec();
+            (struct_type_args, method_type_args)
+        };
+
+        let param_info: Vec<_> = method
+            .params
+            .iter()
+            .map(|p| (p.name, p.mutability))
+            .collect();
+        check_var_param_args(&param_info, &node.args, type_checker, errors);
+
+        return instantiate_method_body(
+            struct_name,
+            method_name,
+            &struct_type_args,
+            &method_type_args,
+            struct_def,
+            &method,
+            call.span,
+            type_checker,
+            errors,
+        );
+    }
+
+    if is_struct_generic {
         let param_templates: Vec<Type> = method.params.iter().map(|p| p.ty.clone()).collect();
         let expected_ty = Type::Func {
             params: param_templates.clone(),
@@ -633,10 +735,108 @@ pub(super) fn check_instance_method_call(
     }
 
     if let Some(target) = target {
-        check_mutating_receiver(target, struct_name, method_name, method.receiver, type_checker, errors);
+        check_mutating_receiver(
+            target,
+            struct_name,
+            method_name,
+            method.receiver,
+            type_checker,
+            errors,
+        );
     }
 
     let node = &call.node;
+    let has_method_type_params = !method.type_params.is_empty();
+
+    if has_method_type_params {
+        // apply struct substitution first leaving method type vars in place
+        let struct_subst: HashMap<TypeVarId, Type> = struct_def
+            .type_params
+            .iter()
+            .zip(type_args.iter())
+            .map(|(param, arg)| (param.id, arg.clone()))
+            .collect();
+
+        let partially_subst_params: Vec<Type> = method
+            .params
+            .iter()
+            .map(|p| subst_type(&p.ty, &struct_subst))
+            .collect();
+
+        let has_explicit_type_args = !node.type_args.is_empty();
+
+        let method_type_args = if has_explicit_type_args {
+            let same_count = node.type_args.len() == method.type_params.len();
+            if !same_count {
+                errors.push(TypeErr::new(
+                    call.span,
+                    TypeErrKind::GenericArgNumMismatch {
+                        expected: method.type_params.len(),
+                        found: node.type_args.len(),
+                    },
+                ));
+                return Type::Infer;
+            }
+
+            let combined_subst: HashMap<TypeVarId, Type> = struct_def
+                .type_params
+                .iter()
+                .zip(type_args.iter())
+                .chain(method.type_params.iter().zip(node.type_args.iter()))
+                .map(|(param, arg)| (param.id, arg.clone()))
+                .collect();
+
+            for (arg_expr, param_ty) in node.args.iter().zip(partially_subst_params.iter()) {
+                check_expr(arg_expr, type_checker, errors);
+                let instantiated_param = subst_type(param_ty, &combined_subst);
+                let arg_ref = TypeRef::Expr(arg_expr.node.id);
+                let param_ref = TypeRef::Concrete(instantiated_param);
+                type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
+            }
+
+            node.type_args.clone()
+        } else {
+            let partially_subst_ret = subst_type(&method.ret, &struct_subst);
+            let expected_ty = Type::Func {
+                params: partially_subst_params.clone(),
+                ret: Box::new(partially_subst_ret),
+            };
+
+            let Some(inferred) = infer_type_args_from_call(
+                call.span,
+                &method.type_params,
+                &partially_subst_params,
+                &node.args,
+                expected_ty,
+                type_checker,
+                errors,
+            ) else {
+                return Type::Infer;
+            };
+
+            inferred
+        };
+
+        let param_info: Vec<_> = method
+            .params
+            .iter()
+            .map(|p| (p.name, p.mutability))
+            .collect();
+        check_var_param_args(&param_info, &node.args, type_checker, errors);
+
+        let method = method.clone();
+        return instantiate_method_body(
+            struct_name,
+            method_name,
+            type_args,
+            &method_type_args,
+            struct_def,
+            &method,
+            call.span,
+            type_checker,
+            errors,
+        );
+    }
 
     let subst: HashMap<TypeVarId, Type> = struct_def
         .type_params
@@ -764,6 +964,103 @@ pub(super) fn instantiate_and_check_fn(
     );
 
     // report any errors from the body with the call site span
+    for err in body_errors {
+        errors.push(TypeErr::new(call_span, err.kind));
+    }
+
+    specialized_ret
+}
+
+fn instantiate_method_body(
+    struct_name: Ident,
+    method_name: Ident,
+    struct_type_args: &[Type],
+    method_type_args: &[Type],
+    struct_def: &StructDef,
+    method: &MethodDef,
+    call_span: Span,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let all_type_args: Vec<Type> = struct_type_args
+        .iter()
+        .chain(method_type_args.iter())
+        .cloned()
+        .collect();
+
+    let cache_key = MethodSpecKey {
+        struct_name,
+        method_name,
+        type_args: all_type_args,
+    };
+
+    if let Some(cached) = type_checker.method_spec_cache.get(&cache_key) {
+        if let Some(err_kind) = &cached.err_kind {
+            errors.push(TypeErr::new(call_span, err_kind.clone()));
+        }
+        return cached.ret_ty.clone();
+    }
+
+    let subst: HashMap<TypeVarId, Type> = struct_def
+        .type_params
+        .iter()
+        .zip(struct_type_args.iter())
+        .chain(method.type_params.iter().zip(method_type_args.iter()))
+        .map(|(param, arg)| (param.id, arg.clone()))
+        .collect();
+
+    let specialized_param_types: Vec<Type> = method
+        .params
+        .iter()
+        .map(|p| subst_type(&p.ty, &subst))
+        .collect();
+    let specialized_ret = subst_type(&method.ret, &subst);
+
+    let self_type = Type::Struct {
+        name: struct_name,
+        type_args: struct_type_args.to_vec(),
+    };
+    let self_ident = Ident(internment::Intern::new("self".to_string()));
+
+    let mut params: Vec<(Ident, Type, bool)> = vec![];
+    if let Some(receiver) = method.receiver {
+        let self_mutable = matches!(receiver, MethodReceiver::Var);
+        params.push((self_ident, self_type, self_mutable));
+    }
+    for (param, specialized_ty) in method.params.iter().zip(specialized_param_types.iter()) {
+        params.push((
+            param.name,
+            specialized_ty.clone(),
+            matches!(param.mutability, Mutability::Mutable),
+        ));
+    }
+
+    type_checker.push_method_context(MethodContext {
+        struct_name,
+        receiver: method.receiver,
+    });
+
+    let mut body_errors = vec![];
+    check_body_common(
+        &params,
+        &method.body,
+        &specialized_ret,
+        call_span,
+        type_checker,
+        &mut body_errors,
+    );
+
+    type_checker.pop_method_context();
+
+    let err_kind = body_errors.first().map(|err| err.kind.clone());
+    type_checker.method_spec_cache.insert(
+        cache_key,
+        SpecializationResult {
+            ret_ty: specialized_ret.clone(),
+            err_kind,
+        },
+    );
+
     for err in body_errors {
         errors.push(TypeErr::new(call_span, err.kind));
     }
