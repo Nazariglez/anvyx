@@ -21,13 +21,23 @@ pub use error::{TypeErr, TypeErrKind};
 pub use types::TypeChecker;
 
 use crate::ast::Program;
+use crate::builtin::Builtin;
 use constraint::resolve_constraints;
 use stmt::check_block_stmts;
 use unify::contains_infer;
 
+fn register_builtins(type_checker: &mut TypeChecker) {
+    type_checker.push_scope();
+    for builtin in Builtin::all() {
+        type_checker.set_var(builtin.ident(), builtin.func_type(), false);
+    }
+}
+
 pub fn check_program(program: &Program) -> Result<TypeChecker, Vec<TypeErr>> {
     let mut type_checker = TypeChecker::default();
     let mut errors = vec![];
+
+    register_builtins(&mut type_checker);
 
     // first pass we collect the types from the ast
     // we don't need the type of the file scope blocks

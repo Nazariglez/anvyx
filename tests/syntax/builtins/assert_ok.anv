@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    assert(true);
+    assert_msg(true, "ok");
+}

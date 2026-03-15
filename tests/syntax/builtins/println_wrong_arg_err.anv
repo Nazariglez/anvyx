@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: expected 'string', found 'int'
+
+fn main() {
+    println(42)
+}

@@ -213,7 +213,9 @@ pub fn compile_lang(release: bool) -> Result<String, String> {
     } else {
         "anvyx"
     };
-    let exe_path = PathBuf::from("target").join(profile).join(exe_name);
+    let target_root = std::env::var("CARGO_TARGET_DIR")
+        .unwrap_or_else(|_| "target".to_string());
+    let exe_path = PathBuf::from(target_root).join(profile).join(exe_name);
     Ok(exe_path.display().to_string())
 }
 
