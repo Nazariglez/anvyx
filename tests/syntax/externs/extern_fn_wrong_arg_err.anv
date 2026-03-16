@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+
+extern fn add(a: int, b: int) -> int
+
+fn main() {
+    let x = add(true, 2);
+}

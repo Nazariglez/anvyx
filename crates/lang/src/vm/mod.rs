@@ -5,17 +5,43 @@ mod runtime;
 mod value;
 
 use crate::hir;
+use std::collections::HashMap;
+
+pub use runtime::ExternHandler;
+pub use value::Value;
 
 pub fn run(hir_prog: &hir::Program) -> Result<String, String> {
+    run_with_externs(hir_prog, HashMap::new())
+}
+
+pub fn run_with_externs(
+    hir_prog: &hir::Program,
+    externs: HashMap<String, ExternHandler>,
+) -> Result<String, String> {
     let compiled = compiler::compile(hir_prog).map_err(|e| format!("Compile error: {e}"))?;
     let mut vm = runtime::VM::new(&compiled);
+
+    for (name, handler) in externs {
+        let idx = compiled.extern_names.iter().position(|n| n == &name);
+        match idx {
+            Some(i) => vm.register_extern(i, handler),
+            None => {
+                return Err(format!(
+                    "Registered extern '{name}' was not declared in the program"
+                ));
+            }
+        }
+    }
+
     vm.run().map_err(|e| format!("Runtime error: {e}"))?;
     Ok(vm.stdout)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::{ExternHandler, Value, run_with_externs};
     use crate::test_helpers::TestCtx;
+    use std::collections::HashMap;
 
     fn vm_ok(source: &str) -> String {
         TestCtx::vm_ok(source)
@@ -23,6 +49,16 @@ mod tests {
 
     fn vm_err(source: &str) -> String {
         TestCtx::vm_err(source)
+    }
+
+    fn vm_ok_with_externs(source: &str, externs: HashMap<String, ExternHandler>) -> String {
+        let hir = crate::generate_hir(source, "<test>").expect("generate_hir failed");
+        run_with_externs(&hir, externs).expect("vm run failed")
+    }
+
+    fn vm_err_with_externs(source: &str, externs: HashMap<String, ExternHandler>) -> String {
+        let hir = crate::generate_hir(source, "<test>").expect("generate_hir failed");
+        run_with_externs(&hir, externs).expect_err("expected vm error")
     }
 
     #[test]
@@ -99,7 +135,8 @@ mod tests {
 
     #[test]
     fn while_with_break() {
-        let out = vm_ok(r#"
+        let out = vm_ok(
+            r#"
             fn main() {
                 var i = 0;
                 while true {
@@ -108,13 +145,15 @@ mod tests {
                 }
                 println("done");
             }
-        "#);
+        "#,
+        );
         assert_eq!(out, "done\n");
     }
 
     #[test]
     fn while_with_continue() {
-        let out = vm_ok(r#"
+        let out = vm_ok(
+            r#"
             fn main() {
                 var i = 0;
                 var sum = 0;
@@ -125,7 +164,8 @@ mod tests {
                 }
                 println("ok");
             }
-        "#);
+        "#,
+        );
         assert_eq!(out, "ok\n");
     }
 
@@ -137,25 +177,30 @@ mod tests {
 
     #[test]
     fn call_function_with_return_value() {
-        let out = vm_ok(r#"
+        let out = vm_ok(
+            r#"
             fn answer() -> int { 42 }
             fn main() { let x = answer(); println("ok"); }
-        "#);
+        "#,
+        );
         assert_eq!(out, "ok\n");
     }
 
     #[test]
     fn call_function_with_args() {
-        let out = vm_ok(r#"
+        let out = vm_ok(
+            r#"
             fn add(a: int, b: int) -> int { a + b }
             fn main() { add(1, 2); }
-        "#);
+        "#,
+        );
         assert!(out.is_empty());
     }
 
     #[test]
     fn arithmetic_ops() {
-        let out = vm_ok(r#"
+        let out = vm_ok(
+            r#"
             fn main() {
                 let a = 10;
                 let b = 3;
@@ -166,37 +211,43 @@ mod tests {
                 let rem = a % b;
                 println("ok");
             }
-        "#);
+        "#,
+        );
         assert_eq!(out, "ok\n");
     }
 
     #[test]
     fn string_concat() {
-        let out = vm_ok(r#"
+        let out = vm_ok(
+            r#"
             fn main() {
                 let s = "hello" + " " + "world";
                 println(s);
             }
-        "#);
+        "#,
+        );
         assert_eq!(out, "hello world\n");
     }
 
     #[test]
     fn nested_function_calls() {
-        let out = vm_ok(r#"
+        let out = vm_ok(
+            r#"
             fn double(x: int) -> int { x * 2 }
             fn quadruple(x: int) -> int { double(double(x)) }
             fn main() {
                 quadruple(3);
                 println("ok");
             }
-        "#);
+        "#,
+        );
         assert_eq!(out, "ok\n");
     }
 
     #[test]
     fn bool_operations() {
-        let out = vm_ok(r#"
+        let out = vm_ok(
+            r#"
             fn main() {
                 let t = true;
                 let f = false;
@@ -205,13 +256,15 @@ mod tests {
                 let c = !t;
                 println("ok");
             }
-        "#);
+        "#,
+        );
         assert_eq!(out, "ok\n");
     }
 
     #[test]
     fn comparison_ops() {
-        let out = vm_ok(r#"
+        let out = vm_ok(
+            r#"
             fn main() {
                 let x = 5;
                 let eq = x == 5;
@@ -222,8 +275,131 @@ mod tests {
                 let ge = x >= 5;
                 println("ok");
             }
-        "#);
+        "#,
+        );
+        assert_eq!(out, "ok\n");
+    }
+
+    // ---- extern fn vm ----
+
+    #[test]
+    fn extern_fn_returns_value() {
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "add".to_string(),
+            Box::new(|args| {
+                let Value::Int(a) = args[0] else {
+                    panic!("expected int")
+                };
+                let Value::Int(b) = args[1] else {
+                    panic!("expected int")
+                };
+                Ok(Value::Int(a + b))
+            }),
+        );
+        let src = r#"
+            extern fn add(a: int, b: int) -> int
+            fn main() {
+                let result = add(3, 4);
+                assert(result == 7);
+                println("ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+    }
+
+    #[test]
+    fn extern_fn_zero_args() {
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "get_answer".to_string(),
+            Box::new(|_args| Ok(Value::Int(42))),
+        );
+        let src = r#"
+            extern fn get_answer() -> int
+            fn main() {
+                let x = get_answer();
+                assert(x == 42);
+                println("ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+    }
+
+    #[test]
+    fn extern_fn_void_with_side_effect() {
+        use std::sync::{Arc, Mutex};
+        let counter = Arc::new(Mutex::new(0i64));
+        let counter_clone = counter.clone();
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "increment".to_string(),
+            Box::new(move |_args| {
+                *counter_clone.lock().unwrap() += 1;
+                Ok(Value::Nil)
+            }),
+        );
+        let src = r#"
+            extern fn increment()
+            fn main() {
+                increment();
+                increment();
+                println("ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+        assert_eq!(*counter.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn extern_fn_missing_handler_errors() {
+        let externs: HashMap<String, ExternHandler> = HashMap::new();
+        let src = r#"
+            extern fn add(a: int, b: int) -> int
+            fn main() { let x = add(1, 2); }
+        "#;
+        let err = vm_err_with_externs(src, externs);
+        assert!(
+            err.contains("missing extern") && err.contains("add"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn extern_fn_multiple_externs() {
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "double".to_string(),
+            Box::new(|args| {
+                let Value::Int(n) = args[0] else {
+                    panic!("expected int")
+                };
+                Ok(Value::Int(n * 2))
+            }),
+        );
+        externs.insert(
+            "negate".to_string(),
+            Box::new(|args| {
+                let Value::Int(n) = args[0] else {
+                    panic!("expected int")
+                };
+                Ok(Value::Int(-n))
+            }),
+        );
+        let src = r#"
+            extern fn double(n: int) -> int
+            extern fn negate(n: int) -> int
+            fn main() {
+                let x = double(5);
+                let y = negate(x);
+                assert(y == -10);
+                println("ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
         assert_eq!(out, "ok\n");
     }
 }
-

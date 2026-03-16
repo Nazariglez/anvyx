@@ -67,6 +67,7 @@ impl fmt::Display for LowerError {
 struct LowerCtx<'a> {
     tcx: &'a TypeChecker,
     funcs: HashMap<Ident, hir::FuncId>,
+    externs: HashMap<Ident, hir::ExternId>,
 }
 
 struct FuncLower {
@@ -78,22 +79,44 @@ pub fn lower_program(ast: &ast::Program, tcx: &TypeChecker) -> Result<hir::Progr
     let mut ctx = LowerCtx {
         tcx,
         funcs: HashMap::new(),
+        externs: HashMap::new(),
     };
 
     let mut func_nodes: Vec<&ast::FuncNode> = vec![];
-    let mut next_id = 0u32;
+    let mut next_func_id = 0u32;
+    let mut next_extern_id = 0u32;
+    let mut extern_decls: Vec<hir::ExternDecl> = vec![];
 
-    // collect monomorphic top-level functions
+    // collect top-level declarations (first pass)
     for stmt_node in &ast.stmts {
-        if let Stmt::Func(func_node) = &stmt_node.node {
-            // skip generic function templates, HIR is monomorphic
-            if !func_node.node.type_params.is_empty() {
-                continue;
+        match &stmt_node.node {
+            Stmt::Func(func_node) => {
+                // skip generic function templates, HIR is monomorphic
+                if !func_node.node.type_params.is_empty() {
+                    continue;
+                }
+                let id = hir::FuncId(next_func_id);
+                next_func_id += 1;
+                ctx.funcs.insert(func_node.node.name, id);
+                func_nodes.push(func_node);
             }
-            let id = hir::FuncId(next_id);
-            next_id += 1;
-            ctx.funcs.insert(func_node.node.name, id);
-            func_nodes.push(func_node);
+            Stmt::ExternFunc(extern_node) => {
+                let id = hir::ExternId(next_extern_id);
+                next_extern_id += 1;
+                ctx.externs.insert(extern_node.node.name, id);
+                extern_decls.push(hir::ExternDecl {
+                    id,
+                    name: extern_node.node.name,
+                    params: extern_node
+                        .node
+                        .params
+                        .iter()
+                        .map(|p| p.ty.clone())
+                        .collect(),
+                    ret: extern_node.node.ret.clone(),
+                });
+            }
+            _ => {}
         }
     }
 
@@ -103,7 +126,10 @@ pub fn lower_program(ast: &ast::Program, tcx: &TypeChecker) -> Result<hir::Progr
         funcs.push(lower_func(func_node, &ctx)?);
     }
 
-    Ok(hir::Program { funcs })
+    Ok(hir::Program {
+        funcs,
+        externs: extern_decls,
+    })
 }
 
 fn lower_func(func_node: &ast::FuncNode, ctx: &LowerCtx) -> Result<hir::Func, LowerError> {
@@ -290,6 +316,8 @@ fn lower_stmt(
             kind: "for loop".to_string(),
         }),
 
+        Stmt::ExternFunc(_) => Ok(None),
+
         Stmt::Func(_) => Err(LowerError::UnsupportedStmtKind {
             span,
             kind: "nested function".to_string(),
@@ -439,7 +467,7 @@ fn lower_expr(
                 .map(|arg| lower_expr(arg, ctx, fc))
                 .collect::<Result<Vec<_>, _>>()?;
 
-            // builtins take precedence over user functions of the same name
+            // builtins take precedence over user functions and externs of the same name
             if let Some(builtin) = Builtin::from_name(callee_name.0.as_ref()) {
                 hir::ExprKind::CallBuiltin { builtin, args }
             } else if let Some(&func_id) = ctx.funcs.get(&callee_name) {
@@ -447,6 +475,8 @@ fn lower_expr(
                     func: func_id,
                     args,
                 }
+            } else if let Some(&extern_id) = ctx.externs.get(&callee_name) {
+                hir::ExprKind::CallExtern { extern_id, args }
             } else {
                 return Err(LowerError::UnknownFunc {
                     name: callee_name,
@@ -475,9 +505,9 @@ mod tests {
     use super::*;
     use crate::ast::Type;
     use crate::builtin::Builtin;
+    use crate::hir;
     use crate::hir::{ExprKind, LocalId, StmtKind};
     use crate::test_helpers::TestCtx;
-    use crate::hir;
 
     fn lower_ok(source: &str) -> hir::Program {
         TestCtx::lower_ok(source)
@@ -929,5 +959,48 @@ mod tests {
             err,
             LowerError::UnsupportedStmtKind { .. } | LowerError::UnsupportedExprKind { .. }
         ));
+    }
+
+    // ---- extern fn lowering tests ----
+
+    #[test]
+    fn extern_fn_emits_call_extern_node() {
+        let prog =
+            lower_ok("extern fn add(a: int, b: int) -> int\nfn main() { let x = add(1, 2); }");
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("expected Let stmt");
+        };
+        assert!(
+            matches!(init.kind, ExprKind::CallExtern { .. }),
+            "expected CallExtern, got {:?}",
+            init.kind
+        );
+    }
+
+    #[test]
+    fn extern_fn_decl_is_in_hir_program() {
+        let prog = lower_ok("extern fn tick()\nextern fn add(a: int, b: int) -> int\nfn main() {}");
+        assert_eq!(prog.externs.len(), 2);
+        assert_eq!(prog.externs[0].name.to_string(), "tick");
+        assert_eq!(prog.externs[1].name.to_string(), "add");
+        assert_eq!(prog.externs[1].params, vec![Type::Int, Type::Int]);
+        assert_eq!(prog.externs[1].ret, Type::Int);
+    }
+
+    #[test]
+    fn extern_fn_call_extern_has_correct_id() {
+        let prog =
+            lower_ok("extern fn add(a: int, b: int) -> int\nfn main() { let x = add(1, 2); }");
+        assert_eq!(prog.externs[0].id, hir::ExternId(0));
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("expected Let");
+        };
+        let ExprKind::CallExtern { extern_id, args } = &init.kind else {
+            panic!("expected CallExtern");
+        };
+        assert_eq!(*extern_id, hir::ExternId(0));
+        assert_eq!(args.len(), 2);
     }
 }

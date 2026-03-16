@@ -9,6 +9,8 @@ use super::value::{
     value_xor,
 };
 
+pub type ExternHandler = Box<dyn Fn(Vec<Value>) -> Result<Value, RuntimeError>>;
+
 struct CallFrame {
     chunk_idx: usize,
     ip: usize,
@@ -20,15 +22,24 @@ pub struct VM<'a> {
     stack: Vec<Value>,
     frames: Vec<CallFrame>,
     pub stdout: String,
+    extern_handlers: Vec<Option<ExternHandler>>,
 }
 
 impl<'a> VM<'a> {
     pub fn new(program: &'a CompiledProgram) -> Self {
+        let extern_count = program.extern_names.len();
         Self {
             program,
             stack: vec![],
             frames: vec![],
             stdout: String::new(),
+            extern_handlers: (0..extern_count).map(|_| None).collect(),
+        }
+    }
+
+    pub fn register_extern(&mut self, index: usize, handler: ExternHandler) {
+        if index < self.extern_handlers.len() {
+            self.extern_handlers[index] = Some(handler);
         }
     }
 
@@ -225,6 +236,24 @@ impl<'a> VM<'a> {
                     self.push(result);
                 }
 
+                Op::CallExtern(extern_idx, arg_count) => {
+                    let n = arg_count as usize;
+                    let args: Vec<Value> = self.stack.drain(self.stack.len() - n..).collect();
+                    let idx = extern_idx as usize;
+                    let result = match self.extern_handlers.get(idx) {
+                        Some(Some(handler)) => handler(args)?,
+                        _ => {
+                            let name = self.program.extern_names.get(idx)
+                                .map(|s| s.as_str())
+                                .unwrap_or("<unknown>");
+                            return Err(RuntimeError::new(format!(
+                                "missing extern implementation for '{name}'"
+                            )));
+                        }
+                    };
+                    self.push(result);
+                }
+
                 Op::Return => {
                     let return_val = self.pop();
                     let frame = self.frames.pop().expect("no frame to return from");
@@ -251,7 +280,7 @@ mod tests {
     use std::rc::Rc;
 
     fn make_program(chunks: Vec<Chunk>, main_idx: usize) -> CompiledProgram {
-        CompiledProgram { chunks, main_idx }
+        CompiledProgram { chunks, main_idx, extern_names: vec![] }
     }
 
     fn simple_chunk(name: &str, ops: Vec<Op>, constants: Vec<Value>) -> Chunk {

@@ -32,6 +32,7 @@ impl fmt::Display for CompileError {
 pub struct CompiledProgram {
     pub chunks: Vec<Chunk>,
     pub main_idx: usize,
+    pub extern_names: Vec<String>,
 }
 
 struct LoopState {
@@ -88,7 +89,13 @@ pub fn compile(hir: &hir::Program) -> Result<CompiledProgram, CompileError> {
         .position(|f| f.name.to_string() == "main")
         .ok_or(CompileError::NoMainFunction)?;
 
-    Ok(CompiledProgram { chunks, main_idx })
+    let extern_names = hir
+        .externs
+        .iter()
+        .map(|e| e.name.to_string())
+        .collect();
+
+    Ok(CompiledProgram { chunks, main_idx, extern_names })
 }
 
 fn compile_func(func: &hir::Func) -> Result<Chunk, CompileError> {
@@ -302,6 +309,13 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
                 .position(|b| b == builtin)
                 .expect("unknown builtin") as u8;
             fc.emit(Op::CallBuiltin(builtin_idx, args.len() as u8));
+        }
+
+        hir::ExprKind::CallExtern { extern_id, args } => {
+            for arg in args {
+                compile_expr(fc, arg)?;
+            }
+            fc.emit(Op::CallExtern(extern_id.0 as u16, args.len() as u8));
         }
     }
 
@@ -535,6 +549,7 @@ mod tests {
         };
         let program = Program {
             funcs: vec![helper, main],
+            externs: vec![],
         };
         let compiled = compile(&program).unwrap();
         assert_eq!(compiled.main_idx, 1);
@@ -547,6 +562,7 @@ mod tests {
     fn no_main_returns_error() {
         let program = Program {
             funcs: vec![simple_func("notmain", vec![], vec![], 0, Type::Void)],
+            externs: vec![],
         };
         assert!(matches!(
             compile(&program),

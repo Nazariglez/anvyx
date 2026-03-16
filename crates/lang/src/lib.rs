@@ -9,6 +9,9 @@ mod span;
 mod typecheck;
 mod vm;
 
+pub use vm::ExternHandler;
+pub use vm::Value;
+
 #[cfg(test)]
 mod test_helpers;
 
@@ -100,9 +103,18 @@ impl Backend {
 }
 
 pub fn run_program(program: &str, file_path: &str, backend: Backend) -> Result<String, String> {
+    run_program_with_externs(program, file_path, backend, std::collections::HashMap::new())
+}
+
+pub fn run_program_with_externs(
+    program: &str,
+    file_path: &str,
+    backend: Backend,
+    externs: std::collections::HashMap<String, ExternHandler>,
+) -> Result<String, String> {
     let hir = generate_hir(program, file_path)?;
     match backend {
-        Backend::Vm => vm::run(&hir),
+        Backend::Vm => vm::run_with_externs(&hir, externs),
         Backend::Transpiler => Err("Transpiler backend is not yet implemented".to_string()),
     }
 }

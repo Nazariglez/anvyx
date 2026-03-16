@@ -1,5 +1,5 @@
 use super::helpers::parse_program;
-use crate::ast::{self, MethodReceiver, Mutability};
+use crate::ast::{self, MethodReceiver, Mutability, Type};
 
 #[test]
 fn while_with_binary_cond_parses() {
@@ -225,4 +225,43 @@ fn test_var_self_parses() {
     assert_eq!(methods.len(), 1);
     assert_eq!(methods[0].receiver, Some(MethodReceiver::Var));
     assert_eq!(methods[0].name.0.as_ref(), "m");
+}
+
+#[test]
+fn extern_fn_no_params_parses() {
+    let prog = parse_program("extern fn tick() -> void");
+    assert_eq!(prog.stmts.len(), 1);
+    let ast::Stmt::ExternFunc(node) = &prog.stmts[0].node else {
+        panic!("expected ExternFunc");
+    };
+    assert_eq!(node.node.name.0.as_ref(), "tick");
+    assert_eq!(node.node.params.len(), 0);
+    assert_eq!(node.node.ret, Type::Void);
+}
+
+#[test]
+fn extern_fn_with_params_parses() {
+    let prog = parse_program("extern fn add(a: int, b: int) -> int");
+    assert_eq!(prog.stmts.len(), 1);
+    let ast::Stmt::ExternFunc(node) = &prog.stmts[0].node else {
+        panic!("expected ExternFunc");
+    };
+    let ef = &node.node;
+    assert_eq!(ef.name.0.as_ref(), "add");
+    assert_eq!(ef.params.len(), 2);
+    assert_eq!(ef.params[0].name.0.as_ref(), "a");
+    assert_eq!(ef.params[0].ty, Type::Int);
+    assert_eq!(ef.params[1].name.0.as_ref(), "b");
+    assert_eq!(ef.params[1].ty, Type::Int);
+    assert_eq!(ef.ret, Type::Int);
+}
+
+#[test]
+fn extern_fn_no_return_type_defaults_void() {
+    let prog = parse_program("extern fn fire()");
+    assert_eq!(prog.stmts.len(), 1);
+    let ast::Stmt::ExternFunc(node) = &prog.stmts[0].node else {
+        panic!("expected ExternFunc");
+    };
+    assert_eq!(node.node.ret, Type::Void);
 }

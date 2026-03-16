@@ -30,6 +30,7 @@ pub type MapLiteralNode = Spanned<MapLiteral>;
 pub type IndexNode = Spanned<Index>;
 pub type MatchNode = Spanned<Match>;
 pub type MatchArmNode = Spanned<MatchArm>;
+pub type ExternFuncNode = Spanned<ExternFunc>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -39,6 +40,7 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     Func(FuncNode),
+    ExternFunc(ExternFuncNode),
     Struct(StructDeclNode),
     Enum(EnumDeclNode),
     Expr(ExprNode),
@@ -408,6 +410,13 @@ pub struct Func {
     pub params: Vec<Param>,
     pub ret: Type,
     pub body: BlockNode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternFunc {
+    pub name: Ident,
+    pub params: Vec<Param>,
+    pub ret: Type,
 }
 
 #[derive(Debug, Clone, PartialEq)]

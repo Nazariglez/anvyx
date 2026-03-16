@@ -5,10 +5,22 @@ use crate::span::Span;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub funcs: Vec<Func>,
+    pub externs: Vec<ExternDecl>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct FuncId(pub u32);
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct ExternId(pub u32);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternDecl {
+    pub id: ExternId,
+    pub name: Ident,
+    pub params: Vec<Type>,
+    pub ret: Type,
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct LocalId(pub u32);
@@ -108,6 +120,11 @@ pub enum ExprKind {
         builtin: Builtin,
         args: Vec<Expr>,
     },
+
+    CallExtern {
+        extern_id: ExternId,
+        args: Vec<Expr>,
+    },
 }
 
 #[cfg(test)]
@@ -141,7 +158,7 @@ mod tests {
 
     #[test]
     fn empty_program() {
-        let prog = Program { funcs: vec![] };
+        let prog = Program { funcs: vec![], externs: vec![] };
         assert!(prog.funcs.is_empty());
     }
 
@@ -156,7 +173,7 @@ mod tests {
             body: Block { stmts: vec![] },
             span: dummy_span(),
         };
-        let prog = Program { funcs: vec![func] };
+        let prog = Program { funcs: vec![func], externs: vec![] };
         assert_eq!(prog.funcs.len(), 1);
         assert_eq!(prog.funcs[0].name.to_string(), "main");
     }

@@ -68,6 +68,21 @@ pub(super) fn check_block_expr(
 pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChecker) {
     for stmt in stmts {
         match &stmt.node {
+            Stmt::ExternFunc(node) => {
+                let extern_func = &node.node;
+                let func_ty = Type::Func {
+                    params: extern_func.params.iter().map(|p| p.ty.clone()).collect(),
+                    ret: Box::new(extern_func.ret.clone()),
+                };
+                type_checker.set_var(extern_func.name, func_ty, false);
+                let param_info: Vec<_> = extern_func
+                    .params
+                    .iter()
+                    .map(|p| (p.name, p.mutability))
+                    .collect();
+                type_checker.func_param_info.insert(extern_func.name, param_info);
+            }
+
             Stmt::Func(node) => {
                 let func = &node.node;
                 type_checker.set_var(func.name, type_from_fn(func), false);
@@ -153,6 +168,7 @@ pub(super) fn check_stmt(
     errors: &mut Vec<TypeErr>,
 ) {
     match &stmt.node {
+        Stmt::ExternFunc(_) => {}
         Stmt::Func(node) => check_func(node, type_checker, errors),
         Stmt::Struct(node) => check_struct(node, type_checker, errors),
         Stmt::Enum(_) => {

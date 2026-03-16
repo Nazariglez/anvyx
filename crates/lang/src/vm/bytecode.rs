@@ -46,6 +46,7 @@ pub enum Op {
     // functions
     Call(u16, u8),
     CallBuiltin(u8, u8),
+    CallExtern(u16, u8),
     Return,
 }
 

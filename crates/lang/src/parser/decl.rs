@@ -38,6 +38,33 @@ fn type_params<'src>() -> BoxedParser<'src, Vec<ast::TypeParam>> {
     .boxed()
 }
 
+pub(super) fn extern_function<'src>() -> BoxedParser<'src, ast::ExternFuncNode> {
+    select! {
+        (Token::Keyword(Keyword::Extern), _) => (),
+    }
+    .ignore_then(select! {
+        (Token::Keyword(Keyword::Fn), _) => (),
+    })
+    .ignore_then(identifier())
+    .then(params())
+    .then(return_type())
+    .map_with(|((name, params), ret), e| {
+        let s = e.span();
+        let resolved_ret = ret.unwrap_or(ast::Type::Void);
+        Spanned::new(
+            ast::ExternFunc {
+                name,
+                params,
+                ret: resolved_ret,
+            },
+            Span::new(s.start, s.end),
+        )
+    })
+    .labelled("extern function")
+    .as_context()
+    .boxed()
+}
+
 pub(super) fn function<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::FuncNode> {

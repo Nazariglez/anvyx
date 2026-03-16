@@ -344,3 +344,40 @@ fn test_nested_fn_implicit_return() {
     let tcx = run_ok(prog);
     assert_expr_type(&tcx, call_id, Type::Int);
 }
+
+// ---- extern fn typechecker tests ----
+
+fn check_src(src: &str) -> Result<crate::typecheck::TypeChecker, Vec<crate::typecheck::error::TypeErr>> {
+    let tokens = crate::lexer::tokenize(crate::CORE_PRELUDE).unwrap();
+    let prelude = crate::parser::parse_ast(&tokens).unwrap();
+    let user_tokens = crate::lexer::tokenize(src).unwrap();
+    let user_ast = crate::parser::parse_ast(&user_tokens).unwrap();
+    let mut stmts = prelude.stmts;
+    stmts.extend(user_ast.stmts);
+    let combined = crate::ast::Program { stmts };
+    crate::typecheck::check_program(&combined)
+}
+
+#[test]
+fn extern_fn_call_correct_types_ok() {
+    let result = check_src("extern fn add(a: int, b: int) -> int\nfn main() { let x = add(1, 2); }");
+    assert!(result.is_ok(), "expected typecheck to pass, got: {:?}", result.err());
+}
+
+#[test]
+fn extern_fn_call_wrong_arg_type_typecheck_err() {
+    let result = check_src("extern fn add(a: int, b: int) -> int\nfn main() { add(true, 2); }");
+    assert!(result.is_err(), "expected type error for wrong arg type");
+}
+
+#[test]
+fn extern_fn_call_wrong_arity_typecheck_err() {
+    let result = check_src("extern fn add(a: int, b: int) -> int\nfn main() { add(1); }");
+    assert!(result.is_err(), "expected type error for wrong arity");
+}
+
+#[test]
+fn extern_fn_void_return_ok() {
+    let result = check_src("extern fn tick()\nfn main() { tick(); }");
+    assert!(result.is_ok(), "expected typecheck to pass, got: {:?}", result.err());
+}

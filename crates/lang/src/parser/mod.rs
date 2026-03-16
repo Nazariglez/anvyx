@@ -21,7 +21,7 @@ use chumsky::{
     prelude::*,
 };
 
-use decl::{enum_declaration, function, struct_declaration};
+use decl::{enum_declaration, extern_function, function, struct_declaration};
 use stmt::statement;
 
 #[derive(Debug, Default)]
@@ -67,6 +67,10 @@ pub fn parse_ast(tokens: &[SpannedToken]) -> Result<ast::Program, Vec<Rich<'_, S
 
 fn parser<'src>() -> BoxedParser<'src, ast::Program> {
     let stmt = statement();
+    let extern_fn_decl = extern_function().map(|node| {
+        let span = node.span;
+        Spanned::new(ast::Stmt::ExternFunc(node), span)
+    });
     let func_decl = function(stmt.clone()).map(|func_node| {
         let span = func_node.span;
         Spanned::new(ast::Stmt::Func(func_node), span)
@@ -80,7 +84,7 @@ fn parser<'src>() -> BoxedParser<'src, ast::Program> {
         Spanned::new(ast::Stmt::Enum(enum_node), span)
     });
 
-    choice((func_decl, struct_decl, enum_decl))
+    choice((extern_fn_decl, func_decl, struct_decl, enum_decl))
         .repeated()
         .collect::<Vec<_>>()
         .map(|stmts| ast::Program { stmts })
