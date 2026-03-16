@@ -16,6 +16,16 @@ fn lang_crate_path() -> String {
 }
 
 pub fn generate_runner_crate(project_root: &Path, manifest: &Manifest) -> Result<PathBuf, String> {
+    for (name, entry) in &manifest.externs {
+        let resolved = project_root.join(&entry.path);
+        if !resolved.exists() {
+            return Err(format!(
+                "Extern provider '{name}' not found at path: {}",
+                resolved.display()
+            ));
+        }
+    }
+
     let runner_dir = project_root.join("build/runner");
     let src_dir = runner_dir.join("src");
 
@@ -69,8 +79,19 @@ pub fn build_runner(runner_dir: &Path) -> Result<(), String> {
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("Failed to build runner crate:\n{stderr}"))
+        Err(format_build_error(&stderr))
     }
+}
+
+fn format_build_error(stderr: &str) -> String {
+    let mut msg = format!("Failed to build runner crate:\n{stderr}");
+    if stderr.contains("anvyx_externs") {
+        msg.push_str(
+            "\nHint: each extern provider must export a \
+            `pub fn anvyx_externs() -> HashMap<String, ExternHandler>` function",
+        );
+    }
+    msg
 }
 
 fn generate_cargo_toml(project_root: &Path, manifest: &Manifest) -> String {
@@ -260,6 +281,7 @@ mod tests {
     fn generate_runner_crate_creates_files() {
         let tmp = std::env::temp_dir().join(format!("anvyx-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("my_externs/engine")).unwrap();
 
         let manifest = manifest_one_extern();
         let runner_dir = generate_runner_crate(&tmp, &manifest).unwrap();
@@ -275,6 +297,40 @@ mod tests {
         let main_content = fs::read_to_string(runner_dir.join("src/main.rs")).unwrap();
         assert!(main_content.contains("run_program_with_externs"));
         assert!(main_content.contains("engine::anvyx_externs"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn generate_runner_validates_extern_paths() {
+        let tmp = std::env::temp_dir().join(format!("anvyx-validate-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        let mut externs = HashMap::new();
+        externs.insert(
+            "missing_crate".into(),
+            ExternEntry {
+                path: "does_not_exist".into(),
+            },
+        );
+        let manifest = Manifest {
+            project: Project {
+                name: None,
+                entry: "src/main.anv".into(),
+            },
+            externs,
+        };
+
+        let result = generate_runner_crate(&tmp, &manifest);
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("not found at path"),
+            "unexpected error: {msg}"
+        );
+        assert!(msg.contains("missing_crate"), "unexpected error: {msg}");
 
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -319,6 +375,21 @@ mod tests {
     }
 
     #[test]
+    fn format_build_error_no_hint_when_no_anvyx_externs() {
+        let msg = format_build_error("error[E0425]: cannot find function `something_else`");
+        assert!(msg.contains("Failed to build runner crate"));
+        assert!(!msg.contains("Hint:"));
+    }
+
+    #[test]
+    fn format_build_error_adds_hint_when_anvyx_externs_mentioned() {
+        let msg = format_build_error("error[E0425]: cannot find function `anvyx_externs`");
+        assert!(msg.contains("Failed to build runner crate"));
+        assert!(msg.contains("Hint:"));
+        assert!(msg.contains("anvyx_externs()"));
+    }
+
+    #[test]
     fn integration_manifest_to_runner_crate() {
         let toml_src = r#"
             [project]
@@ -339,6 +410,8 @@ mod tests {
 
         let tmp = std::env::temp_dir().join(format!("anvyx-integration-{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("my_externs/engine")).unwrap();
+        fs::create_dir_all(tmp.join("my_externs/audio")).unwrap();
 
         let runner_dir = generate_runner_crate(&tmp, &manifest).unwrap();
 
