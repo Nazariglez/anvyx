@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @contains: ok
+
+fn main() {
+    var i = 0;
+    var sum = 0;
+    while i < 5 {
+        i = i + 1;
+        if i == 3 { continue; }
+        sum = sum + i;
+    }
+    // sums 1 + 2 + 4 + 5 = 12  (skips 3)
+    assert(sum == 12);
+    println("ok");
+}

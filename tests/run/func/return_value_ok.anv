@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @contains: ok
+
+fn answer() -> int {
+    42
+}
+
+fn main() {
+    let x = answer();
+    assert(x == 42);
+    println("ok");
+}

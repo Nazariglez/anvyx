@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @contains: ok
+
+fn main() {
+    var count = 0;
+    while false {
+        count = count + 1;
+    }
+    assert(count == 0);
+    println("ok");
+}

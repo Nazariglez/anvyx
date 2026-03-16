@@ -9,6 +9,9 @@ mod span;
 mod typecheck;
 mod vm;
 
+#[cfg(test)]
+mod test_helpers;
+
 pub(crate) const CORE_PRELUDE: &str = include_str!("../core/prelude.anv");
 
 fn parse_source(
@@ -89,7 +92,9 @@ impl Backend {
         match s {
             "vm" => Ok(Self::Vm),
             "transpiler" => Ok(Self::Transpiler),
-            _ => Err(format!("Unknown backend: '{s}'. Expected 'vm' or 'transpiler'")),
+            _ => Err(format!(
+                "Unknown backend: '{s}'. Expected 'vm' or 'transpiler'"
+            )),
         }
     }
 }

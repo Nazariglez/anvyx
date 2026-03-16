@@ -476,31 +476,15 @@ mod tests {
     use crate::ast::Type;
     use crate::builtin::Builtin;
     use crate::hir::{ExprKind, LocalId, StmtKind};
-    use crate::{CORE_PRELUDE, ast, hir, typecheck};
-
-    fn pipeline(source: &str) -> (ast::Program, typecheck::TypeChecker) {
-        let prelude_tokens = crate::lexer::tokenize(CORE_PRELUDE).expect("prelude must tokenize");
-        let prelude_ast = crate::parser::parse_ast(&prelude_tokens).expect("prelude must parse");
-
-        let user_tokens = crate::lexer::tokenize(source).expect("source must tokenize");
-        let user_ast = crate::parser::parse_ast(&user_tokens).expect("source must parse");
-
-        let mut stmts = prelude_ast.stmts;
-        stmts.extend(user_ast.stmts);
-        let combined = ast::Program { stmts };
-
-        let tcx = typecheck::check_program(&combined).expect("source must typecheck");
-        (combined, tcx)
-    }
+    use crate::test_helpers::TestCtx;
+    use crate::hir;
 
     fn lower_ok(source: &str) -> hir::Program {
-        let (ast, tcx) = pipeline(source);
-        lower_program(&ast, &tcx).expect("lowering should succeed")
+        TestCtx::lower_ok(source)
     }
 
     fn lower_err(source: &str) -> LowerError {
-        let (ast, tcx) = pipeline(source);
-        lower_program(&ast, &tcx).expect_err("lowering should fail")
+        TestCtx::lower_err(source)
     }
 
     fn find_main(prog: &hir::Program) -> &hir::Func {

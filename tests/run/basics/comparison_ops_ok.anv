@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @contains: ok
+
+fn main() {
+    let x = 5;
+    assert(x == 5);
+    assert(x != 4);
+    assert(x < 10);
+    assert(x > 1);
+    assert(x <= 5);
+    assert(x >= 5);
+    assert(!(x == 6));
+    assert(!(x < 5));
+    assert(!(x > 5));
+    println("ok");
+}

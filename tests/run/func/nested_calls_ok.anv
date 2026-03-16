@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @contains: ok
+
+fn double(x: int) -> int {
+    x * 2
+}
+
+fn quadruple(x: int) -> int {
+    double(double(x))
+}
+
+fn main() {
+    let result = quadruple(3);
+    assert(result == 12);
+    println("ok");
+}

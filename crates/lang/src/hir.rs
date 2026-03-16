@@ -113,31 +113,7 @@ pub enum ExprKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use internment::Intern;
-
-    fn dummy_span() -> Span {
-        Span::new(0, 0)
-    }
-
-    fn dummy_ident(name: &str) -> Ident {
-        Ident(Intern::new(name.to_string()))
-    }
-
-    fn int_expr(value: i64) -> Expr {
-        Expr {
-            ty: Type::Int,
-            span: dummy_span(),
-            kind: ExprKind::Int(value),
-        }
-    }
-
-    fn bool_expr(value: bool) -> Expr {
-        Expr {
-            ty: Type::Bool,
-            span: dummy_span(),
-            kind: ExprKind::Bool(value),
-        }
-    }
+    use crate::test_helpers::{dummy_ident, dummy_span, hir_bool_expr as bool_expr, hir_int_expr as int_expr};
 
     #[test]
     fn func_id_is_copy_and_eq() {

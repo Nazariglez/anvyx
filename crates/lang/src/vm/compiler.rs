@@ -311,90 +311,14 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::Ident;
     use crate::ast::Type;
-    use crate::hir::{
-        Block, Expr, ExprKind, Func, FuncId, Local, LocalId, Program, Stmt, StmtKind,
+    use crate::hir::{Block, Expr, ExprKind, Func, FuncId, Local, LocalId, Program, StmtKind};
+    use crate::test_helpers::{
+        dummy_ident, dummy_span, hir_bool_expr as bool_expr, hir_int_expr as int_expr,
+        hir_local_expr as local_expr, hir_binary_expr as binary_expr,
+        hir_stmt as stmt, hir_simple_func as simple_func,
+        hir_main_func as main_func, hir_program as prog,
     };
-    use crate::span::Span;
-    use internment::Intern;
-
-    fn dummy_span() -> Span {
-        Span::new(0, 0)
-    }
-
-    fn dummy_ident(name: &str) -> Ident {
-        Ident(Intern::new(name.to_string()))
-    }
-
-    fn int_expr(v: i64) -> Expr {
-        Expr {
-            ty: Type::Int,
-            span: dummy_span(),
-            kind: ExprKind::Int(v),
-        }
-    }
-
-    fn bool_expr(v: bool) -> Expr {
-        Expr {
-            ty: Type::Bool,
-            span: dummy_span(),
-            kind: ExprKind::Bool(v),
-        }
-    }
-
-    fn local_expr(id: u32) -> Expr {
-        Expr {
-            ty: Type::Int,
-            span: dummy_span(),
-            kind: ExprKind::Local(LocalId(id)),
-        }
-    }
-
-    fn binary_expr(op: BinaryOp, lhs: Expr, rhs: Expr) -> Expr {
-        Expr {
-            ty: Type::Int,
-            span: dummy_span(),
-            kind: ExprKind::Binary {
-                op,
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
-            },
-        }
-    }
-
-    fn stmt(kind: StmtKind) -> Stmt {
-        Stmt {
-            span: dummy_span(),
-            kind,
-        }
-    }
-
-    fn simple_func(
-        name: &str,
-        stmts: Vec<Stmt>,
-        locals: Vec<Local>,
-        params_len: u32,
-        ret: Type,
-    ) -> Func {
-        Func {
-            id: FuncId(0),
-            name: dummy_ident(name),
-            locals,
-            params_len,
-            ret,
-            body: Block { stmts },
-            span: dummy_span(),
-        }
-    }
-
-    fn main_func(stmts: Vec<Stmt>) -> Func {
-        simple_func("main", stmts, vec![], 0, Type::Void)
-    }
-
-    fn prog(func: Func) -> Program {
-        Program { funcs: vec![func] }
-    }
 
     #[test]
     fn empty_main_emits_nil_return() {

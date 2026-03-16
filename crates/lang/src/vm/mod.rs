@@ -15,16 +15,14 @@ pub fn run(hir_prog: &hir::Program) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::test_helpers::TestCtx;
 
     fn vm_ok(source: &str) -> String {
-        let hir = crate::generate_hir(source, "<test>").expect("generate_hir failed");
-        run(&hir).expect("vm run failed")
+        TestCtx::vm_ok(source)
     }
 
     fn vm_err(source: &str) -> String {
-        let hir = crate::generate_hir(source, "<test>").expect("generate_hir failed");
-        run(&hir).expect_err("expected vm error")
+        TestCtx::vm_err(source)
     }
 
     #[test]

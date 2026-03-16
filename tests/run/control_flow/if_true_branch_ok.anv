@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// reached
+// ok
+// @match-end
+
+fn main() {
+    if true {
+        println("reached");
+    };
+    println("ok");
+}

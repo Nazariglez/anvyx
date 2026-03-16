@@ -1,0 +1,23 @@
+// @mode: run
+// @expect: success
+// @contains: ok
+
+fn add(a: int, b: int) -> int {
+    a + b
+}
+
+fn sub(a: int, b: int) -> int {
+    a - b
+}
+
+fn mul(a: int, b: int) -> int {
+    a * b
+}
+
+fn main() {
+    assert(add(3, 4) == 7);
+    assert(add(-1, 1) == 0);
+    assert(sub(10, 3) == 7);
+    assert(mul(3, 4) == 12);
+    println("ok");
+}
