@@ -50,8 +50,12 @@ pub(super) fn check_block_expr(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> (Type, Option<ExprId>) {
-    let last_expr_id =
-        check_block_stmts(&block.node.stmts, block.node.tail.as_deref(), type_checker, errors);
+    let last_expr_id = check_block_stmts(
+        &block.node.stmts,
+        block.node.tail.as_deref(),
+        type_checker,
+        errors,
+    );
     let Some(id) = last_expr_id else {
         return (Type::Void, None);
     };
@@ -66,13 +70,29 @@ pub(super) fn check_block_expr(
 }
 
 pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChecker) {
+    // register extern type names before anything else, so they can be
+    // resolved when building function signatures that reference them
+    for stmt in stmts {
+        if let Stmt::ExternType(node) = &stmt.node {
+            type_checker.extern_type_defs.insert(node.node.name);
+        }
+    }
+
     for stmt in stmts {
         match &stmt.node {
+            Stmt::ExternType(_) => {
+                // already handled in the pre-pass above
+            }
+
             Stmt::ExternFunc(node) => {
                 let extern_func = &node.node;
                 let func_ty = Type::Func {
-                    params: extern_func.params.iter().map(|p| p.ty.clone()).collect(),
-                    ret: Box::new(extern_func.ret.clone()),
+                    params: extern_func
+                        .params
+                        .iter()
+                        .map(|p| type_checker.resolve_type(&p.ty))
+                        .collect(),
+                    ret: Box::new(type_checker.resolve_type(&extern_func.ret)),
                 };
                 type_checker.set_var(extern_func.name, func_ty, false);
                 let param_info: Vec<_> = extern_func
@@ -80,7 +100,9 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                     .iter()
                     .map(|p| (p.name, p.mutability))
                     .collect();
-                type_checker.func_param_info.insert(extern_func.name, param_info);
+                type_checker
+                    .func_param_info
+                    .insert(extern_func.name, param_info);
             }
 
             Stmt::Func(node) => {
@@ -169,6 +191,7 @@ pub(super) fn check_stmt(
 ) {
     match &stmt.node {
         Stmt::ExternFunc(_) => {}
+        Stmt::ExternType(_) => {}
         Stmt::Func(node) => check_func(node, type_checker, errors),
         Stmt::Struct(node) => check_struct(node, type_checker, errors),
         Stmt::Enum(_) => {

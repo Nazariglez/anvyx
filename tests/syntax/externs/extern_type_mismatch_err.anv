@@ -1,0 +1,14 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+extern type Sprite
+extern type Sound
+extern fn play_sound(s: Sound)
+
+fn main() {
+    let s = make_sprite();
+    play_sound(s);
+}
+
+extern fn make_sprite() -> Sprite

@@ -31,6 +31,7 @@ pub type IndexNode = Spanned<Index>;
 pub type MatchNode = Spanned<Match>;
 pub type MatchArmNode = Spanned<MatchArm>;
 pub type ExternFuncNode = Spanned<ExternFunc>;
+pub type ExternTypeNode = Spanned<ExternType>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -41,6 +42,7 @@ pub struct Program {
 pub enum Stmt {
     Func(FuncNode),
     ExternFunc(ExternFuncNode),
+    ExternType(ExternTypeNode),
     Struct(StructDeclNode),
     Enum(EnumDeclNode),
     Expr(ExprNode),
@@ -160,6 +162,8 @@ pub enum Type {
     Map { key: Box<Type>, value: Box<Type> },
     /// View/slice type for function parameters ([T; ..])
     ArrayView { elem: Box<Type> },
+    /// Opaque handle type declared with 'extern type'
+    Extern { name: Ident },
 }
 
 impl Type {
@@ -356,6 +360,7 @@ impl Display for Type {
             },
             Type::Map { key, value } => write!(f, "[{key}: {value}]"),
             Type::ArrayView { elem } => write!(f, "[{elem}; ..]"),
+            Type::Extern { name } => write!(f, "{name}"),
         }
     }
 }
@@ -417,6 +422,11 @@ pub struct ExternFunc {
     pub name: Ident,
     pub params: Vec<Param>,
     pub ret: Type,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternType {
+    pub name: Ident,
 }
 
 #[derive(Debug, Clone, PartialEq)]

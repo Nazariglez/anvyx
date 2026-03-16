@@ -5,7 +5,7 @@ use crate::{
     },
     span::Span,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::{
     constraint::{Constraint, TypeRef},
@@ -124,6 +124,9 @@ pub struct TypeChecker {
     /// Stores enum definitions (name -> variants)
     pub(super) enum_defs: HashMap<Ident, EnumDef>,
 
+    /// Stores extern type names declared with 'extern type'
+    pub(super) extern_type_defs: HashSet<Ident>,
+
     /// Stores param info for free functions
     pub(super) func_param_info: HashMap<Ident, Vec<(Ident, Mutability)>>,
 
@@ -160,6 +163,9 @@ impl TypeChecker {
 
     pub(super) fn resolve_type(&self, ty: &Type) -> Type {
         match ty {
+            Type::UnresolvedName(name) if self.extern_type_defs.contains(name) => {
+                Type::Extern { name: *name }
+            }
             Type::UnresolvedName(name) if self.struct_defs.contains_key(name) => Type::Struct {
                 name: *name,
                 type_args: vec![],

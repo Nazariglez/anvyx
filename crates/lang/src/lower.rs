@@ -116,6 +116,7 @@ pub fn lower_program(ast: &ast::Program, tcx: &TypeChecker) -> Result<hir::Progr
                     ret: extern_node.node.ret.clone(),
                 });
             }
+            Stmt::ExternType(_) => {}
             _ => {}
         }
     }
@@ -317,6 +318,7 @@ fn lower_stmt(
         }),
 
         Stmt::ExternFunc(_) => Ok(None),
+        Stmt::ExternType(_) => Ok(None),
 
         Stmt::Func(_) => Err(LowerError::UnsupportedStmtKind {
             span,
@@ -1002,5 +1004,23 @@ mod tests {
         };
         assert_eq!(*extern_id, hir::ExternId(0));
         assert_eq!(args.len(), 2);
+    }
+
+    #[test]
+    fn extern_type_flows_through_hir() {
+        let prog = lower_ok(
+            "extern type Sprite\nextern fn create() -> Sprite\nfn main() { let s = create(); }",
+        );
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("expected Let stmt");
+        };
+        let ExprKind::CallExtern { .. } = &init.kind else {
+            panic!("expected CallExtern, got {:?}", init.kind);
+        };
+        let Type::Extern { name } = &init.ty else {
+            panic!("expected Type::Extern, got {:?}", init.ty);
+        };
+        assert_eq!(name.to_string(), "Sprite");
     }
 }

@@ -159,6 +159,9 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
             is_assignable(elem_from, elem_to)
         }
 
+        // opaque extern types are only assignable to the exact same extern type
+        (Extern { name: ln }, Extern { name: rn }) => ln == rn,
+
         // anything else is just not assignable
         _ => false,
     }
@@ -343,6 +346,22 @@ pub(super) fn unify_types(
         // views unify if element types can unify
         (ArrayView { elem: le }, ArrayView { elem: re }) => {
             unify_types(le, re, span, errors).map(|elem| ArrayView { elem: elem.boxed() })
+        }
+
+        // extern types unify only if they have the same name
+        (Extern { name: ln }, Extern { name: rn }) => {
+            if ln == rn {
+                Some(Extern { name: *ln })
+            } else {
+                errors.push(TypeErr::new(
+                    span,
+                    TypeErrKind::MismatchedTypes {
+                        expected: left.clone(),
+                        found: right.clone(),
+                    },
+                ));
+                None
+            }
         }
 
         // mismatched types report an error

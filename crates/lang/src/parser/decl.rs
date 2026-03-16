@@ -38,31 +38,41 @@ fn type_params<'src>() -> BoxedParser<'src, Vec<ast::TypeParam>> {
     .boxed()
 }
 
-pub(super) fn extern_function<'src>() -> BoxedParser<'src, ast::ExternFuncNode> {
-    select! {
-        (Token::Keyword(Keyword::Extern), _) => (),
-    }
-    .ignore_then(select! {
-        (Token::Keyword(Keyword::Fn), _) => (),
-    })
-    .ignore_then(identifier())
-    .then(params())
-    .then(return_type())
-    .map_with(|((name, params), ret), e| {
-        let s = e.span();
-        let resolved_ret = ret.unwrap_or(ast::Type::Void);
-        Spanned::new(
-            ast::ExternFunc {
-                name,
-                params,
-                ret: resolved_ret,
-            },
-            Span::new(s.start, s.end),
-        )
-    })
-    .labelled("extern function")
-    .as_context()
-    .boxed()
+pub(super) fn extern_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
+    select! { (Token::Keyword(Keyword::Extern), _) => () }
+        .ignore_then(choice((
+            // extern fn
+            select! { (Token::Keyword(Keyword::Fn), _) => () }
+                .ignore_then(identifier())
+                .then(params())
+                .then(return_type())
+                .map_with(|((name, params), ret), e| {
+                    let s = e.span();
+                    let resolved_ret = ret.unwrap_or(ast::Type::Void);
+                    let node = Spanned::new(
+                        ast::ExternFunc {
+                            name,
+                            params,
+                            ret: resolved_ret,
+                        },
+                        Span::new(s.start, s.end),
+                    );
+                    let span = node.span;
+                    Spanned::new(ast::Stmt::ExternFunc(node), span)
+                }),
+            // extern type
+            select! { (Token::Keyword(Keyword::Type), _) => () }
+                .ignore_then(identifier())
+                .map_with(|name, e| {
+                    let s = e.span();
+                    let node = Spanned::new(ast::ExternType { name }, Span::new(s.start, s.end));
+                    let span = node.span;
+                    Spanned::new(ast::Stmt::ExternType(node), span)
+                }),
+        )))
+        .labelled("extern declaration")
+        .as_context()
+        .boxed()
 }
 
 pub(super) fn function<'src>(

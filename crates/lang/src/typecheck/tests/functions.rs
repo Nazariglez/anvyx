@@ -381,3 +381,68 @@ fn extern_fn_void_return_ok() {
     let result = check_src("extern fn tick()\nfn main() { tick(); }");
     assert!(result.is_ok(), "expected typecheck to pass, got: {:?}", result.err());
 }
+
+#[test]
+fn extern_type_used_in_extern_fn_ok() {
+    let src = "
+extern type Sprite
+extern fn create() -> Sprite
+extern fn draw(s: Sprite)
+fn main() {
+    let s = create();
+    draw(s);
+}";
+    let result = check_src(src);
+    assert!(result.is_ok(), "expected typecheck to pass, got: {:?}", result.err());
+}
+
+#[test]
+fn extern_type_mismatch_err() {
+    let src = "
+extern type Sprite
+extern type Sound
+extern fn play(s: Sound)
+fn main() {
+    let spr = create_sprite();
+    play(spr);
+}
+extern fn create_sprite() -> Sprite";
+    let result = check_src(src);
+    assert!(result.is_err(), "expected type error for wrong extern type");
+}
+
+#[test]
+fn extern_type_not_assignable_to_int_err() {
+    let src = "
+extern type Sprite
+extern fn create() -> Sprite
+fn main() {
+    let x: int = create();
+}";
+    let result = check_src(src);
+    assert!(result.is_err(), "expected type error: Sprite is not int");
+}
+
+#[test]
+fn int_not_assignable_to_extern_type_err() {
+    let src = "
+extern type Sprite
+extern fn draw(s: Sprite)
+fn main() {
+    draw(42);
+}";
+    let result = check_src(src);
+    assert!(result.is_err(), "expected type error: int is not Sprite");
+}
+
+#[test]
+fn extern_type_optional_ok() {
+    let src = "
+extern type Sprite
+extern fn find() -> Sprite?
+fn main() {
+    let s = find();
+}";
+    let result = check_src(src);
+    assert!(result.is_ok(), "expected typecheck to pass, got: {:?}", result.err());
+}

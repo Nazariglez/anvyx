@@ -402,4 +402,39 @@ mod tests {
         let out = vm_ok_with_externs(src, externs);
         assert_eq!(out, "ok\n");
     }
+
+    #[test]
+    fn extern_handle_round_trip() {
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "make_handle".to_string(),
+            Box::new(|_args| Ok(Value::ExternHandle(42))),
+        );
+        externs.insert(
+            "use_handle".to_string(),
+            Box::new(|args| {
+                let Value::ExternHandle(id) = args[0] else {
+                    panic!("expected ExternHandle");
+                };
+                assert_eq!(id, 42);
+                Ok(Value::Nil)
+            }),
+        );
+        let src = "
+extern type Foo
+extern fn make_handle() -> Foo
+extern fn use_handle(h: Foo)
+fn main() {
+    let h = make_handle();
+    use_handle(h);
+    println(\"ok\");
+}";
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+    }
+
+    #[test]
+    fn extern_handle_display() {
+        assert_eq!(Value::ExternHandle(99).to_string(), "<extern:99>");
+    }
 }

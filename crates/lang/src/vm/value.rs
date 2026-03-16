@@ -8,6 +8,7 @@ pub enum Value {
     Bool(bool),
     String(Rc<str>),
     Nil,
+    ExternHandle(u64),
 }
 
 impl fmt::Display for Value {
@@ -18,6 +19,7 @@ impl fmt::Display for Value {
             Value::Bool(v) => write!(f, "{v}"),
             Value::String(s) => write!(f, "{s}"),
             Value::Nil => write!(f, "nil"),
+            Value::ExternHandle(id) => write!(f, "<extern:{id}>"),
         }
     }
 }
@@ -49,6 +51,7 @@ fn type_name(v: &Value) -> &'static str {
         Value::Bool(_) => "bool",
         Value::String(_) => "string",
         Value::Nil => "nil",
+        Value::ExternHandle(_) => "extern handle",
     }
 }
 
