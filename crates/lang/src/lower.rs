@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::ast::{self, AssignOp, BinaryOp, Ident, Lit, Pattern, Stmt, Type};
+use crate::ast::{self, AssignOp, BinaryOp, Ident, Lit, Pattern, Stmt, StringPart, Type};
 use crate::builtin::Builtin;
 use crate::hir;
 use crate::span::Span;
@@ -194,7 +194,7 @@ fn lower_block(
         let span = tail_expr.span;
         match &tail_expr.node.kind {
             ast::ExprKind::If(if_node) => {
-                stmts.push(lower_if(if_node, span, ctx, fc)?);
+                stmts.push(lower_if(if_node, span, ctx, fc, is_func_body, ret_ty)?);
             }
             ast::ExprKind::Assign(assign_node) => {
                 stmts.push(lower_assign(assign_node, span, ctx, fc)?);
@@ -269,7 +269,9 @@ fn lower_stmt(
         }
 
         Stmt::Expr(expr_node) => match &expr_node.node.kind {
-            ast::ExprKind::If(if_node) => Ok(Some(lower_if(if_node, span, ctx, fc)?)),
+            ast::ExprKind::If(if_node) => {
+                Ok(Some(lower_if(if_node, span, ctx, fc, false, &Type::Void)?))
+            }
             ast::ExprKind::Assign(assign_node) => {
                 Ok(Some(lower_assign(assign_node, span, ctx, fc)?))
             }
@@ -342,11 +344,13 @@ fn lower_if(
     span: Span,
     ctx: &LowerCtx,
     fc: &mut FuncLower,
+    is_func_body: bool,
+    ret_ty: &Type,
 ) -> Result<hir::Stmt, LowerError> {
     let cond = lower_expr(&if_node.node.cond, ctx, fc)?;
-    let then_block = lower_block(&if_node.node.then_block, ctx, fc, false, &Type::Void)?;
+    let then_block = lower_block(&if_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
     let else_block = match &if_node.node.else_block {
-        Some(b) => Some(lower_block(b, ctx, fc, false, &Type::Void)?),
+        Some(b) => Some(lower_block(b, ctx, fc, is_func_body, ret_ty)?),
         None => None,
     };
     Ok(hir::Stmt {
@@ -399,6 +403,47 @@ fn lower_assign(
             value,
         },
     })
+}
+
+fn lower_string_interp(
+    parts: &[StringPart],
+    span: Span,
+    ty: &Type,
+    ctx: &LowerCtx,
+    fc: &FuncLower,
+) -> Result<hir::ExprKind, LowerError> {
+    let mut hir_parts: Vec<hir::Expr> = vec![];
+
+    for part in parts {
+        let expr = match part {
+            StringPart::Text(s) => hir::Expr {
+                ty: Type::String,
+                span,
+                kind: hir::ExprKind::String(s.clone()),
+            },
+            StringPart::Expr(e) => lower_expr(e, ctx, fc)?,
+        };
+        hir_parts.push(expr);
+    }
+
+    match hir_parts.len() {
+        0 => Ok(hir::ExprKind::String(String::new())),
+        1 => Ok(hir_parts.remove(0).kind),
+        _ => {
+            let mut iter = hir_parts.into_iter();
+            let first = iter.next().unwrap();
+            let folded = iter.fold(first, |acc, rhs| hir::Expr {
+                ty: ty.clone(),
+                span,
+                kind: hir::ExprKind::Binary {
+                    op: BinaryOp::Add,
+                    lhs: Box::new(acc),
+                    rhs: Box::new(rhs),
+                },
+            });
+            Ok(folded.kind)
+        }
+    }
 }
 
 fn lower_expr(
@@ -456,6 +501,8 @@ fn lower_expr(
                 rhs: Box::new(rhs),
             }
         }
+
+        ast::ExprKind::StringInterp(parts) => lower_string_interp(parts, span, &ty, ctx, fc)?,
 
         ast::ExprKind::Call(c) => {
             let callee_name = match &c.node.func.node.kind {
@@ -598,6 +645,71 @@ mod tests {
         let prog = lower_ok("fn main() { return; }");
         let main = find_main(&prog);
         assert!(matches!(main.body.stmts[0].kind, StmtKind::Return(None)));
+    }
+
+    #[test]
+    fn implicit_return_from_if_expr() {
+        let prog = lower_ok("fn foo() -> int { if true { 1 } else { 2 } }");
+        let foo = prog
+            .funcs
+            .iter()
+            .find(|f| f.name.to_string() == "foo")
+            .unwrap();
+        // The if is the tail of the function body → StmtKind::If
+        let StmtKind::If {
+            then_block,
+            else_block,
+            ..
+        } = &foo.body.stmts[0].kind
+        else {
+            panic!("expected If stmt")
+        };
+        // Both branches must end with Return(Some(...))
+        assert!(matches!(
+            then_block.stmts[0].kind,
+            StmtKind::Return(Some(_))
+        ));
+        let else_stmts = &else_block.as_ref().unwrap().stmts;
+        assert!(matches!(else_stmts[0].kind, StmtKind::Return(Some(_))));
+    }
+
+    #[test]
+    fn implicit_return_from_nested_if_expr() {
+        let prog = lower_ok("fn foo() -> int { if true { if false { 1 } else { 2 } } else { 3 } }");
+        let foo = prog
+            .funcs
+            .iter()
+            .find(|f| f.name.to_string() == "foo")
+            .unwrap();
+        let StmtKind::If {
+            then_block,
+            else_block,
+            ..
+        } = &foo.body.stmts[0].kind
+        else {
+            panic!("expected outer If")
+        };
+        // outer else branch must return
+        let else_stmts = &else_block.as_ref().unwrap().stmts;
+        assert!(matches!(else_stmts[0].kind, StmtKind::Return(Some(_))));
+        // inner if in then_branch, both inner branches must return
+        let StmtKind::If {
+            then_block: inner_then,
+            else_block: inner_else,
+            ..
+        } = &then_block.stmts[0].kind
+        else {
+            panic!("expected inner If")
+        };
+        assert!(matches!(
+            inner_then.stmts[0].kind,
+            StmtKind::Return(Some(_))
+        ));
+        let inner_else_stmts = &inner_else.as_ref().unwrap().stmts;
+        assert!(matches!(
+            inner_else_stmts[0].kind,
+            StmtKind::Return(Some(_))
+        ));
     }
 
     #[test]
@@ -920,9 +1032,49 @@ mod tests {
     }
 
     #[test]
-    fn rejects_string_interpolation() {
-        let err = lower_err(r#"fn main() { let n = 1; let s = "n = {n}"; }"#);
-        assert!(matches!(err, LowerError::UnsupportedExprKind { .. }));
+    fn string_interp_with_var() {
+        let prog = lower_ok(r#"fn main() { let n = 1; let s = "n = {n}"; }"#);
+        let main = find_main(&prog);
+        // s = "n = " + n  → Binary(Add, String("n = "), Local(n))
+        let StmtKind::Let { init, .. } = &main.body.stmts[1].kind else {
+            panic!("expected Let stmt for s")
+        };
+        assert!(matches!(
+            init.kind,
+            ExprKind::Binary {
+                op: crate::ast::BinaryOp::Add,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn string_interp_single_expr_only() {
+        let prog = lower_ok(r#"fn main() { let x = "hi"; let s = "{x}"; }"#);
+        let main = find_main(&prog);
+        // single Expr part -> just the local, no wrapper
+        let StmtKind::Let { init, .. } = &main.body.stmts[1].kind else {
+            panic!("expected Let stmt for s")
+        };
+        assert!(matches!(init.kind, ExprKind::Local(_)));
+    }
+
+    #[test]
+    fn string_interp_multiple_parts() {
+        let prog = lower_ok(r#"fn main() { let x = 1; let y = 2; let s = "a {x} b {y}"; }"#);
+        let main = find_main(&prog);
+        // "a {x} b {y}" → (("a " + x) + " b ") + y
+        let StmtKind::Let { init, .. } = &main.body.stmts[2].kind else {
+            panic!("expected Let stmt for s")
+        };
+        // outermost node is Add
+        assert!(matches!(
+            init.kind,
+            ExprKind::Binary {
+                op: crate::ast::BinaryOp::Add,
+                ..
+            }
+        ));
     }
 
     #[test]

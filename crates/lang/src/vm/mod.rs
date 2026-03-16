@@ -230,6 +230,18 @@ mod tests {
     }
 
     #[test]
+    fn string_interp_int() {
+        let out = vm_ok(r#"fn main() { let x = 42; println("val: {x}"); }"#);
+        assert_eq!(out, "val: 42\n");
+    }
+
+    #[test]
+    fn string_interp_multiple_values() {
+        let out = vm_ok(r#"fn main() { let a = "hi"; let b = 3; println("{a} {b}"); }"#);
+        assert_eq!(out, "hi 3\n");
+    }
+
+    #[test]
     fn nested_function_calls() {
         let out = vm_ok(
             r#"
@@ -242,6 +254,50 @@ mod tests {
         "#,
         );
         assert_eq!(out, "ok\n");
+    }
+
+    #[test]
+    fn if_expr_returns_value() {
+        let out = vm_ok(
+            r#"
+            fn choose(x: bool) -> int { if x { 1 } else { 2 } }
+            fn main() {
+                let a = choose(true);
+                let b = choose(false);
+                if a == 1 {
+                    println("ok");
+                }
+                if b == 2 {
+                    println("ok");
+                }
+            }
+        "#,
+        );
+        assert_eq!(out, "ok\nok\n");
+    }
+
+    #[test]
+    fn fib_recursive() {
+        let out = vm_ok(
+            r#"
+            fn fib(n: int) -> int {
+                if n <= 1 {
+                    n
+                } else {
+                    fib(n - 1) + fib(n - 2)
+                }
+            }
+            fn main() {
+                let result = fib(10);
+                if result == 55 {
+                    println("fib ok");
+                } else {
+                    println("fib failed");
+                }
+            }
+        "#,
+        );
+        assert_eq!(out, "fib ok\n");
     }
 
     #[test]
