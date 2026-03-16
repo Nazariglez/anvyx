@@ -1,0 +1,17 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+fn do_something<A, B>(a: A, b: B) -> B {
+    if true {
+        a
+    } else {
+        b
+    }
+}
+
+fn main() {
+    let a: int = 10;
+    let b: string = "hola";
+    do_something(a, b);
+}

@@ -16,7 +16,10 @@ use super::{
     expr::check_expr,
     infer::type_from_fn,
     pattern::check_pattern,
-    types::{EnumDef, EnumVariantDef, MethodDef, StructDef, TypeChecker, is_keyable, keyable_reason, unwrap_opt_typ},
+    types::{
+        EnumDef, EnumVariantDef, MethodDef, StructDef, TypeChecker, is_keyable, keyable_reason,
+        unwrap_opt_typ,
+    },
     unify::contains_infer,
 };
 

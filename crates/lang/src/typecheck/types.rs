@@ -76,7 +76,7 @@ pub(super) struct MethodSpecKey {
 #[derive(Debug, Clone)]
 pub(super) struct SpecializationResult {
     pub ret_ty: Type,
-    pub err_kind: Option<TypeErrKind>,
+    pub err: Option<(Span, TypeErrKind)>,
 }
 
 #[derive(Debug, Clone)]

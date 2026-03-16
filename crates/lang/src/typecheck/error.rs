@@ -27,6 +27,16 @@ impl TypeErr {
         self.help = Some(help.into());
         self
     }
+
+    pub fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.notes.push(note.into());
+        self
+    }
+
+    pub fn with_secondary(mut self, span: Span, msg: impl Into<String>) -> Self {
+        self.secondary.push((span, msg.into()));
+        self
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

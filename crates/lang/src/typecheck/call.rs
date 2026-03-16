@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         CallNode, ExprKind, ExprNode, FieldAccessNode, Ident, MethodReceiver, Mutability, Type,
-        TypeVarId, VariantKind,
+        TypeParam, TypeVarId, VariantKind,
     },
     span::Span,
 };
@@ -872,6 +872,27 @@ pub(super) fn check_instance_method_call(
     result
 }
 
+fn generic_context_strings(
+    name: &str,
+    type_params: &[TypeParam],
+    type_args: &[Type],
+) -> (String, String) {
+    let args_str = type_args
+        .iter()
+        .map(|t| t.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let label = format!("in this instantiation of '{name}<{args_str}>'");
+    let mapping = type_params
+        .iter()
+        .zip(type_args.iter())
+        .map(|(p, a)| format!("{} = {a}", p.name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let note = format!("where {mapping}");
+    (label, note)
+}
+
 /// Instantiates a generic function with concrete type arguments and typechecks the specialized body
 pub(super) fn instantiate_and_check_fn(
     func_name: Ident,
@@ -880,22 +901,8 @@ pub(super) fn instantiate_and_check_fn(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
-    let cache_key = SpecializationKey {
-        func_name,
-        type_args: type_args.to_vec(),
-    };
-
-    // check cache first
-    if let Some(cached) = type_checker.specialization_cache.get(&cache_key) {
-        // if there was an error we report it with the current call site span
-        if let Some(err_kind) = &cached.err_kind {
-            errors.push(TypeErr::new(call_span, err_kind.clone()));
-        }
-        return cached.ret_ty.clone();
-    }
-
-    // look up the generic function template
-    let Some(fn_template) = type_checker.generic_func_templates.get(&func_name).cloned() else {
+    // look up type parameters early so they are available for cache-hit context
+    let Some(type_params) = type_checker.func_type_params.get(&func_name).cloned() else {
         errors.push(TypeErr::new(
             call_span,
             TypeErrKind::UnknownFunction { name: func_name },
@@ -903,8 +910,27 @@ pub(super) fn instantiate_and_check_fn(
         return Type::Infer;
     };
 
-    // look up type parameters
-    let Some(type_params) = type_checker.func_type_params.get(&func_name).cloned() else {
+    let cache_key = SpecializationKey {
+        func_name,
+        type_args: type_args.to_vec(),
+    };
+
+    // check cache first
+    if let Some(cached) = type_checker.specialization_cache.get(&cache_key) {
+        if let Some((body_span, err_kind)) = &cached.err {
+            let (label, note) =
+                generic_context_strings(&func_name.to_string(), &type_params, type_args);
+            errors.push(
+                TypeErr::new(*body_span, err_kind.clone())
+                    .with_secondary(call_span, label)
+                    .with_note(note),
+            );
+        }
+        return cached.ret_ty.clone();
+    }
+
+    // look up the generic function template
+    let Some(fn_template) = type_checker.generic_func_templates.get(&func_name).cloned() else {
         errors.push(TypeErr::new(
             call_span,
             TypeErrKind::UnknownFunction { name: func_name },
@@ -953,19 +979,23 @@ pub(super) fn instantiate_and_check_fn(
         &mut body_errors,
     );
 
-    // cache the result
-    let err_kind = body_errors.first().map(|err| err.kind.clone());
+    // cache the result preserving the body span of the first error
+    let cached_err = body_errors.first().map(|err| (err.span, err.kind.clone()));
     type_checker.specialization_cache.insert(
         cache_key,
         SpecializationResult {
             ret_ty: specialized_ret.clone(),
-            err_kind,
+            err: cached_err,
         },
     );
 
-    // report any errors from the body with the call site span
-    for err in body_errors {
-        errors.push(TypeErr::new(call_span, err.kind));
+    // report body errors with original spans, attaching call-site context
+    let (label, note) =
+        generic_context_strings(&func_name.to_string(), &type_params, type_args);
+    for mut err in body_errors {
+        err.secondary.push((call_span, label.clone()));
+        err.notes.push(note.clone());
+        errors.push(err);
     }
 
     specialized_ret
@@ -988,15 +1018,30 @@ fn instantiate_method_body(
         .cloned()
         .collect();
 
+    // collect all type params (struct params first, then method params) mirroring all_type_args
+    let all_type_params: Vec<TypeParam> = struct_def
+        .type_params
+        .iter()
+        .chain(method.type_params.iter())
+        .cloned()
+        .collect();
+
     let cache_key = MethodSpecKey {
         struct_name,
         method_name,
-        type_args: all_type_args,
+        type_args: all_type_args.clone(),
     };
 
     if let Some(cached) = type_checker.method_spec_cache.get(&cache_key) {
-        if let Some(err_kind) = &cached.err_kind {
-            errors.push(TypeErr::new(call_span, err_kind.clone()));
+        if let Some((body_span, err_kind)) = &cached.err {
+            let context_name = format!("{struct_name}.{method_name}");
+            let (label, note) =
+                generic_context_strings(&context_name, &all_type_params, &all_type_args);
+            errors.push(
+                TypeErr::new(*body_span, err_kind.clone())
+                    .with_secondary(call_span, label)
+                    .with_note(note),
+            );
         }
         return cached.ret_ty.clone();
     }
@@ -1052,17 +1097,24 @@ fn instantiate_method_body(
 
     type_checker.pop_method_context();
 
-    let err_kind = body_errors.first().map(|err| err.kind.clone());
+    // cache the result preserving the body span of the first error
+    let cached_err = body_errors.first().map(|err| (err.span, err.kind.clone()));
     type_checker.method_spec_cache.insert(
         cache_key,
         SpecializationResult {
             ret_ty: specialized_ret.clone(),
-            err_kind,
+            err: cached_err,
         },
     );
 
-    for err in body_errors {
-        errors.push(TypeErr::new(call_span, err.kind));
+    // report body errors with original spans, attaching call-site context
+    let context_name = format!("{struct_name}.{method_name}");
+    let (label, note) =
+        generic_context_strings(&context_name, &all_type_params, &all_type_args);
+    for mut err in body_errors {
+        err.secondary.push((call_span, label.clone()));
+        err.notes.push(note.clone());
+        errors.push(err);
     }
 
     specialized_ret

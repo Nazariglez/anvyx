@@ -1,5 +1,5 @@
-use crate::ast::{self, Mutability, MethodReceiver};
 use super::helpers::parse_program;
+use crate::ast::{self, MethodReceiver, Mutability};
 
 #[test]
 fn while_with_binary_cond_parses() {
