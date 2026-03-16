@@ -1,4 +1,6 @@
 mod check;
+mod init;
+mod manifest;
 mod run;
 
 use std::path::PathBuf;
@@ -20,22 +22,29 @@ struct Cli {
 enum Command {
     #[command(about = "Run an Anvyx program")]
     Run {
-        file: PathBuf,
+        file: Option<PathBuf>,
         #[arg(long, default_value = "vm")]
         backend: String,
     },
     #[command(about = "Check an Anvyx file")]
-    Check { file: PathBuf },
+    Check { file: Option<PathBuf> },
+    #[command(about = "Create a new Anvyx project")]
+    Init { name: Option<String> },
 }
 
 fn main() -> Result<(), String> {
     let cli = Cli::parse();
     match cli.command {
         Command::Run { file, backend } => {
-            run::cmd(file.as_path(), &backend)?;
+            let path = manifest::resolve_entry(file.as_deref())?;
+            run::cmd(&path, &backend)?;
         }
         Command::Check { file } => {
-            check::cmd(file.as_path())?;
+            let path = manifest::resolve_entry(file.as_deref())?;
+            check::cmd(&path)?;
+        }
+        Command::Init { name } => {
+            init::cmd(name.as_deref())?;
         }
     }
 

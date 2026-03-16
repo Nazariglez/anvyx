@@ -7,3 +7,5 @@ edition.workspace = true
 [dependencies]
 clap = { version = "4.5.53", features = ["derive"] }
 anvyx-lang = { path = "../lang" }
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }

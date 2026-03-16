@@ -11,3 +11,6 @@ tests target="tests":
 tests-release target="tests":
     cargo test --workspace --release
     cargo run --package test-runner -- {{target}} --release
+
+install:
+    cargo install --path crates/anvyx --force
