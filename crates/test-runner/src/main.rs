@@ -2,6 +2,7 @@ mod args;
 mod directives;
 mod run_test;
 
+use args::BackendArg;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use run_test::{ExpectedResult, TestResult, run_test_file};
 use std::{
@@ -32,14 +33,30 @@ fn main() {
         list_all_anv_files(&args.root)
     };
 
+    let work: Vec<(PathBuf, Option<&'static str>)> = match args.backend {
+        BackendArg::Both => files
+            .iter()
+            .flat_map(|f| {
+                vec![
+                    (f.clone(), Some(BackendArg::Vm.as_str())),
+                    (f.clone(), Some(BackendArg::Transpiler.as_str())),
+                ]
+            })
+            .collect(),
+        b => files
+            .iter()
+            .map(|f| (f.clone(), Some(b.as_str())))
+            .collect(),
+    };
+
     println!("");
-    println!("{CYAN}Running {} tests...{RESET}", files.len());
+    println!("{CYAN}Running {} tests...{RESET}", work.len());
     println!("");
 
-    let results = files
+    let results = work
         .par_iter()
-        .filter_map(|file| {
-            match run_test_file(&exe, file, Duration::from_millis(args.timeout_ms)) {
+        .filter_map(|(file, backend)| {
+            match run_test_file(&exe, file, Duration::from_millis(args.timeout_ms), *backend) {
                 Ok(res) => Some((file.clone(), res)),
                 Err(e) => Some((
                     file.clone(),
@@ -48,6 +65,7 @@ fn main() {
                             message: format!("Test runner error: {e}"),
                         },
                         mode: run_test::Mode::Check,
+                        backend: None,
                         duration: Duration::from_secs(0),
                     },
                 )),
@@ -80,27 +98,28 @@ impl Summary {
         let RunTestResult {
             result,
             mode,
+            backend,
             duration,
         } = result;
 
         match result {
             TestResult::Pass => {
                 self.passed += 1;
-                pass_msg(&file, quiet, mode, duration);
+                pass_msg(&file, quiet, mode, backend, duration);
             }
             TestResult::Fail { message } => {
                 self.failed += 1;
-                fail_msg(&file, quiet, mode, duration);
+                fail_msg(&file, quiet, mode, backend, duration);
                 self.failures.push((file, message));
             }
             TestResult::Timeout => {
                 self.timed_out += 1;
-                timeout_msg(&file, quiet, mode, duration);
+                timeout_msg(&file, quiet, mode, backend, duration);
                 self.timeouts.push(file);
             }
             TestResult::Skip { message } => {
                 self.skipped += 1;
-                skip_msg(&file, quiet, mode, duration);
+                skip_msg(&file, quiet, mode, backend, duration);
                 self.skips.push((file, message));
             }
         }
@@ -156,46 +175,57 @@ impl Summary {
     }
 }
 
-fn pass_msg(file: &PathBuf, quiet: bool, mode: Mode, duration: Duration) {
+fn mode_label(mode: Mode, backend: Option<&str>) -> String {
+    match backend {
+        Some(b) => format!("{mode}/{b}"),
+        None => format!("{mode}"),
+    }
+}
+
+fn pass_msg(file: &PathBuf, quiet: bool, mode: Mode, backend: Option<&str>, duration: Duration) {
     if quiet {
         return;
     }
     println!(
-        "{GREEN}[PASS]{RESET} {} {GREY}({mode} - {:.3}s){RESET}",
+        "{GREEN}[PASS]{RESET} {} {GREY}({} - {:.3}s){RESET}",
         file.display(),
+        mode_label(mode, backend),
         duration.as_secs_f32()
     );
 }
 
-fn fail_msg(file: &PathBuf, quiet: bool, mode: Mode, duration: Duration) {
+fn fail_msg(file: &PathBuf, quiet: bool, mode: Mode, backend: Option<&str>, duration: Duration) {
     if quiet {
         return;
     }
     eprintln!(
-        "{RED}[FAIL]{RESET} {} {GREY}({mode} - {:.3}s){RESET}",
+        "{RED}[FAIL]{RESET} {} {GREY}({} - {:.3}s){RESET}",
         file.display(),
+        mode_label(mode, backend),
         duration.as_secs_f32()
     );
 }
 
-fn timeout_msg(file: &PathBuf, quiet: bool, mode: Mode, duration: Duration) {
+fn timeout_msg(file: &PathBuf, quiet: bool, mode: Mode, backend: Option<&str>, duration: Duration) {
     if quiet {
         return;
     }
     eprintln!(
-        "{BLUE}[TIMEOUT]{RESET} {} {GREY}({mode} - {:.3}s){RESET}",
+        "{BLUE}[TIMEOUT]{RESET} {} {GREY}({} - {:.3}s){RESET}",
         file.display(),
+        mode_label(mode, backend),
         duration.as_secs_f32()
     );
 }
 
-fn skip_msg(file: &PathBuf, quiet: bool, mode: Mode, duration: Duration) {
+fn skip_msg(file: &PathBuf, quiet: bool, mode: Mode, backend: Option<&str>, duration: Duration) {
     if quiet {
         return;
     }
     println!(
-        "{YELLOW}[SKIP]{RESET} {} {GREY}({mode} - {:.3}s){RESET}",
+        "{YELLOW}[SKIP]{RESET} {} {GREY}({} - {:.3}s){RESET}",
         file.display(),
+        mode_label(mode, backend),
         duration.as_secs_f32()
     );
 }

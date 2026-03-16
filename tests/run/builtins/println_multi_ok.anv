@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// one
+// two
+// three
+// @match-end
+
+fn main() {
+    println("one");
+    println("two");
+    println("three");
+}

@@ -1,5 +1,33 @@
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendArg {
+    Vm,
+    Transpiler,
+    Both,
+}
+
+impl BackendArg {
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "vm" => Ok(Self::Vm),
+            "transpiler" => Ok(Self::Transpiler),
+            "both" => Ok(Self::Both),
+            _ => Err(format!(
+                "Unknown backend: '{s}'. Expected 'vm', 'transpiler', or 'both'"
+            )),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Vm => "vm",
+            Self::Transpiler => "transpiler",
+            Self::Both => "both",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct RunnerArgs {
     pub root: PathBuf,
@@ -7,6 +35,7 @@ pub struct RunnerArgs {
     pub quiet: bool,
     pub release: bool,
     pub file: Option<PathBuf>,
+    pub backend: BackendArg,
 }
 
 impl RunnerArgs {
@@ -16,12 +45,14 @@ impl RunnerArgs {
         let quiet = parse_quiet(&args);
         let release = parse_release(&args);
         let timeout_ms = parse_timeout(&args);
+        let backend = parse_backend(&args)?;
         Ok(Self {
             root,
             timeout_ms,
             quiet,
             release,
             file,
+            backend,
         })
     }
 }
@@ -59,4 +90,12 @@ fn parse_root_file(args: &[String]) -> Result<(PathBuf, Option<PathBuf>), String
     }
 
     Err("Provide a directory or a file as first argument".to_string())
+}
+
+fn parse_backend(args: &[String]) -> Result<BackendArg, String> {
+    args.iter()
+        .position(|arg| arg.as_str() == "--backend")
+        .and_then(|i| args.get(i + 1))
+        .map(|s| BackendArg::from_str(s))
+        .unwrap_or(Ok(BackendArg::Vm))
 }

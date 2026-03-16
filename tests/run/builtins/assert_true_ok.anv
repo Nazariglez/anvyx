@@ -1,0 +1,7 @@
+// @mode: run
+// @expect: success
+
+fn main() {
+    assert(true);
+    assert_msg(true, "still ok");
+}

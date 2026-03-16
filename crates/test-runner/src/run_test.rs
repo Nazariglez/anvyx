@@ -13,6 +13,7 @@ const RESET: &str = "\x1b[0m";
 pub struct RunTestResult {
     pub result: TestResult,
     pub mode: Mode,
+    pub backend: Option<&'static str>,
     pub duration: Duration,
 }
 
@@ -20,6 +21,7 @@ pub fn run_test_file(
     cmd: &str,
     file: &PathBuf,
     timeout: Duration,
+    backend: Option<&'static str>,
 ) -> Result<RunTestResult, String> {
     let src = std::fs::read_to_string(file).map_err(|e| e.to_string())?;
     let directives = Directives::new(&src);
@@ -29,52 +31,65 @@ pub fn run_test_file(
                 message: directives.skip.unwrap(),
             },
             mode: directives.mode,
+            backend: None,
             duration: Duration::from_secs(0),
         });
     }
 
+    let effective_backend = match directives.mode {
+        Mode::Run => backend,
+        Mode::Check => None,
+    };
+
     let start_time = Instant::now();
-    let outcome = spawn_test_process(cmd, file, timeout, directives.mode)?;
+    let outcome = spawn_test_process(cmd, file, timeout, directives.mode, effective_backend)?;
     let elapsed = start_time.elapsed();
 
-    let res = match (outcome, directives.expect) {
-        (ProcessOutcome::Pass { stdout, stderr }, ExpectedResult::Success) => {
+    let res = match (outcome, directives.expect, directives.mode) {
+        (ProcessOutcome::Pass { stdout, .. }, ExpectedResult::Success, Mode::Run) => {
+            match_output(&stdout, &directives)?
+        }
+        (ProcessOutcome::Pass { stdout, stderr }, ExpectedResult::Success, Mode::Check) => {
             let merged = format!("{stdout}{stderr}");
             match_output(&merged, &directives)?
         }
-        (ProcessOutcome::Pass { .. }, ExpectedResult::Error) => TestResult::Fail {
-            message: format!("Expected error but got success"),
+        (ProcessOutcome::Pass { .. }, ExpectedResult::Error, _) => TestResult::Fail {
+            message: "Expected error but got success".to_string(),
         },
-        (ProcessOutcome::Pass { stdout, stderr }, ExpectedResult::Timeout) => {
+        (ProcessOutcome::Pass { stdout, stderr }, ExpectedResult::Timeout, _) => {
             let merged = format!("{stdout}{stderr}");
             TestResult::Fail {
                 message: format!("Expected timeout but got success:\n{merged}"),
             }
         }
-        (ProcessOutcome::Fail { stdout, stderr }, ExpectedResult::Success) => {
+        (ProcessOutcome::Fail { stdout, stderr }, ExpectedResult::Success, _) => {
             let merged = format!("{stdout}{stderr}");
             TestResult::Fail {
                 message: format!("Expected success but got error:\n{merged}"),
             }
         }
-        (ProcessOutcome::Fail { stdout, stderr }, ExpectedResult::Timeout) => {
+        (ProcessOutcome::Fail { stdout, stderr }, ExpectedResult::Timeout, _) => {
             let merged = format!("{stdout}{stderr}");
             TestResult::Fail {
                 message: format!("Expected timeout but got error:\n{merged}"),
             }
         }
-        (ProcessOutcome::Fail { stdout, stderr }, ExpectedResult::Error) => {
+        (ProcessOutcome::Fail { stderr, .. }, ExpectedResult::Error, Mode::Run) => {
+            match_output(&stderr, &directives)?
+        }
+        (ProcessOutcome::Fail { stdout, stderr }, ExpectedResult::Error, Mode::Check) => {
             let merged = format!("{stdout}{stderr}");
             match_output(&merged, &directives)?
         }
-        (ProcessOutcome::Timeout, ExpectedResult::Success) => TestResult::Timeout,
-        (ProcessOutcome::Timeout, ExpectedResult::Error) => TestResult::Timeout,
-        (ProcessOutcome::Timeout, ExpectedResult::Timeout) => TestResult::Pass,
+        (ProcessOutcome::Timeout, ExpectedResult::Success, _) => TestResult::Timeout,
+        (ProcessOutcome::Timeout, ExpectedResult::Error, _) => TestResult::Timeout,
+        (ProcessOutcome::Timeout, ExpectedResult::Timeout, _) => TestResult::Pass,
     };
 
     Ok(RunTestResult {
         result: res,
         mode: directives.mode,
+        backend: effective_backend,
         duration: elapsed,
     })
 }
@@ -224,13 +239,21 @@ fn spawn_test_process(
     file: &PathBuf,
     timeout: Duration,
     mode: Mode,
+    backend: Option<&str>,
 ) -> Result<ProcessOutcome, String> {
-    // TODO: allows to set backend? debug or release?
-    let mut child = std::process::Command::new(cmd)
-        .arg(match mode {
-            Mode::Check => "check",
-            Mode::Run => "run",
-        })
+    let subcommand = match mode {
+        Mode::Check => "check",
+        Mode::Run => "run",
+    };
+
+    let mut command = std::process::Command::new(cmd);
+    command.arg(subcommand);
+
+    if let Some(b) = backend {
+        command.args(["--backend", b]);
+    }
+
+    let mut child = command
         .arg(file.display().to_string())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

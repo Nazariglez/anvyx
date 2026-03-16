@@ -1,0 +1,15 @@
+// @mode: run
+// @expect: success
+// @contains: done
+
+fn main() {
+    var i = 0;
+    while true {
+        i = i + 1;
+        if i == 5 {
+            break;
+        }
+    }
+    assert(i == 5);
+    println("done");
+}

@@ -1,0 +1,525 @@
+use crate::ast::{BinaryOp, Ident, Type, UnaryOp};
+use crate::builtin::Builtin;
+use crate::span::Span;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Program {
+    pub funcs: Vec<Func>,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct FuncId(pub u32);
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct LocalId(pub u32);
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Func {
+    pub id: FuncId,
+    pub name: Ident,
+
+    pub locals: Vec<Local>,
+    pub params_len: u32,
+
+    pub ret: Type,
+    pub body: Block,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Local {
+    pub name: Option<Ident>,
+    pub ty: Type,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Block {
+    pub stmts: Vec<Stmt>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stmt {
+    pub span: Span,
+    pub kind: StmtKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StmtKind {
+    Let {
+        local: LocalId,
+        init: Expr,
+    },
+    Assign {
+        local: LocalId,
+        value: Expr,
+    },
+    Expr(Expr),
+    Return(Option<Expr>),
+
+    If {
+        cond: Expr,
+        then_block: Block,
+        else_block: Option<Block>,
+    },
+
+    While {
+        cond: Expr,
+        body: Block,
+    },
+
+    Break,
+    Continue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Expr {
+    pub ty: Type,
+    pub span: Span,
+    pub kind: ExprKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExprKind {
+    Local(LocalId),
+
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(String),
+    Nil,
+
+    Unary {
+        op: UnaryOp,
+        expr: Box<Expr>,
+    },
+
+    Binary {
+        op: BinaryOp,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
+
+    Call {
+        func: FuncId,
+        args: Vec<Expr>,
+    },
+
+    CallBuiltin {
+        builtin: Builtin,
+        args: Vec<Expr>,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use internment::Intern;
+
+    fn dummy_span() -> Span {
+        Span::new(0, 0)
+    }
+
+    fn dummy_ident(name: &str) -> Ident {
+        Ident(Intern::new(name.to_string()))
+    }
+
+    fn int_expr(value: i64) -> Expr {
+        Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::Int(value),
+        }
+    }
+
+    fn bool_expr(value: bool) -> Expr {
+        Expr {
+            ty: Type::Bool,
+            span: dummy_span(),
+            kind: ExprKind::Bool(value),
+        }
+    }
+
+    #[test]
+    fn func_id_is_copy_and_eq() {
+        let a = FuncId(0);
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn local_id_is_copy_and_eq() {
+        let a = LocalId(3);
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn different_func_ids_are_not_equal() {
+        assert_ne!(FuncId(0), FuncId(1));
+    }
+
+    #[test]
+    fn different_local_ids_are_not_equal() {
+        assert_ne!(LocalId(0), LocalId(1));
+    }
+
+    #[test]
+    fn empty_program() {
+        let prog = Program { funcs: vec![] };
+        assert!(prog.funcs.is_empty());
+    }
+
+    #[test]
+    fn program_with_empty_func() {
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("main"),
+            locals: vec![],
+            params_len: 0,
+            ret: Type::Void,
+            body: Block { stmts: vec![] },
+            span: dummy_span(),
+        };
+        let prog = Program { funcs: vec![func] };
+        assert_eq!(prog.funcs.len(), 1);
+        assert_eq!(prog.funcs[0].name.to_string(), "main");
+    }
+
+    #[test]
+    fn func_with_params_and_locals() {
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("add"),
+            locals: vec![
+                Local {
+                    name: Some(dummy_ident("a")),
+                    ty: Type::Int,
+                },
+                Local {
+                    name: Some(dummy_ident("b")),
+                    ty: Type::Int,
+                },
+                Local {
+                    name: Some(dummy_ident("result")),
+                    ty: Type::Int,
+                },
+            ],
+            params_len: 2,
+            ret: Type::Int,
+            body: Block { stmts: vec![] },
+            span: dummy_span(),
+        };
+        assert_eq!(func.params_len, 2);
+        assert_eq!(func.locals.len(), 3);
+    }
+
+    #[test]
+    fn stmt_let() {
+        let stmt = Stmt {
+            span: dummy_span(),
+            kind: StmtKind::Let {
+                local: LocalId(0),
+                init: int_expr(42),
+            },
+        };
+        assert!(matches!(stmt.kind, StmtKind::Let { .. }));
+    }
+
+    #[test]
+    fn stmt_assign() {
+        let stmt = Stmt {
+            span: dummy_span(),
+            kind: StmtKind::Assign {
+                local: LocalId(0),
+                value: int_expr(10),
+            },
+        };
+        assert!(matches!(stmt.kind, StmtKind::Assign { .. }));
+    }
+
+    #[test]
+    fn stmt_expr() {
+        let stmt = Stmt {
+            span: dummy_span(),
+            kind: StmtKind::Expr(int_expr(1)),
+        };
+        assert!(matches!(stmt.kind, StmtKind::Expr(_)));
+    }
+
+    #[test]
+    fn stmt_return_with_value() {
+        let stmt = Stmt {
+            span: dummy_span(),
+            kind: StmtKind::Return(Some(int_expr(0))),
+        };
+        assert!(matches!(stmt.kind, StmtKind::Return(Some(_))));
+    }
+
+    #[test]
+    fn stmt_return_void() {
+        let stmt = Stmt {
+            span: dummy_span(),
+            kind: StmtKind::Return(None),
+        };
+        assert!(matches!(stmt.kind, StmtKind::Return(None)));
+    }
+
+    #[test]
+    fn stmt_if_without_else() {
+        let stmt = Stmt {
+            span: dummy_span(),
+            kind: StmtKind::If {
+                cond: bool_expr(true),
+                then_block: Block { stmts: vec![] },
+                else_block: None,
+            },
+        };
+        assert!(matches!(
+            stmt.kind,
+            StmtKind::If {
+                else_block: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn stmt_if_with_else() {
+        let stmt = Stmt {
+            span: dummy_span(),
+            kind: StmtKind::If {
+                cond: bool_expr(true),
+                then_block: Block { stmts: vec![] },
+                else_block: Some(Block { stmts: vec![] }),
+            },
+        };
+        assert!(matches!(
+            stmt.kind,
+            StmtKind::If {
+                else_block: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn stmt_while() {
+        let stmt = Stmt {
+            span: dummy_span(),
+            kind: StmtKind::While {
+                cond: bool_expr(true),
+                body: Block { stmts: vec![] },
+            },
+        };
+        assert!(matches!(stmt.kind, StmtKind::While { .. }));
+    }
+
+    #[test]
+    fn stmt_break() {
+        let stmt = Stmt {
+            span: dummy_span(),
+            kind: StmtKind::Break,
+        };
+        assert!(matches!(stmt.kind, StmtKind::Break));
+    }
+
+    #[test]
+    fn stmt_continue() {
+        let stmt = Stmt {
+            span: dummy_span(),
+            kind: StmtKind::Continue,
+        };
+        assert!(matches!(stmt.kind, StmtKind::Continue));
+    }
+
+    #[test]
+    fn expr_local() {
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::Local(LocalId(0)),
+        };
+        assert!(matches!(expr.kind, ExprKind::Local(LocalId(0))));
+    }
+
+    #[test]
+    fn expr_int() {
+        let expr = int_expr(42);
+        assert!(matches!(expr.kind, ExprKind::Int(42)));
+    }
+
+    #[test]
+    fn expr_float() {
+        let expr = Expr {
+            ty: Type::Float,
+            span: dummy_span(),
+            kind: ExprKind::Float(3.14),
+        };
+        assert!(matches!(expr.kind, ExprKind::Float(v) if (v - 3.14).abs() < f64::EPSILON));
+    }
+
+    #[test]
+    fn expr_bool() {
+        let expr = bool_expr(true);
+        assert!(matches!(expr.kind, ExprKind::Bool(true)));
+    }
+
+    #[test]
+    fn expr_string() {
+        let expr = Expr {
+            ty: Type::String,
+            span: dummy_span(),
+            kind: ExprKind::String("hello".into()),
+        };
+        assert!(matches!(expr.kind, ExprKind::String(ref s) if s == "hello"));
+    }
+
+    #[test]
+    fn expr_nil() {
+        let expr = Expr {
+            ty: Type::Void,
+            span: dummy_span(),
+            kind: ExprKind::Nil,
+        };
+        assert!(matches!(expr.kind, ExprKind::Nil));
+    }
+
+    #[test]
+    fn expr_unary() {
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::Unary {
+                op: UnaryOp::Neg,
+                expr: Box::new(int_expr(1)),
+            },
+        };
+        assert!(matches!(
+            expr.kind,
+            ExprKind::Unary {
+                op: UnaryOp::Neg,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn expr_binary() {
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::Binary {
+                op: BinaryOp::Add,
+                lhs: Box::new(int_expr(1)),
+                rhs: Box::new(int_expr(2)),
+            },
+        };
+        assert!(matches!(
+            expr.kind,
+            ExprKind::Binary {
+                op: BinaryOp::Add,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn expr_call() {
+        let expr = Expr {
+            ty: Type::Void,
+            span: dummy_span(),
+            kind: ExprKind::Call {
+                func: FuncId(0),
+                args: vec![int_expr(1)],
+            },
+        };
+        assert!(matches!(expr.kind, ExprKind::Call { .. }));
+    }
+
+    #[test]
+    fn expr_call_builtin() {
+        let expr = Expr {
+            ty: Type::Void,
+            span: dummy_span(),
+            kind: ExprKind::CallBuiltin {
+                builtin: Builtin::Println,
+                args: vec![Expr {
+                    ty: Type::String,
+                    span: dummy_span(),
+                    kind: ExprKind::String("hi".into()),
+                }],
+            },
+        };
+        assert!(matches!(
+            expr.kind,
+            ExprKind::CallBuiltin {
+                builtin: Builtin::Println,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn expr_call_builtin_assert_msg() {
+        let expr = Expr {
+            ty: Type::Void,
+            span: dummy_span(),
+            kind: ExprKind::CallBuiltin {
+                builtin: Builtin::AssertMsg,
+                args: vec![
+                    bool_expr(true),
+                    Expr {
+                        ty: Type::String,
+                        span: dummy_span(),
+                        kind: ExprKind::String("ok".into()),
+                    },
+                ],
+            },
+        };
+        assert!(matches!(
+            expr.kind,
+            ExprKind::CallBuiltin {
+                builtin: Builtin::AssertMsg,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn func_with_let_and_return() {
+        let body = Block {
+            stmts: vec![
+                Stmt {
+                    span: dummy_span(),
+                    kind: StmtKind::Let {
+                        local: LocalId(0),
+                        init: int_expr(42),
+                    },
+                },
+                Stmt {
+                    span: dummy_span(),
+                    kind: StmtKind::Return(Some(Expr {
+                        ty: Type::Int,
+                        span: dummy_span(),
+                        kind: ExprKind::Local(LocalId(0)),
+                    })),
+                },
+            ],
+        };
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("answer"),
+            locals: vec![Local {
+                name: Some(dummy_ident("x")),
+                ty: Type::Int,
+            }],
+            params_len: 0,
+            ret: Type::Int,
+            body,
+            span: dummy_span(),
+        };
+        assert_eq!(func.body.stmts.len(), 2);
+        assert!(matches!(func.body.stmts[0].kind, StmtKind::Let { .. }));
+        assert!(matches!(func.body.stmts[1].kind, StmtKind::Return(Some(_))));
+    }
+}

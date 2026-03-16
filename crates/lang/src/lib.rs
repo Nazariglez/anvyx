@@ -1,10 +1,13 @@
 mod ast;
 mod builtin;
 mod error;
+mod hir;
 mod lexer;
+mod lower;
 mod parser;
 mod span;
 mod typecheck;
+mod vm;
 
 pub(crate) const CORE_PRELUDE: &str = include_str!("../core/prelude.anv");
 
@@ -31,7 +34,17 @@ fn parse_source(
     Ok((ast, tokens))
 }
 
-pub fn generate_ast(program: &str, file_path: &str) -> Result<ast::Program, String> {
+fn analyze(
+    program: &str,
+    file_path: &str,
+) -> Result<
+    (
+        ast::Program,
+        typecheck::TypeChecker,
+        Vec<lexer::SpannedToken>,
+    ),
+    String,
+> {
     let (prelude_ast, _) = parse_source(CORE_PRELUDE, "<prelude>")
         .map_err(|_| "Failed to parse prelude (internal error)".to_string())?;
 
@@ -43,15 +56,48 @@ pub fn generate_ast(program: &str, file_path: &str) -> Result<ast::Program, Stri
         stmts: combined_stmts,
     };
 
-    if let Err(errors) = typecheck::check_program(&combined) {
-        error::report_typecheck_errors(program, file_path, &user_tokens, errors);
-        return Err("Failed to typecheck program".to_string());
-    }
+    let tcx = match typecheck::check_program(&combined) {
+        Ok(tcx) => tcx,
+        Err(errors) => {
+            error::report_typecheck_errors(program, file_path, &user_tokens, errors);
+            return Err("Failed to typecheck program".to_string());
+        }
+    };
 
-    Ok(combined)
+    Ok((combined, tcx, user_tokens))
 }
 
-pub fn run_program(program: &str, file_path: &str) -> Result<String, String> {
-    let _ast = generate_ast(program, file_path)?;
-    Ok("output".to_string())
+pub fn generate_ast(program: &str, file_path: &str) -> Result<ast::Program, String> {
+    let (ast, _, _) = analyze(program, file_path)?;
+    Ok(ast)
+}
+
+pub(crate) fn generate_hir(program: &str, file_path: &str) -> Result<hir::Program, String> {
+    let (ast, tcx, _) = analyze(program, file_path)?;
+    lower::lower_program(&ast, &tcx).map_err(|e| format!("Lowering error: {e}"))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Backend {
+    #[default]
+    Vm,
+    Transpiler,
+}
+
+impl Backend {
+    pub fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "vm" => Ok(Self::Vm),
+            "transpiler" => Ok(Self::Transpiler),
+            _ => Err(format!("Unknown backend: '{s}'. Expected 'vm' or 'transpiler'")),
+        }
+    }
+}
+
+pub fn run_program(program: &str, file_path: &str, backend: Backend) -> Result<String, String> {
+    let hir = generate_hir(program, file_path)?;
+    match backend {
+        Backend::Vm => vm::run(&hir),
+        Backend::Transpiler => Err("Transpiler backend is not yet implemented".to_string()),
+    }
 }
