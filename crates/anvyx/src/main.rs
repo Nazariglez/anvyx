@@ -1,3 +1,4 @@
+mod build;
 mod check;
 mod init;
 mod manifest;
@@ -36,7 +37,26 @@ fn main() -> Result<(), String> {
     let cli = Cli::parse();
     match cli.command {
         Command::Run { file, backend } => {
-            let path = manifest::resolve_entry(file.as_deref())?;
+            let manifest = manifest::parse_manifest()?;
+            let path = match file {
+                Some(f) => f,
+                None => {
+                    let m = manifest
+                        .as_ref()
+                        .ok_or("No file provided and no anvyx.toml found in the current directory")?;
+                    PathBuf::from(&m.project.entry)
+                }
+            };
+
+            if let Some(m) = &manifest {
+                if m.has_externs() {
+                    let cwd = std::env::current_dir()
+                        .map_err(|e| format!("Failed to get current directory: {e}"))?;
+                    build::generate_runner_crate(&cwd, m)?;
+                    eprintln!("Generated runner crate at build/runner/");
+                }
+            }
+
             run::cmd(&path, &backend)?;
         }
         Command::Check { file } => {
