@@ -183,14 +183,11 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                 let import = &node.node;
                 let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
 
-                // clone the stmts to release the borrow on type_checker before calling build_module_def_from_stmts
-                let module_stmts = type_checker.resolved_module_stmts.get(&path_key).cloned();
-                let Some(stmts) = module_stmts else {
+                let Some(module_def) = type_checker.resolved_module_defs.get(&path_key).cloned()
+                else {
                     // module wasn't resolved (std.*, unresolved error, etc.)
                     continue;
                 };
-
-                let module_def = build_module_def_from_stmts(&stmts, type_checker);
 
                 match &import.kind {
                     ImportKind::Module => {
@@ -207,13 +204,7 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                         }
                     }
                     ImportKind::Wildcard => {
-                        let names: Vec<Ident> = module_def
-                            .funcs
-                            .keys()
-                            .chain(module_def.struct_defs.keys())
-                            .chain(module_def.enum_defs.keys())
-                            .copied()
-                            .collect();
+                        let names: Vec<Ident> = module_def.all_public_names().collect();
                         for name in names {
                             inject_module_item(name, name, &module_def, type_checker);
                         }
@@ -226,7 +217,10 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
     }
 }
 
-fn build_module_def_from_stmts(stmts: &[StmtNode], type_checker: &TypeChecker) -> ModuleDef {
+pub(super) fn build_module_def_with_reexports(
+    stmts: &[StmtNode],
+    type_checker: &TypeChecker,
+) -> ModuleDef {
     let mut module_def = ModuleDef::default();
 
     for stmt in stmts {
@@ -307,11 +301,66 @@ fn build_module_def_from_stmts(stmts: &[StmtNode], type_checker: &TypeChecker) -
                     },
                 );
             }
+            Stmt::Import(node) => {
+                let import = &node.node;
+                if import.visibility != Visibility::Public {
+                    continue;
+                }
+
+                let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
+                let Some(source_def) = type_checker.resolved_module_defs.get(&path_key).cloned()
+                else {
+                    continue;
+                };
+
+                match &import.kind {
+                    ImportKind::Selective(items) => {
+                        for item in items {
+                            let bind_as = item.alias.unwrap_or(item.name);
+                            merge_symbol(item.name, bind_as, &source_def, &mut module_def);
+                        }
+                    }
+                    ImportKind::Wildcard => {
+                        for name in source_def.all_public_names().collect::<Vec<_>>() {
+                            merge_symbol(name, name, &source_def, &mut module_def);
+                        }
+                    }
+                    ImportKind::Module => {
+                        let binding = *import.path.last().expect("import path cannot be empty");
+                        module_def.re_exported_modules.insert(binding, source_def);
+                    }
+                    ImportKind::ModuleAs(alias) => {
+                        module_def.re_exported_modules.insert(*alias, source_def);
+                    }
+                }
+            }
             _ => {}
         }
     }
 
     module_def
+}
+
+fn merge_symbol(name: Ident, bind_as: Ident, source: &ModuleDef, target: &mut ModuleDef) {
+    if let Some(ty) = source.funcs.get(&name) {
+        target.funcs.insert(bind_as, ty.clone());
+        target.all_names.insert(bind_as);
+        if let Some(param_info) = source.func_param_info.get(&name) {
+            target.func_param_info.insert(bind_as, param_info.clone());
+        }
+        if let Some(tp) = source.func_type_params.get(&name) {
+            target.func_type_params.insert(bind_as, tp.clone());
+        }
+        if let Some(tmpl) = source.generic_func_templates.get(&name) {
+            target.generic_func_templates.insert(bind_as, tmpl.clone());
+        }
+    } else if let Some(struct_def) = source.struct_defs.get(&name) {
+        target.struct_defs.insert(bind_as, struct_def.clone());
+        target.all_names.insert(bind_as);
+    } else if let Some(enum_def) = source.enum_defs.get(&name) {
+        target.enum_defs.insert(bind_as, enum_def.clone());
+        target.all_names.insert(bind_as);
+    }
 }
 
 fn inject_module_item(
@@ -354,12 +403,10 @@ pub(super) fn check_stmt(
             let import = &node.node;
             let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
 
-            let module_stmts = type_checker.resolved_module_stmts.get(&path_key).cloned();
-            let Some(stmts) = module_stmts else {
+            let Some(module_def) = type_checker.resolved_module_defs.get(&path_key) else {
                 return;
             };
-
-            let module_def = build_module_def_from_stmts(&stmts, type_checker);
+            let module_def = module_def.clone();
             let module_name = *import.path.last().expect("import path cannot be empty");
 
             if let ImportKind::Selective(items) = &import.kind {

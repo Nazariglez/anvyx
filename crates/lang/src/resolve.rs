@@ -25,10 +25,18 @@ pub(crate) fn resolve_imports(
     project_root: &Path,
 ) -> Result<ResolveResult, Vec<ImportError>> {
     let mut modules = vec![];
-    let mut visited: HashSet<Vec<String>> = HashSet::new();
+    let mut resolving: HashSet<Vec<String>> = HashSet::new();
+    let mut resolved: HashSet<Vec<String>> = HashSet::new();
     let mut errors = vec![];
 
-    collect_imports(stmts, project_root, &mut visited, &mut modules, &mut errors);
+    collect_imports(
+        stmts,
+        project_root,
+        &mut resolving,
+        &mut resolved,
+        &mut modules,
+        &mut errors,
+    );
 
     if errors.is_empty() {
         Ok(ResolveResult { modules })
@@ -40,7 +48,8 @@ pub(crate) fn resolve_imports(
 fn collect_imports(
     stmts: &[StmtNode],
     project_root: &Path,
-    visited: &mut HashSet<Vec<String>>,
+    resolving: &mut HashSet<Vec<String>>,
+    resolved: &mut HashSet<Vec<String>>,
     modules: &mut Vec<ModuleSource>,
     errors: &mut Vec<ImportError>,
 ) {
@@ -56,12 +65,21 @@ fn collect_imports(
             continue;
         }
 
-        if visited.contains(&path_key) {
+        // already fully resolved, deduplicate
+        if resolved.contains(&path_key) {
             continue;
         }
 
-        // mark as visited before recursing to prevent circular imports
-        visited.insert(path_key.clone());
+        // currently on the DFS stack, this is a real cycle
+        if resolving.contains(&path_key) {
+            errors.push(ImportError::CircularImport {
+                path: path_key.join("."),
+                span: import_node.span,
+            });
+            continue;
+        }
+
+        resolving.insert(path_key.clone());
 
         let file_path = build_file_path(project_root, &path_key);
 
@@ -72,6 +90,7 @@ fn collect_imports(
                     path: file_path.display().to_string(),
                     span: import_node.span,
                 });
+                resolving.remove(&path_key);
                 continue;
             }
         };
@@ -83,12 +102,23 @@ fn collect_imports(
                 errors.push(ImportError::ParseError {
                     file_path: file_path_str,
                 });
+                resolving.remove(&path_key);
                 continue;
             }
         };
 
         // recursively resolve imports declared inside this module
-        collect_imports(&module_ast.stmts, project_root, visited, modules, errors);
+        collect_imports(
+            &module_ast.stmts,
+            project_root,
+            resolving,
+            resolved,
+            modules,
+            errors,
+        );
+
+        resolving.remove(&path_key);
+        resolved.insert(path_key.clone());
 
         modules.push(ModuleSource {
             path_key,

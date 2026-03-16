@@ -61,8 +61,8 @@ fn analyze(
     let (user_ast, user_tokens) = parse_source(program, file_path)?;
 
     // resolve local file imports
-    let (module_stmts_map, imported_stmts) = if file_path.starts_with('<') {
-        (std::collections::HashMap::new(), vec![])
+    let (module_list, imported_stmts) = if file_path.starts_with('<') {
+        (vec![], vec![])
     } else {
         let project_root = {
             let p = std::path::Path::new(file_path);
@@ -73,13 +73,13 @@ fn analyze(
 
         match resolve::resolve_imports(&user_ast.stmts, &project_root) {
             Ok(result) => {
-                let mut map = std::collections::HashMap::new();
                 let mut all_stmts = vec![];
+                let mut ordered = vec![];
                 for module in result.modules {
-                    map.insert(module.path_key, module.stmts.clone());
-                    all_stmts.extend(module.stmts);
+                    all_stmts.extend(module.stmts.clone());
+                    ordered.push((module.path_key, module.stmts));
                 }
-                (map, all_stmts)
+                (ordered, all_stmts)
             }
             Err(errors) => {
                 error::report_import_errors(program, file_path, &user_tokens, &errors);
@@ -95,7 +95,7 @@ fn analyze(
         stmts: combined_stmts,
     };
 
-    let tcx = match typecheck::check_program_with_modules(&combined, &module_stmts_map) {
+    let tcx = match typecheck::check_program_with_modules(&combined, &module_list) {
         Ok(tcx) => tcx,
         Err(errors) => {
             error::report_typecheck_errors(program, file_path, &user_tokens, errors);

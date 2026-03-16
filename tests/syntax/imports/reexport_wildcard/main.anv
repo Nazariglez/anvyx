@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: ok
+
+import facade { double, square };
+
+fn main() {
+    assert(double(3) == 6);
+    assert(square(4) == 16);
+    println("ok");
+}

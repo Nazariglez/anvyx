@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: Circular import
+
+import a;
+
+fn main() {}

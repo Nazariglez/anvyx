@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: ok
+
+import prelude { * };
+
+fn main() {
+    assert(add(3, 2) == 5);
+    assert(draw() == 1);
+    println("ok");
+}

@@ -1,0 +1,10 @@
+// @mode: run
+// @expect: success
+// @match: ok
+
+import facade { renamed };
+
+fn main() {
+    assert(renamed() == 99);
+    println("ok");
+}

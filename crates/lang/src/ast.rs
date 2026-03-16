@@ -433,6 +433,7 @@ pub struct ExternType {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Import {
+    pub visibility: Visibility,
     pub path: Vec<Ident>,
     pub kind: ImportKind,
 }

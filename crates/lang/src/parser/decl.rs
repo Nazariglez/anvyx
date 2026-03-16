@@ -80,13 +80,14 @@ pub(super) fn import_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
         semicolon.to(ast::ImportKind::Module),
     ));
 
-    import_kw
-        .ignore_then(import_path)
+    visibility()
+        .then_ignore(import_kw)
+        .then(import_path)
         .then(import_tail)
-        .map_with(|(path, kind), e| {
+        .map_with(|((visibility, path), kind), e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
-            let node = Spanned::new(ast::Import { path, kind }, span);
+            let node = Spanned::new(ast::Import { visibility, path, kind }, span);
             Spanned::new(ast::Stmt::Import(node), span)
         })
         .labelled("import declaration")

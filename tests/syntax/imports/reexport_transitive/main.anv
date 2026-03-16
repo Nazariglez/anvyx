@@ -1,0 +1,10 @@
+// @mode: run
+// @expect: success
+// @match: ok
+
+import middle { value };
+
+fn main() {
+    assert(value() == 42);
+    println("ok");
+}

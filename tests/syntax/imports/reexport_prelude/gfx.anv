@@ -1,0 +1,4 @@
+// @helper
+
+pub fn draw() -> int { 1 }
+pub fn clear() -> int { 0 }

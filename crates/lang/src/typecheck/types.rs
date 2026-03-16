@@ -96,6 +96,20 @@ pub(super) struct ModuleDef {
 
     //  all top-level declaration names (public and private) for private vs missing checks
     pub all_names: HashSet<Ident>,
+
+    /// sub modules re-exported via `pub import X;` or `pub import X as alias;`
+    pub re_exported_modules: HashMap<Ident, ModuleDef>,
+}
+
+impl ModuleDef {
+    /// iterator over all publicly visible symbols (funcs + structs + enums)
+    pub fn all_public_names(&self) -> impl Iterator<Item = Ident> + '_ {
+        self.funcs
+            .keys()
+            .chain(self.struct_defs.keys())
+            .chain(self.enum_defs.keys())
+            .copied()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -148,6 +162,9 @@ pub struct TypeChecker {
 
     /// Stmts from resolved imported modules, keyed by import path segments
     pub(super) resolved_module_stmts: HashMap<Vec<String>, Vec<StmtNode>>,
+
+    /// Pre-built ModuleDefs for each resolved module, keyed by import path segments
+    pub(super) resolved_module_defs: HashMap<Vec<String>, ModuleDef>,
 
     /// Module bindings for qualified access (binding_name -> module declarations)
     pub(super) module_defs: HashMap<Ident, ModuleDef>,
