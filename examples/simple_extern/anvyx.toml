@@ -1,0 +1,6 @@
+[project]
+name = "simple_extern"
+entry = "src/main.anv"
+
+[externs]
+my_extern = { path = "./my_extern" }

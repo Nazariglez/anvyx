@@ -48,16 +48,17 @@ fn main() -> Result<(), String> {
                 }
             };
 
-            if let Some(m) = &manifest {
-                if m.has_externs() {
-                    let cwd = std::env::current_dir()
-                        .map_err(|e| format!("Failed to get current directory: {e}"))?;
-                    build::generate_runner_crate(&cwd, m)?;
-                    eprintln!("Generated runner crate at build/runner/");
-                }
+            let has_externs = manifest.as_ref().is_some_and(|m| m.has_externs());
+            if has_externs {
+                let cwd = std::env::current_dir()
+                    .map_err(|e| format!("Failed to get current directory: {e}"))?;
+                let m = manifest.as_ref().unwrap();
+                let runner_dir = build::generate_runner_crate(&cwd, m)?;
+                build::build_runner(&runner_dir)?;
+                build::execute_runner(&cwd, &path, &backend)?;
+            } else {
+                run::cmd(&path, &backend)?;
             }
-
-            run::cmd(&path, &backend)?;
         }
         Command::Check { file } => {
             let path = manifest::resolve_entry(file.as_deref())?;

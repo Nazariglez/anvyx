@@ -1,7 +1,19 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process;
 
 use crate::manifest::Manifest;
+
+const ANVYX_CRATE_DIR: &str = env!("CARGO_MANIFEST_DIR");
+
+fn lang_crate_path() -> String {
+    Path::new(ANVYX_CRATE_DIR)
+        .parent()
+        .unwrap()
+        .join("lang")
+        .to_string_lossy()
+        .into_owned()
+}
 
 pub fn generate_runner_crate(project_root: &Path, manifest: &Manifest) -> Result<PathBuf, String> {
     let runner_dir = project_root.join("build/runner");
@@ -25,10 +37,45 @@ pub fn runner_binary_path(project_root: &Path) -> PathBuf {
     project_root.join("build/runner/target/release/anvyx-runner")
 }
 
+pub fn execute_runner(project_root: &Path, entry_path: &Path, backend: &str) -> Result<(), String> {
+    let binary = runner_binary_path(project_root);
+    if !binary.exists() {
+        return Err(format!("Runner binary not found at {}", binary.display()));
+    }
+
+    let status = process::Command::new(&binary)
+        .arg(entry_path)
+        .arg(backend)
+        .status()
+        .map_err(|e| format!("Failed to execute runner binary: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        let code = status.code().unwrap_or(1);
+        Err(format!("Runner exited with code {code}"))
+    }
+}
+
+pub fn build_runner(runner_dir: &Path) -> Result<(), String> {
+    let manifest_path = runner_dir.join("Cargo.toml");
+    let output = process::Command::new("cargo")
+        .args(["build", "--release", "--manifest-path"])
+        .arg(&manifest_path)
+        .output()
+        .map_err(|e| format!("Failed to run cargo build: {e}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("Failed to build runner crate:\n{stderr}"))
+    }
+}
+
 fn generate_cargo_toml(project_root: &Path, manifest: &Manifest) -> String {
     // TODO: use `anvyx-lang = "x.y.z"` once published to crates.io
-    // for now, compute the path to crates/lang relative to build/runner/
-    let lang_path = resolve_relative_path(project_root, "crates/lang");
+    let lang_path = lang_crate_path();
 
     let mut deps = format!("anvyx-lang = {{ path = \"{lang_path}\" }}\n");
 
@@ -42,7 +89,7 @@ fn generate_cargo_toml(project_root: &Path, manifest: &Manifest) -> String {
     }
 
     format!(
-        "[package]\nname = \"anvyx-runner\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\n{deps}"
+        "[package]\nname = \"anvyx-runner\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n\n[dependencies]\n{deps}"
     )
 }
 
@@ -160,6 +207,7 @@ mod tests {
 
         assert!(output.contains("[package]"));
         assert!(output.contains("name = \"anvyx-runner\""));
+        assert!(output.contains("[workspace]"));
         assert!(output.contains("anvyx-lang"));
         assert!(!output.contains("engine"));
         assert!(!output.contains("audio"));
@@ -221,11 +269,51 @@ mod tests {
 
         let cargo_content = fs::read_to_string(runner_dir.join("Cargo.toml")).unwrap();
         assert!(cargo_content.contains("anvyx-runner"));
+        assert!(cargo_content.contains("[workspace]"));
         assert!(cargo_content.contains("engine"));
 
         let main_content = fs::read_to_string(runner_dir.join("src/main.rs")).unwrap();
         assert!(main_content.contains("run_program_with_externs"));
         assert!(main_content.contains("engine::anvyx_externs"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn build_runner_invalid_crate_returns_error() {
+        let tmp = std::env::temp_dir().join(format!("anvyx-build-err-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        // invalid cargo.toml, missing [package] section
+        fs::write(tmp.join("Cargo.toml"), "[invalid_section]\nfoo = \"bar\"\n").unwrap();
+
+        let result = build_runner(&tmp);
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("Failed to build runner crate"),
+            "unexpected error: {msg}"
+        );
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn execute_runner_missing_binary_returns_error() {
+        let tmp = std::env::temp_dir().join(format!("anvyx-exec-err-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        let result = execute_runner(&tmp, Path::new("src/main.anv"), "vm");
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("Runner binary not found"),
+            "unexpected error: {msg}"
+        );
 
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -249,13 +337,13 @@ mod tests {
         assert!(manifest.has_externs());
         assert_eq!(manifest.externs.len(), 2);
 
-        let tmp =
-            std::env::temp_dir().join(format!("anvyx-integration-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-integration-{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);
 
         let runner_dir = generate_runner_crate(&tmp, &manifest).unwrap();
 
         let cargo_content = fs::read_to_string(runner_dir.join("Cargo.toml")).unwrap();
+        assert!(cargo_content.contains("[workspace]"));
         assert!(cargo_content.contains("engine"));
         assert!(cargo_content.contains("my_externs/engine"));
         assert!(cargo_content.contains("audio"));
