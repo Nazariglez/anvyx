@@ -257,4 +257,9 @@ pub enum TypeErrKind {
         module: Ident,
         member: Ident,
     },
+
+    PrivateModuleMember {
+        module: Ident,
+        member: Ident,
+    },
 }

@@ -2,4 +2,4 @@
 
 import b;
 
-fn from_a() -> int { 1 }
+pub fn from_a() -> int { 1 }

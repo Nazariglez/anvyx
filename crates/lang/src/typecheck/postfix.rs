@@ -378,13 +378,18 @@ fn try_type_name_dispatch(
                 return Some((ty, 2, op_safe));
             } else {
                 // module.MemberName without a call
-                errors.push(TypeErr::new(
-                    field_node.span,
+                let err_kind = if module_def.all_names.contains(&member_name) {
+                    TypeErrKind::PrivateModuleMember {
+                        module: *type_name,
+                        member: member_name,
+                    }
+                } else {
                     TypeErrKind::UnknownModuleMember {
                         module: *type_name,
                         member: member_name,
-                    },
-                ));
+                    }
+                };
+                errors.push(TypeErr::new(field_node.span, err_kind));
                 return Some((Type::Infer, 1, op_safe));
             }
         }

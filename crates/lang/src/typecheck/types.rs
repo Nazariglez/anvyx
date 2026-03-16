@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         BlockNode, CallNode, ExprId, FieldAccessNode, FuncNode, Ident, IndexNode, MethodReceiver,
-        Mutability, Param, StructField, StmtNode, Type, TypeParam, TypeVarId, VariantKind,
+        Mutability, Param, StmtNode, StructField, Type, TypeParam, TypeVarId, VariantKind,
     },
     span::Span,
 };
@@ -93,6 +93,9 @@ pub(super) struct ModuleDef {
     pub enum_defs: HashMap<Ident, EnumDef>,
     pub func_type_params: HashMap<Ident, Vec<TypeParam>>,
     pub generic_func_templates: HashMap<Ident, FuncNode>,
+
+    //  all top-level declaration names (public and private) for private vs missing checks
+    pub all_names: HashSet<Ident>,
 }
 
 #[derive(Debug, Default)]

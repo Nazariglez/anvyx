@@ -1,5 +1,5 @@
 // @helper
 
-fn abs(n: int) -> int {
+pub fn abs(n: int) -> int {
     if n < 0 { -n } else { n }
 }

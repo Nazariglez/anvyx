@@ -502,6 +502,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("Unknown member '{member}' in module '{module}'"),
             format!("module '{module}' does not have a member named '{member}'"),
         ),
+        TypeErrKind::PrivateModuleMember { module, member } => (
+            format!("'{member}' is private in module '{module}'"),
+            format!("'{member}' exists in module '{module}' but is not marked `pub`"),
+        ),
     }
 }
 

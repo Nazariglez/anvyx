@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         ArrayLen, BlockNode, ExprId, ExprKind, ExprNode, Ident, ImportKind, Mutability, ReturnNode,
-        Stmt, StmtNode, Type,
+        Stmt, StmtNode, Type, Visibility,
     },
     span::Span,
 };
@@ -233,6 +233,10 @@ fn build_module_def_from_stmts(stmts: &[StmtNode], type_checker: &TypeChecker) -
         match &stmt.node {
             Stmt::Func(node) => {
                 let func = &node.node;
+                module_def.all_names.insert(func.name);
+                if func.visibility != Visibility::Public {
+                    continue;
+                }
                 let raw_ty = type_from_fn(func);
                 let func_ty = type_checker.resolve_type(&raw_ty);
                 module_def.funcs.insert(func.name, func_ty);
@@ -252,6 +256,10 @@ fn build_module_def_from_stmts(stmts: &[StmtNode], type_checker: &TypeChecker) -
             }
             Stmt::Struct(node) => {
                 let decl = &node.node;
+                module_def.all_names.insert(decl.name);
+                if decl.visibility != Visibility::Public {
+                    continue;
+                }
                 let methods = decl
                     .methods
                     .iter()
@@ -279,6 +287,10 @@ fn build_module_def_from_stmts(stmts: &[StmtNode], type_checker: &TypeChecker) -
             }
             Stmt::Enum(node) => {
                 let decl = &node.node;
+                module_def.all_names.insert(decl.name);
+                if decl.visibility != Visibility::Public {
+                    continue;
+                }
                 let variants = decl
                     .variants
                     .iter()
@@ -352,17 +364,22 @@ pub(super) fn check_stmt(
 
             if let ImportKind::Selective(items) = &import.kind {
                 for item in items {
-                    let exists = module_def.funcs.contains_key(&item.name)
+                    let is_public = module_def.funcs.contains_key(&item.name)
                         || module_def.struct_defs.contains_key(&item.name)
                         || module_def.enum_defs.contains_key(&item.name);
-                    if !exists {
-                        errors.push(TypeErr::new(
-                            node.span,
+                    if !is_public {
+                        let err_kind = if module_def.all_names.contains(&item.name) {
+                            TypeErrKind::PrivateModuleMember {
+                                module: module_name,
+                                member: item.name,
+                            }
+                        } else {
                             TypeErrKind::UnknownModuleMember {
                                 module: module_name,
                                 member: item.name,
-                            },
-                        ));
+                            }
+                        };
+                        errors.push(TypeErr::new(node.span, err_kind));
                     }
                 }
             }

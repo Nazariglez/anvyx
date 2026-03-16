@@ -131,55 +131,65 @@ pub(super) fn extern_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
         .boxed()
 }
 
+fn visibility<'src>() -> BoxedParser<'src, ast::Visibility> {
+    select! {
+        (Token::Keyword(Keyword::Pub), _) => ast::Visibility::Public,
+    }
+    .or_not()
+    .map(|v| v.unwrap_or(ast::Visibility::Private))
+    .boxed()
+}
+
 pub(super) fn function<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::FuncNode> {
     let tail_expr = expression(stmt.clone());
-    select! {
-        (Token::Keyword(Keyword::Fn), _) => (),
-    }
-    .ignore_then(identifier())
-    .then(type_params())
-    .then(params())
-    .then(return_type())
-    .then(block_stmt(stmt, tail_expr))
-    .map_with(|((((name, type_params), params), ret), body), e| {
-        let s = e.span();
-        let type_param_map: HashMap<ast::Ident, ast::TypeVarId> =
-            type_params.iter().map(|tp| (tp.name, tp.id)).collect();
+    visibility()
+        .then_ignore(select! {
+            (Token::Keyword(Keyword::Fn), _) => (),
+        })
+        .then(identifier())
+        .then(type_params())
+        .then(params())
+        .then(return_type())
+        .then(block_stmt(stmt, tail_expr))
+        .map_with(|(((((vis, name), type_params), params), ret), body), e| {
+            let s = e.span();
+            let type_param_map: HashMap<ast::Ident, ast::TypeVarId> =
+                type_params.iter().map(|tp| (tp.name, tp.id)).collect();
 
-        let resolved_params = params
-            .into_iter()
-            .map(|p| {
-                let ty = resolve_type_params(&p.ty, &type_param_map);
-                ast::Param {
-                    mutability: p.mutability,
-                    name: p.name,
-                    ty,
-                }
-            })
-            .collect();
+            let resolved_params = params
+                .into_iter()
+                .map(|p| {
+                    let ty = resolve_type_params(&p.ty, &type_param_map);
+                    ast::Param {
+                        mutability: p.mutability,
+                        name: p.name,
+                        ty,
+                    }
+                })
+                .collect();
 
-        let resolved_ret = match ret {
-            Some(ty) => resolve_type_params(&ty, &type_param_map),
-            None => ast::Type::Void,
-        };
+            let resolved_ret = match ret {
+                Some(ty) => resolve_type_params(&ty, &type_param_map),
+                None => ast::Type::Void,
+            };
 
-        Spanned::new(
-            ast::Func {
-                name,
-                visibility: ast::Visibility::Private,
-                type_params,
-                params: resolved_params,
-                ret: resolved_ret,
-                body,
-            },
-            Span::new(s.start, s.end),
-        )
-    })
-    .labelled("function")
-    .as_context()
-    .boxed()
+            Spanned::new(
+                ast::Func {
+                    name,
+                    visibility: vis,
+                    type_params,
+                    params: resolved_params,
+                    ret: resolved_ret,
+                    body,
+                },
+                Span::new(s.start, s.end),
+            )
+        })
+        .labelled("function")
+        .as_context()
+        .boxed()
 }
 
 fn struct_field<'src>() -> BoxedParser<'src, ast::StructField> {
@@ -326,12 +336,13 @@ fn struct_member<'src>(
 pub(super) fn struct_declaration<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::StructDeclNode> {
-    select! {
-        (Token::Keyword(Keyword::Struct), _) => (),
-    }
-    .ignore_then(identifier())
-    .then(type_params())
-    .then(
+    visibility()
+        .then_ignore(select! {
+            (Token::Keyword(Keyword::Struct), _) => (),
+        })
+        .then(identifier())
+        .then(type_params())
+        .then(
         select! {
             (Token::Open(Delimiter::Brace), _) => (),
         }
@@ -345,7 +356,7 @@ pub(super) fn struct_declaration<'src>(
             (Token::Close(Delimiter::Brace), _) => (),
         }),
     )
-    .map_with(|((name, type_params), members), e| {
+    .map_with(|(((vis, name), type_params), members), e| {
         let s = e.span();
 
         let struct_type_param_map: HashMap<ast::Ident, ast::TypeVarId> =
@@ -410,6 +421,7 @@ pub(super) fn struct_declaration<'src>(
         Spanned::new(
             ast::StructDecl {
                 name,
+                visibility: vis,
                 type_params,
                 fields,
                 methods,
@@ -462,8 +474,9 @@ fn enum_variant<'src>() -> BoxedParser<'src, ast::EnumVariant> {
 }
 
 pub(super) fn enum_declaration<'src>() -> BoxedParser<'src, ast::EnumDeclNode> {
-    select! { (Token::Keyword(Keyword::Enum), _) => () }
-        .ignore_then(identifier())
+    visibility()
+        .then_ignore(select! { (Token::Keyword(Keyword::Enum), _) => () })
+        .then(identifier())
         .then(type_params())
         .then(
             select! { (Token::Open(Delimiter::Brace), _) => () }
@@ -475,7 +488,7 @@ pub(super) fn enum_declaration<'src>() -> BoxedParser<'src, ast::EnumDeclNode> {
                 )
                 .then_ignore(select! { (Token::Close(Delimiter::Brace), _) => () }),
         )
-        .map_with(|((name, type_params), variants), e| {
+        .map_with(|(((vis, name), type_params), variants), e| {
             let s = e.span();
 
             let type_param_map: HashMap<ast::Ident, ast::TypeVarId> =
@@ -514,6 +527,7 @@ pub(super) fn enum_declaration<'src>() -> BoxedParser<'src, ast::EnumDeclNode> {
             Spanned::new(
                 ast::EnumDecl {
                     name,
+                    visibility: vis,
                     type_params,
                     variants: resolved_variants,
                 },

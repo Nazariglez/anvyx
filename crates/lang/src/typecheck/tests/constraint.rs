@@ -6,7 +6,7 @@ use super::helpers::{
 };
 use crate::ast::{
     BinaryOp, EnumDecl, EnumDeclNode, EnumVariant, MethodReceiver, Stmt, StmtNode, Type, TypeParam,
-    TypeVarId, VariantKind,
+    TypeVarId, VariantKind, Visibility,
 };
 use crate::typecheck::error::TypeErrKind;
 
@@ -941,6 +941,7 @@ fn test_constrain_generic_enum_type_arg_assignable() {
         node: Stmt::Enum(EnumDeclNode {
             node: EnumDecl {
                 name: dummy_ident("Box"),
+                visibility: Visibility::Public,
                 type_params: vec![TypeParam {
                     name: dummy_ident("T"),
                     id: t_id,
@@ -983,6 +984,7 @@ fn test_constrain_generic_enum_type_arg_mismatch_errors() {
         node: Stmt::Enum(EnumDeclNode {
             node: EnumDecl {
                 name: dummy_ident("Box"),
+                visibility: Visibility::Public,
                 type_params: vec![TypeParam {
                     name: dummy_ident("T"),
                     id: t_id,

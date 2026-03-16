@@ -365,13 +365,18 @@ pub(super) fn check_module_func_call(
     errors: &mut Vec<TypeErr>,
 ) -> Type {
     let Some(func_ty) = module_def.funcs.get(&func_name).cloned() else {
-        errors.push(TypeErr::new(
-            call.span,
+        let err_kind = if module_def.all_names.contains(&func_name) {
+            TypeErrKind::PrivateModuleMember {
+                module: module_name,
+                member: func_name,
+            }
+        } else {
             TypeErrKind::UnknownModuleMember {
                 module: module_name,
                 member: func_name,
-            },
-        ));
+            }
+        };
+        errors.push(TypeErr::new(call.span, err_kind));
         return Type::Infer;
     };
 

@@ -601,6 +601,7 @@ pub(super) fn generic_struct_decl(
         node: Stmt::Struct(StructDeclNode {
             node: StructDecl {
                 name: dummy_ident(name),
+                visibility: Visibility::Public,
                 type_params,
                 fields: struct_fields,
                 methods,
@@ -623,6 +624,7 @@ pub(super) fn enum_decl(name: &str, variants: Vec<(&str, VariantKind)>) -> StmtN
         node: Stmt::Enum(EnumDeclNode {
             node: EnumDecl {
                 name: dummy_ident(name),
+                visibility: Visibility::Public,
                 type_params: vec![],
                 variants: enum_variants,
             },

@@ -648,6 +648,7 @@ pub struct StructField {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDecl {
     pub name: Ident,
+    pub visibility: Visibility,
     pub type_params: Vec<TypeParam>,
     pub fields: Vec<StructField>,
     pub methods: Vec<Method>,
@@ -694,6 +695,7 @@ pub struct EnumVariant {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDecl {
     pub name: Ident,
+    pub visibility: Visibility,
     pub type_params: Vec<TypeParam>,
     pub variants: Vec<EnumVariant>,
 }

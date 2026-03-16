@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: is private
+
+import helpers;
+
+fn main() {
+    let result = helpers.secret(1);
+}

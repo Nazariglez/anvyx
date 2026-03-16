@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+import helpers { add };
+
+fn main() {
+    let result = add(1, 2);
+}

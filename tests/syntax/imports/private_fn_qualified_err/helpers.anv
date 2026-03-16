@@ -1,0 +1,3 @@
+// @helper: helper module for private_fn_qualified_err test
+
+fn secret(x: int) -> int { x * 42 }
