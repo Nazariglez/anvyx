@@ -50,10 +50,10 @@ fn if_with_ident_cond_parses() {
     let ast::Stmt::Func(func_node) = &prog.stmts[0].node else {
         panic!("expected Func");
     };
-    let body_stmts = &func_node.node.body.node.stmts;
-    assert_eq!(body_stmts.len(), 1);
-    let ast::Stmt::Expr(expr_node) = &body_stmts[0].node else {
-        panic!("expected Expr stmt");
+    let body = &func_node.node.body.node;
+    assert_eq!(body.stmts.len(), 0);
+    let Some(expr_node) = &body.tail else {
+        panic!("expected tail expr");
     };
     let ast::ExprKind::If(if_node) = &expr_node.node.kind else {
         panic!("expected If expr");

@@ -1,6 +1,6 @@
 use crate::{
     ast,
-    lexer::{Delimiter, Keyword, Op, Token},
+    lexer::{Keyword, Op, Token},
     span::{Span, Spanned},
 };
 use chumsky::prelude::*;
@@ -18,12 +18,10 @@ pub(super) fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
         let func = function(stmt.clone());
         let bind = binding(stmt.clone());
         let ret = return_stmt(stmt.clone());
-        let while_s = while_stmt(stmt.clone());
-        let for_s = for_stmt(stmt.clone());
+        let while_s = while_stmt(stmt.clone(), expr.clone());
+        let for_s = for_stmt(stmt.clone(), expr.clone());
         let break_s = break_stmt();
         let continue_s = continue_stmt();
-
-        let at_block_end = select! { (Token::Close(Delimiter::Brace), _) => () }.rewind();
 
         let at_stmt_start = select! {
             (Token::Keyword(Keyword::Let), _) => (),
@@ -53,7 +51,6 @@ pub(super) fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
         let expr_stmt = expr
             .then_ignore(
                 select! { (Token::Semicolon, _) => () }
-                    .or(at_block_end)
                     .or(at_stmt_start)
                     .or(at_assign_start),
             )
@@ -121,14 +118,17 @@ fn binding<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'src,
         .boxed()
 }
 
-fn while_stmt<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'src, ast::StmtNode> {
+fn while_stmt<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::StmtNode> {
     let cond_expr = cond_expression();
 
     select! {
         (Token::Keyword(Keyword::While), _) => (),
     }
     .ignore_then(cond_expr)
-    .then(block_stmt(stmt))
+    .then(block_stmt(stmt, expr))
     .map_with(|(cond, body), e| {
         let s = e.span();
         let span = Span::new(s.start, s.end);
@@ -162,7 +162,10 @@ fn contextual_step<'src>(
     .boxed()
 }
 
-fn for_stmt<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'src, ast::StmtNode> {
+fn for_stmt<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::StmtNode> {
     select! {
         (Token::Keyword(Keyword::For), _) => (),
     }
@@ -173,7 +176,7 @@ fn for_stmt<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'src
     .then(contextual_rev())
     .then(expression(stmt.clone()))
     .then(contextual_step(stmt.clone()))
-    .then(block_stmt(stmt))
+    .then(block_stmt(stmt, expr))
     .map_with(|((((pat, reversed), iterable), step), body), e| {
         let s = e.span();
         let span = Span::new(s.start, s.end);

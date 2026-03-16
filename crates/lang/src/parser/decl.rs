@@ -8,6 +8,7 @@ use crate::{
 use chumsky::{error::Rich, prelude::*};
 
 use super::common::{block_stmt, identifier, param, params, return_type};
+use super::expr::expression;
 use super::types::type_ident;
 use super::{AnvParser, BoxedParser};
 
@@ -40,6 +41,7 @@ fn type_params<'src>() -> BoxedParser<'src, Vec<ast::TypeParam>> {
 pub(super) fn function<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::FuncNode> {
+    let tail_expr = expression(stmt.clone());
     select! {
         (Token::Keyword(Keyword::Fn), _) => (),
     }
@@ -47,7 +49,7 @@ pub(super) fn function<'src>(
     .then(type_params())
     .then(params())
     .then(return_type())
-    .then(block_stmt(stmt))
+    .then(block_stmt(stmt, tail_expr))
     .map_with(|((((name, type_params), params), ret), body), e| {
         let s = e.span();
         let type_param_map: HashMap<ast::Ident, ast::TypeVarId> =
@@ -107,6 +109,7 @@ enum StructMember {
 fn struct_method<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::Method> {
+    let tail_expr = expression(stmt.clone());
     select! {
         (Token::Keyword(Keyword::Fn), _) => (),
     }
@@ -114,7 +117,7 @@ fn struct_method<'src>(
     .then(type_params())
     .then(method_params())
     .then(return_type())
-    .then(block_stmt(stmt))
+    .then(block_stmt(stmt, tail_expr))
     .map_with(
         |((((name, method_type_params), (receiver, params)), ret), body), e| {
             let s = e.span();

@@ -41,7 +41,7 @@ pub fn check_program(program: &Program) -> Result<TypeChecker, Vec<TypeErr>> {
 
     // first pass we collect the types from the ast
     // we don't need the type of the file scope blocks
-    let _ = check_block_stmts(&program.stmts, &mut type_checker, &mut errors);
+    let _ = check_block_stmts(&program.stmts, None, &mut type_checker, &mut errors);
 
     if !errors.is_empty() {
         return Err(errors);

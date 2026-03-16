@@ -420,6 +420,7 @@ pub struct Param {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
     pub stmts: Vec<StmtNode>,
+    pub tail: Option<Box<ExprNode>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

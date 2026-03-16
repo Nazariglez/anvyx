@@ -2,8 +2,8 @@ use crate::{
     ast::{
         ArrayFill, ArrayFillNode, ArrayLiteral, ArrayLiteralNode, Assign, AssignNode, AssignOp,
         Binary, BinaryNode, BinaryOp, Binding, BindingNode, Block, BlockNode, Call, CallNode, Cast,
-        CastNode, Expr, ExprId, ExprKind, ExprNode, FieldAccess, FieldAccessNode, Func, FuncNode,
-        EnumDecl, EnumDeclNode, EnumVariant, Ident, Index, IndexNode, Lit, MapLiteral,
+        CastNode, EnumDecl, EnumDeclNode, EnumVariant, Expr, ExprId, ExprKind, ExprNode,
+        FieldAccess, FieldAccessNode, Func, FuncNode, Ident, Index, IndexNode, Lit, MapLiteral,
         MapLiteralNode, Method, MethodReceiver, Mutability, Param, Pattern, PatternNode, Program,
         Range, RangeNode, Return, ReturnNode, Stmt, StmtNode, StringPart, StructDecl,
         StructDeclNode, StructField, StructLiteral, StructLiteralNode, Type, TypeParam, TypeVarId,
@@ -195,11 +195,27 @@ pub(super) fn assign_expr(target: ExprNode, op: AssignOp, value: ExprNode) -> Ex
     }
 }
 
-pub(super) fn block_expr(stmts: Vec<StmtNode>) -> ExprNode {
+fn split_body(mut stmts: Vec<StmtNode>) -> (Vec<StmtNode>, Option<Box<ExprNode>>) {
+    match stmts.last().map(|s| &s.node) {
+        Some(Stmt::Expr(_)) => {
+            let last = stmts.pop().unwrap();
+            let Stmt::Expr(tail) = last.node else {
+                unreachable!()
+            };
+            (stmts, Some(Box::new(tail)))
+        }
+        _ => (stmts, None),
+    }
+}
+
+pub(super) fn block_expr(stmts: Vec<StmtNode>, tail: Option<ExprNode>) -> ExprNode {
     ExprNode {
         node: Expr::new(
             ExprKind::Block(BlockNode {
-                node: Block { stmts },
+                node: Block {
+                    stmts,
+                    tail: tail.map(Box::new),
+                },
                 span: dummy_span(),
             }),
             next_expr_id(),
@@ -327,6 +343,7 @@ pub(super) fn fn_decl(
     ret: Type,
     body: Vec<StmtNode>,
 ) -> StmtNode {
+    let (stmts, tail) = split_body(body);
     StmtNode {
         node: Stmt::Func(FuncNode {
             node: Func {
@@ -343,7 +360,7 @@ pub(super) fn fn_decl(
                     .collect(),
                 ret,
                 body: BlockNode {
-                    node: Block { stmts: body },
+                    node: Block { stmts, tail },
                     span: dummy_span(),
                 },
             },
@@ -360,6 +377,7 @@ pub(super) fn generic_fn_decl(
     ret: Type,
     body: Vec<StmtNode>,
 ) -> StmtNode {
+    let (stmts, tail) = split_body(body);
     StmtNode {
         node: Stmt::Func(FuncNode {
             node: Func {
@@ -376,7 +394,7 @@ pub(super) fn generic_fn_decl(
                     .collect(),
                 ret,
                 body: BlockNode {
-                    node: Block { stmts: body },
+                    node: Block { stmts, tail },
                     span: dummy_span(),
                 },
             },
@@ -393,12 +411,10 @@ pub(super) fn func_decl(
     body: Vec<StmtNode>,
     _implicit_ret_ty: Type,
 ) -> StmtNode {
-    let body_stmts = if body.is_empty() && !ret.is_void() {
-        vec![expr_stmt(lit_int(0))]
-    } else if body.is_empty() {
-        vec![]
+    let (stmts, tail) = if body.is_empty() && !ret.is_void() {
+        (vec![], Some(Box::new(lit_int(0))))
     } else {
-        body
+        split_body(body)
     };
 
     StmtNode {
@@ -417,7 +433,7 @@ pub(super) fn func_decl(
                     .collect(),
                 ret,
                 body: BlockNode {
-                    node: Block { stmts: body_stmts },
+                    node: Block { stmts, tail },
                     span: dummy_span(),
                 },
             },
@@ -518,6 +534,7 @@ pub(super) fn method(
             mutability: Mutability::Immutable,
         })
         .collect();
+    let (stmts, tail) = split_body(body);
     Method {
         name: dummy_ident(name),
         visibility: Visibility::Private,
@@ -526,7 +543,7 @@ pub(super) fn method(
         params: param_list,
         ret,
         body: BlockNode {
-            node: Block { stmts: body },
+            node: Block { stmts, tail },
             span: dummy_span(),
         },
     }
@@ -548,6 +565,7 @@ pub(super) fn generic_method(
             mutability: Mutability::Immutable,
         })
         .collect();
+    let (stmts, tail) = split_body(body);
     Method {
         name: dummy_ident(name),
         visibility: Visibility::Private,
@@ -556,7 +574,7 @@ pub(super) fn generic_method(
         params: param_list,
         ret,
         body: BlockNode {
-            node: Block { stmts: body },
+            node: Block { stmts, tail },
             span: dummy_span(),
         },
     }
@@ -632,6 +650,7 @@ pub(super) fn fn_decl_var_params(
             },
         })
         .collect();
+    let (stmts, tail) = split_body(body);
     StmtNode {
         node: Stmt::Func(FuncNode {
             node: Func {
@@ -641,7 +660,7 @@ pub(super) fn fn_decl_var_params(
                 params: param_list,
                 ret,
                 body: BlockNode {
-                    node: Block { stmts: body },
+                    node: Block { stmts, tail },
                     span: dummy_span(),
                 },
             },

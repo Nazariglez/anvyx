@@ -40,7 +40,10 @@ pub(super) fn cond_expression<'src>() -> BoxedParser<'src, ast::ExprNode> {
     .boxed()
 }
 
-fn if_expr<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'src, ast::ExprNode> {
+fn if_expr<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
     recursive(|if_parser| {
         let cond_expr = cond_expression();
 
@@ -48,14 +51,13 @@ fn if_expr<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'src,
             (Token::Keyword(Keyword::Else), _) => (),
         }
         .ignore_then(choice((
-            // else-if wraps the nested if in a block
-            if_parser.map_with(|if_expr: ast::ExprNode, _| {
-                let span = if_expr.span;
-                let stmt = Spanned::new(ast::Stmt::Expr(if_expr), span);
-                Spanned::new(ast::Block { stmts: vec![stmt] }, span)
+            // else-if wraps the nested if in a block with the if as the tail
+            if_parser.map_with(|nested_if: ast::ExprNode, _| {
+                let span = nested_if.span;
+                Spanned::new(ast::Block { stmts: vec![], tail: Some(Box::new(nested_if)) }, span)
             }),
             // else { ... }
-            block_stmt(stmt.clone()),
+            block_stmt(stmt.clone(), expr.clone()),
         )))
         .or_not();
 
@@ -63,7 +65,7 @@ fn if_expr<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'src,
             (Token::Keyword(Keyword::If), _) => (),
         }
         .ignore_then(cond_expr)
-        .then(block_stmt(stmt.clone()))
+        .then(block_stmt(stmt.clone(), expr.clone()))
         .then(else_branch)
         .map_with(|((cond, then_block), else_block), e| {
             let s = e.span();
@@ -96,11 +98,11 @@ fn match_expr<'src>(
     let fat_arrow = select! { (Token::Op(Op::FatArrow), _) => () };
 
     let arm_body = choice((
-        block_stmt(stmt.clone()).map_with(|block_node, e| {
+        block_stmt(stmt.clone(), expr.clone()).map_with(|block_node, e| {
             let span = block_node.span;
             let id = e.state().new_expr_id();
-            let expr = ast::Expr::new(ast::ExprKind::Block(block_node), id);
-            Spanned::new(expr, span)
+            let arm_expr = ast::Expr::new(ast::ExprKind::Block(block_node), id);
+            Spanned::new(arm_expr, span)
         }),
         expr.clone(),
     ));
@@ -340,13 +342,13 @@ fn atom_expr<'src>(
             let expr = ast::Expr::new(ast::ExprKind::Ident(ident), expr_id);
             Spanned::new(expr, span)
         }),
-        if_expr(stmt.clone()),
+        if_expr(stmt.clone(), expr.clone()),
         match_expr(stmt.clone(), expr.clone()),
-        block_stmt(stmt).map_with(|block_node, e| {
+        block_stmt(stmt, expr.clone()).map_with(|block_node, e| {
             let span = block_node.span;
             let id = e.state().new_expr_id();
-            let expr = ast::Expr::new(ast::ExprKind::Block(block_node), id);
-            Spanned::new(expr, span)
+            let block_expr = ast::Expr::new(ast::ExprKind::Block(block_node), id);
+            Spanned::new(block_expr, span)
         }),
         grouped_or_tuple_expr(expr),
     ))
@@ -857,18 +859,18 @@ fn ternary_expr<'src>(
             |cond, (then_expr, else_expr), e| {
                 let span = Span::new(cond.span.start, else_expr.span.end);
 
-                let then_stmt = Spanned::new(ast::Stmt::Expr(then_expr.clone()), then_expr.span);
                 let then_block = Spanned::new(
                     ast::Block {
-                        stmts: vec![then_stmt],
+                        stmts: vec![],
+                        tail: Some(Box::new(then_expr.clone())),
                     },
                     then_expr.span,
                 );
 
-                let else_stmt = Spanned::new(ast::Stmt::Expr(else_expr.clone()), else_expr.span);
                 let else_block = Spanned::new(
                     ast::Block {
-                        stmts: vec![else_stmt],
+                        stmts: vec![],
+                        tail: Some(Box::new(else_expr.clone())),
                     },
                     else_expr.span,
                 );

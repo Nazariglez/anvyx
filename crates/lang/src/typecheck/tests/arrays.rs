@@ -814,10 +814,6 @@ fn test_view_indexing_ok() {
     let view_param = view_type(Type::Int);
     let idx = index_expr(ident_expr("xs"), lit_int(0));
     let idx_id = get_expr_id(&idx);
-    let body_stmt = StmtNode {
-        node: Stmt::Expr(idx),
-        span: dummy_span(),
-    };
     let func = FuncNode {
         node: Func {
             name: ident("head"),
@@ -831,7 +827,8 @@ fn test_view_indexing_ok() {
             ret: Type::Int,
             body: BlockNode {
                 node: Block {
-                    stmts: vec![body_stmt],
+                    stmts: vec![],
+                    tail: Some(Box::new(idx)),
                 },
                 span: dummy_span(),
             },

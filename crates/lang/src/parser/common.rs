@@ -95,17 +95,19 @@ pub(super) fn return_type<'src>() -> BoxedParser<'src, Option<ast::Type>> {
 
 pub(super) fn block_stmt<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
+    tail_expr: impl AnvParser<'src, ast::ExprNode>,
 ) -> BoxedParser<'src, ast::BlockNode> {
     select! {
         (Token::Open(Delimiter::Brace), _) => (),
     }
     .ignore_then(stmt.repeated().collect::<Vec<_>>())
+    .then(tail_expr.or_not())
     .then_ignore(select! {
         (Token::Close(Delimiter::Brace), _) => (),
     })
-    .map_with(|stmts, e| {
+    .map_with(|(stmts, tail), e| {
         let s = e.span();
-        Spanned::new(ast::Block { stmts }, Span::new(s.start, s.end))
+        Spanned::new(ast::Block { stmts, tail: tail.map(Box::new) }, Span::new(s.start, s.end))
     })
     .labelled("block")
     .as_context()

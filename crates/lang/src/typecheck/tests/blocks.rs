@@ -11,7 +11,7 @@ use crate::typecheck::error::TypeErrKind;
 fn test_block_expr_empty_is_void() {
     reset_expr_ids();
     // { }
-    let block = block_expr(vec![]);
+    let block = block_expr(vec![], None);
     let block_id = get_expr_id(&block);
     let prog = program(vec![fn_decl(
         "main",
@@ -29,7 +29,7 @@ fn test_block_expr_trailing_int() {
     reset_expr_ids();
     // { 1 }
     let one = lit_int(1);
-    let block = block_expr(vec![expr_stmt(one)]);
+    let block = block_expr(vec![], Some(one));
     let block_id = get_expr_id(&block);
     let prog = program(vec![fn_decl(
         "main",
@@ -50,7 +50,7 @@ fn test_block_expr_let_then_ident() {
     let x_binding = let_binding("x", Some(Type::Int), x_val);
     let x_ref = ident_expr("x");
     let x_ref_id = get_expr_id(&x_ref);
-    let block = block_expr(vec![x_binding, expr_stmt(x_ref)]);
+    let block = block_expr(vec![x_binding], Some(x_ref));
     let block_id = get_expr_id(&block);
     let prog = program(vec![fn_decl(
         "main",
@@ -72,7 +72,7 @@ fn test_let_binding_block_infers_int() {
     // let x = { 1 };
     let one = lit_int(1);
     let one_id = get_expr_id(&one);
-    let block = block_expr(vec![expr_stmt(one)]);
+    let block = block_expr(vec![], Some(one));
     let block_id = get_expr_id(&block);
     let prog = program(vec![fn_decl(
         "main",
@@ -91,7 +91,7 @@ fn test_let_binding_block_annotated_int_ok() {
     reset_expr_ids();
     // let x: int = { 1 };
     let one = lit_int(1);
-    let block = block_expr(vec![expr_stmt(one)]);
+    let block = block_expr(vec![], Some(one));
     let block_id = get_expr_id(&block);
     let prog = program(vec![fn_decl(
         "main",
@@ -109,7 +109,7 @@ fn test_let_binding_block_type_mismatch() {
     reset_expr_ids();
     // let x: string = { 1 };
     let one = lit_int(1);
-    let block = block_expr(vec![expr_stmt(one)]);
+    let block = block_expr(vec![], Some(one));
     let prog = program(vec![fn_decl(
         "main",
         vec![],

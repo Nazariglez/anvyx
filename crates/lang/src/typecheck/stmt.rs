@@ -25,33 +25,24 @@ use super::{
 
 pub(super) fn check_block_stmts(
     stmts: &[StmtNode],
+    tail: Option<&ExprNode>,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Option<ExprId> {
     type_checker.push_scope();
     collect_scope_types(stmts, type_checker);
 
-    let last_expr_id = stmts.split_last().and_then(|(last, rest)| {
-        // check all the statements except the last one
-        rest.iter().for_each(|stmt| {
-            check_stmt(stmt, type_checker, errors);
-        });
+    for stmt in stmts {
+        check_stmt(stmt, type_checker, errors);
+    }
 
-        // process the last statement as expression if needed
-        match &last.node {
-            Stmt::Expr(expr_node) => {
-                let _ = check_expr(expr_node, type_checker, errors);
-                Some(expr_node.node.id)
-            }
-            _ => {
-                check_stmt(last, type_checker, errors);
-                None
-            }
-        }
+    let tail_id = tail.map(|expr| {
+        let _ = check_expr(expr, type_checker, errors);
+        expr.node.id
     });
 
     type_checker.pop_scope();
-    last_expr_id
+    tail_id
 }
 
 pub(super) fn check_block_expr(
@@ -59,7 +50,8 @@ pub(super) fn check_block_expr(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> (Type, Option<ExprId>) {
-    let last_expr_id = check_block_stmts(&block.node.stmts, type_checker, errors);
+    let last_expr_id =
+        check_block_stmts(&block.node.stmts, block.node.tail.as_deref(), type_checker, errors);
     let Some(id) = last_expr_id else {
         return (Type::Void, None);
     };

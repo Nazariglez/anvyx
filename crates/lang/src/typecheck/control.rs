@@ -31,7 +31,7 @@ pub(super) fn check_while(
     }
 
     type_checker.enter_loop();
-    let _ = check_block_stmts(&node.body.node.stmts, type_checker, errors);
+    let _ = check_block_stmts(&node.body.node.stmts, node.body.node.tail.as_deref(), type_checker, errors);
     type_checker.exit_loop();
 }
 
@@ -65,7 +65,7 @@ pub(super) fn check_for(
 
     check_pattern(&node.pattern, &item_ty, false, type_checker, errors);
 
-    let _ = check_block_stmts(&node.body.node.stmts, type_checker, errors);
+    let _ = check_block_stmts(&node.body.node.stmts, node.body.node.tail.as_deref(), type_checker, errors);
 
     type_checker.exit_loop();
     type_checker.pop_scope();
