@@ -25,6 +25,14 @@ pub fn run_test_file(
 ) -> Result<RunTestResult, String> {
     let src = std::fs::read_to_string(file).map_err(|e| e.to_string())?;
     let directives = Directives::new(&src);
+    if directives.helper {
+        return Ok(RunTestResult {
+            result: TestResult::Helper,
+            mode: directives.mode,
+            backend: None,
+            duration: Duration::from_secs(0),
+        });
+    }
     if directives.skip.is_some() {
         return Ok(RunTestResult {
             result: TestResult::Skip {
@@ -192,6 +200,7 @@ pub enum TestResult {
     Fail { message: String },
     Timeout,
     Skip { message: String },
+    Helper,
 }
 
 #[derive(Debug)]

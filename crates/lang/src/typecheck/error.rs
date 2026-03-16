@@ -252,4 +252,9 @@ pub enum TypeErrKind {
     NotEquatable {
         ty: Type,
     },
+
+    UnknownModuleMember {
+        module: Ident,
+        member: Ident,
+    },
 }

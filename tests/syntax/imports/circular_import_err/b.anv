@@ -1,0 +1,3 @@
+// @helper
+
+fn from_b() -> int { 2 }

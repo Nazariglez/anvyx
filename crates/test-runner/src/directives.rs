@@ -7,6 +7,7 @@ pub struct Directives {
     pub match_exact: Option<String>,
     pub contains: Vec<String>,
     pub skip: Option<String>,
+    pub helper: bool,
 }
 
 impl Directives {
@@ -47,6 +48,12 @@ impl Directives {
             }
 
             // now let's manage single line directives
+            if trimmed == "// @helper" {
+                directives.helper = true;
+            }
+            if trimmed.starts_with("// @helper:") {
+                directives.helper = true;
+            }
             if let Some(ln) = trimmed.strip_prefix("// @skip:") {
                 directives.skip = Some(ln.trim().to_string());
             }

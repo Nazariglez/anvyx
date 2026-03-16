@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: ok
+
+import utils.math;
+
+fn main() {
+    assert(math.abs(-5) == 5);
+    assert(math.abs(3) == 3);
+    println("ok");
+}

@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+import shapes { Point };
+
+fn main() {
+    let p = Point { x: 1.0, y: 2.0 };
+    let x: float = p.x;
+    let y: float = p.y;
+}

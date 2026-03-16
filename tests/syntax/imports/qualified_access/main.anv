@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match: ok
+
+import helpers;
+
+fn main() {
+    let x = helpers.add(3, 4);
+    let y = helpers.mul(2, 5);
+    assert(x == 7);
+    assert(y == 10);
+    println("ok");
+}

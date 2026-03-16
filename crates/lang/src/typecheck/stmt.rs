@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        ArrayLen, BlockNode, ExprId, ExprKind, ExprNode, Mutability, ReturnNode, Stmt, StmtNode,
-        Type,
+        ArrayLen, BlockNode, ExprId, ExprKind, ExprNode, Ident, ImportKind, Mutability, ReturnNode,
+        Stmt, StmtNode, Type,
     },
     span::Span,
 };
@@ -17,8 +17,8 @@ use super::{
     infer::type_from_fn,
     pattern::check_pattern,
     types::{
-        EnumDef, EnumVariantDef, MethodDef, StructDef, TypeChecker, is_keyable, keyable_reason,
-        unwrap_opt_typ,
+        EnumDef, EnumVariantDef, MethodDef, ModuleDef, StructDef, TypeChecker, is_keyable,
+        keyable_reason, unwrap_opt_typ,
     },
     unify::contains_infer,
 };
@@ -179,9 +179,157 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                 );
             }
 
+            Stmt::Import(node) => {
+                let import = &node.node;
+                let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
+
+                // clone the stmts to release the borrow on type_checker before calling build_module_def_from_stmts
+                let module_stmts = type_checker.resolved_module_stmts.get(&path_key).cloned();
+                let Some(stmts) = module_stmts else {
+                    // module wasn't resolved (std.*, unresolved error, etc.)
+                    continue;
+                };
+
+                let module_def = build_module_def_from_stmts(&stmts, type_checker);
+
+                match &import.kind {
+                    ImportKind::Module => {
+                        let binding = *import.path.last().expect("import path cannot be empty");
+                        type_checker.module_defs.insert(binding, module_def);
+                    }
+                    ImportKind::ModuleAs(alias) => {
+                        type_checker.module_defs.insert(*alias, module_def);
+                    }
+                    ImportKind::Selective(items) => {
+                        for item in items {
+                            let bind_as = item.alias.unwrap_or(item.name);
+                            inject_module_item(item.name, bind_as, &module_def, type_checker);
+                        }
+                    }
+                    ImportKind::Wildcard => {
+                        let names: Vec<Ident> = module_def
+                            .funcs
+                            .keys()
+                            .chain(module_def.struct_defs.keys())
+                            .chain(module_def.enum_defs.keys())
+                            .copied()
+                            .collect();
+                        for name in names {
+                            inject_module_item(name, name, &module_def, type_checker);
+                        }
+                    }
+                }
+            }
+
             _ => {}
         }
     }
+}
+
+fn build_module_def_from_stmts(stmts: &[StmtNode], type_checker: &TypeChecker) -> ModuleDef {
+    let mut module_def = ModuleDef::default();
+
+    for stmt in stmts {
+        match &stmt.node {
+            Stmt::Func(node) => {
+                let func = &node.node;
+                let raw_ty = type_from_fn(func);
+                let func_ty = type_checker.resolve_type(&raw_ty);
+                module_def.funcs.insert(func.name, func_ty);
+
+                let param_info: Vec<_> =
+                    func.params.iter().map(|p| (p.name, p.mutability)).collect();
+                module_def.func_param_info.insert(func.name, param_info);
+
+                if !func.type_params.is_empty() {
+                    module_def
+                        .func_type_params
+                        .insert(func.name, func.type_params.clone());
+                    module_def
+                        .generic_func_templates
+                        .insert(func.name, node.clone());
+                }
+            }
+            Stmt::Struct(node) => {
+                let decl = &node.node;
+                let methods = decl
+                    .methods
+                    .iter()
+                    .map(|m| {
+                        (
+                            m.name,
+                            MethodDef {
+                                type_params: m.type_params.clone(),
+                                receiver: m.receiver,
+                                params: m.params.clone(),
+                                ret: m.ret.clone(),
+                                body: m.body.clone(),
+                            },
+                        )
+                    })
+                    .collect();
+                module_def.struct_defs.insert(
+                    decl.name,
+                    StructDef {
+                        type_params: decl.type_params.clone(),
+                        fields: decl.fields.clone(),
+                        methods,
+                    },
+                );
+            }
+            Stmt::Enum(node) => {
+                let decl = &node.node;
+                let variants = decl
+                    .variants
+                    .iter()
+                    .map(|v| EnumVariantDef {
+                        name: v.name,
+                        kind: v.kind.clone(),
+                    })
+                    .collect();
+                module_def.enum_defs.insert(
+                    decl.name,
+                    EnumDef {
+                        type_params: decl.type_params.clone(),
+                        variants,
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+
+    module_def
+}
+
+fn inject_module_item(
+    name: Ident,
+    bind_as: Ident,
+    module_def: &ModuleDef,
+    type_checker: &mut TypeChecker,
+) {
+    if let Some(ty) = module_def.funcs.get(&name) {
+        type_checker.set_var(bind_as, ty.clone(), false);
+        if let Some(param_info) = module_def.func_param_info.get(&name) {
+            type_checker
+                .func_param_info
+                .insert(bind_as, param_info.clone());
+        }
+        if let Some(tp) = module_def.func_type_params.get(&name) {
+            type_checker.func_type_params.insert(bind_as, tp.clone());
+        }
+        if let Some(tmpl) = module_def.generic_func_templates.get(&name) {
+            type_checker
+                .generic_func_templates
+                .insert(bind_as, tmpl.clone());
+        }
+    } else if let Some(struct_def) = module_def.struct_defs.get(&name) {
+        type_checker.struct_defs.insert(bind_as, struct_def.clone());
+    } else if let Some(enum_def) = module_def.enum_defs.get(&name) {
+        type_checker.enum_defs.insert(bind_as, enum_def.clone());
+    }
+
+    // symbol not found is silently skipped here, check_stmt will report the error
 }
 
 pub(super) fn check_stmt(
@@ -190,7 +338,35 @@ pub(super) fn check_stmt(
     errors: &mut Vec<TypeErr>,
 ) {
     match &stmt.node {
-        Stmt::Import(_) => {}
+        Stmt::Import(node) => {
+            let import = &node.node;
+            let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
+
+            let module_stmts = type_checker.resolved_module_stmts.get(&path_key).cloned();
+            let Some(stmts) = module_stmts else {
+                return;
+            };
+
+            let module_def = build_module_def_from_stmts(&stmts, type_checker);
+            let module_name = *import.path.last().expect("import path cannot be empty");
+
+            if let ImportKind::Selective(items) = &import.kind {
+                for item in items {
+                    let exists = module_def.funcs.contains_key(&item.name)
+                        || module_def.struct_defs.contains_key(&item.name)
+                        || module_def.enum_defs.contains_key(&item.name);
+                    if !exists {
+                        errors.push(TypeErr::new(
+                            node.span,
+                            TypeErrKind::UnknownModuleMember {
+                                module: module_name,
+                                member: item.name,
+                            },
+                        ));
+                    }
+                }
+            }
+        }
         Stmt::ExternFunc(_) => {}
         Stmt::ExternType(_) => {}
         Stmt::Func(node) => check_func(node, type_checker, errors),

@@ -20,9 +20,10 @@ mod tests;
 pub use error::{TypeErr, TypeErrKind};
 pub use types::TypeChecker;
 
-use crate::ast::Program;
+use crate::ast::{Program, StmtNode};
 use crate::builtin::Builtin;
 use constraint::resolve_constraints;
+use std::collections::HashMap;
 use stmt::check_block_stmts;
 use unify::contains_infer;
 
@@ -34,10 +35,24 @@ fn register_builtins(type_checker: &mut TypeChecker) {
 }
 
 pub fn check_program(program: &Program) -> Result<TypeChecker, Vec<TypeErr>> {
+    check_program_with_modules(program, &HashMap::new())
+}
+
+pub fn check_program_with_modules(
+    program: &Program,
+    module_stmts: &HashMap<Vec<String>, Vec<StmtNode>>,
+) -> Result<TypeChecker, Vec<TypeErr>> {
     let mut type_checker = TypeChecker::default();
     let mut errors = vec![];
 
     register_builtins(&mut type_checker);
+
+    // pre-load module stmts so collect_scope_types can build ModuleDef when it processes imports
+    for (path, stmts) in module_stmts {
+        type_checker
+            .resolved_module_stmts
+            .insert(path.clone(), stmts.clone());
+    }
 
     // first pass we collect the types from the ast
     // we don't need the type of the file scope blocks

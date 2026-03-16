@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: ok
+
+import helpers as h;
+
+fn main() {
+    let msg = h.greet("world");
+    assert(msg == "hello world");
+    println("ok");
+}

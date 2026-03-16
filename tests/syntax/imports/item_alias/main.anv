@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: ok
+
+import helpers { add as my_add };
+
+fn main() {
+    let result = my_add(10, 5);
+    assert(result == 15);
+    println("ok");
+}

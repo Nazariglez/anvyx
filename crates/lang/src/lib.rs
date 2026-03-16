@@ -5,6 +5,7 @@ mod hir;
 mod lexer;
 mod lower;
 mod parser;
+mod resolve;
 mod span;
 mod typecheck;
 mod vm;
@@ -20,7 +21,7 @@ mod test_helpers;
 
 pub(crate) const CORE_PRELUDE: &str = include_str!("../core/prelude.anv");
 
-fn parse_source(
+pub(crate) fn parse_source(
     source: &str,
     file_path: &str,
 ) -> Result<(ast::Program, Vec<lexer::SpannedToken>), String> {
@@ -59,13 +60,42 @@ fn analyze(
 
     let (user_ast, user_tokens) = parse_source(program, file_path)?;
 
+    // resolve local file imports
+    let (module_stmts_map, imported_stmts) = if file_path.starts_with('<') {
+        (std::collections::HashMap::new(), vec![])
+    } else {
+        let project_root = {
+            let p = std::path::Path::new(file_path);
+            p.parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .to_path_buf()
+        };
+
+        match resolve::resolve_imports(&user_ast.stmts, &project_root) {
+            Ok(result) => {
+                let mut map = std::collections::HashMap::new();
+                let mut all_stmts = vec![];
+                for module in result.modules {
+                    map.insert(module.path_key, module.stmts.clone());
+                    all_stmts.extend(module.stmts);
+                }
+                (map, all_stmts)
+            }
+            Err(errors) => {
+                error::report_import_errors(program, file_path, &user_tokens, &errors);
+                return Err("Failed to resolve imports".to_string());
+            }
+        }
+    };
+
     let mut combined_stmts = prelude_ast.stmts;
+    combined_stmts.extend(imported_stmts);
     combined_stmts.extend(user_ast.stmts);
     let combined = ast::Program {
         stmts: combined_stmts,
     };
 
-    let tcx = match typecheck::check_program(&combined) {
+    let tcx = match typecheck::check_program_with_modules(&combined, &module_stmts_map) {
         Ok(tcx) => tcx,
         Err(errors) => {
             error::report_typecheck_errors(program, file_path, &user_tokens, errors);
@@ -106,7 +136,12 @@ impl Backend {
 }
 
 pub fn run_program(program: &str, file_path: &str, backend: Backend) -> Result<String, String> {
-    run_program_with_externs(program, file_path, backend, std::collections::HashMap::new())
+    run_program_with_externs(
+        program,
+        file_path,
+        backend,
+        std::collections::HashMap::new(),
+    )
 }
 
 pub fn run_program_with_externs(

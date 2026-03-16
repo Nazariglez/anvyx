@@ -87,6 +87,7 @@ struct Summary {
     failed: usize,
     skipped: usize,
     timed_out: usize,
+    helpers: usize,
 
     failures: Vec<(PathBuf, String)>,
     timeouts: Vec<PathBuf>,
@@ -121,6 +122,10 @@ impl Summary {
                 self.skipped += 1;
                 skip_msg(&file, quiet, mode, backend, duration);
                 self.skips.push((file, message));
+            }
+            TestResult::Helper => {
+                self.helpers += 1;
+                // silent, helper files are not logged
             }
         }
     }
@@ -160,11 +165,12 @@ impl Summary {
         println!("* {GREEN}Passed:{RESET} {}", self.passed);
         println!("");
         let result = format!(
-            "{GREEN}{}{RESET} passed; {RED}{}{RESET} failed; {BLUE}{}{RESET} timed out; {YELLOW}{}{RESET} skipped; finished in: {CYAN}{:.2}s{RESET}",
+            "{GREEN}{}{RESET} passed; {RED}{}{RESET} failed; {BLUE}{}{RESET} timed out; {YELLOW}{}{RESET} skipped; {GREY}{}{RESET} helpers; finished in: {CYAN}{:.2}s{RESET}",
             self.passed,
             self.failed,
             self.timed_out,
             self.skipped,
+            self.helpers,
             start_time.elapsed().as_secs_f64()
         );
         if self.failed > 0 || self.timed_out > 0 {

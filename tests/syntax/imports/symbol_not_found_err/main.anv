@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown member
+
+import helpers { nonexistent };
+
+fn main() {}

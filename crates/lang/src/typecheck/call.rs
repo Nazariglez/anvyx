@@ -17,8 +17,8 @@ use super::{
         type_to_ref_with_inference,
     },
     types::{
-        EnumDef, MethodContext, MethodDef, MethodSpecKey, SpecializationKey, SpecializationResult,
-        StructDef, TypeChecker,
+        EnumDef, MethodContext, MethodDef, MethodSpecKey, ModuleDef, SpecializationKey,
+        SpecializationResult, StructDef, TypeChecker,
     },
 };
 
@@ -354,6 +354,34 @@ pub(super) fn check_call_with_type(
             Type::Infer
         }
     }
+}
+
+pub(super) fn check_module_func_call(
+    call: &CallNode,
+    module_name: Ident,
+    func_name: Ident,
+    module_def: &ModuleDef,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let Some(func_ty) = module_def.funcs.get(&func_name).cloned() else {
+        errors.push(TypeErr::new(
+            call.span,
+            TypeErrKind::UnknownModuleMember {
+                module: module_name,
+                member: func_name,
+            },
+        ));
+        return Type::Infer;
+    };
+
+    let result = check_call_with_type(call, func_ty, type_checker, errors);
+
+    if let Some(param_info) = module_def.func_param_info.get(&func_name).cloned() {
+        check_var_param_args(&param_info, &call.node.args, type_checker, errors);
+    }
+
+    result
 }
 
 pub(super) fn try_check_method_call(

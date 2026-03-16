@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         BlockNode, CallNode, ExprId, FieldAccessNode, FuncNode, Ident, IndexNode, MethodReceiver,
-        Mutability, Param, StructField, Type, TypeParam, TypeVarId, VariantKind,
+        Mutability, Param, StructField, StmtNode, Type, TypeParam, TypeVarId, VariantKind,
     },
     span::Span,
 };
@@ -85,6 +85,16 @@ pub(super) struct VarInfo {
     pub mutable: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(super) struct ModuleDef {
+    pub funcs: HashMap<Ident, Type>,
+    pub func_param_info: HashMap<Ident, Vec<(Ident, Mutability)>>,
+    pub struct_defs: HashMap<Ident, StructDef>,
+    pub enum_defs: HashMap<Ident, EnumDef>,
+    pub func_type_params: HashMap<Ident, Vec<TypeParam>>,
+    pub generic_func_templates: HashMap<Ident, FuncNode>,
+}
+
 #[derive(Debug, Default)]
 pub struct TypeChecker {
     /// Resolved type for each expression
@@ -132,6 +142,12 @@ pub struct TypeChecker {
 
     /// Tracks depth of nested loops to validate break/continue usage
     pub(super) loop_depth: usize,
+
+    /// Stmts from resolved imported modules, keyed by import path segments
+    pub(super) resolved_module_stmts: HashMap<Vec<String>, Vec<StmtNode>>,
+
+    /// Module bindings for qualified access (binding_name -> module declarations)
+    pub(super) module_defs: HashMap<Ident, ModuleDef>,
 }
 
 impl TypeChecker {
@@ -159,6 +175,14 @@ impl TypeChecker {
 
     pub(super) fn get_enum(&self, name: Ident) -> Option<&EnumDef> {
         self.enum_defs.get(&name)
+    }
+
+    pub(super) fn get_module(&self, name: Ident) -> Option<&ModuleDef> {
+        self.module_defs.get(&name)
+    }
+
+    pub fn is_module_name(&self, name: Ident) -> bool {
+        self.module_defs.contains_key(&name)
     }
 
     pub(super) fn resolve_type(&self, ty: &Type) -> Type {

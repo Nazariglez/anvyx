@@ -1,0 +1,4 @@
+// @helper
+
+fn double(n: int) -> int { n * 2 }
+fn square(n: int) -> int { n * n }

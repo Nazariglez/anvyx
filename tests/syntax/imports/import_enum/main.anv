@@ -1,0 +1,14 @@
+// @mode: check
+// @expect: success
+
+import colors { Color };
+
+fn main() {
+    let c = Color.Red;
+    let is_red = match c {
+        Color.Red => true,
+        Color.Green => false,
+        Color.Blue => false,
+    };
+    let r: bool = is_red;
+}

@@ -1,7 +1,10 @@
 use crate::ast::{ExprId, ExprKind, ExprNode, Type};
 
 use super::{
-    call::{check_call, check_instance_method_call, check_var_param_args, type_call_on_base},
+    call::{
+        check_call, check_instance_method_call, check_module_func_call, check_var_param_args,
+        type_call_on_base,
+    },
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
     types::{PostfixNodeRef, TypeChecker, type_field_on_base, type_index_on_base, unwrap_opt_typ},
@@ -341,6 +344,52 @@ fn try_type_name_dispatch(
     let ExprKind::Ident(type_name) = &base.node.kind else {
         return None;
     };
+
+    // handle module qualified access before enum/struct dispatch
+    if let Some(module_def) = type_checker.get_module(*type_name).cloned() {
+        if let [
+            PostfixNodeRef::Field {
+                node: field_node, ..
+            },
+            rest @ ..,
+        ] = chain
+        {
+            let member_name = field_node.node.field;
+            let op_safe = field_node.node.safe;
+            let call_follows = matches!(rest.first(), Some(PostfixNodeRef::Call { .. }));
+
+            if call_follows {
+                let call_op = rest[0];
+                let PostfixNodeRef::Call {
+                    node: call_node, ..
+                } = call_op
+                else {
+                    unreachable!()
+                };
+                let op_safe = op_safe || call_op.safe();
+                let ty = check_module_func_call(
+                    call_node,
+                    *type_name,
+                    member_name,
+                    &module_def,
+                    type_checker,
+                    errors,
+                );
+                return Some((ty, 2, op_safe));
+            } else {
+                // module.MemberName without a call
+                errors.push(TypeErr::new(
+                    field_node.span,
+                    TypeErrKind::UnknownModuleMember {
+                        module: *type_name,
+                        member: member_name,
+                    },
+                ));
+                return Some((Type::Infer, 1, op_safe));
+            }
+        }
+        return None;
+    }
 
     // single Field step: may be an enum unit variant access
     if let [

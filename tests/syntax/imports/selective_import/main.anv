@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: ok
+
+import mathlib { add, sub };
+
+fn main() {
+    assert(add(3, 2) == 5);
+    assert(sub(10, 4) == 6);
+    println("ok");
+}

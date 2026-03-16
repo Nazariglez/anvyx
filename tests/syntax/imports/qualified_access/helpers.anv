@@ -1,0 +1,4 @@
+// @helper
+
+fn add(a: int, b: int) -> int { a + b }
+fn mul(a: int, b: int) -> int { a * b }

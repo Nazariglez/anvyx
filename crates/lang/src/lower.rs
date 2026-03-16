@@ -117,7 +117,21 @@ pub fn lower_program(ast: &ast::Program, tcx: &TypeChecker) -> Result<hir::Progr
                 });
             }
             Stmt::ExternType(_) => {}
-            Stmt::Import(_) => {}
+            Stmt::Import(import_node) => {
+                // register aliases so they resolve to the same FuncId/ExternId as the original
+                if let ast::ImportKind::Selective(items) = &import_node.node.kind {
+                    for item in items {
+                        let Some(alias) = item.alias else {
+                            continue;
+                        };
+                        if let Some(&func_id) = ctx.funcs.get(&item.name) {
+                            ctx.funcs.insert(alias, func_id);
+                        } else if let Some(&extern_id) = ctx.externs.get(&item.name) {
+                            ctx.externs.insert(alias, extern_id);
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -509,6 +523,18 @@ fn lower_expr(
         ast::ExprKind::Call(c) => {
             let callee_name = match &c.node.func.node.kind {
                 ast::ExprKind::Ident(name) => *name,
+                ast::ExprKind::Field(field) => {
+                    // module qualified call module.func(args), resolve to the function name
+                    if let ast::ExprKind::Ident(module_name) = &field.node.target.node.kind {
+                        if ctx.tcx.is_module_name(*module_name) {
+                            field.node.field
+                        } else {
+                            return Err(LowerError::NonDirectCall { span });
+                        }
+                    } else {
+                        return Err(LowerError::NonDirectCall { span });
+                    }
+                }
                 _ => return Err(LowerError::NonDirectCall { span }),
             };
             let args = c

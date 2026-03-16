@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: Cannot find module file
+
+import nonexistent_module;
+
+fn main() {}

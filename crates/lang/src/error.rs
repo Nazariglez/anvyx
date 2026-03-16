@@ -2,6 +2,7 @@ use std::ops::Range;
 
 use crate::{
     lexer::{SpannedToken, Token},
+    resolve::ImportError,
     typecheck::{TypeErr, TypeErrKind},
 };
 use ariadne::{Color, Label, Report, ReportKind, Source};
@@ -116,6 +117,62 @@ pub fn report_typecheck_errors(
             e.notes.clone(),
             e.help.clone(),
         );
+    }
+}
+
+pub fn report_import_errors(
+    src: &str,
+    file_path: &str,
+    tokens: &[SpannedToken],
+    errors: &[ImportError],
+) {
+    for e in errors {
+        match e {
+            ImportError::FileNotFound { path, span } => {
+                let byte_range = token_span_to_byte_range(tokens, span.start..span.end);
+                emit_report(
+                    src,
+                    file_path,
+                    (
+                        byte_range,
+                        format!("Cannot find module file '{path}'"),
+                        "import path cannot be resolved to a file".to_string(),
+                    ),
+                    vec![],
+                    vec![],
+                    None,
+                );
+            }
+            ImportError::ParseError { file_path: imported_path } => {
+                emit_report(
+                    src,
+                    file_path,
+                    (
+                        0..0,
+                        format!("Failed to parse imported module '{imported_path}'"),
+                        "the imported file contains errors".to_string(),
+                    ),
+                    vec![],
+                    vec![],
+                    None,
+                );
+            }
+            ImportError::CircularImport { path, span } => {
+                let byte_range = token_span_to_byte_range(tokens, span.start..span.end);
+                emit_report(
+                    src,
+                    file_path,
+                    (
+                        byte_range,
+                        format!("Circular import detected for '{path}'"),
+                        "this import creates a cycle".to_string(),
+                    ),
+                    vec![],
+                    vec![],
+                    None,
+                );
+            }
+        }
     }
 }
 
@@ -440,6 +497,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
         TypeErrKind::NotEquatable { ty } => (
             "type is not equatable".to_string(),
             format!("type '{ty}' does not support '==' or '!='"),
+        ),
+        TypeErrKind::UnknownModuleMember { module, member } => (
+            format!("Unknown member '{member}' in module '{module}'"),
+            format!("module '{module}' does not have a member named '{member}'"),
         ),
     }
 }
