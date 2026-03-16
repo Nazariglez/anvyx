@@ -117,6 +117,7 @@ pub fn lower_program(ast: &ast::Program, tcx: &TypeChecker) -> Result<hir::Progr
                 });
             }
             Stmt::ExternType(_) => {}
+            Stmt::Import(_) => {}
             _ => {}
         }
     }
@@ -321,6 +322,7 @@ fn lower_stmt(
 
         Stmt::ExternFunc(_) => Ok(None),
         Stmt::ExternType(_) => Ok(None),
+        Stmt::Import(_) => Ok(None),
 
         Stmt::Func(_) => Err(LowerError::UnsupportedStmtKind {
             span,

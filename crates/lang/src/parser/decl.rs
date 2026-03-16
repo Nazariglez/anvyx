@@ -38,6 +38,62 @@ fn type_params<'src>() -> BoxedParser<'src, Vec<ast::TypeParam>> {
     .boxed()
 }
 
+pub(super) fn import_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
+    let import_kw = select! { (Token::Keyword(Keyword::Import), _) => () };
+    let dot = select! { (Token::Dot, _) => () };
+    let semicolon = select! { (Token::Semicolon, _) => () };
+    let as_kw = select! { (Token::Keyword(Keyword::As), _) => () };
+    let open_brace = select! { (Token::Open(Delimiter::Brace), _) => () };
+    let close_brace = select! { (Token::Close(Delimiter::Brace), _) => () };
+    let star = select! { (Token::Op(Op::Mul), _) => () };
+    let comma = select! { (Token::Comma, _) => () };
+
+    let import_path = identifier()
+        .then(dot.ignore_then(identifier()).repeated().collect::<Vec<_>>())
+        .map(|(first, mut rest)| {
+            rest.insert(0, first);
+            rest
+        });
+
+    let import_item = identifier()
+        .then(as_kw.ignore_then(identifier()).or_not())
+        .map(|(name, alias)| ast::ImportItem { name, alias });
+
+    let selective_items = import_item
+        .separated_by(comma.clone())
+        .allow_trailing()
+        .at_least(1)
+        .collect::<Vec<_>>();
+
+    let import_tail = choice((
+        as_kw
+            .ignore_then(identifier())
+            .then_ignore(semicolon.clone())
+            .map(ast::ImportKind::ModuleAs),
+        open_brace
+            .ignore_then(choice((
+                star.to(ast::ImportKind::Wildcard),
+                selective_items.map(ast::ImportKind::Selective),
+            )))
+            .then_ignore(close_brace)
+            .then_ignore(semicolon.clone()),
+        semicolon.to(ast::ImportKind::Module),
+    ));
+
+    import_kw
+        .ignore_then(import_path)
+        .then(import_tail)
+        .map_with(|(path, kind), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let node = Spanned::new(ast::Import { path, kind }, span);
+            Spanned::new(ast::Stmt::Import(node), span)
+        })
+        .labelled("import declaration")
+        .as_context()
+        .boxed()
+}
+
 pub(super) fn extern_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
     select! { (Token::Keyword(Keyword::Extern), _) => () }
         .ignore_then(choice((

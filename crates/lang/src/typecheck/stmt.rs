@@ -190,6 +190,7 @@ pub(super) fn check_stmt(
     errors: &mut Vec<TypeErr>,
 ) {
     match &stmt.node {
+        Stmt::Import(_) => {}
         Stmt::ExternFunc(_) => {}
         Stmt::ExternType(_) => {}
         Stmt::Func(node) => check_func(node, type_checker, errors),

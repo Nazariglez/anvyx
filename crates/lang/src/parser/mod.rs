@@ -21,7 +21,7 @@ use chumsky::{
     prelude::*,
 };
 
-use decl::{enum_declaration, extern_declaration, function, struct_declaration};
+use decl::{enum_declaration, extern_declaration, function, import_declaration, struct_declaration};
 use stmt::statement;
 
 #[derive(Debug, Default)]
@@ -80,7 +80,7 @@ fn parser<'src>() -> BoxedParser<'src, ast::Program> {
         Spanned::new(ast::Stmt::Enum(enum_node), span)
     });
 
-    choice((extern_declaration(), func_decl, struct_decl, enum_decl))
+    choice((import_declaration(), extern_declaration(), func_decl, struct_decl, enum_decl))
         .repeated()
         .collect::<Vec<_>>()
         .map(|stmts| ast::Program { stmts })

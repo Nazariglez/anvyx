@@ -32,6 +32,7 @@ pub type MatchNode = Spanned<Match>;
 pub type MatchArmNode = Spanned<MatchArm>;
 pub type ExternFuncNode = Spanned<ExternFunc>;
 pub type ExternTypeNode = Spanned<ExternType>;
+pub type ImportNode = Spanned<Import>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -40,6 +41,7 @@ pub struct Program {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
+    Import(ImportNode),
     Func(FuncNode),
     ExternFunc(ExternFuncNode),
     ExternType(ExternTypeNode),
@@ -427,6 +429,26 @@ pub struct ExternFunc {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternType {
     pub name: Ident,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Import {
+    pub path: Vec<Ident>,
+    pub kind: ImportKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportKind {
+    Module,
+    ModuleAs(Ident),
+    Selective(Vec<ImportItem>),
+    Wildcard,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportItem {
+    pub name: Ident,
+    pub alias: Option<Ident>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
