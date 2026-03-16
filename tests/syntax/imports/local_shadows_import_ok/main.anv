@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match: local
+
+import helpers;
+
+fn add(a: int, b: int) -> int { a * 10 }
+
+fn main() {
+    let x = add(3, 4);
+    if x == 30 {
+        println("local");
+    } else {
+        println("leaked");
+    }
+}

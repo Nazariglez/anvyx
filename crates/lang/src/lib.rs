@@ -52,6 +52,7 @@ fn analyze(
         ast::Program,
         typecheck::TypeChecker,
         Vec<lexer::SpannedToken>,
+        Vec<(Vec<String>, Vec<ast::StmtNode>)>,
     ),
     String,
 > {
@@ -61,8 +62,8 @@ fn analyze(
     let (user_ast, user_tokens) = parse_source(program, file_path)?;
 
     // resolve local file imports
-    let (module_list, imported_stmts) = if file_path.starts_with('<') {
-        (vec![], vec![])
+    let module_list = if file_path.starts_with('<') {
+        vec![]
     } else {
         let project_root = {
             let p = std::path::Path::new(file_path);
@@ -72,15 +73,11 @@ fn analyze(
         };
 
         match resolve::resolve_imports(&user_ast.stmts, &project_root) {
-            Ok(result) => {
-                let mut all_stmts = vec![];
-                let mut ordered = vec![];
-                for module in result.modules {
-                    all_stmts.extend(module.stmts.clone());
-                    ordered.push((module.path_key, module.stmts));
-                }
-                (ordered, all_stmts)
-            }
+            Ok(result) => result
+                .modules
+                .into_iter()
+                .map(|module| (module.path_key, module.stmts))
+                .collect(),
             Err(errors) => {
                 error::report_import_errors(program, file_path, &user_tokens, &errors);
                 return Err("Failed to resolve imports".to_string());
@@ -89,7 +86,6 @@ fn analyze(
     };
 
     let mut combined_stmts = prelude_ast.stmts;
-    combined_stmts.extend(imported_stmts);
     combined_stmts.extend(user_ast.stmts);
     let combined = ast::Program {
         stmts: combined_stmts,
@@ -103,17 +99,17 @@ fn analyze(
         }
     };
 
-    Ok((combined, tcx, user_tokens))
+    Ok((combined, tcx, user_tokens, module_list))
 }
 
 pub fn generate_ast(program: &str, file_path: &str) -> Result<ast::Program, String> {
-    let (ast, _, _) = analyze(program, file_path)?;
+    let (ast, _, _, _) = analyze(program, file_path)?;
     Ok(ast)
 }
 
 pub(crate) fn generate_hir(program: &str, file_path: &str) -> Result<hir::Program, String> {
-    let (ast, tcx, _) = analyze(program, file_path)?;
-    lower::lower_program(&ast, &tcx).map_err(|e| format!("Lowering error: {e}"))
+    let (ast, tcx, _, module_list) = analyze(program, file_path)?;
+    lower::lower_program(&ast, &tcx, &module_list).map_err(|e| format!("Lowering error: {e}"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

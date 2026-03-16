@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown variable
+
+import helpers;
+
+fn main() {
+    let x = add(3, 4);
+}

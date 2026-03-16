@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown
+
+import colors;
+
+fn main() {
+    let c = Color.Red;
+}

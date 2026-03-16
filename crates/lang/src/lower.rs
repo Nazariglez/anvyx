@@ -75,7 +75,11 @@ struct FuncLower {
     local_map: HashMap<Ident, hir::LocalId>,
 }
 
-pub fn lower_program(ast: &ast::Program, tcx: &TypeChecker) -> Result<hir::Program, LowerError> {
+pub fn lower_program(
+    ast: &ast::Program,
+    tcx: &TypeChecker,
+    module_list: &[(Vec<String>, Vec<ast::StmtNode>)],
+) -> Result<hir::Program, LowerError> {
     let mut ctx = LowerCtx {
         tcx,
         funcs: HashMap::new(),
@@ -86,6 +90,45 @@ pub fn lower_program(ast: &ast::Program, tcx: &TypeChecker) -> Result<hir::Progr
     let mut next_func_id = 0u32;
     let mut next_extern_id = 0u32;
     let mut extern_decls: Vec<hir::ExternDecl> = vec![];
+
+    // collect functions from imported modules first so qualified and selective
+    // calls can resolve to the correct FuncId
+    // modules arrive in DFS post-order (deepest dependencies first), so aliases
+    // from re-export stmts (pub import inner { original as renamed }) are
+    // processed after the original function is already registered.
+    for (_path, stmts) in module_list {
+        for stmt_node in stmts {
+            match &stmt_node.node {
+                Stmt::Func(func_node) => {
+                    if func_node.node.type_params.is_empty()
+                        && !ctx.funcs.contains_key(&func_node.node.name)
+                    {
+                        let id = hir::FuncId(next_func_id);
+                        next_func_id += 1;
+                        ctx.funcs.insert(func_node.node.name, id);
+                        func_nodes.push(func_node);
+                    }
+                }
+                Stmt::Import(import_node) => {
+                    // pub import inner { original as renamed }, register the alias
+                    // so qualified or selective callers can resolve renamed -> FuncId
+                    if let ast::ImportKind::Selective(items) = &import_node.node.kind {
+                        for item in items {
+                            let Some(alias) = item.alias else {
+                                continue;
+                            };
+                            if let Some(&func_id) = ctx.funcs.get(&item.name) {
+                                ctx.funcs.insert(alias, func_id);
+                            } else if let Some(&extern_id) = ctx.externs.get(&item.name) {
+                                ctx.externs.insert(alias, extern_id);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
 
     // collect top-level declarations (first pass)
     for stmt_node in &ast.stmts {
@@ -118,7 +161,8 @@ pub fn lower_program(ast: &ast::Program, tcx: &TypeChecker) -> Result<hir::Progr
             }
             Stmt::ExternType(_) => {}
             Stmt::Import(import_node) => {
-                // register aliases so they resolve to the same FuncId/ExternId as the original
+                // for selective imports register aliases so they resolve to the
+                // same FuncId/ExternId as the original name
                 if let ast::ImportKind::Selective(items) = &import_node.node.kind {
                     for item in items {
                         let Some(alias) = item.alias else {

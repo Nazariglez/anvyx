@@ -1,0 +1,3 @@
+// @helper
+
+pub fn compute(x: int) -> int { x + 1 }

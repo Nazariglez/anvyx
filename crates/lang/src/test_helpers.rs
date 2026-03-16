@@ -14,13 +14,13 @@ impl TestCtx {
     #[track_caller]
     pub(crate) fn lower_ok(source: &str) -> hir::Program {
         let (ast, tcx) = Self::pipeline(source);
-        lower::lower_program(&ast, &tcx).expect("lowering should succeed")
+        lower::lower_program(&ast, &tcx, &[]).expect("lowering should succeed")
     }
 
     #[track_caller]
     pub(crate) fn lower_err(source: &str) -> LowerError {
         let (ast, tcx) = Self::pipeline(source);
-        lower::lower_program(&ast, &tcx).expect_err("lowering should fail")
+        lower::lower_program(&ast, &tcx, &[]).expect_err("lowering should fail")
     }
 
     #[track_caller]

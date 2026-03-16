@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown variable
+
+import utils.math;
+
+fn main() {
+    let x = abs(-5);
+}

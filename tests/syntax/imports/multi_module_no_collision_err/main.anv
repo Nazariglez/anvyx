@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown variable
+
+import alpha;
+import beta;
+
+fn main() {
+    let x = compute(1);
+}

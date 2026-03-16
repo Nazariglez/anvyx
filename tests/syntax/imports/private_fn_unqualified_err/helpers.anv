@@ -1,0 +1,4 @@
+// @helper
+
+pub fn add(a: int, b: int) -> int { a + b }
+fn secret(x: int) -> int { x * 42 }

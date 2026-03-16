@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown
+
+import shapes;
+
+fn main() {
+    let p = Point { x: 1.0, y: 2.0 };
+}
