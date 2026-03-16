@@ -208,6 +208,11 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                         for name in names {
                             inject_module_item(name, name, &module_def, type_checker);
                         }
+                        let sub_module_names: Vec<Ident> =
+                            module_def.re_exported_modules.keys().copied().collect();
+                        for name in sub_module_names {
+                            inject_module_item(name, name, &module_def, type_checker);
+                        }
                     }
                 }
             }
@@ -220,8 +225,11 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
 pub(super) fn build_module_def_with_reexports(
     stmts: &[StmtNode],
     type_checker: &TypeChecker,
-) -> ModuleDef {
+) -> (ModuleDef, Vec<TypeErr>) {
     let mut module_def = ModuleDef::default();
+    let mut errors: Vec<TypeErr> = vec![];
+
+    let mut reexported_from: HashMap<Ident, String> = HashMap::new();
 
     for stmt in stmts {
         match &stmt.node {
@@ -247,6 +255,8 @@ pub(super) fn build_module_def_with_reexports(
                         .generic_func_templates
                         .insert(func.name, node.clone());
                 }
+
+                reexported_from.insert(func.name, "<local>".to_string());
             }
             Stmt::Struct(node) => {
                 let decl = &node.node;
@@ -278,6 +288,8 @@ pub(super) fn build_module_def_with_reexports(
                         methods,
                     },
                 );
+
+                reexported_from.insert(decl.name, "<local>".to_string());
             }
             Stmt::Enum(node) => {
                 let decl = &node.node;
@@ -300,6 +312,8 @@ pub(super) fn build_module_def_with_reexports(
                         variants,
                     },
                 );
+
+                reexported_from.insert(decl.name, "<local>".to_string());
             }
             Stmt::Import(node) => {
                 let import = &node.node;
@@ -308,6 +322,8 @@ pub(super) fn build_module_def_with_reexports(
                 }
 
                 let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
+                let source_label = path_key.last().cloned().unwrap_or_default();
+
                 let Some(source_def) = type_checker.resolved_module_defs.get(&path_key).cloned()
                 else {
                     continue;
@@ -317,20 +333,86 @@ pub(super) fn build_module_def_with_reexports(
                     ImportKind::Selective(items) => {
                         for item in items {
                             let bind_as = item.alias.unwrap_or(item.name);
-                            merge_symbol(item.name, bind_as, &source_def, &mut module_def);
+                            if let Some(existing) = reexported_from.get(&bind_as) {
+                                errors.push(
+                                    TypeErr::new(
+                                        node.span,
+                                        TypeErrKind::ReExportCollision {
+                                            name: bind_as,
+                                            first_source: existing.clone(),
+                                            second_source: source_label.clone(),
+                                        },
+                                    )
+                                    .with_help(
+                                        "use selective re-exports or aliasing to resolve the conflict",
+                                    ),
+                                );
+                            } else {
+                                merge_symbol(item.name, bind_as, &source_def, &mut module_def);
+                                reexported_from.insert(bind_as, source_label.clone());
+                            }
                         }
                     }
                     ImportKind::Wildcard => {
                         for name in source_def.all_public_names().collect::<Vec<_>>() {
-                            merge_symbol(name, name, &source_def, &mut module_def);
+                            if let Some(existing) = reexported_from.get(&name) {
+                                errors.push(
+                                    TypeErr::new(
+                                        node.span,
+                                        TypeErrKind::ReExportCollision {
+                                            name,
+                                            first_source: existing.clone(),
+                                            second_source: source_label.clone(),
+                                        },
+                                    )
+                                    .with_help(
+                                        "use selective re-exports or aliasing to resolve the conflict",
+                                    ),
+                                );
+                            } else {
+                                merge_symbol(name, name, &source_def, &mut module_def);
+                                reexported_from.insert(name, source_label.clone());
+                            }
                         }
                     }
                     ImportKind::Module => {
                         let binding = *import.path.last().expect("import path cannot be empty");
-                        module_def.re_exported_modules.insert(binding, source_def);
+                        if let Some(existing) = reexported_from.get(&binding) {
+                            errors.push(
+                                TypeErr::new(
+                                    node.span,
+                                    TypeErrKind::ReExportCollision {
+                                        name: binding,
+                                        first_source: existing.clone(),
+                                        second_source: source_label.clone(),
+                                    },
+                                )
+                                .with_help(
+                                    "use `pub import X as alias;` to rename the re-exported module",
+                                ),
+                            );
+                        } else {
+                            module_def.re_exported_modules.insert(binding, source_def);
+                            reexported_from.insert(binding, source_label.clone());
+                        }
                     }
                     ImportKind::ModuleAs(alias) => {
-                        module_def.re_exported_modules.insert(*alias, source_def);
+                        if let Some(existing) = reexported_from.get(alias) {
+                            errors.push(
+                                TypeErr::new(
+                                    node.span,
+                                    TypeErrKind::ReExportCollision {
+                                        name: *alias,
+                                        first_source: existing.clone(),
+                                        second_source: source_label.clone(),
+                                    },
+                                )
+                                .with_help("use a different alias to resolve the conflict"),
+                            );
+                        } else {
+                            module_def.re_exported_modules.insert(*alias, source_def);
+                            reexported_from.insert(*alias, source_label.clone());
+                        }
                     }
                 }
             }
@@ -338,7 +420,7 @@ pub(super) fn build_module_def_with_reexports(
         }
     }
 
-    module_def
+    (module_def, errors)
 }
 
 fn merge_symbol(name: Ident, bind_as: Ident, source: &ModuleDef, target: &mut ModuleDef) {
@@ -388,6 +470,8 @@ fn inject_module_item(
         type_checker.struct_defs.insert(bind_as, struct_def.clone());
     } else if let Some(enum_def) = module_def.enum_defs.get(&name) {
         type_checker.enum_defs.insert(bind_as, enum_def.clone());
+    } else if let Some(sub_module) = module_def.re_exported_modules.get(&name) {
+        type_checker.module_defs.insert(bind_as, sub_module.clone());
     }
 
     // symbol not found is silently skipped here, check_stmt will report the error
@@ -413,7 +497,8 @@ pub(super) fn check_stmt(
                 for item in items {
                     let is_public = module_def.funcs.contains_key(&item.name)
                         || module_def.struct_defs.contains_key(&item.name)
-                        || module_def.enum_defs.contains_key(&item.name);
+                        || module_def.enum_defs.contains_key(&item.name)
+                        || module_def.re_exported_modules.contains_key(&item.name);
                     if !is_public {
                         let err_kind = if module_def.all_names.contains(&item.name) {
                             TypeErrKind::PrivateModuleMember {

@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: re-exported by both
+
+import facade { compute };
+
+fn main() {
+    let x = compute(1);
+}

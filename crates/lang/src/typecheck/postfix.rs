@@ -356,6 +356,51 @@ fn try_type_name_dispatch(
         {
             let member_name = field_node.node.field;
             let op_safe = field_node.node.safe;
+
+            // nested facade.submodule.func(), submodule is a re-exported module
+            if let Some(sub_def) = module_def.re_exported_modules.get(&member_name).cloned() {
+                if let [
+                    PostfixNodeRef::Field {
+                        node: sub_field_node,
+                        ..
+                    },
+                    sub_rest @ ..,
+                ] = rest
+                {
+                    let sub_member = sub_field_node.node.field;
+                    let sub_op_safe = op_safe || sub_field_node.node.safe;
+                    let call_follows =
+                        matches!(sub_rest.first(), Some(PostfixNodeRef::Call { .. }));
+
+                    if call_follows {
+                        let call_op = sub_rest[0];
+                        let PostfixNodeRef::Call {
+                            node: call_node, ..
+                        } = call_op
+                        else {
+                            unreachable!()
+                        };
+                        let sub_op_safe = sub_op_safe || call_op.safe();
+                        let ty = check_module_func_call(
+                            call_node,
+                            member_name,
+                            sub_member,
+                            &sub_def,
+                            type_checker,
+                            errors,
+                        );
+                        return Some((ty, 3, sub_op_safe));
+                    }
+                }
+                // facade.submodule without further chaining, not a valid expression
+                let err_kind = TypeErrKind::UnknownModuleMember {
+                    module: *type_name,
+                    member: member_name,
+                };
+                errors.push(TypeErr::new(field_node.span, err_kind));
+                return Some((Type::Infer, 1, op_safe));
+            }
+
             let call_follows = matches!(rest.first(), Some(PostfixNodeRef::Call { .. }));
 
             if call_follows {

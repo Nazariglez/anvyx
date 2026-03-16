@@ -575,6 +575,19 @@ fn lower_expr(
                         } else {
                             return Err(LowerError::NonDirectCall { span });
                         }
+                    } else if let ast::ExprKind::Field(inner_field) = &field.node.target.node.kind {
+                        // nested facade.submodule.func(args), two levels of field access
+                        if let ast::ExprKind::Ident(outer_module) =
+                            &inner_field.node.target.node.kind
+                        {
+                            if ctx.tcx.is_module_name(*outer_module) {
+                                field.node.field
+                            } else {
+                                return Err(LowerError::NonDirectCall { span });
+                            }
+                        } else {
+                            return Err(LowerError::NonDirectCall { span });
+                        }
                     } else {
                         return Err(LowerError::NonDirectCall { span });
                     }

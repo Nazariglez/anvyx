@@ -506,6 +506,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("'{member}' is private in module '{module}'"),
             format!("'{member}' exists in module '{module}' but is not marked `pub`"),
         ),
+        TypeErrKind::ReExportCollision { name, first_source, second_source } => (
+            format!("symbol '{name}' re-exported by both '{first_source}' and '{second_source}'"),
+            format!("'{name}' is introduced by 'pub import' from '{first_source}' and also from '{second_source}'"),
+        ),
     }
 }
 

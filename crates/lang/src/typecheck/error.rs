@@ -262,4 +262,10 @@ pub enum TypeErrKind {
         module: Ident,
         member: Ident,
     },
+
+    ReExportCollision {
+        name: Ident,
+        first_source: String,
+        second_source: String,
+    },
 }

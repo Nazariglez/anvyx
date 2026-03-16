@@ -1,0 +1,10 @@
+// @mode: run
+// @expect: success
+// @match: ok
+
+import facade;
+
+fn main() {
+    assert(facade.math.add(3, 4) == 7);
+    println("ok");
+}

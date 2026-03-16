@@ -54,10 +54,15 @@ pub fn check_program_with_modules(
     }
 
     for (path, stmts) in module_list {
-        let module_def = build_module_def_with_reexports(stmts, &type_checker);
+        let (module_def, reexport_errors) = build_module_def_with_reexports(stmts, &type_checker);
+        errors.extend(reexport_errors);
         type_checker
             .resolved_module_defs
             .insert(path.clone(), module_def);
+    }
+
+    if !errors.is_empty() {
+        return Err(errors);
     }
 
     // first pass we collect the types from the ast
