@@ -1,20 +1,42 @@
-use std::collections::HashMap;
+use anvyx_lang::export_fn;
 
-use anvyx_lang::{ExternHandler, Value};
+#[export_fn]
+pub fn add(a: i64, b: i64) -> i64 {
+    a + b
+}
 
-pub fn anvyx_externs() -> HashMap<String, ExternHandler> {
-    let mut m = HashMap::new();
-    m.insert(
-        "add".into(),
-        Box::new(|args: Vec<Value>| {
-            let Value::Int(a) = &args[0] else {
-                unreachable!()
-            };
-            let Value::Int(b) = &args[1] else {
-                unreachable!()
-            };
-            Ok(Value::Int(a + b))
-        }) as ExternHandler,
-    );
-    m
+#[export_fn(name = "greet")]
+pub fn greet_user(name: String) -> String {
+    format!("Hello, {name}!")
+}
+
+anvyx_lang::provider!(add, greet_user);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anvyx_lang::Value;
+    use std::rc::Rc;
+
+    #[test]
+    fn anvyx_externs_contains_all() {
+        let externs = anvyx_externs();
+        assert_eq!(externs.len(), 2);
+        assert!(externs.contains_key("add"));
+        assert!(externs.contains_key("greet"));
+    }
+
+    #[test]
+    fn add_handler_works() {
+        let externs = anvyx_externs();
+        let result = externs["add"](vec![Value::Int(3), Value::Int(4)]).unwrap();
+        assert_eq!(result, Value::Int(7));
+    }
+
+    #[test]
+    fn greet_handler_works() {
+        let externs = anvyx_externs();
+        let result = externs["greet"](vec![Value::String(Rc::from("Anvyx"))]).unwrap();
+        assert_eq!(result, Value::String(Rc::from("Hello, Anvyx!")));
+    }
 }

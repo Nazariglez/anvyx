@@ -69,9 +69,14 @@ pub fn execute_runner(project_root: &Path, entry_path: &Path, backend: &str) -> 
 
 pub fn build_runner(runner_dir: &Path) -> Result<(), String> {
     let manifest_path = runner_dir.join("Cargo.toml");
+    let target_dir = runner_dir.join("target");
     let output = process::Command::new("cargo")
         .args(["build", "--release", "--manifest-path"])
         .arg(&manifest_path)
+        .arg("--target-dir")
+        .arg(&target_dir)
+        // unset CARGO_TARGET_DIR so the explicit --target-dir takes effect.
+        .env_remove("CARGO_TARGET_DIR")
         .output()
         .map_err(|e| format!("Failed to run cargo build: {e}"))?;
 
@@ -326,10 +331,7 @@ mod tests {
 
         assert!(result.is_err());
         let msg = result.unwrap_err();
-        assert!(
-            msg.contains("not found at path"),
-            "unexpected error: {msg}"
-        );
+        assert!(msg.contains("not found at path"), "unexpected error: {msg}");
         assert!(msg.contains("missing_crate"), "unexpected error: {msg}");
 
         let _ = fs::remove_dir_all(&tmp);

@@ -8,6 +8,7 @@ use crate::hir;
 use std::collections::HashMap;
 
 pub use runtime::ExternHandler;
+pub use value::RuntimeError;
 pub use value::Value;
 
 pub fn run(hir_prog: &hir::Program) -> Result<String, String> {

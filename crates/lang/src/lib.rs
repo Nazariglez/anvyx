@@ -9,7 +9,10 @@ mod span;
 mod typecheck;
 mod vm;
 
+pub use anvyx_macros::export_fn;
+pub use anvyx_macros::provider;
 pub use vm::ExternHandler;
+pub use vm::RuntimeError;
 pub use vm::Value;
 
 #[cfg(test)]

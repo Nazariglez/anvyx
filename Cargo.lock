@@ -81,9 +81,20 @@ dependencies = [
 name = "anvyx-lang"
 version = "0.1.0"
 dependencies = [
+ "anvyx-macros",
  "ariadne",
  "chumsky",
  "internment",
+]
+
+[[package]]
+name = "anvyx-macros"
+version = "0.1.0"
+dependencies = [
+ "anvyx-lang",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

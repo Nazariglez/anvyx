@@ -1,6 +1,9 @@
 extern fn add(a: int, b: int) -> int
+extern fn greet(name: string) -> string
 
 fn main() {
     let result = add(3, 4);
     println("{result}");
+    let msg = greet("Anvyx");
+    println(msg);
 }
