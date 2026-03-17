@@ -23,7 +23,7 @@ pub(super) fn type_from_fn(func: &Func) -> Type {
 
 /// Substitutes type variables in a type with concrete types from the substitution map
 /// fn(T) -> T where "T = int" then fn(int) -> int
-pub(super) fn subst_type(ty: &Type, subst: &HashMap<TypeVarId, Type>) -> Type {
+pub fn subst_type(ty: &Type, subst: &HashMap<TypeVarId, Type>) -> Type {
     use Type::*;
     match ty {
         Var(id) => subst.get(id).cloned().unwrap_or_else(|| ty.clone()),

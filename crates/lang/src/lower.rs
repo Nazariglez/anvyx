@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::ast::{self, AssignOp, BinaryOp, Ident, Lit, Pattern, Stmt, StringPart, Type};
+use crate::ast::{
+    self, AssignOp, BinaryOp, ExprId, Ident, Lit, Pattern, Stmt, StringPart, Type, TypeVarId,
+};
 use crate::builtin::Builtin;
 use crate::hir;
 use crate::span::Span;
-use crate::typecheck::TypeChecker;
+use crate::typecheck::{TypeChecker, subst_type};
+use internment::Intern;
 
 #[derive(Debug)]
 pub enum LowerError {
@@ -64,10 +67,20 @@ impl fmt::Display for LowerError {
     }
 }
 
+fn mangle_generic_name(name: Ident, type_args: &[Type]) -> Ident {
+    let suffix = type_args
+        .iter()
+        .map(|t| t.to_string())
+        .collect::<Vec<_>>()
+        .join("$");
+    Ident(Intern::new(format!("{name}${suffix}")))
+}
+
 struct LowerCtx<'a> {
     tcx: &'a TypeChecker,
     funcs: HashMap<Ident, hir::FuncId>,
     externs: HashMap<Ident, hir::ExternId>,
+    type_overrides: Option<&'a HashMap<ExprId, (Span, Type)>>,
 }
 
 struct FuncLower {
@@ -84,6 +97,7 @@ pub fn lower_program(
         tcx,
         funcs: HashMap::new(),
         externs: HashMap::new(),
+        type_overrides: None,
     };
 
     let mut func_nodes: Vec<&ast::FuncNode> = vec![];
@@ -198,10 +212,97 @@ pub fn lower_program(
         }
     }
 
-    // lower each function body
+    let mut spec_registrations: Vec<(Ident, crate::typecheck::SpecializationKey)> = vec![];
+    for spec_key in ctx.tcx.specializations().keys() {
+        let spec_result = &ctx.tcx.specializations()[spec_key];
+        if spec_result.err.is_some() {
+            continue;
+        }
+        if ctx.tcx.generic_template(spec_key.func_name).is_none() {
+            continue;
+        }
+        let mangled = mangle_generic_name(spec_key.func_name, &spec_key.type_args);
+        if ctx.funcs.contains_key(&mangled) {
+            continue;
+        }
+        let id = hir::FuncId(next_func_id);
+        next_func_id += 1;
+        ctx.funcs.insert(mangled, id);
+        spec_registrations.push((mangled, spec_key.clone()));
+    }
+
+    // lower non-generic function bodies (FuncIds 0..N assigned in passes above)
     let mut funcs = vec![];
     for func_node in func_nodes {
         funcs.push(lower_func(func_node, &ctx)?);
+    }
+
+    for (mangled, spec_key) in &spec_registrations {
+        let spec_result = &ctx.tcx.specializations()[spec_key];
+        let template = ctx
+            .tcx
+            .generic_template(spec_key.func_name)
+            .expect("template must exist as checked during pre-registration");
+
+        let &id = ctx
+            .funcs
+            .get(mangled)
+            .expect("mangled name was just registered");
+
+        let type_params = &template.node.type_params;
+        let subst: HashMap<TypeVarId, Type> = type_params
+            .iter()
+            .zip(spec_key.type_args.iter())
+            .map(|(param, arg)| (param.id, arg.clone()))
+            .collect();
+
+        let specialized_params: Vec<Type> = template
+            .node
+            .params
+            .iter()
+            .map(|p| subst_type(&p.ty, &subst))
+            .collect();
+        let specialized_ret = subst_type(&template.node.ret, &subst);
+
+        let spec_ctx = LowerCtx {
+            tcx: ctx.tcx,
+            funcs: ctx.funcs.clone(),
+            externs: ctx.externs.clone(),
+            type_overrides: Some(&spec_result.body_types),
+        };
+
+        let mut fc = FuncLower {
+            locals: vec![],
+            local_map: HashMap::new(),
+        };
+
+        for (param, ty) in template.node.params.iter().zip(specialized_params.iter()) {
+            let local_id = hir::LocalId(fc.locals.len() as u32);
+            fc.locals.push(hir::Local {
+                name: Some(param.name),
+                ty: ty.clone(),
+            });
+            fc.local_map.insert(param.name, local_id);
+        }
+        let params_len = fc.locals.len() as u32;
+
+        let body = lower_block(
+            &template.node.body,
+            &spec_ctx,
+            &mut fc,
+            true,
+            &specialized_ret,
+        )?;
+
+        funcs.push(hir::Func {
+            id,
+            name: *mangled,
+            locals: fc.locals,
+            params_len,
+            ret: specialized_ret,
+            body,
+            span: template.span,
+        });
     }
 
     Ok(hir::Program {
@@ -532,8 +633,9 @@ fn lower_expr(
     let span = ast_expr.span;
     let ty = {
         let (_, ty) = ctx
-            .tcx
-            .get_type(ast_expr.node.id)
+            .type_overrides
+            .and_then(|overrides| overrides.get(&ast_expr.node.id))
+            .or_else(|| ctx.tcx.get_type(ast_expr.node.id))
             .ok_or(LowerError::MissingExprType { span })?;
         ty.clone()
     };
@@ -629,6 +731,17 @@ fn lower_expr(
                 }
             } else if let Some(&extern_id) = ctx.externs.get(&callee_name) {
                 hir::ExprKind::CallExtern { extern_id, args }
+            } else if let Some((func_name, type_args)) = ctx.tcx.call_type_args(c.node.func.node.id)
+            {
+                let mangled = mangle_generic_name(*func_name, type_args);
+                let &func_id = ctx.funcs.get(&mangled).ok_or(LowerError::UnknownFunc {
+                    name: callee_name,
+                    span,
+                })?;
+                hir::ExprKind::Call {
+                    func: func_id,
+                    args,
+                }
             } else {
                 return Err(LowerError::UnknownFunc {
                     name: callee_name,

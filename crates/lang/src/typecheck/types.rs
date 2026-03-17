@@ -59,7 +59,7 @@ pub(super) struct MethodContext {
 
 /// Key for caching scpecialized generic functions (instantiated with concrete types)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(super) struct SpecializationKey {
+pub struct SpecializationKey {
     pub func_name: Ident,
     pub type_args: Vec<Type>,
 }
@@ -74,9 +74,10 @@ pub(super) struct MethodSpecKey {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct SpecializationResult {
+pub struct SpecializationResult {
     pub ret_ty: Type,
     pub err: Option<(Span, TypeErrKind)>,
+    pub body_types: HashMap<ExprId, (Span, Type)>,
 }
 
 #[derive(Debug, Clone)]
@@ -168,6 +169,12 @@ pub struct TypeChecker {
 
     /// Module bindings for qualified access (binding_name -> module declarations)
     pub(super) module_defs: HashMap<Ident, ModuleDef>,
+
+    /// Active snapshot for capturing expression types during generic body specialization
+    pub(super) spec_type_snapshot: Option<HashMap<ExprId, (Span, Type)>>,
+
+    /// Resolved type args per call site, keyed by callee ExprId
+    pub resolved_call_type_args: HashMap<ExprId, (Ident, Vec<Type>)>,
 }
 
 impl TypeChecker {
@@ -269,6 +276,9 @@ impl TypeChecker {
     }
 
     pub fn set_type(&mut self, id: ExprId, ty: Type, span: Span) {
+        if let Some(snapshot) = &mut self.spec_type_snapshot {
+            snapshot.insert(id, (span, ty.clone()));
+        }
         self.types.insert(id, (span, ty));
     }
 
@@ -278,6 +288,18 @@ impl TypeChecker {
 
     pub fn types(&self) -> impl Iterator<Item = (&ExprId, &(Span, Type))> {
         self.types.iter()
+    }
+
+    pub fn specializations(&self) -> &HashMap<SpecializationKey, SpecializationResult> {
+        &self.specialization_cache
+    }
+
+    pub fn generic_template(&self, name: Ident) -> Option<&FuncNode> {
+        self.generic_func_templates.get(&name)
+    }
+
+    pub fn call_type_args(&self, callee_expr_id: ExprId) -> Option<&(Ident, Vec<Type>)> {
+        self.resolved_call_type_args.get(&callee_expr_id)
     }
 
     pub(super) fn set_var(&mut self, name: Ident, ty: Type, mutable: bool) {

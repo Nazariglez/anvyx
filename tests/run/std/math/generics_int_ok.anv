@@ -1,0 +1,23 @@
+// @mode: run
+// @expect: success
+// @contains: ok
+
+import std.math { abs, min, max, clamp };
+
+fn main() {
+    assert(abs(-7) == 7);
+    assert(abs(3) == 3);
+    assert(abs(0) == 0);
+
+    assert(min(4, 9) == 4);
+    assert(min(-2, 1) == -2);
+
+    assert(max(4, 9) == 9);
+    assert(max(-2, 1) == 1);
+
+    assert(clamp(5, 0, 10) == 5);
+    assert(clamp(-3, 0, 10) == 0);
+    assert(clamp(20, 0, 10) == 10);
+
+    println("ok");
+}

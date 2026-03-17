@@ -18,7 +18,8 @@ mod unify;
 mod tests;
 
 pub use error::{TypeErr, TypeErrKind};
-pub use types::TypeChecker;
+pub use infer::subst_type;
+pub use types::{SpecializationKey, SpecializationResult, TypeChecker};
 
 use crate::ast::{Program, StmtNode};
 use crate::builtin::Builtin;

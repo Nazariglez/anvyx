@@ -18,5 +18,9 @@ fn main() {
     let diff = abs(deg - 180.0);
     assert(diff < 0.0001);
 
+    assert(clamp(5, 0, 10) == 5);
+    assert(clamp(-1, 0, 10) == 0);
+    assert(clamp(15, 0, 10) == 10);
+
     println("ok");
 }

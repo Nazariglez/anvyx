@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        CallNode, ExprKind, ExprNode, FieldAccessNode, Ident, MethodReceiver, Mutability, Type,
-        TypeParam, TypeVarId, VariantKind,
+        CallNode, ExprKind, ExprNode, FieldAccessNode, FuncNode, Ident, MethodReceiver, Mutability,
+        Type, TypeParam, TypeVarId, VariantKind,
     },
     span::Span,
 };
@@ -174,13 +174,17 @@ pub(super) fn check_call(
                 check_var_param_args(&param_info, &node.args, type_checker, errors);
             }
 
-            return instantiate_and_check_fn(
+            let ret = instantiate_and_check_fn(
                 name,
                 &inferred_type_args,
                 call.span,
                 type_checker,
                 errors,
             );
+            type_checker
+                .resolved_call_type_args
+                .insert(node.func.node.id, (name, inferred_type_args));
+            return ret;
         }
 
         // generic function with type args -> explicit instantiation
@@ -261,13 +265,17 @@ pub(super) fn check_call(
                 check_var_param_args(&param_info, &node.args, type_checker, errors);
             }
 
-            return instantiate_and_check_fn(
+            let ret = instantiate_and_check_fn(
                 name,
                 &node.type_args,
                 call.span,
                 type_checker,
                 errors,
             );
+            type_checker
+                .resolved_call_type_args
+                .insert(node.func.node.id, (name, node.type_args.clone()));
+            return ret;
         }
 
         // non generic function without type args then must be a normal call
@@ -380,6 +388,84 @@ pub(super) fn check_module_func_call(
         return Type::Infer;
     };
 
+    let type_params = module_def.func_type_params.get(&func_name).cloned();
+    let is_generic = type_params.as_ref().is_some_and(|tp| !tp.is_empty());
+
+    if is_generic {
+        let type_params = type_params.unwrap();
+        let template = module_def
+            .generic_func_templates
+            .get(&func_name)
+            .cloned()
+            .expect("generic template must exist when type_params are present");
+
+        // temporarily inject template into the global maps so instantiate_and_check_fn can find it
+        let prev_tp = type_checker.func_type_params.remove(&func_name);
+        let prev_tmpl = type_checker.generic_func_templates.remove(&func_name);
+        type_checker
+            .func_type_params
+            .insert(func_name, type_params.clone());
+        type_checker
+            .generic_func_templates
+            .insert(func_name, template);
+
+        let node = &call.node;
+        let has_explicit_type_args = !node.type_args.is_empty();
+
+        let result = if has_explicit_type_args {
+            let ret = instantiate_and_check_fn(
+                func_name,
+                &node.type_args,
+                call.span,
+                type_checker,
+                errors,
+            );
+            type_checker
+                .resolved_call_type_args
+                .insert(node.func.node.id, (func_name, node.type_args.clone()));
+            ret
+        } else {
+            let Type::Func { params, .. } = &func_ty else {
+                errors.push(TypeErr::new(
+                    call.span,
+                    TypeErrKind::NotAFunction {
+                        expr_type: func_ty,
+                    },
+                ));
+                restore_generic_maps(type_checker, func_name, prev_tp, prev_tmpl);
+                return Type::Infer;
+            };
+
+            let Some(inferred) = infer_type_args_from_call(
+                call.span,
+                &type_params,
+                params,
+                &node.args,
+                func_ty.clone(),
+                type_checker,
+                errors,
+            ) else {
+                restore_generic_maps(type_checker, func_name, prev_tp, prev_tmpl);
+                return Type::Infer;
+            };
+
+            let ret =
+                instantiate_and_check_fn(func_name, &inferred, call.span, type_checker, errors);
+            type_checker
+                .resolved_call_type_args
+                .insert(node.func.node.id, (func_name, inferred));
+            ret
+        };
+
+        restore_generic_maps(type_checker, func_name, prev_tp, prev_tmpl);
+
+        if let Some(param_info) = module_def.func_param_info.get(&func_name).cloned() {
+            check_var_param_args(&param_info, &call.node.args, type_checker, errors);
+        }
+
+        return result;
+    }
+
     let result = check_call_with_type(call, func_ty, type_checker, errors);
 
     if let Some(param_info) = module_def.func_param_info.get(&func_name).cloned() {
@@ -387,6 +473,30 @@ pub(super) fn check_module_func_call(
     }
 
     result
+}
+
+fn restore_generic_maps(
+    tc: &mut TypeChecker,
+    name: Ident,
+    prev_tp: Option<Vec<TypeParam>>,
+    prev_tmpl: Option<FuncNode>,
+) {
+    match prev_tp {
+        Some(tp) => {
+            tc.func_type_params.insert(name, tp);
+        }
+        None => {
+            tc.func_type_params.remove(&name);
+        }
+    }
+    match prev_tmpl {
+        Some(tmpl) => {
+            tc.generic_func_templates.insert(name, tmpl);
+        }
+        None => {
+            tc.generic_func_templates.remove(&name);
+        }
+    }
 }
 
 pub(super) fn try_check_method_call(
@@ -1001,7 +1111,10 @@ pub(super) fn instantiate_and_check_fn(
         .collect();
     let specialized_ret = subst_type(&func.ret, &subst);
 
-    // typecheck the body with specialized types
+    // typecheck the body with specialized types, capturing expression types per specialization
+    let prev_snapshot = type_checker.spec_type_snapshot.take();
+    type_checker.spec_type_snapshot = Some(HashMap::new());
+
     let mut body_errors = vec![];
     check_fn_body(
         func,
@@ -1012,6 +1125,9 @@ pub(super) fn instantiate_and_check_fn(
         &mut body_errors,
     );
 
+    let body_types = type_checker.spec_type_snapshot.take().unwrap_or_default();
+    type_checker.spec_type_snapshot = prev_snapshot;
+
     // cache the result preserving the body span of the first error
     let cached_err = body_errors.first().map(|err| (err.span, err.kind.clone()));
     type_checker.specialization_cache.insert(
@@ -1019,6 +1135,7 @@ pub(super) fn instantiate_and_check_fn(
         SpecializationResult {
             ret_ty: specialized_ret.clone(),
             err: cached_err,
+            body_types,
         },
     );
 
@@ -1131,12 +1248,14 @@ fn instantiate_method_body(
     type_checker.pop_method_context();
 
     // cache the result preserving the body span of the first error
+    // method specializations don't need body_types (methods are not lowered via specialization cache)
     let cached_err = body_errors.first().map(|err| (err.span, err.kind.clone()));
     type_checker.method_spec_cache.insert(
         cache_key,
         SpecializationResult {
             ret_ty: specialized_ret.clone(),
             err: cached_err,
+            body_types: HashMap::new(),
         },
     );
 

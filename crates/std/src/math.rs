@@ -18,11 +18,6 @@ pub fn sqrt(x: f64) -> f64 {
 }
 
 #[export_fn]
-pub fn abs(x: f64) -> f64 {
-    x.abs()
-}
-
-#[export_fn]
 pub fn floor(x: f64) -> f64 {
     x.floor()
 }
@@ -47,17 +42,7 @@ pub fn log(x: f64) -> f64 {
     x.ln()
 }
 
-#[export_fn]
-pub fn min(a: f64, b: f64) -> f64 {
-    a.min(b)
-}
-
-#[export_fn]
-pub fn max(a: f64, b: f64) -> f64 {
-    a.max(b)
-}
-
-provider!(sin, cos, sqrt, abs, floor, ceil, round, pow, log, min, max);
+provider!(sin, cos, sqrt, floor, ceil, round, pow, log);
 
 pub fn module() -> StdModule {
     StdModule {
