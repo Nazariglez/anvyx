@@ -5,3 +5,4 @@ base_test.anv
 WIP_README.md
 examples/*/build/
 examples/**/*/target/
+/exp_info.md
