@@ -31,6 +31,8 @@ enum Command {
     Check { file: Option<PathBuf> },
     #[command(about = "Create a new Anvyx project")]
     Init { name: Option<String> },
+    #[command(about = "Build an Anvyx project for distribution")]
+    Build,
 }
 
 fn main() -> Result<(), String> {
@@ -89,6 +91,29 @@ fn main() -> Result<(), String> {
         }
         Command::Init { name } => {
             init::cmd(name.as_deref())?;
+        }
+        Command::Build => {
+            let manifest = manifest::parse_manifest()?
+                .ok_or("anvyx build requires an anvyx.toml manifest")?;
+            let cwd = std::env::current_dir()
+                .map_err(|e| format!("Failed to get current directory: {e}"))?;
+            let project_name = build::resolve_project_name(&manifest, &cwd);
+
+            if manifest.has_externs() {
+                let runner_dir = build::generate_runner_crate(&cwd, &manifest)?;
+                build::build_runner(&runner_dir)?;
+                build::extract_metadata(&cwd)?;
+
+                let runner_dir = build::generate_build_runner_crate(&cwd, &manifest)?;
+                build::build_runner(&runner_dir)?;
+            } else {
+                let runner_dir = build::generate_build_runner_crate(&cwd, &manifest)?;
+                build::build_runner(&runner_dir)?;
+            }
+
+            let dist_dir = build::assemble_dist(&cwd, &project_name)?;
+            build::bundle_sources(&cwd, &dist_dir, &manifest)?;
+            println!("Build complete: {}", dist_dir.display());
         }
     }
 

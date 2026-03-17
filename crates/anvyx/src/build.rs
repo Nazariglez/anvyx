@@ -43,6 +43,34 @@ pub fn generate_runner_crate(project_root: &Path, manifest: &Manifest) -> Result
     Ok(runner_dir)
 }
 
+pub fn generate_build_runner_crate(project_root: &Path, manifest: &Manifest) -> Result<PathBuf, String> {
+    for (name, entry) in &manifest.externs {
+        let resolved = project_root.join(&entry.path);
+        if !resolved.exists() {
+            return Err(format!(
+                "Extern provider '{name}' not found at path: {}",
+                resolved.display()
+            ));
+        }
+    }
+
+    let runner_dir = project_root.join("build/runner");
+    let src_dir = runner_dir.join("src");
+
+    fs::create_dir_all(&src_dir)
+        .map_err(|e| format!("Failed to create runner crate directory: {e}"))?;
+
+    let cargo_toml = generate_cargo_toml(project_root, manifest);
+    fs::write(runner_dir.join("Cargo.toml"), cargo_toml)
+        .map_err(|e| format!("Failed to write runner Cargo.toml: {e}"))?;
+
+    let main_rs = generate_build_main_rs(manifest);
+    fs::write(src_dir.join("main.rs"), main_rs)
+        .map_err(|e| format!("Failed to write runner src/main.rs: {e}"))?;
+
+    Ok(runner_dir)
+}
+
 pub fn runner_binary_path(project_root: &Path) -> PathBuf {
     project_root.join("build/runner/target/release/anvyx-runner")
 }
@@ -109,7 +137,10 @@ pub fn extract_metadata(project_root: &Path) -> Result<(), String> {
         Ok(())
     } else {
         let code = status.code().unwrap_or(1);
-        Err(format!("Metadata extraction exited with code {code}"))
+        Err(format!(
+            "Metadata extraction failed (exit code {code}). \
+            Check that extern provider crates compile correctly and export ANVYX_EXPORTS."
+        ))
     }
 }
 
@@ -226,6 +257,108 @@ fn generate_metadata_read_lines(sorted_names: &[&String]) -> String {
     lines
 }
 
+fn generate_build_main_rs(manifest: &Manifest) -> String {
+    let entry_point = &manifest.project.entry;
+
+    if manifest.has_externs() {
+        let mut entries: Vec<&String> = manifest.externs.keys().collect();
+        entries.sort();
+
+        let metadata_consts = generate_build_metadata_consts(&entries);
+        let metadata_inserts = generate_build_metadata_inserts(&entries);
+        let mut extend_lines = String::new();
+        for name in &entries {
+            extend_lines.push_str(&format!("    externs.extend({name}::anvyx_externs());\n"));
+        }
+
+        format!(
+            r#"use std::collections::HashMap;
+use std::env;
+use std::fs;
+
+const ENTRY_POINT: &str = "{entry_point}";
+
+{metadata_consts}
+fn main() {{
+    let exe_path = env::current_exe()
+        .unwrap_or_else(|e| {{ eprintln!("Failed to resolve executable path: {{e}}"); std::process::exit(1); }});
+    let base_dir = exe_path.parent()
+        .unwrap_or_else(|| {{ eprintln!("Failed to resolve executable directory"); std::process::exit(1); }});
+
+    let entry = base_dir.join(ENTRY_POINT);
+    let file_path = entry.to_string_lossy().to_string();
+
+    let source = fs::read_to_string(&entry)
+        .unwrap_or_else(|e| {{ eprintln!("Failed to read {{file_path}}: {{e}}"); std::process::exit(1); }});
+
+    let backend = anvyx_lang::Backend::from_str("vm")
+        .unwrap_or_else(|e| {{ eprintln!("{{e}}"); std::process::exit(1); }});
+
+    let mut extern_metadata: HashMap<String, String> = HashMap::new();
+{metadata_inserts}
+    let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
+{extend_lines}
+    match anvyx_lang::run_program_with_externs(&source, &file_path, backend, externs, extern_metadata) {{
+        Ok(output) => print!("{{output}}"),
+        Err(e) => {{ eprintln!("{{e}}"); std::process::exit(1); }}
+    }}
+}}
+"#
+        )
+    } else {
+        format!(
+            r#"use std::env;
+use std::fs;
+
+const ENTRY_POINT: &str = "{entry_point}";
+
+fn main() {{
+    let exe_path = env::current_exe()
+        .unwrap_or_else(|e| {{ eprintln!("Failed to resolve executable path: {{e}}"); std::process::exit(1); }});
+    let base_dir = exe_path.parent()
+        .unwrap_or_else(|| {{ eprintln!("Failed to resolve executable directory"); std::process::exit(1); }});
+
+    let entry = base_dir.join(ENTRY_POINT);
+    let file_path = entry.to_string_lossy().to_string();
+
+    let source = fs::read_to_string(&entry)
+        .unwrap_or_else(|e| {{ eprintln!("Failed to read {{file_path}}: {{e}}"); std::process::exit(1); }});
+
+    let backend = anvyx_lang::Backend::from_str("vm")
+        .unwrap_or_else(|e| {{ eprintln!("{{e}}"); std::process::exit(1); }});
+
+    match anvyx_lang::run_program(&source, &file_path, backend) {{
+        Ok(output) => print!("{{output}}"),
+        Err(e) => {{ eprintln!("{{e}}"); std::process::exit(1); }}
+    }}
+}}
+"#
+        )
+    }
+}
+
+fn generate_build_metadata_consts(sorted_names: &[&String]) -> String {
+    let mut lines = String::new();
+    for name in sorted_names {
+        let const_name = format!("META_{}", name.to_uppercase());
+        lines.push_str(&format!(
+            "const {const_name}: &str = include_str!(\"../../metadata/{name}.json\");\n"
+        ));
+    }
+    lines
+}
+
+fn generate_build_metadata_inserts(sorted_names: &[&String]) -> String {
+    let mut lines = String::new();
+    for name in sorted_names {
+        let const_name = format!("META_{}", name.to_uppercase());
+        lines.push_str(&format!(
+            "    extern_metadata.insert(\"{name}\".to_string(), {const_name}.to_string());\n"
+        ));
+    }
+    lines
+}
+
 pub fn read_metadata(
     project_root: &Path,
     manifest: &Manifest,
@@ -239,6 +372,124 @@ pub fn read_metadata(
         result.insert(name.clone(), json);
     }
     Ok(result)
+}
+
+pub fn resolve_project_name(manifest: &Manifest, project_root: &Path) -> String {
+    let raw = match &manifest.project.name {
+        Some(name) => name.clone(),
+        None => project_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("anvyx-project")
+            .to_string(),
+    };
+
+    raw.to_lowercase()
+        .chars()
+        .map(|c| if c == ' ' { '-' } else { c })
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect()
+}
+
+pub fn assemble_dist(project_root: &Path, project_name: &str) -> Result<PathBuf, String> {
+    let dist_dir = project_root.join("build/dist");
+
+    if dist_dir.exists() {
+        fs::remove_dir_all(&dist_dir)
+            .map_err(|e| format!("Failed to clean previous dist directory: {e}"))?;
+    }
+
+    fs::create_dir_all(&dist_dir)
+        .map_err(|e| format!("Failed to create dist directory: {e}"))?;
+
+    let src_binary = runner_binary_path(project_root);
+    if !src_binary.exists() {
+        return Err(format!("Runner binary not found at {}", src_binary.display()));
+    }
+
+    let dest_binary = dist_dir.join(project_name);
+    fs::copy(&src_binary, &dest_binary)
+        .map_err(|e| format!("Failed to copy binary to dist: {e}"))?;
+
+    Ok(dist_dir)
+}
+
+pub fn bundle_sources(
+    project_root: &Path,
+    dist_dir: &Path,
+    manifest: &Manifest,
+) -> Result<(), String> {
+    use std::collections::HashSet;
+
+    let mut skip_dirs: HashSet<PathBuf> = HashSet::new();
+    skip_dirs.insert(PathBuf::from("build"));
+    for entry in manifest.externs.values() {
+        let normalized = Path::new(&entry.path).components().collect::<PathBuf>();
+        skip_dirs.insert(normalized);
+    }
+
+    walk_and_copy_anv(project_root, project_root, dist_dir, &skip_dirs)?;
+
+    let entry_in_dist = dist_dir.join(&manifest.project.entry);
+    if !entry_in_dist.exists() {
+        return Err(format!(
+            "Entry point '{}' not found in bundled sources. \
+            Check project.entry in anvyx.toml.",
+            manifest.project.entry
+        ));
+    }
+
+    Ok(())
+}
+
+fn walk_and_copy_anv(
+    dir: &Path,
+    project_root: &Path,
+    dist_dir: &Path,
+    skip_dirs: &std::collections::HashSet<PathBuf>,
+) -> Result<(), String> {
+    let read_dir = fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read directory {}: {e}", dir.display()))?;
+
+    for entry in read_dir {
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {e}"))?;
+        let path = entry.path();
+
+        let rel = path
+            .strip_prefix(project_root)
+            .map_err(|_| format!("Path {} is not under project root", path.display()))?;
+
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("Failed to get file type for {}: {e}", path.display()))?;
+
+        if file_type.is_dir() {
+            let dir_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+
+            let is_hidden = dir_name.starts_with('.');
+            let is_skipped = skip_dirs.contains(rel);
+
+            if !is_hidden && !is_skipped {
+                walk_and_copy_anv(&path, project_root, dist_dir, skip_dirs)?;
+            }
+        } else if file_type.is_file() {
+            let is_anv = path.extension().and_then(|e| e.to_str()) == Some("anv");
+            if is_anv {
+                let dest = dist_dir.join(rel);
+                if let Some(parent) = dest.parent() {
+                    fs::create_dir_all(parent)
+                        .map_err(|e| format!("Failed to create directory {}: {e}", parent.display()))?;
+                }
+                fs::copy(&path, &dest)
+                    .map_err(|e| format!("Failed to copy {} to {}: {e}", path.display(), dest.display()))?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn resolve_relative_path(project_root: &Path, rel_to_root: &str) -> String {
@@ -646,6 +897,521 @@ mod tests {
         assert!(main_content.contains("--metadata"));
         assert!(main_content.contains("engine::ANVYX_EXPORTS"));
         assert!(main_content.contains("engine.json"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn build_main_rs_no_externs() {
+        let output = generate_build_main_rs(&manifest_no_externs());
+
+        assert!(output.contains("ENTRY_POINT"));
+        assert!(output.contains("\"src/main.anv\""));
+        assert!(output.contains("run_program"));
+        assert!(output.contains("current_exe"));
+        assert!(!output.contains("HashMap"));
+        assert!(!output.contains("extern_metadata"));
+        assert!(!output.contains("include_str!"));
+        assert!(!output.contains("run_program_with_externs"));
+        assert!(!output.contains("anvyx_externs"));
+    }
+
+    #[test]
+    fn build_main_rs_one_extern() {
+        let output = generate_build_main_rs(&manifest_one_extern());
+
+        assert!(output.contains("ENTRY_POINT"));
+        assert!(output.contains("\"src/main.anv\""));
+        assert!(output.contains("current_exe"));
+        assert!(output.contains("include_str!"));
+        assert!(output.contains("META_ENGINE"));
+        assert!(output.contains("engine.json"));
+        assert!(output.contains("../../metadata/engine.json"));
+        assert!(output.contains("extern_metadata.insert(\"engine\""));
+        assert!(output.contains("engine::anvyx_externs()"));
+        assert!(output.contains("run_program_with_externs"));
+        assert!(!output.contains("--metadata"));
+        assert!(!output.contains("args[1]"));
+        assert!(!output.contains("args.get(2)"));
+        assert!(!output.contains("args.get(3)"));
+    }
+
+    #[test]
+    fn build_main_rs_two_externs() {
+        let output = generate_build_main_rs(&manifest_two_externs());
+
+        assert!(output.contains("META_AUDIO"));
+        assert!(output.contains("META_ENGINE"));
+        assert!(output.contains("audio.json"));
+        assert!(output.contains("engine.json"));
+        assert!(output.contains("audio::anvyx_externs()"));
+        assert!(output.contains("engine::anvyx_externs()"));
+
+        let audio_pos = output.find("META_AUDIO").unwrap();
+        let engine_pos = output.find("META_ENGINE").unwrap();
+        assert!(audio_pos < engine_pos, "META_AUDIO should appear before META_ENGINE (alphabetical)");
+    }
+
+    #[test]
+    fn build_main_rs_hardcoded_entry() {
+        let manifest = Manifest {
+            project: crate::manifest::Project {
+                name: None,
+                entry: "game/start.anv".into(),
+            },
+            externs: HashMap::new(),
+        };
+        let output = generate_build_main_rs(&manifest);
+
+        assert!(output.contains("const ENTRY_POINT: &str = \"game/start.anv\";"));
+    }
+
+    #[test]
+    fn build_main_rs_hardcoded_vm_backend() {
+        let output = generate_build_main_rs(&manifest_one_extern());
+
+        assert!(output.contains("Backend::from_str(\"vm\")"));
+        assert!(!output.contains("args.get(2)"));
+    }
+
+    #[test]
+    fn build_main_rs_no_cli_args() {
+        let output = generate_build_main_rs(&manifest_one_extern());
+
+        assert!(!output.contains("env::args()"));
+        assert!(!output.contains("args[1]"));
+        assert!(!output.contains("--metadata"));
+    }
+
+    #[test]
+    fn generate_build_runner_crate_creates_files() {
+        let tmp = std::env::temp_dir().join(format!("anvyx-build-crate-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("my_externs/engine")).unwrap();
+
+        let runner_dir = generate_build_runner_crate(&tmp, &manifest_one_extern()).unwrap();
+
+        assert!(runner_dir.join("Cargo.toml").exists());
+        assert!(runner_dir.join("src/main.rs").exists());
+
+        let cargo_content = fs::read_to_string(runner_dir.join("Cargo.toml")).unwrap();
+        assert!(cargo_content.contains("anvyx-runner"));
+        assert!(cargo_content.contains("engine"));
+
+        let main_content = fs::read_to_string(runner_dir.join("src/main.rs")).unwrap();
+        assert!(main_content.contains("ENTRY_POINT"));
+        assert!(main_content.contains("include_str!"));
+        assert!(main_content.contains("current_exe"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn generate_build_runner_crate_no_externs() {
+        let tmp = std::env::temp_dir().join(format!("anvyx-build-noext-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        let runner_dir = generate_build_runner_crate(&tmp, &manifest_no_externs()).unwrap();
+
+        assert!(runner_dir.join("Cargo.toml").exists());
+        assert!(runner_dir.join("src/main.rs").exists());
+
+        let cargo_content = fs::read_to_string(runner_dir.join("Cargo.toml")).unwrap();
+        assert!(cargo_content.contains("anvyx-lang"));
+        assert!(!cargo_content.contains("engine"));
+
+        let main_content = fs::read_to_string(runner_dir.join("src/main.rs")).unwrap();
+        assert!(main_content.contains("ENTRY_POINT"));
+        assert!(main_content.contains("run_program"));
+        assert!(!main_content.contains("include_str!"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolve_project_name_from_manifest() {
+        let manifest = Manifest {
+            project: crate::manifest::Project {
+                name: Some("my_game".into()),
+                entry: "src/main.anv".into(),
+            },
+            externs: HashMap::new(),
+        };
+        assert_eq!(resolve_project_name(&manifest, Path::new("/any/path")), "my_game");
+    }
+
+    #[test]
+    fn resolve_project_name_from_directory() {
+        let manifest = Manifest {
+            project: crate::manifest::Project {
+                name: None,
+                entry: "src/main.anv".into(),
+            },
+            externs: HashMap::new(),
+        };
+        assert_eq!(
+            resolve_project_name(&manifest, Path::new("/home/user/cool_project")),
+            "cool_project"
+        );
+    }
+
+    #[test]
+    fn resolve_project_name_sanitizes() {
+        let manifest = Manifest {
+            project: crate::manifest::Project {
+                name: Some("My Cool Game!".into()),
+                entry: "src/main.anv".into(),
+            },
+            externs: HashMap::new(),
+        };
+        assert_eq!(
+            resolve_project_name(&manifest, Path::new("/any/path")),
+            "my-cool-game"
+        );
+    }
+
+    #[test]
+    fn resolve_project_name_fallback() {
+        let manifest = Manifest {
+            project: crate::manifest::Project {
+                name: None,
+                entry: "src/main.anv".into(),
+            },
+            externs: HashMap::new(),
+        };
+        assert_eq!(
+            resolve_project_name(&manifest, Path::new("/")),
+            "anvyx-project"
+        );
+    }
+
+    #[test]
+    fn assemble_dist_copies_binary() {
+        let tmp = std::env::temp_dir().join(format!("anvyx-dist-copy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+
+        let binary_dir = tmp.join("build/runner/target/release");
+        fs::create_dir_all(&binary_dir).unwrap();
+        let binary_path = binary_dir.join("anvyx-runner");
+        fs::write(&binary_path, b"fake binary content").unwrap();
+
+        let dist_dir = assemble_dist(&tmp, "my_game").unwrap();
+
+        assert_eq!(dist_dir, tmp.join("build/dist"));
+        assert!(dist_dir.join("my_game").exists());
+        let content = fs::read(dist_dir.join("my_game")).unwrap();
+        assert_eq!(content, b"fake binary content");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn assemble_dist_cleans_previous() {
+        let tmp = std::env::temp_dir().join(format!("anvyx-dist-clean-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+
+        let stale_dir = tmp.join("build/dist");
+        fs::create_dir_all(&stale_dir).unwrap();
+        fs::write(stale_dir.join("stale_file"), b"old").unwrap();
+
+        let binary_dir = tmp.join("build/runner/target/release");
+        fs::create_dir_all(&binary_dir).unwrap();
+        fs::write(binary_dir.join("anvyx-runner"), b"new binary").unwrap();
+
+        assemble_dist(&tmp, "my_game").unwrap();
+
+        assert!(!stale_dir.join("stale_file").exists());
+        assert!(stale_dir.join("my_game").exists());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn assemble_dist_missing_binary_errors() {
+        let tmp =
+            std::env::temp_dir().join(format!("anvyx-dist-missing-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        let result = assemble_dist(&tmp, "my_game");
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("not found"), "unexpected error: {msg}");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn bundle_sources_copies_anv_files() {
+        let tmp =
+            std::env::temp_dir().join(format!("anvyx-bundle-copy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+
+        fs::create_dir_all(tmp.join("src/utils")).unwrap();
+        fs::write(tmp.join("src/main.anv"), b"fn main() {}").unwrap();
+        fs::write(tmp.join("src/utils/helpers.anv"), b"fn helper() {}").unwrap();
+
+        let dist = tmp.join("dist");
+        fs::create_dir_all(&dist).unwrap();
+
+        bundle_sources(&tmp, &dist, &manifest_no_externs()).unwrap();
+
+        assert!(dist.join("src/main.anv").exists());
+        assert_eq!(fs::read(dist.join("src/main.anv")).unwrap(), b"fn main() {}");
+        assert!(dist.join("src/utils/helpers.anv").exists());
+        assert_eq!(
+            fs::read(dist.join("src/utils/helpers.anv")).unwrap(),
+            b"fn helper() {}"
+        );
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn bundle_sources_skips_non_anv() {
+        let tmp =
+            std::env::temp_dir().join(format!("anvyx-bundle-non-anv-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+
+        fs::create_dir_all(tmp.join("src")).unwrap();
+        fs::write(tmp.join("src/main.anv"), b"fn main() {}").unwrap();
+        fs::write(tmp.join("README.md"), b"readme").unwrap();
+        fs::write(tmp.join("anvyx.toml"), b"[project]").unwrap();
+
+        let dist = tmp.join("dist");
+        fs::create_dir_all(&dist).unwrap();
+
+        bundle_sources(&tmp, &dist, &manifest_no_externs()).unwrap();
+
+        assert!(dist.join("src/main.anv").exists());
+        assert!(!dist.join("README.md").exists());
+        assert!(!dist.join("anvyx.toml").exists());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn bundle_sources_skips_build_dir() {
+        let tmp =
+            std::env::temp_dir().join(format!("anvyx-bundle-build-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+
+        fs::create_dir_all(tmp.join("src")).unwrap();
+        fs::write(tmp.join("src/main.anv"), b"fn main() {}").unwrap();
+        fs::create_dir_all(tmp.join("build/runner/src")).unwrap();
+        fs::write(tmp.join("build/runner/src/main.rs"), b"fn main() {}").unwrap();
+        fs::write(tmp.join("build/something.anv"), b"should be skipped").unwrap();
+
+        let dist = tmp.join("dist");
+        fs::create_dir_all(&dist).unwrap();
+
+        bundle_sources(&tmp, &dist, &manifest_no_externs()).unwrap();
+
+        assert!(dist.join("src/main.anv").exists());
+        assert!(!dist.join("build").exists());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn bundle_sources_skips_extern_dirs() {
+        let tmp =
+            std::env::temp_dir().join(format!("anvyx-bundle-extern-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+
+        fs::create_dir_all(tmp.join("src")).unwrap();
+        fs::write(tmp.join("src/main.anv"), b"fn main() {}").unwrap();
+        fs::create_dir_all(tmp.join("my_externs/engine/src")).unwrap();
+        fs::write(tmp.join("my_externs/engine/src/lib.rs"), b"// rust").unwrap();
+
+        let dist = tmp.join("dist");
+        fs::create_dir_all(&dist).unwrap();
+
+        bundle_sources(&tmp, &dist, &manifest_one_extern()).unwrap();
+
+        assert!(dist.join("src/main.anv").exists());
+        assert!(!dist.join("my_externs").exists());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn bundle_sources_skips_dotprefix_extern_path() {
+        let tmp =
+            std::env::temp_dir().join(format!("anvyx-bundle-dotprefix-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+
+        fs::create_dir_all(tmp.join("src")).unwrap();
+        fs::write(tmp.join("src/main.anv"), b"fn main() {}").unwrap();
+        fs::create_dir_all(tmp.join("my_extern/src")).unwrap();
+        fs::write(tmp.join("my_extern/src/lib.rs"), b"// rust").unwrap();
+
+        let dist = tmp.join("dist");
+        fs::create_dir_all(&dist).unwrap();
+
+        let mut externs = HashMap::new();
+        externs.insert(
+            "my_extern".into(),
+            crate::manifest::ExternEntry {
+                path: "./my_extern".into(),
+            },
+        );
+        let manifest = Manifest {
+            project: crate::manifest::Project {
+                name: None,
+                entry: "src/main.anv".into(),
+            },
+            externs,
+        };
+
+        bundle_sources(&tmp, &dist, &manifest).unwrap();
+
+        assert!(dist.join("src/main.anv").exists());
+        assert!(!dist.join("my_extern").exists());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn bundle_sources_skips_hidden_dirs() {
+        let tmp =
+            std::env::temp_dir().join(format!("anvyx-bundle-hidden-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+
+        fs::create_dir_all(tmp.join("src")).unwrap();
+        fs::write(tmp.join("src/main.anv"), b"fn main() {}").unwrap();
+        fs::create_dir_all(tmp.join(".git")).unwrap();
+        fs::write(tmp.join(".git/config"), b"git config").unwrap();
+        fs::create_dir_all(tmp.join(".vscode")).unwrap();
+        fs::write(tmp.join(".vscode/settings.json"), b"{}").unwrap();
+
+        let dist = tmp.join("dist");
+        fs::create_dir_all(&dist).unwrap();
+
+        bundle_sources(&tmp, &dist, &manifest_no_externs()).unwrap();
+
+        assert!(dist.join("src/main.anv").exists());
+        assert!(!dist.join(".git").exists());
+        assert!(!dist.join(".vscode").exists());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn bundle_sources_validates_entry_point() {
+        let tmp =
+            std::env::temp_dir().join(format!("anvyx-bundle-entry-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+
+        fs::create_dir_all(tmp.join("other")).unwrap();
+        fs::write(tmp.join("other/file.anv"), b"fn other() {}").unwrap();
+
+        let dist = tmp.join("dist");
+        fs::create_dir_all(&dist).unwrap();
+
+        let result = bundle_sources(&tmp, &dist, &manifest_no_externs());
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("Entry point"), "unexpected error: {msg}");
+        assert!(msg.contains("not found"), "unexpected error: {msg}");
+        assert!(msg.contains("anvyx.toml"), "hint missing in error: {msg}");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn build_e2e_no_externs() {
+        let tmp = std::env::temp_dir().join(format!("anvyx-e2e-noext-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+
+        fs::create_dir_all(tmp.join("src")).unwrap();
+        fs::write(tmp.join("src/main.anv"), b"fn main() { println(\"hello\"); }").unwrap();
+
+        let runner_dir = generate_build_runner_crate(&tmp, &manifest_no_externs()).unwrap();
+
+        assert!(runner_dir.join("Cargo.toml").exists());
+        assert!(runner_dir.join("src/main.rs").exists());
+
+        let main_content = fs::read_to_string(runner_dir.join("src/main.rs")).unwrap();
+        assert!(main_content.contains("ENTRY_POINT"));
+        assert!(main_content.contains("run_program"));
+        assert!(!main_content.contains("include_str!"));
+        assert!(!main_content.contains("--metadata"));
+        assert!(!main_content.contains("args[1]"));
+
+        let cargo_content = fs::read_to_string(runner_dir.join("Cargo.toml")).unwrap();
+        assert!(cargo_content.contains("anvyx-lang"));
+        assert!(!cargo_content.contains("engine"));
+
+        let result = assemble_dist(&tmp, "test_project");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn build_e2e_with_externs_generates_correct_runner() {
+        let tmp = std::env::temp_dir().join(format!("anvyx-e2e-ext-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+
+        fs::create_dir_all(tmp.join("src")).unwrap();
+        fs::write(tmp.join("src/main.anv"), b"fn main() {}").unwrap();
+        fs::create_dir_all(tmp.join("my_externs/engine")).unwrap();
+
+        let dev_runner_dir = generate_runner_crate(&tmp, &manifest_one_extern()).unwrap();
+        let dev_main = fs::read_to_string(dev_runner_dir.join("src/main.rs")).unwrap();
+        assert!(dev_main.contains("--metadata"));
+        assert!(dev_main.contains("args[1]"));
+        assert!(!dev_main.contains("ENTRY_POINT"));
+        assert!(!dev_main.contains("include_str!"));
+
+        let build_runner_dir = generate_build_runner_crate(&tmp, &manifest_one_extern()).unwrap();
+        let build_main = fs::read_to_string(build_runner_dir.join("src/main.rs")).unwrap();
+        assert!(build_main.contains("ENTRY_POINT"));
+        assert!(build_main.contains("include_str!"));
+        assert!(build_main.contains("current_exe"));
+        assert!(!build_main.contains("--metadata"));
+        assert!(!build_main.contains("args[1]"));
+
+        let cargo_content = fs::read_to_string(build_runner_dir.join("Cargo.toml")).unwrap();
+        assert!(cargo_content.contains("anvyx-lang"));
+        assert!(cargo_content.contains("engine"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn build_dist_layout_with_sources() {
+        let tmp =
+            std::env::temp_dir().join(format!("anvyx-e2e-layout-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+
+        let binary_dir = tmp.join("build/runner/target/release");
+        fs::create_dir_all(&binary_dir).unwrap();
+        fs::write(binary_dir.join("anvyx-runner"), b"fake binary").unwrap();
+
+        fs::create_dir_all(tmp.join("src/utils")).unwrap();
+        fs::write(tmp.join("src/main.anv"), b"fn main() {}").unwrap();
+        fs::write(tmp.join("src/utils/helper.anv"), b"fn help() {}").unwrap();
+
+        fs::create_dir_all(tmp.join("build")).unwrap();
+        fs::write(tmp.join("build/something.anv"), b"skipped").unwrap();
+
+        fs::create_dir_all(tmp.join(".git")).unwrap();
+        fs::write(tmp.join(".git/config"), b"git config").unwrap();
+
+        let dist_dir = assemble_dist(&tmp, "test_game").unwrap();
+        bundle_sources(&tmp, &dist_dir, &manifest_no_externs()).unwrap();
+
+        assert!(dist_dir.join("test_game").exists());
+        assert!(dist_dir.join("src/main.anv").exists());
+        assert!(dist_dir.join("src/utils/helper.anv").exists());
+        assert!(!dist_dir.join("build").exists());
+        assert!(!dist_dir.join(".git").exists());
 
         let _ = fs::remove_dir_all(&tmp);
     }
