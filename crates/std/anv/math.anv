@@ -1,0 +1,29 @@
+extern fn sin(x: float) -> float
+extern fn cos(x: float) -> float
+extern fn sqrt(x: float) -> float
+extern fn abs(x: float) -> float
+extern fn floor(x: float) -> float
+extern fn ceil(x: float) -> float
+extern fn round(x: float) -> float
+extern fn pow(base: float, exp: float) -> float
+extern fn log(x: float) -> float
+extern fn min(a: float, b: float) -> float
+extern fn max(a: float, b: float) -> float
+
+pub fn deg_to_rad(deg: float) -> float {
+    deg * 3.14159265358979323846 / 180.0
+}
+
+pub fn rad_to_deg(rad: float) -> float {
+    rad * 180.0 / 3.14159265358979323846
+}
+
+pub fn clamp(val: float, lo: float, hi: float) -> float {
+    if val < lo { lo }
+    else if val > hi { hi }
+    else { val }
+}
+
+pub fn lerp(a: float, b: float, t: float) -> float {
+    a + (b - a) * t
+}

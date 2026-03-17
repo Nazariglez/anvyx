@@ -172,6 +172,21 @@ pub fn report_import_errors(
                     None,
                 );
             }
+            ImportError::UnknownStdModule { name, span } => {
+                let byte_range = token_span_to_byte_range(tokens, span.start..span.end);
+                emit_report(
+                    src,
+                    file_path,
+                    (
+                        byte_range,
+                        format!("Unknown standard library module 'std.{name}'"),
+                        "no std module with this name exists".to_string(),
+                    ),
+                    vec![],
+                    vec![],
+                    None,
+                );
+            }
         }
     }
 }

@@ -1,0 +1,22 @@
+// @mode: run
+// @expect: success
+// @contains: ok
+
+import std.math { deg_to_rad, rad_to_deg, clamp, lerp, abs };
+
+fn main() {
+    assert(clamp(5.0, 0.0, 10.0) == 5.0);
+    assert(clamp(-1.0, 0.0, 10.0) == 0.0);
+    assert(clamp(15.0, 0.0, 10.0) == 10.0);
+
+    assert(lerp(0.0, 10.0, 0.5) == 5.0);
+    assert(lerp(0.0, 10.0, 0.0) == 0.0);
+    assert(lerp(0.0, 10.0, 1.0) == 10.0);
+
+    let rad = deg_to_rad(180.0);
+    let deg = rad_to_deg(rad);
+    let diff = abs(deg - 180.0);
+    assert(diff < 0.0001);
+
+    println("ok");
+}

@@ -15,6 +15,15 @@ fn lang_crate_path() -> String {
         .into_owned()
 }
 
+fn std_crate_path() -> String {
+    Path::new(ANVYX_CRATE_DIR)
+        .parent()
+        .unwrap()
+        .join("std")
+        .to_string_lossy()
+        .into_owned()
+}
+
 pub fn generate_runner_crate(project_root: &Path, manifest: &Manifest) -> Result<PathBuf, String> {
     for (name, entry) in &manifest.externs {
         let resolved = project_root.join(&entry.path);
@@ -158,8 +167,11 @@ fn format_build_error(stderr: &str) -> String {
 fn generate_cargo_toml(project_root: &Path, manifest: &Manifest) -> String {
     // TODO: use `anvyx-lang = "x.y.z"` once published to crates.io
     let lang_path = lang_crate_path();
+    let std_path = std_crate_path();
 
-    let mut deps = format!("anvyx-lang = {{ path = \"{lang_path}\" }}\n");
+    let mut deps = format!(
+        "anvyx-lang = {{ path = \"{lang_path}\" }}\nanvyx-std = {{ path = \"{std_path}\" }}\n"
+    );
 
     let mut entries: Vec<(&String, &crate::manifest::ExternEntry)> =
         manifest.externs.iter().collect();
@@ -220,7 +232,16 @@ fn main() {{
 
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
 {extend_lines}
-    match anvyx_lang::run_program_with_externs(&source, file_path, backend, externs, extern_metadata) {{
+    let std_mods = anvyx_std::std_modules();
+    let mut std_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
+    for m in &std_mods {{
+        std_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
+            anv_source: m.anv_source.to_string(),
+        }});
+        externs.extend((m.handlers)());
+    }}
+
+    match anvyx_lang::run_program_with_std(&source, file_path, backend, externs, extern_metadata, std_sources) {{
         Ok(output) => print!("{{output}}"),
         Err(e) => {{ eprintln!("{{e}}"); std::process::exit(1); }}
     }}
@@ -298,7 +319,16 @@ fn main() {{
 {metadata_inserts}
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
 {extend_lines}
-    match anvyx_lang::run_program_with_externs(&source, &file_path, backend, externs, extern_metadata) {{
+    let std_mods = anvyx_std::std_modules();
+    let mut std_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
+    for m in &std_mods {{
+        std_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
+            anv_source: m.anv_source.to_string(),
+        }});
+        externs.extend((m.handlers)());
+    }}
+
+    match anvyx_lang::run_program_with_std(&source, &file_path, backend, externs, extern_metadata, std_sources) {{
         Ok(output) => print!("{{output}}"),
         Err(e) => {{ eprintln!("{{e}}"); std::process::exit(1); }}
     }}
@@ -307,7 +337,8 @@ fn main() {{
         )
     } else {
         format!(
-            r#"use std::env;
+            r#"use std::collections::HashMap;
+use std::env;
 use std::fs;
 
 const ENTRY_POINT: &str = "{entry_point}";
@@ -327,7 +358,17 @@ fn main() {{
     let backend = anvyx_lang::Backend::from_str("vm")
         .unwrap_or_else(|e| {{ eprintln!("{{e}}"); std::process::exit(1); }});
 
-    match anvyx_lang::run_program(&source, &file_path, backend) {{
+    let std_mods = anvyx_std::std_modules();
+    let mut std_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
+    let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
+    for m in &std_mods {{
+        std_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
+            anv_source: m.anv_source.to_string(),
+        }});
+        externs.extend((m.handlers)());
+    }}
+
+    match anvyx_lang::run_program_with_std(&source, &file_path, backend, externs, HashMap::new(), std_sources) {{
         Ok(output) => print!("{{output}}"),
         Err(e) => {{ eprintln!("{{e}}"); std::process::exit(1); }}
     }}
@@ -572,6 +613,7 @@ mod tests {
         assert!(output.contains("name = \"anvyx-runner\""));
         assert!(output.contains("[workspace]"));
         assert!(output.contains("anvyx-lang"));
+        assert!(output.contains("anvyx-std"));
         assert!(!output.contains("engine"));
         assert!(!output.contains("audio"));
     }
@@ -581,6 +623,7 @@ mod tests {
         let root = Path::new("/fake/project");
         let output = generate_cargo_toml(root, &manifest_one_extern());
 
+        assert!(output.contains("anvyx-std"));
         assert!(output.contains("engine"));
         assert!(output.contains("my_externs/engine"));
     }
@@ -590,6 +633,7 @@ mod tests {
         let root = Path::new("/fake/project");
         let output = generate_cargo_toml(root, &manifest_two_externs());
 
+        assert!(output.contains("anvyx-std"));
         assert!(output.contains("engine"));
         assert!(output.contains("my_externs/engine"));
         assert!(output.contains("audio"));
@@ -600,8 +644,9 @@ mod tests {
     fn main_rs_no_externs() {
         let output = generate_main_rs(&manifest_no_externs());
 
-        assert!(output.contains("run_program_with_externs"));
-        assert!(!output.contains("extend"));
+        assert!(output.contains("run_program_with_std"));
+        assert!(output.contains("anvyx_std::std_modules()"));
+        assert!(output.contains("std_sources"));
     }
 
     #[test]
@@ -612,6 +657,8 @@ mod tests {
         assert!(output.contains("extern_metadata"));
         assert!(output.contains("metadata_dir"));
         assert!(output.contains("engine.json"));
+        assert!(output.contains("run_program_with_std"));
+        assert!(output.contains("anvyx_std::std_modules()"));
     }
 
     #[test]
@@ -622,6 +669,8 @@ mod tests {
         assert!(output.contains("externs.extend(audio::anvyx_externs());"));
         assert!(output.contains("engine.json"));
         assert!(output.contains("audio.json"));
+        assert!(output.contains("run_program_with_std"));
+        assert!(output.contains("anvyx_std::std_modules()"));
     }
 
     #[test]
@@ -629,9 +678,9 @@ mod tests {
         let output = generate_main_rs(&manifest_one_extern());
 
         assert!(output.contains("extern_metadata"));
-        assert!(output.contains("run_program_with_externs"));
+        assert!(output.contains("run_program_with_std"));
         // the call should include both externs and extern_metadata
-        let run_call = output.find("run_program_with_externs").unwrap();
+        let run_call = output.find("run_program_with_std").unwrap();
         let call_snippet = &output[run_call..run_call + 120];
         assert!(call_snippet.contains("extern_metadata"), "run call should pass extern_metadata");
     }
@@ -658,10 +707,12 @@ mod tests {
         let cargo_content = fs::read_to_string(runner_dir.join("Cargo.toml")).unwrap();
         assert!(cargo_content.contains("anvyx-runner"));
         assert!(cargo_content.contains("[workspace]"));
+        assert!(cargo_content.contains("anvyx-std"));
         assert!(cargo_content.contains("engine"));
 
         let main_content = fs::read_to_string(runner_dir.join("src/main.rs")).unwrap();
-        assert!(main_content.contains("run_program_with_externs"));
+        assert!(main_content.contains("run_program_with_std"));
+        assert!(main_content.contains("anvyx_std::std_modules()"));
         assert!(main_content.contains("engine::anvyx_externs"));
         assert!(main_content.contains("extern_metadata"));
         assert!(main_content.contains("metadata_dir"));
@@ -782,6 +833,7 @@ mod tests {
 
         let cargo_content = fs::read_to_string(runner_dir.join("Cargo.toml")).unwrap();
         assert!(cargo_content.contains("[workspace]"));
+        assert!(cargo_content.contains("anvyx-std"));
         assert!(cargo_content.contains("engine"));
         assert!(cargo_content.contains("my_externs/engine"));
         assert!(cargo_content.contains("audio"));
@@ -792,6 +844,8 @@ mod tests {
         assert!(main_content.contains("externs.extend(engine::anvyx_externs());"));
         assert!(main_content.contains("extern_metadata"));
         assert!(main_content.contains("metadata_dir"));
+        assert!(main_content.contains("anvyx_std::std_modules()"));
+        assert!(main_content.contains("run_program_with_std"));
 
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -839,6 +893,7 @@ mod tests {
         assert!(output.contains("engine::ANVYX_EXPORTS"));
         assert!(output.contains("anvyx_lang::exports_to_json"));
         assert!(output.contains("engine.json"));
+        assert!(output.contains("anvyx_std::std_modules()"));
     }
 
     #[test]
@@ -857,6 +912,8 @@ mod tests {
         let output = generate_main_rs(&manifest_no_externs());
         assert!(output.contains("--metadata"));
         assert!(!output.contains("ANVYX_EXPORTS"));
+        assert!(output.contains("anvyx_std::std_modules()"));
+        assert!(output.contains("run_program_with_std"));
     }
 
     #[test]
@@ -864,7 +921,7 @@ mod tests {
         let output = generate_main_rs(&manifest_one_extern());
         // both metadata extraction and normal run paths exist
         assert!(output.contains("--metadata"));
-        assert!(output.contains("run_program_with_externs"));
+        assert!(output.contains("run_program_with_std"));
     }
 
     #[test]
@@ -897,6 +954,8 @@ mod tests {
         assert!(main_content.contains("--metadata"));
         assert!(main_content.contains("engine::ANVYX_EXPORTS"));
         assert!(main_content.contains("engine.json"));
+        assert!(main_content.contains("anvyx_std::std_modules()"));
+        assert!(main_content.contains("run_program_with_std"));
 
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -907,12 +966,13 @@ mod tests {
 
         assert!(output.contains("ENTRY_POINT"));
         assert!(output.contains("\"src/main.anv\""));
-        assert!(output.contains("run_program"));
+        assert!(output.contains("run_program_with_std"));
         assert!(output.contains("current_exe"));
-        assert!(!output.contains("HashMap"));
-        assert!(!output.contains("extern_metadata"));
+        assert!(output.contains("HashMap"));
+        assert!(output.contains("anvyx_std::std_modules()"));
+        assert!(output.contains("std_sources"));
         assert!(!output.contains("include_str!"));
-        assert!(!output.contains("run_program_with_externs"));
+        assert!(!output.contains("extern_metadata"));
         assert!(!output.contains("anvyx_externs"));
     }
 
@@ -929,7 +989,8 @@ mod tests {
         assert!(output.contains("../../metadata/engine.json"));
         assert!(output.contains("extern_metadata.insert(\"engine\""));
         assert!(output.contains("engine::anvyx_externs()"));
-        assert!(output.contains("run_program_with_externs"));
+        assert!(output.contains("run_program_with_std"));
+        assert!(output.contains("anvyx_std::std_modules()"));
         assert!(!output.contains("--metadata"));
         assert!(!output.contains("args[1]"));
         assert!(!output.contains("args.get(2)"));
@@ -946,6 +1007,8 @@ mod tests {
         assert!(output.contains("engine.json"));
         assert!(output.contains("audio::anvyx_externs()"));
         assert!(output.contains("engine::anvyx_externs()"));
+        assert!(output.contains("run_program_with_std"));
+        assert!(output.contains("anvyx_std::std_modules()"));
 
         let audio_pos = output.find("META_AUDIO").unwrap();
         let engine_pos = output.find("META_ENGINE").unwrap();
@@ -981,6 +1044,8 @@ mod tests {
         assert!(!output.contains("env::args()"));
         assert!(!output.contains("args[1]"));
         assert!(!output.contains("--metadata"));
+        assert!(output.contains("run_program_with_std"));
+        assert!(output.contains("anvyx_std::std_modules()"));
     }
 
     #[test]
@@ -996,12 +1061,15 @@ mod tests {
 
         let cargo_content = fs::read_to_string(runner_dir.join("Cargo.toml")).unwrap();
         assert!(cargo_content.contains("anvyx-runner"));
+        assert!(cargo_content.contains("anvyx-std"));
         assert!(cargo_content.contains("engine"));
 
         let main_content = fs::read_to_string(runner_dir.join("src/main.rs")).unwrap();
         assert!(main_content.contains("ENTRY_POINT"));
         assert!(main_content.contains("include_str!"));
         assert!(main_content.contains("current_exe"));
+        assert!(main_content.contains("anvyx_std::std_modules()"));
+        assert!(main_content.contains("run_program_with_std"));
 
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -1019,11 +1087,13 @@ mod tests {
 
         let cargo_content = fs::read_to_string(runner_dir.join("Cargo.toml")).unwrap();
         assert!(cargo_content.contains("anvyx-lang"));
+        assert!(cargo_content.contains("anvyx-std"));
         assert!(!cargo_content.contains("engine"));
 
         let main_content = fs::read_to_string(runner_dir.join("src/main.rs")).unwrap();
         assert!(main_content.contains("ENTRY_POINT"));
-        assert!(main_content.contains("run_program"));
+        assert!(main_content.contains("run_program_with_std"));
+        assert!(main_content.contains("anvyx_std::std_modules()"));
         assert!(!main_content.contains("include_str!"));
 
         let _ = fs::remove_dir_all(&tmp);
@@ -1337,13 +1407,15 @@ mod tests {
 
         let main_content = fs::read_to_string(runner_dir.join("src/main.rs")).unwrap();
         assert!(main_content.contains("ENTRY_POINT"));
-        assert!(main_content.contains("run_program"));
+        assert!(main_content.contains("run_program_with_std"));
+        assert!(main_content.contains("anvyx_std::std_modules()"));
         assert!(!main_content.contains("include_str!"));
         assert!(!main_content.contains("--metadata"));
         assert!(!main_content.contains("args[1]"));
 
         let cargo_content = fs::read_to_string(runner_dir.join("Cargo.toml")).unwrap();
         assert!(cargo_content.contains("anvyx-lang"));
+        assert!(cargo_content.contains("anvyx-std"));
         assert!(!cargo_content.contains("engine"));
 
         let result = assemble_dist(&tmp, "test_project");
@@ -1366,6 +1438,8 @@ mod tests {
         let dev_main = fs::read_to_string(dev_runner_dir.join("src/main.rs")).unwrap();
         assert!(dev_main.contains("--metadata"));
         assert!(dev_main.contains("args[1]"));
+        assert!(dev_main.contains("anvyx_std::std_modules()"));
+        assert!(dev_main.contains("run_program_with_std"));
         assert!(!dev_main.contains("ENTRY_POINT"));
         assert!(!dev_main.contains("include_str!"));
 
@@ -1374,11 +1448,14 @@ mod tests {
         assert!(build_main.contains("ENTRY_POINT"));
         assert!(build_main.contains("include_str!"));
         assert!(build_main.contains("current_exe"));
+        assert!(build_main.contains("anvyx_std::std_modules()"));
+        assert!(build_main.contains("run_program_with_std"));
         assert!(!build_main.contains("--metadata"));
         assert!(!build_main.contains("args[1]"));
 
         let cargo_content = fs::read_to_string(build_runner_dir.join("Cargo.toml")).unwrap();
         assert!(cargo_content.contains("anvyx-lang"));
+        assert!(cargo_content.contains("anvyx-std"));
         assert!(cargo_content.contains("engine"));
 
         let _ = fs::remove_dir_all(&tmp);

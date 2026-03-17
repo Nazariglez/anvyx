@@ -13,8 +13,14 @@ mod vm;
 pub mod metadata;
 
 pub use anvyx_macros::{export_fn, provider};
-pub use metadata::{ExternDecl, ExternFuncMeta, ExternProviderMeta, exports_to_json, parse_provider_json};
+pub use metadata::{
+    ExternDecl, ExternFuncMeta, ExternProviderMeta, exports_to_json, parse_provider_json,
+};
 pub use vm::{ExternHandler, RuntimeError, Value};
+
+pub struct StdModuleSource {
+    pub anv_source: String,
+}
 
 #[cfg(test)]
 mod test_helpers;
@@ -58,6 +64,7 @@ fn analyze_with_extern_meta(
     program: &str,
     file_path: &str,
     extern_metadata: &std::collections::HashMap<String, String>,
+    std_modules: &std::collections::HashMap<String, StdModuleSource>,
 ) -> AnalyzeResult {
     use std::collections::HashSet;
 
@@ -75,27 +82,34 @@ fn analyze_with_extern_meta(
     }
     let extern_names: HashSet<String> = parsed_providers.keys().cloned().collect();
 
-    // resolve local file imports, skipping extern provider names
-    let mut module_list = if file_path.starts_with('<') {
-        vec![]
-    } else {
-        let project_root = {
-            let p = std::path::Path::new(file_path);
+    // resolve imports (local files + std modules)
+    // for synthetic paths like "<test>", use "." as project root so local file imports
+    // would fail naturally, std module resolution does not need a real project root
+    let project_root = {
+        let p = std::path::Path::new(file_path);
+        if file_path.starts_with('<') {
+            std::path::Path::new(".").to_path_buf()
+        } else {
             p.parent()
                 .unwrap_or_else(|| std::path::Path::new("."))
                 .to_path_buf()
-        };
+        }
+    };
 
-        match resolve::resolve_imports(&user_ast.stmts, &project_root, &extern_names) {
-            Ok(result) => result
-                .modules
-                .into_iter()
-                .map(|module| (module.path_key, module.stmts))
-                .collect(),
-            Err(errors) => {
-                error::report_import_errors(program, file_path, &user_tokens, &errors);
-                return Err("Failed to resolve imports".to_string());
-            }
+    let mut module_list: Vec<(Vec<String>, Vec<ast::StmtNode>)> = match resolve::resolve_imports(
+        &user_ast.stmts,
+        &project_root,
+        &extern_names,
+        std_modules,
+    ) {
+        Ok(result) => result
+            .modules
+            .into_iter()
+            .map(|module| (module.path_key, module.stmts))
+            .collect(),
+        Err(errors) => {
+            error::report_import_errors(program, file_path, &user_tokens, &errors);
+            return Err("Failed to resolve imports".to_string());
         }
     };
 
@@ -108,7 +122,9 @@ fn analyze_with_extern_meta(
 
     let mut combined_stmts = prelude_ast.stmts;
     combined_stmts.extend(user_ast.stmts);
-    let combined = ast::Program { stmts: combined_stmts };
+    let combined = ast::Program {
+        stmts: combined_stmts,
+    };
 
     let tcx = match typecheck::check_program_with_modules(&combined, &module_list) {
         Ok(tcx) => tcx,
@@ -130,7 +146,22 @@ pub fn generate_ast_with_externs(
     file_path: &str,
     extern_metadata: &std::collections::HashMap<String, String>,
 ) -> Result<ast::Program, String> {
-    let (ast, _, _, _) = analyze_with_extern_meta(program, file_path, extern_metadata)?;
+    generate_ast_with_std(
+        program,
+        file_path,
+        extern_metadata,
+        &std::collections::HashMap::new(),
+    )
+}
+
+pub fn generate_ast_with_std(
+    program: &str,
+    file_path: &str,
+    extern_metadata: &std::collections::HashMap<String, String>,
+    std_modules: &std::collections::HashMap<String, StdModuleSource>,
+) -> Result<ast::Program, String> {
+    let (ast, _, _, _) =
+        analyze_with_extern_meta(program, file_path, extern_metadata, std_modules)?;
     Ok(ast)
 }
 
@@ -143,7 +174,22 @@ pub(crate) fn generate_hir_with_externs(
     file_path: &str,
     extern_metadata: &std::collections::HashMap<String, String>,
 ) -> Result<hir::Program, String> {
-    let (ast, tcx, _, module_list) = analyze_with_extern_meta(program, file_path, extern_metadata)?;
+    generate_hir_with_std(
+        program,
+        file_path,
+        extern_metadata,
+        &std::collections::HashMap::new(),
+    )
+}
+
+pub(crate) fn generate_hir_with_std(
+    program: &str,
+    file_path: &str,
+    extern_metadata: &std::collections::HashMap<String, String>,
+    std_modules: &std::collections::HashMap<String, StdModuleSource>,
+) -> Result<hir::Program, String> {
+    let (ast, tcx, _, module_list) =
+        analyze_with_extern_meta(program, file_path, extern_metadata, std_modules)?;
     lower::lower_program(&ast, &tcx, &module_list).map_err(|e| format!("Lowering error: {e}"))
 }
 
@@ -183,9 +229,35 @@ pub fn run_program_with_externs(
     externs: std::collections::HashMap<String, ExternHandler>,
     extern_metadata: std::collections::HashMap<String, String>,
 ) -> Result<String, String> {
-    let hir = generate_hir_with_externs(program, file_path, &extern_metadata)?;
+    run_program_with_std(
+        program,
+        file_path,
+        backend,
+        externs,
+        extern_metadata,
+        std::collections::HashMap::new(),
+    )
+}
+
+pub fn run_program_with_std(
+    program: &str,
+    file_path: &str,
+    backend: Backend,
+    externs: std::collections::HashMap<String, ExternHandler>,
+    extern_metadata: std::collections::HashMap<String, String>,
+    std_modules: std::collections::HashMap<String, StdModuleSource>,
+) -> Result<String, String> {
+    let hir = generate_hir_with_std(program, file_path, &extern_metadata, &std_modules)?;
+
+    let declared: std::collections::HashSet<String> =
+        hir.externs.iter().map(|e| e.name.to_string()).collect();
+    let filtered = externs
+        .into_iter()
+        .filter(|(name, _)| declared.contains(name))
+        .collect();
+
     match backend {
-        Backend::Vm => vm::run_with_externs(&hir, externs),
+        Backend::Vm => vm::run_with_externs(&hir, filtered),
         Backend::Transpiler => Err("Transpiler backend is not yet implemented".to_string()),
     }
 }
@@ -208,49 +280,49 @@ mod extern_import_tests {
     #[test]
     fn selective_import_typechecks() {
         let src = "import my_extern { add };\nfn main() { let x = add(3, 4); }";
-        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata());
+        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata(), &HashMap::new());
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
 
     #[test]
     fn qualified_import_typechecks() {
         let src = "import my_extern;\nfn main() { let x = my_extern.add(3, 4); }";
-        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata());
+        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata(), &HashMap::new());
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
 
     #[test]
     fn wildcard_import_typechecks() {
         let src = "import my_extern { * };\nfn main() { let x = add(3, 4); }";
-        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata());
+        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata(), &HashMap::new());
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
 
     #[test]
     fn alias_import_typechecks() {
         let src = "import my_extern { add as plus };\nfn main() { let x = plus(3, 4); }";
-        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata());
+        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata(), &HashMap::new());
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
 
     #[test]
     fn module_alias_import_typechecks() {
         let src = "import my_extern as ext;\nfn main() { let x = ext.add(3, 4); }";
-        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata());
+        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata(), &HashMap::new());
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
 
     #[test]
     fn unknown_member_error() {
         let src = "import my_extern { nonexistent };\nfn main() {}";
-        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata());
+        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata(), &HashMap::new());
         assert!(result.is_err());
     }
 
     #[test]
     fn wrong_arg_type_error() {
         let src = "import my_extern { add };\nfn main() { let x = add(true, 4); }";
-        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata());
+        let result = analyze_with_extern_meta(src, "<test>", &sample_metadata(), &HashMap::new());
         assert!(result.is_err());
     }
 
@@ -266,7 +338,53 @@ mod extern_import_tests {
     #[test]
     fn no_extern_meta_still_works() {
         let src = "fn main() { let x = 1; }";
-        let result = analyze_with_extern_meta(src, "<test>", &HashMap::new());
+        let result = analyze_with_extern_meta(src, "<test>", &HashMap::new(), &HashMap::new());
         assert!(result.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod std_import_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn math_std_modules() -> HashMap<String, StdModuleSource> {
+        let mut m = HashMap::new();
+        m.insert(
+            "math".to_string(),
+            StdModuleSource {
+                anv_source: "extern fn sin(x: float) -> float\nextern fn cos(x: float) -> float\n"
+                    .to_string(),
+            },
+        );
+        m
+    }
+
+    #[test]
+    fn std_qualified_import_typechecks() {
+        let src = "import std.math;\nfn main() { let x = math.sin(1.0); }";
+        let result = analyze_with_extern_meta(src, "<test>", &HashMap::new(), &math_std_modules());
+        assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+    }
+
+    #[test]
+    fn std_selective_import_typechecks() {
+        let src = "import std.math { sin };\nfn main() { let x = sin(1.0); }";
+        let result = analyze_with_extern_meta(src, "<test>", &HashMap::new(), &math_std_modules());
+        assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+    }
+
+    #[test]
+    fn std_unknown_module_errors() {
+        let src = "import std.nonexistent;\nfn main() {}";
+        let result = analyze_with_extern_meta(src, "<test>", &HashMap::new(), &math_std_modules());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn std_bare_import_errors() {
+        let src = "import std;\nfn main() {}";
+        let result = analyze_with_extern_meta(src, "<test>", &HashMap::new(), &math_std_modules());
+        assert!(result.is_err());
     }
 }

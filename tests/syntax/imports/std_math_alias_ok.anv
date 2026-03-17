@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: success
+
+import std.math as m;
+
+fn main() {
+    let x = m.sin(1.0);
+    let y = m.clamp(5.0, 0.0, 10.0);
+}

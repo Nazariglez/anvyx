@@ -72,6 +72,7 @@ name = "anvyx"
 version = "0.1.0"
 dependencies = [
  "anvyx-lang",
+ "anvyx-std",
  "clap",
  "serde",
  "serde_json",
@@ -97,6 +98,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "anvyx-std"
+version = "0.1.0"
+dependencies = [
+ "anvyx-lang",
 ]
 
 [[package]]

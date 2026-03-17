@@ -1,0 +1,7 @@
+[package]
+name = "anvyx-std"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anvyx-lang = { path = "../lang" }

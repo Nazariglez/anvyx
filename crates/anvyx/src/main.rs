@@ -3,6 +3,7 @@ mod check;
 mod init;
 mod manifest;
 mod run;
+mod std_support;
 
 use std::path::PathBuf;
 

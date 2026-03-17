@@ -1,6 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::StdModuleSource;
 use crate::ast::{Stmt, StmtNode};
 use crate::span::Span;
 
@@ -9,6 +10,7 @@ pub enum ImportError {
     FileNotFound { path: String, span: Span },
     ParseError { file_path: String },
     CircularImport { path: String, span: Span },
+    UnknownStdModule { name: String, span: Span },
 }
 
 pub struct ModuleSource {
@@ -24,6 +26,7 @@ pub(crate) fn resolve_imports(
     stmts: &[StmtNode],
     project_root: &Path,
     extern_names: &HashSet<String>,
+    std_modules: &HashMap<String, StdModuleSource>,
 ) -> Result<ResolveResult, Vec<ImportError>> {
     let mut modules = vec![];
     let mut resolving: HashSet<Vec<String>> = HashSet::new();
@@ -34,6 +37,7 @@ pub(crate) fn resolve_imports(
         stmts,
         project_root,
         extern_names,
+        std_modules,
         &mut resolving,
         &mut resolved,
         &mut modules,
@@ -51,6 +55,7 @@ fn collect_imports(
     stmts: &[StmtNode],
     project_root: &Path,
     extern_names: &HashSet<String>,
+    std_modules: &HashMap<String, StdModuleSource>,
     resolving: &mut HashSet<Vec<String>>,
     resolved: &mut HashSet<Vec<String>>,
     modules: &mut Vec<ModuleSource>,
@@ -65,6 +70,45 @@ fn collect_imports(
         let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
 
         if path_key.first().map(|s| s.as_str()) == Some("std") {
+            if resolved.contains(&path_key) {
+                continue;
+            }
+
+            let module_name = match path_key.get(1) {
+                Some(name) => name.as_str(),
+                None => {
+                    errors.push(ImportError::UnknownStdModule {
+                        name: "std".to_string(),
+                        span: import_node.span,
+                    });
+                    continue;
+                }
+            };
+
+            let Some(source) = std_modules.get(module_name) else {
+                errors.push(ImportError::UnknownStdModule {
+                    name: module_name.to_string(),
+                    span: import_node.span,
+                });
+                continue;
+            };
+
+            let file_label = format!("<std.{module_name}>");
+            let (module_ast, _) = match crate::parse_source(&source.anv_source, &file_label) {
+                Ok(r) => r,
+                Err(_) => {
+                    errors.push(ImportError::ParseError {
+                        file_path: file_label,
+                    });
+                    continue;
+                }
+            };
+
+            resolved.insert(path_key.clone());
+            modules.push(ModuleSource {
+                path_key,
+                stmts: module_ast.stmts,
+            });
             continue;
         }
 
@@ -123,6 +167,7 @@ fn collect_imports(
             &module_ast.stmts,
             project_root,
             extern_names,
+            std_modules,
             resolving,
             resolved,
             modules,

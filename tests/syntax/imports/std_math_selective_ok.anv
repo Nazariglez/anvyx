@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+import std.math { sin, cos, sqrt };
+
+fn main() {
+    let x = sin(1.0);
+    let y = cos(0.0);
+    let z = sqrt(4.0);
+}
