@@ -6,6 +6,7 @@ pub struct TypeMapping {
     pub extract_variant: TokenStream,
     pub convert_extracted: TokenStream,
     pub wrap_result: TokenStream,
+    pub anvyx_type: &'static str,
 }
 
 pub fn map_type(ty: &Type) -> Option<TypeMapping> {
@@ -19,16 +20,19 @@ pub fn map_type(ty: &Type) -> Option<TypeMapping> {
             extract_variant: quote! { anvyx_lang::Value::Int(p) },
             convert_extracted: quote! { p },
             wrap_result: quote! { anvyx_lang::Value::Int(result) },
+            anvyx_type: "int",
         }),
         "f64" => Some(TypeMapping {
             extract_variant: quote! { anvyx_lang::Value::Float(p) },
             convert_extracted: quote! { p },
             wrap_result: quote! { anvyx_lang::Value::Float(result) },
+            anvyx_type: "float",
         }),
         "bool" => Some(TypeMapping {
             extract_variant: quote! { anvyx_lang::Value::Bool(p) },
             convert_extracted: quote! { p },
             wrap_result: quote! { anvyx_lang::Value::Bool(result) },
+            anvyx_type: "bool",
         }),
         "String" => Some(TypeMapping {
             extract_variant: quote! { anvyx_lang::Value::String(p) },
@@ -36,6 +40,7 @@ pub fn map_type(ty: &Type) -> Option<TypeMapping> {
             wrap_result: quote! {
                 anvyx_lang::Value::String(::std::rc::Rc::from(result.as_str()))
             },
+            anvyx_type: "string",
         }),
         _ => None,
     }

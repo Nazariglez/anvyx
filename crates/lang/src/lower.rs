@@ -109,6 +109,24 @@ pub fn lower_program(
                         func_nodes.push(func_node);
                     }
                 }
+                Stmt::ExternFunc(extern_node) => {
+                    if !ctx.externs.contains_key(&extern_node.node.name) {
+                        let id = hir::ExternId(next_extern_id);
+                        next_extern_id += 1;
+                        ctx.externs.insert(extern_node.node.name, id);
+                        extern_decls.push(hir::ExternDecl {
+                            id,
+                            name: extern_node.node.name,
+                            params: extern_node
+                                .node
+                                .params
+                                .iter()
+                                .map(|p| p.ty.clone())
+                                .collect(),
+                            ret: extern_node.node.ret.clone(),
+                        });
+                    }
+                }
                 Stmt::Import(import_node) => {
                     // pub import inner { original as renamed }, register the alias
                     // so qualified or selective callers can resolve renamed -> FuncId

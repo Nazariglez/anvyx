@@ -1,8 +1,8 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    parse::{Parse, ParseStream},
     FnArg, ItemFn, LitStr, Pat, Result, ReturnType, Token, Type,
+    parse::{Parse, ParseStream},
 };
 
 use crate::type_map::map_type;
@@ -45,9 +45,12 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let fn_ident = &func.sig.ident;
     let export_name = args.name.unwrap_or_else(|| fn_ident.to_string());
     let companion_ident = format_ident!("__anvyx_export_{}", fn_ident);
+    let decl_upper = fn_ident.to_string().to_uppercase();
+    let decl_ident = format_ident!("__ANVYX_DECL_{}", decl_upper);
 
     let mut extractions = vec![];
     let mut param_names = vec![];
+    let mut param_tuples = vec![];
 
     for (i, arg) in func.sig.inputs.iter().enumerate() {
         let FnArg::Typed(pat_type) = arg else {
@@ -63,7 +66,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 return Err(syn::Error::new_spanned(
                     other,
                     "only simple parameter names are supported in #[export_fn]",
-                ))
+                ));
             }
         };
 
@@ -77,6 +80,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         let extract_variant = &mapping.extract_variant;
         let convert_extracted = &mapping.convert_extracted;
         let param_name_str = param_name.to_string();
+        let anvyx_type_str = mapping.anvyx_type;
 
         extractions.push(quote! {
             let #extract_variant = args[#i].clone() else {
@@ -89,12 +93,20 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         });
 
         param_names.push(param_name);
+        param_tuples.push(quote! { (#param_name_str, #anvyx_type_str) });
     }
 
+    let ret_type_str = ret_anvyx_type(&func.sig.output, &export_name)?;
     let call_and_wrap = build_return(&func.sig.output, fn_ident, &param_names, &export_name)?;
 
     Ok(quote! {
         #func
+
+        pub const #decl_ident: anvyx_lang::ExternDecl = anvyx_lang::ExternDecl {
+            name: #export_name,
+            params: &[#(#param_tuples),*],
+            ret: #ret_type_str,
+        };
 
         pub fn #companion_ident() -> (&'static str, anvyx_lang::ExternHandler) {
             (#export_name, Box::new(|args: Vec<anvyx_lang::Value>| {
@@ -103,6 +115,28 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             }))
         }
     })
+}
+
+fn ret_anvyx_type(output: &ReturnType, export_name: &str) -> syn::Result<&'static str> {
+    match output {
+        ReturnType::Default => Ok("void"),
+        ReturnType::Type(_, ty) => {
+            let is_unit = matches!(ty.as_ref(), Type::Tuple(t) if t.elems.is_empty());
+            if is_unit {
+                return Ok("void");
+            }
+            let mapping = map_type(ty).ok_or_else(|| {
+                syn::Error::new_spanned(
+                    ty,
+                    format!(
+                        "unsupported return type in #[export_fn] '{export_name}': \
+                        only i64, f64, bool, and String are supported"
+                    ),
+                )
+            })?;
+            Ok(mapping.anvyx_type)
+        }
+    }
 }
 
 fn build_return(

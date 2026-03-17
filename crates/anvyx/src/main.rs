@@ -55,14 +55,37 @@ fn main() -> Result<(), String> {
                 let m = manifest.as_ref().unwrap();
                 let runner_dir = build::generate_runner_crate(&cwd, m)?;
                 build::build_runner(&runner_dir)?;
+                build::extract_metadata(&cwd)?;
                 build::execute_runner(&cwd, &path, &backend)?;
             } else {
                 run::cmd(&path, &backend)?;
             }
         }
         Command::Check { file } => {
-            let path = manifest::resolve_entry(file.as_deref())?;
-            check::cmd(&path)?;
+            let manifest = manifest::parse_manifest()?;
+            let path = match file {
+                Some(f) => f,
+                None => {
+                    let m = manifest
+                        .as_ref()
+                        .ok_or("No file provided and no anvyx.toml found in the current directory")?;
+                    PathBuf::from(&m.project.entry)
+                }
+            };
+
+            let has_externs = manifest.as_ref().is_some_and(|m| m.has_externs());
+            if has_externs {
+                let cwd = std::env::current_dir()
+                    .map_err(|e| format!("Failed to get current directory: {e}"))?;
+                let m = manifest.as_ref().unwrap();
+                let runner_dir = build::generate_runner_crate(&cwd, m)?;
+                build::build_runner(&runner_dir)?;
+                build::extract_metadata(&cwd)?;
+                let extern_meta = build::read_metadata(&cwd, m)?;
+                check::cmd_with_externs(&path, &extern_meta)?;
+            } else {
+                check::cmd(&path)?;
+            }
         }
         Command::Init { name } => {
             init::cmd(name.as_deref())?;

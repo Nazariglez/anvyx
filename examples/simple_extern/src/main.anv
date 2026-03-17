@@ -1,5 +1,4 @@
-extern fn add(a: int, b: int) -> int
-extern fn greet(name: string) -> string
+import my_extern { add, greet };
 
 fn main() {
     let result = add(3, 4);

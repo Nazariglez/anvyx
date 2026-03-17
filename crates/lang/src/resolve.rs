@@ -23,6 +23,7 @@ pub struct ResolveResult {
 pub(crate) fn resolve_imports(
     stmts: &[StmtNode],
     project_root: &Path,
+    extern_names: &HashSet<String>,
 ) -> Result<ResolveResult, Vec<ImportError>> {
     let mut modules = vec![];
     let mut resolving: HashSet<Vec<String>> = HashSet::new();
@@ -32,6 +33,7 @@ pub(crate) fn resolve_imports(
     collect_imports(
         stmts,
         project_root,
+        extern_names,
         &mut resolving,
         &mut resolved,
         &mut modules,
@@ -48,6 +50,7 @@ pub(crate) fn resolve_imports(
 fn collect_imports(
     stmts: &[StmtNode],
     project_root: &Path,
+    extern_names: &HashSet<String>,
     resolving: &mut HashSet<Vec<String>>,
     resolved: &mut HashSet<Vec<String>>,
     modules: &mut Vec<ModuleSource>,
@@ -62,6 +65,14 @@ fn collect_imports(
         let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
 
         if path_key.first().map(|s| s.as_str()) == Some("std") {
+            continue;
+        }
+
+        // extern provider names are resolved separately from metadata, not as local files
+        let is_extern_provider = path_key
+            .first()
+            .is_some_and(|s| extern_names.contains(s.as_str()));
+        if is_extern_provider {
             continue;
         }
 
@@ -111,6 +122,7 @@ fn collect_imports(
         collect_imports(
             &module_ast.stmts,
             project_root,
+            extern_names,
             resolving,
             resolved,
             modules,

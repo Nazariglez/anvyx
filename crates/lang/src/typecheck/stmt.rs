@@ -416,6 +416,23 @@ pub(super) fn build_module_def_with_reexports(
                     }
                 }
             }
+            Stmt::ExternFunc(node) => {
+                let extern_func = &node.node;
+                module_def.all_names.insert(extern_func.name);
+                let func_ty = Type::Func {
+                    params: extern_func
+                        .params
+                        .iter()
+                        .map(|p| type_checker.resolve_type(&p.ty))
+                        .collect(),
+                    ret: Box::new(type_checker.resolve_type(&extern_func.ret)),
+                };
+                module_def.funcs.insert(extern_func.name, func_ty);
+                let param_info: Vec<_> =
+                    extern_func.params.iter().map(|p| (p.name, p.mutability)).collect();
+                module_def.func_param_info.insert(extern_func.name, param_info);
+            }
+            Stmt::ExternType(_) => {}
             _ => {}
         }
     }

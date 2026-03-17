@@ -53,9 +53,12 @@ pub fn execute_runner(project_root: &Path, entry_path: &Path, backend: &str) -> 
         return Err(format!("Runner binary not found at {}", binary.display()));
     }
 
+    let metadata_dir = project_root.join("build/metadata");
+
     let status = process::Command::new(&binary)
         .arg(entry_path)
         .arg(backend)
+        .arg(&metadata_dir)
         .status()
         .map_err(|e| format!("Failed to execute runner binary: {e}"))?;
 
@@ -85,6 +88,28 @@ pub fn build_runner(runner_dir: &Path) -> Result<(), String> {
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
         Err(format_build_error(&stderr))
+    }
+}
+
+pub fn extract_metadata(project_root: &Path) -> Result<(), String> {
+    let binary = runner_binary_path(project_root);
+    if !binary.exists() {
+        return Err(format!("Runner binary not found at {}", binary.display()));
+    }
+
+    let output_dir = project_root.join("build/metadata");
+
+    let status = process::Command::new(&binary)
+        .arg("--metadata")
+        .arg(&output_dir)
+        .status()
+        .map_err(|e| format!("Failed to run metadata extraction: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        let code = status.code().unwrap_or(1);
+        Err(format!("Metadata extraction exited with code {code}"))
     }
 }
 
@@ -120,13 +145,16 @@ fn generate_cargo_toml(project_root: &Path, manifest: &Manifest) -> String {
 }
 
 fn generate_main_rs(manifest: &Manifest) -> String {
-    let mut extend_lines = String::new();
     let mut entries: Vec<&String> = manifest.externs.keys().collect();
     entries.sort();
 
-    for name in entries {
+    let mut extend_lines = String::new();
+    for name in &entries {
         extend_lines.push_str(&format!("    externs.extend({name}::anvyx_externs());\n"));
     }
+
+    let metadata_lines = generate_metadata_lines(&entries);
+    let metadata_read_lines = generate_metadata_read_lines(&entries);
 
     format!(
         r#"use std::collections::HashMap;
@@ -135,9 +163,24 @@ use std::fs;
 
 fn main() {{
     let args: Vec<String> = env::args().collect();
+
+    if args.get(1).map(|s| s.as_str()) == Some("--metadata") {{
+        let output_dir = args.get(2).unwrap_or_else(|| {{
+            eprintln!("--metadata requires an output directory argument");
+            std::process::exit(1);
+        }});
+        fs::create_dir_all(output_dir)
+            .unwrap_or_else(|e| {{ eprintln!("Failed to create metadata dir: {{e}}"); std::process::exit(1); }});
+{metadata_lines}
+        return;
+    }}
+
     let file_path = &args[1];
     let backend = args.get(2).map(|s| s.as_str()).unwrap_or("vm");
+    let metadata_dir = args.get(3).map(|s| s.as_str()).unwrap_or("build/metadata");
 
+    let mut extern_metadata: HashMap<String, String> = HashMap::new();
+{metadata_read_lines}
     let source = fs::read_to_string(file_path)
         .unwrap_or_else(|e| {{ eprintln!("Failed to read file: {{e}}"); std::process::exit(1); }});
 
@@ -146,13 +189,56 @@ fn main() {{
 
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
 {extend_lines}
-    match anvyx_lang::run_program_with_externs(&source, file_path, backend, externs) {{
+    match anvyx_lang::run_program_with_externs(&source, file_path, backend, externs, extern_metadata) {{
         Ok(output) => print!("{{output}}"),
         Err(e) => {{ eprintln!("{{e}}"); std::process::exit(1); }}
     }}
 }}
 "#
     )
+}
+
+fn generate_metadata_lines(sorted_names: &[&String]) -> String {
+    let mut lines = String::new();
+    for name in sorted_names {
+        lines.push_str(&format!(
+            "        {{\n\
+             \x20           let json = anvyx_lang::exports_to_json({name}::ANVYX_EXPORTS);\n\
+             \x20           fs::write(format!(\"{{output_dir}}/{name}.json\"), json)\n\
+             \x20               .unwrap_or_else(|e| {{ eprintln!(\"Failed to write metadata for '{name}': {{e}}\"); std::process::exit(1); }});\n\
+             \x20       }}\n"
+        ));
+    }
+    lines
+}
+
+fn generate_metadata_read_lines(sorted_names: &[&String]) -> String {
+    let mut lines = String::new();
+    for name in sorted_names {
+        lines.push_str(&format!(
+            "    {{\n\
+             \x20       let json = fs::read_to_string(format!(\"{{metadata_dir}}/{name}.json\"))\n\
+             \x20           .unwrap_or_else(|e| {{ eprintln!(\"Failed to read metadata for '{name}': {{e}}\"); std::process::exit(1); }});\n\
+             \x20       extern_metadata.insert(\"{name}\".to_string(), json);\n\
+             \x20   }}\n"
+        ));
+    }
+    lines
+}
+
+pub fn read_metadata(
+    project_root: &Path,
+    manifest: &Manifest,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let metadata_dir = project_root.join("build/metadata");
+    let mut result = std::collections::HashMap::new();
+    for name in manifest.externs.keys() {
+        let path = metadata_dir.join(format!("{name}.json"));
+        let json = fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read metadata for extern '{name}': {e}"))?;
+        result.insert(name.clone(), json);
+    }
+    Ok(result)
 }
 
 fn resolve_relative_path(project_root: &Path, rel_to_root: &str) -> String {
@@ -272,6 +358,9 @@ mod tests {
         let output = generate_main_rs(&manifest_one_extern());
 
         assert!(output.contains("externs.extend(engine::anvyx_externs());"));
+        assert!(output.contains("extern_metadata"));
+        assert!(output.contains("metadata_dir"));
+        assert!(output.contains("engine.json"));
     }
 
     #[test]
@@ -280,6 +369,27 @@ mod tests {
 
         assert!(output.contains("externs.extend(engine::anvyx_externs());"));
         assert!(output.contains("externs.extend(audio::anvyx_externs());"));
+        assert!(output.contains("engine.json"));
+        assert!(output.contains("audio.json"));
+    }
+
+    #[test]
+    fn main_rs_passes_extern_metadata_to_run() {
+        let output = generate_main_rs(&manifest_one_extern());
+
+        assert!(output.contains("extern_metadata"));
+        assert!(output.contains("run_program_with_externs"));
+        // the call should include both externs and extern_metadata
+        let run_call = output.find("run_program_with_externs").unwrap();
+        let call_snippet = &output[run_call..run_call + 120];
+        assert!(call_snippet.contains("extern_metadata"), "run call should pass extern_metadata");
+    }
+
+    #[test]
+    fn main_rs_reads_metadata_dir_from_arg() {
+        let output = generate_main_rs(&manifest_one_extern());
+        assert!(output.contains("args.get(3)"));
+        assert!(output.contains("metadata_dir"));
     }
 
     #[test]
@@ -302,6 +412,8 @@ mod tests {
         let main_content = fs::read_to_string(runner_dir.join("src/main.rs")).unwrap();
         assert!(main_content.contains("run_program_with_externs"));
         assert!(main_content.contains("engine::anvyx_externs"));
+        assert!(main_content.contains("extern_metadata"));
+        assert!(main_content.contains("metadata_dir"));
 
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -427,6 +539,113 @@ mod tests {
         let main_content = fs::read_to_string(runner_dir.join("src/main.rs")).unwrap();
         assert!(main_content.contains("externs.extend(audio::anvyx_externs());"));
         assert!(main_content.contains("externs.extend(engine::anvyx_externs());"));
+        assert!(main_content.contains("extern_metadata"));
+        assert!(main_content.contains("metadata_dir"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn read_metadata_missing_file_returns_error() {
+        let tmp =
+            std::env::temp_dir().join(format!("anvyx-meta-read-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        let result = read_metadata(&tmp, &manifest_one_extern());
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("Failed to read metadata for extern 'engine'"),
+            "unexpected error: {msg}"
+        );
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn read_metadata_reads_json_files() {
+        let tmp =
+            std::env::temp_dir().join(format!("anvyx-meta-ok-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        let metadata_dir = tmp.join("build/metadata");
+        fs::create_dir_all(&metadata_dir).unwrap();
+
+        let json = r#"{"types":[],"functions":[]}"#;
+        fs::write(metadata_dir.join("engine.json"), json).unwrap();
+
+        let result = read_metadata(&tmp, &manifest_one_extern()).unwrap();
+        assert_eq!(result.get("engine").map(|s| s.as_str()), Some(json));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn main_rs_metadata_mode_present() {
+        let output = generate_main_rs(&manifest_one_extern());
+        assert!(output.contains("--metadata"));
+        assert!(output.contains("engine::ANVYX_EXPORTS"));
+        assert!(output.contains("anvyx_lang::exports_to_json"));
+        assert!(output.contains("engine.json"));
+    }
+
+    #[test]
+    fn main_rs_metadata_mode_multiple_externs() {
+        let output = generate_main_rs(&manifest_two_externs());
+        assert!(output.contains("--metadata"));
+        assert!(output.contains("engine::ANVYX_EXPORTS"));
+        assert!(output.contains("audio::ANVYX_EXPORTS"));
+        assert!(output.contains("engine.json"));
+        assert!(output.contains("audio.json"));
+    }
+
+    #[test]
+    fn main_rs_metadata_mode_no_externs() {
+        // With no externs, the --metadata block is still present but writes nothing
+        let output = generate_main_rs(&manifest_no_externs());
+        assert!(output.contains("--metadata"));
+        assert!(!output.contains("ANVYX_EXPORTS"));
+    }
+
+    #[test]
+    fn main_rs_metadata_and_run_both_present() {
+        let output = generate_main_rs(&manifest_one_extern());
+        // both metadata extraction and normal run paths exist
+        assert!(output.contains("--metadata"));
+        assert!(output.contains("run_program_with_externs"));
+    }
+
+    #[test]
+    fn extract_metadata_missing_binary_returns_error() {
+        let tmp = std::env::temp_dir().join(format!("anvyx-meta-err-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+
+        let result = extract_metadata(&tmp);
+
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("Runner binary not found"),
+            "unexpected error: {msg}"
+        );
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn generate_runner_crate_includes_metadata_mode() {
+        let tmp = std::env::temp_dir().join(format!("anvyx-meta-gen-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("my_externs/engine")).unwrap();
+
+        let runner_dir = generate_runner_crate(&tmp, &manifest_one_extern()).unwrap();
+        let main_content = fs::read_to_string(runner_dir.join("src/main.rs")).unwrap();
+
+        assert!(main_content.contains("--metadata"));
+        assert!(main_content.contains("engine::ANVYX_EXPORTS"));
+        assert!(main_content.contains("engine.json"));
 
         let _ = fs::remove_dir_all(&tmp);
     }

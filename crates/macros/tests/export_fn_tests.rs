@@ -1,5 +1,4 @@
-use anvyx_lang::Value;
-use anvyx_lang::export_fn;
+use anvyx_lang::{ExternDecl, Value, export_fn};
 use std::rc::Rc;
 
 #[export_fn]
@@ -166,4 +165,93 @@ fn provider_trailing_comma() {
     // Ensure trailing comma is accepted
     let externs = flat_mod::anvyx_externs();
     assert!(externs.contains_key("inc"));
+}
+
+// -- ExternDecl metadata tests --
+
+#[test]
+fn export_fn_generates_decl_const() {
+    let decl: ExternDecl = __ANVYX_DECL_ADD;
+    assert_eq!(decl.name, "add");
+    assert_eq!(decl.params, &[("a", "int"), ("b", "int")]);
+    assert_eq!(decl.ret, "int");
+}
+
+#[test]
+fn export_fn_name_override_in_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_MY_FN;
+    assert_eq!(decl.name, "custom_name");
+    assert_eq!(decl.params, &[("x", "int")]);
+    assert_eq!(decl.ret, "int");
+}
+
+#[test]
+fn export_fn_string_param_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_GREET;
+    assert_eq!(decl.name, "greet");
+    assert_eq!(decl.params, &[("name", "string")]);
+    assert_eq!(decl.ret, "string");
+}
+
+#[test]
+fn export_fn_void_return_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_NOOP;
+    assert_eq!(decl.name, "noop");
+    assert_eq!(decl.params, &[]);
+    assert_eq!(decl.ret, "void");
+}
+
+#[test]
+fn export_fn_float_param_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_SCALE;
+    assert_eq!(decl.name, "scale");
+    assert_eq!(decl.params, &[("x", "float"), ("factor", "float")]);
+    assert_eq!(decl.ret, "float");
+}
+
+#[test]
+fn export_fn_bool_param_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_TOGGLE;
+    assert_eq!(decl.name, "toggle");
+    assert_eq!(decl.params, &[("flag", "bool")]);
+    assert_eq!(decl.ret, "bool");
+}
+
+#[test]
+fn provider_generates_anvyx_exports() {
+    assert_eq!(ANVYX_EXPORTS.len(), 3);
+    let names: Vec<&str> = ANVYX_EXPORTS.iter().map(|d| d.name).collect();
+    assert!(names.contains(&"double"));
+    assert!(names.contains(&"triple"));
+    assert!(names.contains(&"hello"));
+}
+
+#[test]
+fn provider_exports_name_override() {
+    let triple = ANVYX_EXPORTS.iter().find(|d| d.name == "triple").unwrap();
+    assert_eq!(triple.params, &[("x", "int")]);
+    assert_eq!(triple.ret, "int");
+}
+
+#[test]
+fn provider_exports_correct_types() {
+    let double = ANVYX_EXPORTS.iter().find(|d| d.name == "double").unwrap();
+    assert_eq!(double.params, &[("x", "int")]);
+    assert_eq!(double.ret, "int");
+
+    let hello = ANVYX_EXPORTS.iter().find(|d| d.name == "hello").unwrap();
+    assert_eq!(hello.params, &[("name", "string")]);
+    assert_eq!(hello.ret, "string");
+}
+
+#[test]
+fn provider_bare_ident_exports() {
+    assert_eq!(flat_mod::ANVYX_EXPORTS.len(), 2);
+    let names: Vec<&str> = flat_mod::ANVYX_EXPORTS.iter().map(|d| d.name).collect();
+    assert!(names.contains(&"inc"));
+    assert!(names.contains(&"dec"));
+
+    let inc = flat_mod::ANVYX_EXPORTS.iter().find(|d| d.name == "inc").unwrap();
+    assert_eq!(inc.params, &[("x", "int")]);
+    assert_eq!(inc.ret, "int");
 }
