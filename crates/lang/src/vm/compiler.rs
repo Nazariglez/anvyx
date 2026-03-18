@@ -89,13 +89,13 @@ pub fn compile(hir: &hir::Program) -> Result<CompiledProgram, CompileError> {
         .position(|f| f.name.to_string() == "main")
         .ok_or(CompileError::NoMainFunction)?;
 
-    let extern_names = hir
-        .externs
-        .iter()
-        .map(|e| e.name.to_string())
-        .collect();
+    let extern_names = hir.externs.iter().map(|e| e.name.to_string()).collect();
 
-    Ok(CompiledProgram { chunks, main_idx, extern_names })
+    Ok(CompiledProgram {
+        chunks,
+        main_idx,
+        extern_names,
+    })
 }
 
 fn compile_func(func: &hir::Func) -> Result<Chunk, CompileError> {
@@ -229,11 +229,69 @@ fn compile_stmt(fc: &mut FuncCompiler, stmt: &hir::Stmt) -> Result<(), CompileEr
             fc.emit(Op::Jump(back_offset as i16));
         }
 
-        hir::StmtKind::SetField { object, field_index, value } => {
+        hir::StmtKind::SetField {
+            object,
+            field_index,
+            value,
+        } => {
             fc.emit(Op::GetLocal(object.0 as u16));
             compile_expr(fc, value)?;
             fc.emit(Op::SetField(*field_index));
             fc.emit(Op::SetLocal(object.0 as u16));
+        }
+
+        hir::StmtKind::Match {
+            scrutinee_init,
+            scrutinee,
+            arms,
+            else_body,
+        } => {
+            // evaluate scrutinee and store to local
+            compile_expr(fc, scrutinee_init)?;
+            fc.emit(Op::SetLocal(scrutinee.0 as u16));
+
+            // we collect patch positions for the "jump to end" after each matched arm
+            let mut end_jump_positions: Vec<usize> = vec![];
+
+            for arm in arms {
+                // check if variant matches, GetLocal scrutinee, GetEnumVariant, push expected, Eq, JumpIfFalse(skip)
+                fc.emit(Op::GetLocal(scrutinee.0 as u16));
+                fc.emit(Op::GetEnumVariant);
+                let variant_idx = fc.add_constant(Value::Int(arm.variant as i64))?;
+                fc.emit(Op::Constant(variant_idx));
+                fc.emit(Op::Eq);
+                let skip_pos = fc.emit_jump(Op::JumpIfFalse(0));
+
+                // bind fields to locals
+                for binding in &arm.bindings {
+                    fc.emit(Op::GetLocal(scrutinee.0 as u16));
+                    fc.emit(Op::GetField(binding.field_index));
+                    fc.emit(Op::SetLocal(binding.local.0 as u16));
+                }
+
+                compile_block(fc, &arm.body)?;
+
+                // jump past all remaining arms
+                let end_pos = fc.emit_jump(Op::Jump(0));
+                end_jump_positions.push(end_pos);
+
+                // patch the skip jump to land here (after the arm body)
+                fc.patch_jump(skip_pos);
+            }
+
+            // else_body (wildcard / Ident catch-all)
+            if let Some(else_b) = else_body {
+                if let Some(binding_local) = else_b.binding {
+                    fc.emit(Op::GetLocal(scrutinee.0 as u16));
+                    fc.emit(Op::SetLocal(binding_local.0 as u16));
+                }
+                compile_block(fc, &else_b.body)?;
+            }
+
+            // patch all end-jumps to land after the whole match
+            for pos in end_jump_positions {
+                fc.patch_jump(pos);
+            }
         }
     }
 
@@ -348,6 +406,17 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             compile_expr(fc, tuple)?;
             fc.emit(Op::GetField(*index));
         }
+
+        hir::ExprKind::EnumLiteral {
+            type_id,
+            variant,
+            fields,
+        } => {
+            for field in fields {
+                compile_expr(fc, field)?;
+            }
+            fc.emit(Op::ConstructEnum(*type_id, *variant, fields.len() as u16));
+        }
     }
 
     Ok(())
@@ -359,10 +428,9 @@ mod tests {
     use crate::ast::Type;
     use crate::hir::{Block, Expr, ExprKind, Func, FuncId, Local, LocalId, Program, StmtKind};
     use crate::test_helpers::{
-        dummy_ident, dummy_span, hir_bool_expr as bool_expr, hir_int_expr as int_expr,
-        hir_local_expr as local_expr, hir_binary_expr as binary_expr,
-        hir_stmt as stmt, hir_simple_func as simple_func,
-        hir_main_func as main_func, hir_program as prog,
+        dummy_ident, dummy_span, hir_binary_expr as binary_expr, hir_bool_expr as bool_expr,
+        hir_int_expr as int_expr, hir_local_expr as local_expr, hir_main_func as main_func,
+        hir_program as prog, hir_simple_func as simple_func, hir_stmt as stmt,
     };
 
     #[test]
@@ -639,7 +707,10 @@ mod tests {
             },
         })]);
         let compiled = compile(&prog(Func {
-            locals: vec![Local { name: None, ty: Type::Int }],
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
             ..func
         }))
         .unwrap();
@@ -665,7 +736,10 @@ mod tests {
             },
         })]);
         let compiled = compile(&prog(Func {
-            locals: vec![Local { name: None, ty: Type::Int }],
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
             ..func
         }))
         .unwrap();
@@ -696,7 +770,10 @@ mod tests {
         let func = Func {
             id: FuncId(0),
             name: dummy_ident("main"),
-            locals: vec![Local { name: None, ty: Type::Int }],
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
             params_len: 0,
             ret: Type::Void,
             body: Block {
@@ -714,5 +791,121 @@ mod tests {
         assert_eq!(chunk.code[0], Op::GetLocal(0));
         assert_eq!(chunk.code[2], Op::SetField(1));
         assert_eq!(chunk.code[3], Op::SetLocal(0));
+    }
+
+    #[test]
+    fn enum_literal_unit_emits_construct_enum() {
+        use crate::hir::ExprKind as EK;
+        let func = main_func(vec![stmt(StmtKind::Let {
+            local: LocalId(0),
+            init: Expr {
+                ty: Type::Int,
+                span: dummy_span(),
+                kind: EK::EnumLiteral {
+                    type_id: 3,
+                    variant: 1,
+                    fields: vec![],
+                },
+            },
+        })]);
+        let compiled = compile(&prog(Func {
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
+            ..func
+        }))
+        .unwrap();
+        let chunk = &compiled.chunks[0];
+        // ConstructEnum(3, 1, 0), SetLocal(0), Nil, Return
+        assert_eq!(chunk.code[0], Op::ConstructEnum(3, 1, 0));
+        assert_eq!(chunk.code[1], Op::SetLocal(0));
+    }
+
+    #[test]
+    fn enum_literal_with_fields_emits_construct_enum() {
+        use crate::hir::ExprKind as EK;
+        let func = main_func(vec![stmt(StmtKind::Let {
+            local: LocalId(0),
+            init: Expr {
+                ty: Type::Int,
+                span: dummy_span(),
+                kind: EK::EnumLiteral {
+                    type_id: 2,
+                    variant: 0,
+                    fields: vec![int_expr(42)],
+                },
+            },
+        })]);
+        let compiled = compile(&prog(Func {
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
+            ..func
+        }))
+        .unwrap();
+        let chunk = &compiled.chunks[0];
+        // Constant(0)[42], ConstructEnum(2, 0, 1), SetLocal(0), Nil, Return
+        assert_eq!(chunk.code[0], Op::Constant(0));
+        assert_eq!(chunk.code[1], Op::ConstructEnum(2, 0, 1));
+        assert_eq!(chunk.code[2], Op::SetLocal(0));
+    }
+
+    #[test]
+    fn match_stmt_emits_get_enum_variant_and_eq() {
+        use crate::hir::{ExprKind as EK, MatchArm, MatchElse};
+        let func = main_func(vec![
+            stmt(StmtKind::Let {
+                local: LocalId(0),
+                init: Expr {
+                    ty: Type::Int,
+                    span: dummy_span(),
+                    kind: EK::EnumLiteral {
+                        type_id: 0,
+                        variant: 0,
+                        fields: vec![],
+                    },
+                },
+            }),
+            stmt(StmtKind::Match {
+                scrutinee_init: Box::new(Expr {
+                    ty: Type::Int,
+                    span: dummy_span(),
+                    kind: EK::Local(LocalId(0)),
+                }),
+                scrutinee: LocalId(1),
+                arms: vec![MatchArm {
+                    variant: 0,
+                    bindings: vec![],
+                    body: Block { stmts: vec![] },
+                }],
+                else_body: Some(MatchElse {
+                    binding: None,
+                    body: Block { stmts: vec![] },
+                }),
+            }),
+        ]);
+        let compiled = compile(&prog(Func {
+            locals: vec![
+                Local {
+                    name: None,
+                    ty: Type::Int,
+                },
+                Local {
+                    name: None,
+                    ty: Type::Int,
+                },
+            ],
+            ..func
+        }))
+        .unwrap();
+        let chunk = &compiled.chunks[0];
+        // After SetLocal(0) for scrutinee_init:
+        // GetLocal(1), GetEnumVariant, Constant(idx), Eq, JumpIfFalse, Jump(end), [else], Return
+        let has_get_enum_variant = chunk.code.iter().any(|op| *op == Op::GetEnumVariant);
+        let has_eq = chunk.code.iter().any(|op| *op == Op::Eq);
+        assert!(has_get_enum_variant, "expected GetEnumVariant opcode");
+        assert!(has_eq, "expected Eq opcode");
     }
 }

@@ -52,8 +52,10 @@ pub enum Op {
     // composite types
     ConstructStruct(u32, u16), // (type_id, field_count)
     ConstructTuple(u16),       // element_count
+    ConstructEnum(u32, u16, u16), // (type_id, variant_index, field_count)
     GetField(u16),             // field_index
     SetField(u16),             // field_index
+    GetEnumVariant,            // pops enum, pushes variant index as Int
 }
 
 pub struct Chunk {

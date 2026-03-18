@@ -5,9 +5,9 @@ use super::bytecode::Op;
 use super::compiler::CompiledProgram;
 use super::managed_rc::ManagedRc;
 use super::value::{
-    RuntimeError, StructData, Value, value_add, value_and, value_div, value_eq, value_gt,
-    value_gte, value_lt, value_lte, value_mul, value_negate, value_neq, value_not, value_or,
-    value_rem, value_sub, value_xor,
+    EnumData, RuntimeError, StructData, Value, value_add, value_and, value_div, value_eq,
+    value_gt, value_gte, value_lt, value_lte, value_mul, value_negate, value_neq, value_not,
+    value_or, value_rem, value_sub, value_xor,
 };
 
 pub type ExternHandler = Box<dyn Fn(Vec<Value>) -> Result<Value, RuntimeError>>;
@@ -285,6 +285,27 @@ impl<'a> VM<'a> {
                     self.push(Value::Tuple(ManagedRc::new(elements)));
                 }
 
+                Op::ConstructEnum(type_id, variant, field_count) => {
+                    let count = field_count as usize;
+                    let start = self.stack.len() - count;
+                    let fields: Vec<Value> = self.stack.drain(start..).collect();
+                    let data = EnumData { type_id, variant, fields };
+                    self.push(Value::Enum(ManagedRc::new(data)));
+                }
+
+                Op::GetEnumVariant => {
+                    let val = self.pop();
+                    match val {
+                        Value::Enum(e) => self.push(Value::Int(e.variant as i64)),
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "GetEnumVariant on non-enum value: {}",
+                                other
+                            )));
+                        }
+                    }
+                }
+
                 Op::GetField(index) => {
                     let obj = self.pop();
                     let idx = index as usize;
@@ -295,9 +316,12 @@ impl<'a> VM<'a> {
                         Value::Tuple(t) => t.get(idx).cloned().ok_or_else(|| {
                             RuntimeError::new(format!("index {idx} out of bounds on tuple"))
                         })?,
+                        Value::Enum(e) => e.fields.get(idx).cloned().ok_or_else(|| {
+                            RuntimeError::new(format!("field index {idx} out of bounds on enum variant"))
+                        })?,
                         other => {
                             return Err(RuntimeError::new(format!(
-                                "GetField on non-struct/tuple value: {}",
+                                "GetField on non-struct/tuple/enum value: {}",
                                 other
                             )));
                         }
@@ -586,5 +610,71 @@ mod tests {
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
         vm.run().unwrap();
+    }
+
+    #[test]
+    fn construct_enum_unit_variant() {
+        // ConstructEnum(0, 1, 0) -> Value::Enum
+        let mut chunk = Chunk::new("main", 0, 0);
+        chunk.emit(Op::ConstructEnum(0, 1, 0));
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+    }
+
+    #[test]
+    fn construct_enum_with_field() {
+        // Constant(42), ConstructEnum(0, 0, 1) -> Value::Enum with 1 field
+        let mut chunk = Chunk::new("main", 0, 0);
+        let i42 = chunk.add_constant(Value::Int(42));
+        chunk.emit(Op::Constant(i42));
+        chunk.emit(Op::ConstructEnum(0, 0, 1));
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+    }
+
+    #[test]
+    fn get_enum_variant_returns_variant_index() {
+        // ConstructEnum(0, 2, 0), GetEnumVariant -> Int(2), Return
+        let mut chunk = Chunk::new("main", 0, 0);
+        chunk.emit(Op::ConstructEnum(0, 2, 0));
+        chunk.emit(Op::GetEnumVariant);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+    }
+
+    #[test]
+    fn get_field_on_enum_returns_payload() {
+        // Constant(99), ConstructEnum(0, 0, 1), GetField(0) -> Int(99)
+        let mut chunk = Chunk::new("main", 0, 0);
+        let i99 = chunk.add_constant(Value::Int(99));
+        chunk.emit(Op::Constant(i99));
+        chunk.emit(Op::ConstructEnum(0, 0, 1));
+        chunk.emit(Op::GetField(0));
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+    }
+
+    #[test]
+    fn get_enum_variant_on_non_enum_is_error() {
+        let mut chunk = Chunk::new("main", 0, 0);
+        chunk.emit(Op::True);
+        chunk.emit(Op::GetEnumVariant);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_err());
     }
 }

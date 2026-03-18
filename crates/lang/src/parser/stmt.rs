@@ -30,6 +30,7 @@ pub(super) fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
             (Token::Keyword(Keyword::Fn), _) => (),
             (Token::Keyword(Keyword::Pub), _) => (),
             (Token::Keyword(Keyword::If), _) => (),
+            (Token::Keyword(Keyword::Match), _) => (),
             (Token::Keyword(Keyword::Struct), _) => (),
             (Token::Keyword(Keyword::While), _) => (),
             (Token::Keyword(Keyword::For), _) => (),

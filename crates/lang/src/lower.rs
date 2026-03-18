@@ -82,6 +82,7 @@ struct LowerCtx<'a> {
     externs: HashMap<Ident, hir::ExternId>,
     type_overrides: Option<&'a HashMap<ExprId, (Span, Type)>>,
     struct_type_ids: HashMap<Ident, u32>,
+    enum_type_ids: HashMap<Ident, u32>,
 }
 
 struct FuncLower {
@@ -115,12 +116,33 @@ pub fn lower_program(
         }
     }
 
+    let mut enum_type_ids: HashMap<Ident, u32> = HashMap::new();
+    for name in tcx.enum_names() {
+        enum_type_ids.entry(name).or_insert_with(|| {
+            let id = next_type_id;
+            next_type_id += 1;
+            id
+        });
+    }
+    for (_path, stmts) in module_list {
+        for stmt_node in stmts {
+            if let ast::Stmt::Enum(e) = &stmt_node.node {
+                enum_type_ids.entry(e.node.name).or_insert_with(|| {
+                    let id = next_type_id;
+                    next_type_id += 1;
+                    id
+                });
+            }
+        }
+    }
+
     let mut ctx = LowerCtx {
         tcx,
         funcs: HashMap::new(),
         externs: HashMap::new(),
         type_overrides: None,
         struct_type_ids,
+        enum_type_ids,
     };
 
     let mut func_nodes: Vec<&ast::FuncNode> = vec![];
@@ -293,6 +315,7 @@ pub fn lower_program(
             externs: ctx.externs.clone(),
             type_overrides: Some(&spec_result.body_types),
             struct_type_ids: ctx.struct_type_ids.clone(),
+            enum_type_ids: ctx.enum_type_ids.clone(),
         };
 
         let mut fc = FuncLower {
@@ -401,6 +424,16 @@ fn lower_block(
             ast::ExprKind::Assign(assign_node) => {
                 stmts.push(lower_assign(assign_node, span, ctx, fc)?);
             }
+            ast::ExprKind::Match(match_node) => {
+                stmts.push(lower_match_stmts(
+                    match_node,
+                    span,
+                    ctx,
+                    fc,
+                    is_func_body,
+                    ret_ty,
+                )?);
+            }
             _ => {
                 let hir_expr = lower_expr(tail_expr, ctx, fc)?;
                 let kind = if is_func_body && !ret_ty.is_void() {
@@ -477,6 +510,14 @@ fn lower_stmt(
             ast::ExprKind::Assign(assign_node) => {
                 Ok(Some(lower_assign(assign_node, span, ctx, fc)?))
             }
+            ast::ExprKind::Match(match_node) => Ok(Some(lower_match_stmts(
+                match_node,
+                span,
+                ctx,
+                fc,
+                false,
+                &Type::Void,
+            )?)),
             _ => {
                 let hir_expr = lower_expr(expr_node, ctx, fc)?;
                 Ok(Some(hir::Stmt {
@@ -656,6 +697,219 @@ fn lower_assign(
     }
 }
 
+fn lower_arm_body(
+    body_expr: &ast::ExprNode,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    is_func_body: bool,
+    ret_ty: &Type,
+) -> Result<hir::Block, LowerError> {
+    if let ast::ExprKind::Block(block_node) = &body_expr.node.kind {
+        lower_block(block_node, ctx, fc, is_func_body, ret_ty)
+    } else {
+        let span = body_expr.span;
+        let hir_expr = lower_expr(body_expr, ctx, fc)?;
+        let kind = if is_func_body && !ret_ty.is_void() {
+            hir::StmtKind::Return(Some(hir_expr))
+        } else {
+            hir::StmtKind::Expr(hir_expr)
+        };
+        Ok(hir::Block {
+            stmts: vec![hir::Stmt { span, kind }],
+        })
+    }
+}
+
+fn lower_match_stmts(
+    match_node: &ast::MatchNode,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    is_func_body: bool,
+    ret_ty: &Type,
+) -> Result<hir::Stmt, LowerError> {
+    let scrutinee_expr = lower_expr(&match_node.node.scrutinee, ctx, fc)?;
+    let scrutinee_ty = scrutinee_expr.ty.clone();
+
+    let scrutinee_local = hir::LocalId(fc.locals.len() as u32);
+    fc.locals.push(hir::Local {
+        name: None,
+        ty: scrutinee_ty.clone(),
+    });
+
+    let (enum_name, type_args) = match &scrutinee_ty {
+        Type::Enum { name, type_args } => (*name, type_args.clone()),
+        other => {
+            return Err(LowerError::UnsupportedExprKind {
+                span,
+                kind: format!("match on non-enum type '{other}'"),
+            });
+        }
+    };
+
+    let mut arms: Vec<hir::MatchArm> = vec![];
+    let mut else_body: Option<hir::MatchElse> = None;
+
+    for arm in &match_node.node.arms {
+        let saved_local_map = fc.local_map.clone();
+
+        match &arm.node.pattern.node {
+            Pattern::Wildcard => {
+                let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                else_body = Some(hir::MatchElse {
+                    binding: None,
+                    body,
+                });
+            }
+
+            Pattern::Ident(name) => {
+                let binding_local = hir::LocalId(fc.locals.len() as u32);
+                fc.locals.push(hir::Local {
+                    name: Some(*name),
+                    ty: scrutinee_ty.clone(),
+                });
+                fc.local_map.insert(*name, binding_local);
+                let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                else_body = Some(hir::MatchElse {
+                    binding: Some(binding_local),
+                    body,
+                });
+            }
+
+            Pattern::EnumUnit {
+                qualifier: _,
+                variant,
+            } => {
+                let variant_idx =
+                    ctx.tcx
+                        .enum_variant_index(enum_name, *variant)
+                        .ok_or_else(|| LowerError::UnsupportedExprKind {
+                            span,
+                            kind: format!("unknown variant '{variant}' on enum '{enum_name}'"),
+                        })?;
+                let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                arms.push(hir::MatchArm {
+                    variant: variant_idx,
+                    bindings: vec![],
+                    body,
+                });
+            }
+
+            Pattern::EnumTuple {
+                qualifier: _,
+                variant,
+                fields: subpatterns,
+            } => {
+                let variant_idx =
+                    ctx.tcx
+                        .enum_variant_index(enum_name, *variant)
+                        .ok_or_else(|| LowerError::UnsupportedExprKind {
+                            span,
+                            kind: format!("unknown variant '{variant}' on enum '{enum_name}'"),
+                        })?;
+                let field_types = ctx
+                    .tcx
+                    .enum_variant_field_types(enum_name, *variant, &type_args)
+                    .unwrap_or_default();
+
+                let mut bindings = vec![];
+                for (field_idx, subpat) in subpatterns.iter().enumerate() {
+                    if let Pattern::Ident(binding_name) = &subpat.node {
+                        let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
+                        let local = hir::LocalId(fc.locals.len() as u32);
+                        fc.locals.push(hir::Local {
+                            name: Some(*binding_name),
+                            ty: field_ty,
+                        });
+                        fc.local_map.insert(*binding_name, local);
+                        bindings.push(hir::MatchBinding {
+                            field_index: field_idx as u16,
+                            local,
+                        });
+                    }
+                }
+                let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                arms.push(hir::MatchArm {
+                    variant: variant_idx,
+                    bindings,
+                    body,
+                });
+            }
+
+            Pattern::EnumStruct {
+                qualifier: _,
+                variant,
+                fields: field_patterns,
+            } => {
+                let variant_idx =
+                    ctx.tcx
+                        .enum_variant_index(enum_name, *variant)
+                        .ok_or_else(|| LowerError::UnsupportedExprKind {
+                            span,
+                            kind: format!("unknown variant '{variant}' on enum '{enum_name}'"),
+                        })?;
+                let field_names = ctx
+                    .tcx
+                    .enum_variant_field_names(enum_name, *variant)
+                    .unwrap_or_default();
+                let field_types = ctx
+                    .tcx
+                    .enum_variant_field_types(enum_name, *variant, &type_args)
+                    .unwrap_or_default();
+
+                let mut bindings = vec![];
+                for (pat_field_name, subpat) in field_patterns {
+                    if let Pattern::Ident(binding_name) = &subpat.node {
+                        let field_idx = field_names
+                            .iter()
+                            .position(|n| n == pat_field_name)
+                            .unwrap_or(0);
+                        let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
+                        let local = hir::LocalId(fc.locals.len() as u32);
+                        fc.locals.push(hir::Local {
+                            name: Some(*binding_name),
+                            ty: field_ty,
+                        });
+                        fc.local_map.insert(*binding_name, local);
+                        bindings.push(hir::MatchBinding {
+                            field_index: field_idx as u16,
+                            local,
+                        });
+                    }
+                }
+                let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                arms.push(hir::MatchArm {
+                    variant: variant_idx,
+                    bindings,
+                    body,
+                });
+            }
+
+            other => {
+                return Err(LowerError::UnsupportedExprKind {
+                    span,
+                    kind: format!(
+                        "unsupported match pattern '{}'",
+                        format!("{other:?}").split('(').next().unwrap_or("?")
+                    ),
+                });
+            }
+        }
+
+        fc.local_map = saved_local_map;
+    }
+
+    Ok(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Match {
+            scrutinee_init: Box::new(scrutinee_expr),
+            scrutinee: scrutinee_local,
+            arms,
+            else_body,
+        },
+    })
+}
+
 fn lower_string_interp(
     parts: &[StringPart],
     span: Span,
@@ -757,6 +1011,48 @@ fn lower_expr(
         ast::ExprKind::StringInterp(parts) => lower_string_interp(parts, span, &ty, ctx, fc)?,
 
         ast::ExprKind::Call(c) => {
+            if let Type::Enum {
+                name: enum_name, ..
+            } = &ty
+            {
+                if let ast::ExprKind::Field(field) = &c.node.func.node.kind {
+                    if let ast::ExprKind::Ident(_) = &field.node.target.node.kind {
+                        let enum_name = *enum_name;
+                        let variant_name = field.node.field;
+                        let type_id = *ctx.enum_type_ids.get(&enum_name).ok_or_else(|| {
+                            LowerError::UnsupportedExprKind {
+                                span,
+                                kind: format!("unknown enum '{enum_name}'"),
+                            }
+                        })?;
+                        let variant = ctx
+                            .tcx
+                            .enum_variant_index(enum_name, variant_name)
+                            .ok_or_else(|| LowerError::UnsupportedExprKind {
+                                span,
+                                kind: format!(
+                                    "unknown variant '{variant_name}' on enum '{enum_name}'"
+                                ),
+                            })?;
+                        let fields = c
+                            .node
+                            .args
+                            .iter()
+                            .map(|arg| lower_expr(arg, ctx, fc))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        return Ok(hir::Expr {
+                            ty,
+                            span,
+                            kind: hir::ExprKind::EnumLiteral {
+                                type_id,
+                                variant,
+                                fields,
+                            },
+                        });
+                    }
+                }
+            }
+
             let callee_name = match &c.node.func.node.kind {
                 ast::ExprKind::Ident(name) => *name,
                 ast::ExprKind::Field(field) => {
@@ -823,6 +1119,57 @@ fn lower_expr(
         }
 
         ast::ExprKind::StructLiteral(lit) => {
+            // enum struct variant Event.Move { dx: 5, dy: 10 }
+            if let Some(enum_name) = lit.node.qualifier {
+                let variant_name = lit.node.name;
+                let type_id = *ctx.enum_type_ids.get(&enum_name).ok_or_else(|| {
+                    LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("unknown enum '{enum_name}'"),
+                    }
+                })?;
+                let variant = ctx
+                    .tcx
+                    .enum_variant_index(enum_name, variant_name)
+                    .ok_or_else(|| LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("unknown variant '{variant_name}' on enum '{enum_name}'"),
+                    })?;
+                let field_names = ctx
+                    .tcx
+                    .enum_variant_field_names(enum_name, variant_name)
+                    .ok_or_else(|| LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!(
+                            "variant '{variant_name}' on enum '{enum_name}' is not a struct variant"
+                        ),
+                    })?;
+                let provided: HashMap<Ident, &ast::ExprNode> = lit
+                    .node
+                    .fields
+                    .iter()
+                    .map(|(name, expr)| (*name, expr))
+                    .collect();
+                let fields = field_names
+                    .iter()
+                    .map(|name| {
+                        let expr = provided
+                            .get(name)
+                            .expect("typechecker ensures all declared fields are provided");
+                        lower_expr(expr, ctx, fc)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(hir::Expr {
+                    ty,
+                    span,
+                    kind: hir::ExprKind::EnumLiteral {
+                        type_id,
+                        variant,
+                        fields,
+                    },
+                });
+            }
+
             let struct_name = lit.node.name;
             let type_id = *ctx.struct_type_ids.get(&struct_name).ok_or_else(|| {
                 LowerError::UnsupportedExprKind {
@@ -871,6 +1218,36 @@ fn lower_expr(
         ast::ExprKind::Field(field_access) => {
             let target = &field_access.node.target;
             let field_name = field_access.node.field;
+
+            // unit enum variant Color.Red (result type is Enum)
+            if let Type::Enum {
+                name: enum_name, ..
+            } = &ty
+            {
+                let enum_name = *enum_name;
+                let type_id = *ctx.enum_type_ids.get(&enum_name).ok_or_else(|| {
+                    LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("unknown enum '{enum_name}'"),
+                    }
+                })?;
+                let variant = ctx
+                    .tcx
+                    .enum_variant_index(enum_name, field_name)
+                    .ok_or_else(|| LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("unknown variant '{field_name}' on enum '{enum_name}'"),
+                    })?;
+                return Ok(hir::Expr {
+                    ty,
+                    span,
+                    kind: hir::ExprKind::EnumLiteral {
+                        type_id,
+                        variant,
+                        fields: vec![],
+                    },
+                });
+            }
 
             let target_ty = {
                 let (_, ty) = ctx
@@ -1589,14 +1966,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_match_expr() {
-        let err = lower_err(
+    fn lowers_match_expr() {
+        let prog = lower_ok(
             "fn main() { var x: int? = nil; match x { Option.Some(v) => {}, Option.None => {}, } }",
         );
-        assert!(matches!(
-            err,
-            LowerError::UnsupportedStmtKind { .. } | LowerError::UnsupportedExprKind { .. }
-        ));
+        let main = find_main(&prog);
+        // let x, then the match stmt
+        assert_eq!(main.body.stmts.len(), 2);
+        assert!(matches!(main.body.stmts[1].kind, StmtKind::Match { .. }));
     }
 
     // ---- extern fn lowering tests ----
@@ -1658,5 +2035,102 @@ mod tests {
             panic!("expected Type::Extern, got {:?}", init.ty);
         };
         assert_eq!(name.to_string(), "Sprite");
+    }
+
+    // ---- enum lowering tests ----
+
+    #[test]
+    fn lowers_unit_enum_variant() {
+        let prog = lower_ok("enum Color { Red, Green, Blue } fn main() { let c = Color.Red; }");
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("expected Let");
+        };
+        assert!(
+            matches!(init.kind, ExprKind::EnumLiteral { variant: 0, .. }),
+            "expected EnumLiteral variant=0, got {:?}",
+            init.kind
+        );
+    }
+
+    #[test]
+    fn lowers_tuple_enum_variant() {
+        let prog =
+            lower_ok("enum Msg { Ping(int), Move(int, int) } fn main() { let m = Msg.Ping(42); }");
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("expected Let");
+        };
+        let ExprKind::EnumLiteral {
+            variant, fields, ..
+        } = &init.kind
+        else {
+            panic!("expected EnumLiteral, got {:?}", init.kind);
+        };
+        assert_eq!(*variant, 0);
+        assert_eq!(fields.len(), 1);
+    }
+
+    #[test]
+    fn lowers_struct_enum_variant() {
+        let prog = lower_ok(
+            "enum Ev { Move { dx: int, dy: int } } fn main() { let e = Ev.Move { dx: 5, dy: 10 }; }",
+        );
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("expected Let");
+        };
+        let ExprKind::EnumLiteral {
+            variant, fields, ..
+        } = &init.kind
+        else {
+            panic!("expected EnumLiteral, got {:?}", init.kind);
+        };
+        assert_eq!(*variant, 0);
+        assert_eq!(fields.len(), 2);
+    }
+
+    #[test]
+    fn match_arms_have_correct_variant_indices() {
+        let prog = lower_ok(
+            "enum Color { Red, Green, Blue } fn main() { let c = Color.Green; match c { Color.Red => {}, Color.Green => {}, Color.Blue => {}, } }",
+        );
+        let main = find_main(&prog);
+        let StmtKind::Match { arms, .. } = &main.body.stmts[1].kind else {
+            panic!("expected Match stmt");
+        };
+        assert_eq!(arms[0].variant, 0); // Red
+        assert_eq!(arms[1].variant, 1); // Green
+        assert_eq!(arms[2].variant, 2); // Blue
+    }
+
+    #[test]
+    fn match_wildcard_becomes_else_body() {
+        let prog = lower_ok(
+            "enum Color { Red, Green } fn main() { let c = Color.Red; match c { Color.Red => {}, _ => {}, } }",
+        );
+        let main = find_main(&prog);
+        let StmtKind::Match {
+            arms, else_body, ..
+        } = &main.body.stmts[1].kind
+        else {
+            panic!("expected Match stmt");
+        };
+        assert_eq!(arms.len(), 1);
+        assert!(else_body.is_some());
+        assert!(else_body.as_ref().unwrap().binding.is_none());
+    }
+
+    #[test]
+    fn match_tuple_arm_has_bindings() {
+        let prog = lower_ok(
+            "enum Msg { Ping(int) } fn main() { let m = Msg.Ping(42); match m { Msg.Ping(v) => {}, } }",
+        );
+        let main = find_main(&prog);
+        let StmtKind::Match { arms, .. } = &main.body.stmts[1].kind else {
+            panic!("expected Match stmt");
+        };
+        assert_eq!(arms[0].bindings.len(), 1);
+        assert_eq!(arms[0].bindings[0].field_index, 0);
     }
 }

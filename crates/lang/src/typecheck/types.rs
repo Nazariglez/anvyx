@@ -216,6 +216,54 @@ impl TypeChecker {
         self.struct_defs.get(&struct_name)?.fields.iter().position(|f| f.name == field_name)
     }
 
+    pub fn enum_names(&self) -> impl Iterator<Item = Ident> + '_ {
+        self.enum_defs.keys().copied()
+    }
+
+    pub fn enum_variant_index(&self, enum_name: Ident, variant_name: Ident) -> Option<u16> {
+        let def = self.enum_defs.get(&enum_name)?;
+        let idx = def.variants.iter().position(|v| v.name == variant_name)?;
+        Some(idx as u16)
+    }
+
+    pub fn enum_variant_field_names(
+        &self,
+        enum_name: Ident,
+        variant_name: Ident,
+    ) -> Option<Vec<Ident>> {
+        let def = self.enum_defs.get(&enum_name)?;
+        let variant = def.variants.iter().find(|v| v.name == variant_name)?;
+        match &variant.kind {
+            VariantKind::Struct(fields) => Some(fields.iter().map(|f| f.name).collect()),
+            _ => None,
+        }
+    }
+
+    pub fn enum_variant_field_types(
+        &self,
+        enum_name: Ident,
+        variant_name: Ident,
+        type_args: &[Type],
+    ) -> Option<Vec<Type>> {
+        let def = self.enum_defs.get(&enum_name)?;
+        let variant = def.variants.iter().find(|v| v.name == variant_name)?;
+        let subst: HashMap<_, _> = def
+            .type_params
+            .iter()
+            .zip(type_args.iter())
+            .map(|(param, arg)| (param.id, arg.clone()))
+            .collect();
+        match &variant.kind {
+            VariantKind::Tuple(types) => {
+                Some(types.iter().map(|t| subst_type(t, &subst)).collect())
+            }
+            VariantKind::Struct(fields) => {
+                Some(fields.iter().map(|f| subst_type(&f.ty, &subst)).collect())
+            }
+            VariantKind::Unit => Some(vec![]),
+        }
+    }
+
     pub(super) fn get_module(&self, name: Ident) -> Option<&ModuleDef> {
         self.module_defs.get(&name)
     }

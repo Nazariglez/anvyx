@@ -87,6 +87,32 @@ pub enum StmtKind {
         field_index: u16,
         value: Expr,
     },
+
+    Match {
+        scrutinee_init: Box<Expr>, // evaluated once and stored to scrutinee local
+        scrutinee: LocalId,
+        arms: Vec<MatchArm>,
+        else_body: Option<MatchElse>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub variant: u16,
+    pub bindings: Vec<MatchBinding>,
+    pub body: Block,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchBinding {
+    pub field_index: u16,
+    pub local: LocalId,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchElse {
+    pub binding: Option<LocalId>, // some for pattern::Ident, none for wildcard
+    pub body: Block,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -150,12 +176,20 @@ pub enum ExprKind {
         tuple: Box<Expr>,
         index: u16,
     },
+
+    EnumLiteral {
+        type_id: u32,
+        variant: u16,
+        fields: Vec<Expr>, // in declaration order
+    },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{dummy_ident, dummy_span, hir_bool_expr as bool_expr, hir_int_expr as int_expr};
+    use crate::test_helpers::{
+        dummy_ident, dummy_span, hir_bool_expr as bool_expr, hir_int_expr as int_expr,
+    };
 
     #[test]
     fn func_id_is_copy_and_eq() {
@@ -183,7 +217,10 @@ mod tests {
 
     #[test]
     fn empty_program() {
-        let prog = Program { funcs: vec![], externs: vec![] };
+        let prog = Program {
+            funcs: vec![],
+            externs: vec![],
+        };
         assert!(prog.funcs.is_empty());
     }
 
@@ -198,7 +235,10 @@ mod tests {
             body: Block { stmts: vec![] },
             span: dummy_span(),
         };
-        let prog = Program { funcs: vec![func], externs: vec![] };
+        let prog = Program {
+            funcs: vec![func],
+            externs: vec![],
+        };
         assert_eq!(prog.funcs.len(), 1);
         assert_eq!(prog.funcs[0].name.to_string(), "main");
     }
@@ -571,11 +611,113 @@ mod tests {
         };
         assert!(matches!(
             stmt.kind,
-            StmtKind::SetField {
-                field_index: 3,
+            StmtKind::SetField { field_index: 3, .. }
+        ));
+    }
+
+    #[test]
+    fn expr_enum_literal_unit() {
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::EnumLiteral {
+                type_id: 5,
+                variant: 0,
+                fields: vec![],
+            },
+        };
+        assert!(matches!(
+            expr.kind,
+            ExprKind::EnumLiteral {
+                type_id: 5,
+                variant: 0,
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn expr_enum_literal_with_fields() {
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::EnumLiteral {
+                type_id: 2,
+                variant: 1,
+                fields: vec![int_expr(42)],
+            },
+        };
+        assert!(matches!(
+            expr.kind,
+            ExprKind::EnumLiteral {
+                type_id: 2,
+                variant: 1,
+                ..
+            }
+        ));
+        if let ExprKind::EnumLiteral { fields, .. } = &expr.kind {
+            assert_eq!(fields.len(), 1);
+        }
+    }
+
+    #[test]
+    fn stmt_match_with_arms() {
+        let arm = MatchArm {
+            variant: 0,
+            bindings: vec![],
+            body: Block { stmts: vec![] },
+        };
+        let stmt = Stmt {
+            span: dummy_span(),
+            kind: StmtKind::Match {
+                scrutinee_init: Box::new(int_expr(0)),
+                scrutinee: LocalId(0),
+                arms: vec![arm],
+                else_body: None,
+            },
+        };
+        assert!(matches!(stmt.kind, StmtKind::Match { .. }));
+        if let StmtKind::Match {
+            arms, else_body, ..
+        } = &stmt.kind
+        {
+            assert_eq!(arms.len(), 1);
+            assert!(else_body.is_none());
+        }
+    }
+
+    #[test]
+    fn match_arm_with_bindings() {
+        let binding = MatchBinding {
+            field_index: 0,
+            local: LocalId(1),
+        };
+        let arm = MatchArm {
+            variant: 2,
+            bindings: vec![binding],
+            body: Block { stmts: vec![] },
+        };
+        assert_eq!(arm.variant, 2);
+        assert_eq!(arm.bindings.len(), 1);
+        assert_eq!(arm.bindings[0].field_index, 0);
+    }
+
+    #[test]
+    fn match_else_with_binding() {
+        let else_b = MatchElse {
+            binding: Some(LocalId(3)),
+            body: Block { stmts: vec![] },
+        };
+        assert!(else_b.binding.is_some());
+    }
+
+    #[test]
+    fn match_else_wildcard() {
+        let else_b = MatchElse {
+            binding: None,
+            body: Block { stmts: vec![] },
+        };
+        assert!(else_b.binding.is_none());
     }
 
     #[test]
