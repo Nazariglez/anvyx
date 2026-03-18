@@ -236,7 +236,7 @@ fn main() {{
     let mut std_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
     for m in &std_mods {{
         std_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
-            anv_source: m.anv_source.to_string(),
+            anv_source: m.full_anv_source(),
         }});
         externs.extend((m.handlers)());
     }}
@@ -323,7 +323,7 @@ fn main() {{
     let mut std_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
     for m in &std_mods {{
         std_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
-            anv_source: m.anv_source.to_string(),
+            anv_source: m.full_anv_source(),
         }});
         externs.extend((m.handlers)());
     }}
@@ -363,7 +363,7 @@ fn main() {{
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
     for m in &std_mods {{
         std_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
-            anv_source: m.anv_source.to_string(),
+            anv_source: m.full_anv_source(),
         }});
         externs.extend((m.handlers)());
     }}

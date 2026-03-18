@@ -1,12 +1,3 @@
-extern fn sin(x: float) -> float
-extern fn cos(x: float) -> float
-extern fn sqrt(x: float) -> float
-extern fn floor(x: float) -> float
-extern fn ceil(x: float) -> float
-extern fn round(x: float) -> float
-extern fn pow(base: float, exp: float) -> float
-extern fn log(x: float) -> float
-
 pub fn abs<T>(x: T) -> T {
     let zero = x - x;
     if x < zero { -x } else { x }

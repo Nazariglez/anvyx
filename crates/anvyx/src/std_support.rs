@@ -11,7 +11,7 @@ pub fn collect_std() -> (HashMap<String, StdModuleSource>, HashMap<String, Exter
         sources.insert(
             module.name.to_string(),
             StdModuleSource {
-                anv_source: module.anv_source.to_string(),
+                anv_source: module.full_anv_source(),
             },
         );
         handlers.extend((module.handlers)());
