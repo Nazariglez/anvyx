@@ -1,5 +1,4 @@
-use anvyx_lang::{ExternDecl, Value, export_fn};
-use std::rc::Rc;
+use anvyx_lang::{ExternDecl, ManagedRc, Value, export_fn};
 
 #[export_fn]
 fn add(a: i64, b: i64) -> i64 {
@@ -33,8 +32,8 @@ fn greet(name: String) -> String {
 #[test]
 fn export_fn_string_params() {
     let (_, handler) = __anvyx_export_greet();
-    let result = handler(vec![Value::String(Rc::from("world"))]).unwrap();
-    assert_eq!(result, Value::String(Rc::from("hi world")));
+    let result = handler(vec![Value::String(ManagedRc::new("world".to_string()))]).unwrap();
+    assert_eq!(result, Value::String(ManagedRc::new("hi world".to_string())));
 }
 
 #[export_fn]
@@ -127,8 +126,8 @@ fn provider_handlers_work_correctly() {
     let result = externs["triple"](vec![Value::Int(4)]).unwrap();
     assert_eq!(result, Value::Int(12));
 
-    let result = externs["hello"](vec![Value::String(Rc::from("world"))]).unwrap();
-    assert_eq!(result, Value::String(Rc::from("hello world")));
+    let result = externs["hello"](vec![Value::String(ManagedRc::new("world".to_string()))]).unwrap();
+    assert_eq!(result, Value::String(ManagedRc::new("hello world".to_string())));
 }
 
 // provider! with bare idents (no module prefix) — functions defined at the same scope

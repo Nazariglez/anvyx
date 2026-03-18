@@ -1,15 +1,17 @@
 mod builtins;
 mod bytecode;
 mod compiler;
+pub mod managed_rc;
 mod runtime;
 mod value;
 
 use crate::hir;
 use std::collections::HashMap;
 
+pub use managed_rc::ManagedRc;
 pub use runtime::ExternHandler;
 pub use value::RuntimeError;
-pub use value::Value;
+pub use value::{EnumData, StructData, Value};
 
 pub fn run_with_externs(
     hir_prog: &hir::Program,

@@ -15,8 +15,7 @@ anvyx_lang::provider!(add, greet_user);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anvyx_lang::Value;
-    use std::rc::Rc;
+    use anvyx_lang::{ManagedRc, Value};
 
     #[test]
     fn anvyx_externs_contains_all() {
@@ -36,7 +35,7 @@ mod tests {
     #[test]
     fn greet_handler_works() {
         let externs = anvyx_externs();
-        let result = externs["greet"](vec![Value::String(Rc::from("Anvyx"))]).unwrap();
-        assert_eq!(result, Value::String(Rc::from("Hello, Anvyx!")));
+        let result = externs["greet"](vec![Value::String(ManagedRc::new("Anvyx".to_string()))]).unwrap();
+        assert_eq!(result, Value::String(ManagedRc::new("Hello, Anvyx!".to_string())));
     }
 }

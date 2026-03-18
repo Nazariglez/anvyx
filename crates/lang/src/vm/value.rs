@@ -1,14 +1,59 @@
 use std::fmt;
-use std::rc::Rc;
+use std::hash::{Hash, Hasher};
+
+use indexmap::IndexMap;
+
+use super::managed_rc::ManagedRc;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StructData {
+    pub type_id: u32,
+    pub fields: Vec<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EnumData {
+    pub type_id: u32,
+    pub variant: u16,
+    pub fields: Vec<Value>,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
-    String(Rc<str>),
     Nil,
+    String(ManagedRc<String>),
+    List(ManagedRc<Vec<Value>>),
+    Map(ManagedRc<IndexMap<Value, Value>>),
+    Struct(ManagedRc<StructData>),
+    Tuple(ManagedRc<Vec<Value>>),
+    Enum(ManagedRc<EnumData>),
     ExternHandle(u64),
+}
+
+impl Eq for Value {}
+
+impl Hash for Value {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Value::Int(v) => v.hash(state),
+            Value::Float(v) => v.to_bits().hash(state),
+            Value::Bool(v) => v.hash(state),
+            Value::Nil => {}
+            Value::String(s) => s.hash(state),
+            Value::List(l) => l.hash(state),
+
+            // maps-as-keys are rejected by the typechecker, hash only by discriminant
+            Value::Map(_) => {}
+            Value::Struct(s) => s.hash(state),
+            Value::Tuple(t) => t.hash(state),
+            Value::Enum(e) => e.hash(state),
+            Value::ExternHandle(id) => id.hash(state),
+        }
+    }
 }
 
 impl fmt::Display for Value {
@@ -19,6 +64,38 @@ impl fmt::Display for Value {
             Value::Bool(v) => write!(f, "{v}"),
             Value::String(s) => write!(f, "{s}"),
             Value::Nil => write!(f, "nil"),
+            Value::List(l) => {
+                write!(f, "[")?;
+                for (i, v) in l.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{v}")?;
+                }
+                write!(f, "]")
+            }
+            Value::Map(m) => {
+                write!(f, "[")?;
+                for (i, (k, v)) in m.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{k}: {v}")?;
+                }
+                write!(f, "]")
+            }
+            Value::Struct(s) => write!(f, "<struct:{}>", s.type_id),
+            Value::Tuple(t) => {
+                write!(f, "(")?;
+                for (i, v) in t.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{v}")?;
+                }
+                write!(f, ")")
+            }
+            Value::Enum(e) => write!(f, "<enum:{}:{}>", e.type_id, e.variant),
             Value::ExternHandle(id) => write!(f, "<extern:{id}>"),
         }
     }
@@ -51,6 +128,11 @@ fn type_name(v: &Value) -> &'static str {
         Value::Bool(_) => "bool",
         Value::String(_) => "string",
         Value::Nil => "nil",
+        Value::List(_) => "list",
+        Value::Map(_) => "map",
+        Value::Struct(_) => "struct",
+        Value::Tuple(_) => "tuple",
+        Value::Enum(_) => "enum",
         Value::ExternHandle(_) => "extern handle",
     }
 }
@@ -60,8 +142,8 @@ pub fn value_add(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
         (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
         (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
         // string concatenation, either side may be a non-string
-        (Value::String(a), b) => Ok(Value::String(Rc::from(format!("{a}{b}").as_str()))),
-        (a, Value::String(b)) => Ok(Value::String(Rc::from(format!("{a}{b}").as_str()))),
+        (Value::String(a), b) => Ok(Value::String(ManagedRc::new(format!("{a}{b}")))),
+        (a, Value::String(b)) => Ok(Value::String(ManagedRc::new(format!("{a}{b}")))),
         (a, b) => Err(RuntimeError::new(format!(
             "type error: cannot add {} and {}",
             type_name(&a),
@@ -247,9 +329,11 @@ pub fn value_xor(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vm::managed_rc::ManagedRc;
+    use indexmap::IndexMap;
 
     fn s(text: &str) -> Value {
-        Value::String(Rc::from(text))
+        Value::String(ManagedRc::new(text.to_string()))
     }
 
     #[test]
@@ -277,6 +361,210 @@ mod tests {
     #[test]
     fn display_nil() {
         assert_eq!(Value::Nil.to_string(), "nil");
+    }
+
+    #[test]
+    fn display_empty_list() {
+        let v = Value::List(ManagedRc::new(vec![]));
+        assert_eq!(v.to_string(), "[]");
+    }
+
+    #[test]
+    fn display_list() {
+        let v = Value::List(ManagedRc::new(vec![Value::Int(1), Value::Int(2)]));
+        assert_eq!(v.to_string(), "[1, 2]");
+    }
+
+    #[test]
+    fn display_empty_map() {
+        let v = Value::Map(ManagedRc::new(IndexMap::new()));
+        assert_eq!(v.to_string(), "[]");
+    }
+
+    #[test]
+    fn display_map() {
+        let mut map = IndexMap::new();
+        map.insert(s("key"), Value::Int(42));
+        let v = Value::Map(ManagedRc::new(map));
+        assert_eq!(v.to_string(), "[key: 42]");
+    }
+
+    #[test]
+    fn display_struct() {
+        let v = Value::Struct(ManagedRc::new(StructData {
+            type_id: 7,
+            fields: vec![],
+        }));
+        assert_eq!(v.to_string(), "<struct:7>");
+    }
+
+    #[test]
+    fn display_empty_tuple() {
+        let v = Value::Tuple(ManagedRc::new(vec![]));
+        assert_eq!(v.to_string(), "()");
+    }
+
+    #[test]
+    fn display_tuple() {
+        let v = Value::Tuple(ManagedRc::new(vec![Value::Int(1), Value::Bool(true)]));
+        assert_eq!(v.to_string(), "(1, true)");
+    }
+
+    #[test]
+    fn display_enum() {
+        let v = Value::Enum(ManagedRc::new(EnumData {
+            type_id: 3,
+            variant: 1,
+            fields: vec![],
+        }));
+        assert_eq!(v.to_string(), "<enum:3:1>");
+    }
+
+    #[test]
+    fn type_name_list() {
+        assert_eq!(type_name(&Value::List(ManagedRc::new(vec![]))), "list");
+    }
+
+    #[test]
+    fn type_name_map() {
+        assert_eq!(
+            type_name(&Value::Map(ManagedRc::new(IndexMap::new()))),
+            "map"
+        );
+    }
+
+    #[test]
+    fn type_name_struct() {
+        let v = Value::Struct(ManagedRc::new(StructData {
+            type_id: 0,
+            fields: vec![],
+        }));
+        assert_eq!(type_name(&v), "struct");
+    }
+
+    #[test]
+    fn type_name_tuple() {
+        assert_eq!(type_name(&Value::Tuple(ManagedRc::new(vec![]))), "tuple");
+    }
+
+    #[test]
+    fn type_name_enum() {
+        let v = Value::Enum(ManagedRc::new(EnumData {
+            type_id: 0,
+            variant: 0,
+            fields: vec![],
+        }));
+        assert_eq!(type_name(&v), "enum");
+    }
+
+    #[test]
+    fn list_clone_shares_rc() {
+        let v = Value::List(ManagedRc::new(vec![Value::Int(1)]));
+        let v2 = v.clone();
+        let Value::List(rc) = v else { panic!() };
+        let Value::List(rc2) = v2 else { panic!() };
+        assert_eq!(rc.strong_count(), 2);
+        assert!(ManagedRc::ptr_eq(&rc, &rc2));
+    }
+
+    #[test]
+    fn struct_clone_shares_rc() {
+        let v = Value::Struct(ManagedRc::new(StructData {
+            type_id: 1,
+            fields: vec![],
+        }));
+        let v2 = v.clone();
+        let Value::Struct(rc) = v else { panic!() };
+        let Value::Struct(rc2) = v2 else { panic!() };
+        assert_eq!(rc.strong_count(), 2);
+        assert!(ManagedRc::ptr_eq(&rc, &rc2));
+    }
+
+    #[test]
+    fn map_clone_shares_rc() {
+        let v = Value::Map(ManagedRc::new(IndexMap::new()));
+        let v2 = v.clone();
+        let Value::Map(rc) = v else { panic!() };
+        let Value::Map(rc2) = v2 else { panic!() };
+        assert_eq!(rc.strong_count(), 2);
+        assert!(ManagedRc::ptr_eq(&rc, &rc2));
+    }
+
+    #[test]
+    fn list_eq() {
+        let a = Value::List(ManagedRc::new(vec![Value::Int(1), Value::Int(2)]));
+        let b = Value::List(ManagedRc::new(vec![Value::Int(1), Value::Int(2)]));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn list_neq() {
+        let a = Value::List(ManagedRc::new(vec![Value::Int(1)]));
+        let b = Value::List(ManagedRc::new(vec![Value::Int(2)]));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn tuple_eq() {
+        let a = Value::Tuple(ManagedRc::new(vec![Value::Int(1), Value::Bool(true)]));
+        let b = Value::Tuple(ManagedRc::new(vec![Value::Int(1), Value::Bool(true)]));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn struct_eq() {
+        let a = Value::Struct(ManagedRc::new(StructData {
+            type_id: 5,
+            fields: vec![Value::Int(10)],
+        }));
+        let b = Value::Struct(ManagedRc::new(StructData {
+            type_id: 5,
+            fields: vec![Value::Int(10)],
+        }));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn struct_neq_different_type_id() {
+        let a = Value::Struct(ManagedRc::new(StructData {
+            type_id: 1,
+            fields: vec![],
+        }));
+        let b = Value::Struct(ManagedRc::new(StructData {
+            type_id: 2,
+            fields: vec![],
+        }));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn enum_eq() {
+        let a = Value::Enum(ManagedRc::new(EnumData {
+            type_id: 3,
+            variant: 1,
+            fields: vec![Value::Int(99)],
+        }));
+        let b = Value::Enum(ManagedRc::new(EnumData {
+            type_id: 3,
+            variant: 1,
+            fields: vec![Value::Int(99)],
+        }));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn enum_neq_different_variant() {
+        let a = Value::Enum(ManagedRc::new(EnumData {
+            type_id: 1,
+            variant: 0,
+            fields: vec![],
+        }));
+        let b = Value::Enum(ManagedRc::new(EnumData {
+            type_id: 1,
+            variant: 1,
+            fields: vec![],
+        }));
+        assert_ne!(a, b);
     }
 
     #[test]

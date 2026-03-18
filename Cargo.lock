@@ -86,6 +86,7 @@ dependencies = [
  "anvyx-macros",
  "ariadne",
  "chumsky",
+ "indexmap",
  "internment",
  "serde_json",
 ]

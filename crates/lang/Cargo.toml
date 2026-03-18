@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 chumsky = "0.11.2"
 ariadne = "0.6.0"
+indexmap = "2"
 internment = "0.8.6"
 serde_json = "1"
 anvyx-macros = { path = "../macros" }

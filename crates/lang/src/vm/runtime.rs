@@ -277,7 +277,7 @@ impl<'a> VM<'a> {
 mod tests {
     use super::*;
     use crate::vm::bytecode::Chunk;
-    use std::rc::Rc;
+    use crate::vm::managed_rc::ManagedRc;
 
     fn make_program(chunks: Vec<Chunk>, main_idx: usize) -> CompiledProgram {
         CompiledProgram { chunks, main_idx, extern_names: vec![] }
@@ -295,7 +295,7 @@ mod tests {
     }
 
     fn str_val(s: &str) -> Value {
-        Value::String(Rc::from(s))
+        Value::String(ManagedRc::new(s.to_string()))
     }
 
     #[test]

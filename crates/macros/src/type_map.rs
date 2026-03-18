@@ -36,9 +36,9 @@ pub fn map_type(ty: &Type) -> Option<TypeMapping> {
         }),
         "String" => Some(TypeMapping {
             extract_variant: quote! { anvyx_lang::Value::String(p) },
-            convert_extracted: quote! { p.to_string() },
+            convert_extracted: quote! { (*p).clone() },
             wrap_result: quote! {
-                anvyx_lang::Value::String(::std::rc::Rc::from(result.as_str()))
+                anvyx_lang::Value::String(anvyx_lang::ManagedRc::new(result))
             },
             anvyx_type: "string",
         }),

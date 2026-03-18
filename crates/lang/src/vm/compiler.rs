@@ -1,11 +1,11 @@
 use std::fmt;
-use std::rc::Rc;
 
 use crate::ast::{BinaryOp, UnaryOp};
 use crate::builtin::Builtin;
 use crate::hir;
 
 use super::bytecode::{Chunk, Op};
+use super::managed_rc::ManagedRc;
 use super::value::Value;
 
 #[derive(Debug)]
@@ -254,7 +254,7 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
         }
 
         hir::ExprKind::String(s) => {
-            let idx = fc.add_constant(Value::String(Rc::from(s.as_str())))?;
+            let idx = fc.add_constant(Value::String(ManagedRc::new(s.to_string())))?;
             fc.emit(Op::Constant(idx));
         }
 
