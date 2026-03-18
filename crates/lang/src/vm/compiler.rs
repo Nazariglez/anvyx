@@ -228,6 +228,13 @@ fn compile_stmt(fc: &mut FuncCompiler, stmt: &hir::Stmt) -> Result<(), CompileEr
             let back_offset = loop_start as isize - fc.chunk.code.len() as isize - 1;
             fc.emit(Op::Jump(back_offset as i16));
         }
+
+        hir::StmtKind::SetField { object, field_index, value } => {
+            fc.emit(Op::GetLocal(object.0 as u16));
+            compile_expr(fc, value)?;
+            fc.emit(Op::SetField(*field_index));
+            fc.emit(Op::SetLocal(object.0 as u16));
+        }
     }
 
     Ok(())
@@ -316,6 +323,30 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
                 compile_expr(fc, arg)?;
             }
             fc.emit(Op::CallExtern(extern_id.0 as u16, args.len() as u8));
+        }
+
+        hir::ExprKind::StructLiteral { type_id, fields } => {
+            for field in fields {
+                compile_expr(fc, field)?;
+            }
+            fc.emit(Op::ConstructStruct(*type_id, fields.len() as u16));
+        }
+
+        hir::ExprKind::TupleLiteral { elements } => {
+            for elem in elements {
+                compile_expr(fc, elem)?;
+            }
+            fc.emit(Op::ConstructTuple(elements.len() as u16));
+        }
+
+        hir::ExprKind::FieldGet { object, index } => {
+            compile_expr(fc, object)?;
+            fc.emit(Op::GetField(*index));
+        }
+
+        hir::ExprKind::TupleIndex { tuple, index } => {
+            compile_expr(fc, tuple)?;
+            fc.emit(Op::GetField(*index));
         }
     }
 
@@ -591,5 +622,97 @@ mod tests {
         assert_eq!(chunk.code[0], Op::Constant(0));
         assert_eq!(chunk.code[1], Op::CallBuiltin(0, 1));
         assert_eq!(chunk.code[2], Op::Pop);
+    }
+
+    #[test]
+    fn struct_literal_emits_construct_struct() {
+        use crate::hir::ExprKind as EK;
+        let func = main_func(vec![stmt(StmtKind::Let {
+            local: LocalId(0),
+            init: Expr {
+                ty: Type::Int,
+                span: dummy_span(),
+                kind: EK::StructLiteral {
+                    type_id: 5,
+                    fields: vec![int_expr(10), int_expr(20)],
+                },
+            },
+        })]);
+        let compiled = compile(&prog(Func {
+            locals: vec![Local { name: None, ty: Type::Int }],
+            ..func
+        }))
+        .unwrap();
+        let chunk = &compiled.chunks[0];
+        // Constant(0)[10], Constant(1)[20], ConstructStruct(5, 2), SetLocal(0), Nil, Return
+        assert_eq!(chunk.code[0], Op::Constant(0));
+        assert_eq!(chunk.code[1], Op::Constant(1));
+        assert_eq!(chunk.code[2], Op::ConstructStruct(5, 2));
+        assert_eq!(chunk.code[3], Op::SetLocal(0));
+    }
+
+    #[test]
+    fn tuple_literal_emits_construct_tuple() {
+        use crate::hir::ExprKind as EK;
+        let func = main_func(vec![stmt(StmtKind::Let {
+            local: LocalId(0),
+            init: Expr {
+                ty: Type::Int,
+                span: dummy_span(),
+                kind: EK::TupleLiteral {
+                    elements: vec![int_expr(1), int_expr(2), int_expr(3)],
+                },
+            },
+        })]);
+        let compiled = compile(&prog(Func {
+            locals: vec![Local { name: None, ty: Type::Int }],
+            ..func
+        }))
+        .unwrap();
+        let chunk = &compiled.chunks[0];
+        assert_eq!(chunk.code[3], Op::ConstructTuple(3));
+    }
+
+    #[test]
+    fn field_get_emits_get_field() {
+        use crate::hir::ExprKind as EK;
+        let func = main_func(vec![stmt(StmtKind::Expr(Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: EK::FieldGet {
+                object: Box::new(int_expr(0)),
+                index: 2,
+            },
+        }))]);
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        // Constant(0), GetField(2), Pop, Nil, Return
+        assert_eq!(chunk.code[1], Op::GetField(2));
+    }
+
+    #[test]
+    fn set_field_emits_correct_sequence() {
+        use crate::hir::StmtKind as SK;
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("main"),
+            locals: vec![Local { name: None, ty: Type::Int }],
+            params_len: 0,
+            ret: Type::Void,
+            body: Block {
+                stmts: vec![stmt(SK::SetField {
+                    object: LocalId(0),
+                    field_index: 1,
+                    value: int_expr(42),
+                })],
+            },
+            span: dummy_span(),
+        };
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        // GetLocal(0), Constant(0)[42], SetField(1), SetLocal(0), Nil, Return
+        assert_eq!(chunk.code[0], Op::GetLocal(0));
+        assert_eq!(chunk.code[2], Op::SetField(1));
+        assert_eq!(chunk.code[3], Op::SetLocal(0));
     }
 }

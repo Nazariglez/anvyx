@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @match: 30
+
+fn sum(t: (int, int)) -> int {
+    t.0 + t.1
+}
+
+fn main() {
+    let t = (10, 20);
+    println("{sum(t)}");
+}

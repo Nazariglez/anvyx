@@ -204,6 +204,18 @@ impl TypeChecker {
         self.enum_defs.get(&name)
     }
 
+    pub fn struct_names(&self) -> impl Iterator<Item = Ident> + '_ {
+        self.struct_defs.keys().copied()
+    }
+
+    pub fn struct_field_names(&self, name: Ident) -> Option<Vec<Ident>> {
+        self.struct_defs.get(&name).map(|def| def.fields.iter().map(|f| f.name).collect())
+    }
+
+    pub fn struct_field_index(&self, struct_name: Ident, field_name: Ident) -> Option<usize> {
+        self.struct_defs.get(&struct_name)?.fields.iter().position(|f| f.name == field_name)
+    }
+
     pub(super) fn get_module(&self, name: Ident) -> Option<&ModuleDef> {
         self.module_defs.get(&name)
     }

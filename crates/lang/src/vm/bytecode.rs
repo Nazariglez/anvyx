@@ -48,6 +48,12 @@ pub enum Op {
     CallBuiltin(u8, u8),
     CallExtern(u16, u8),
     Return,
+
+    // composite types
+    ConstructStruct(u32, u16), // (type_id, field_count)
+    ConstructTuple(u16),       // element_count
+    GetField(u16),             // field_index
+    SetField(u16),             // field_index
 }
 
 pub struct Chunk {

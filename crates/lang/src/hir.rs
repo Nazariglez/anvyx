@@ -81,6 +81,12 @@ pub enum StmtKind {
 
     Break,
     Continue,
+
+    SetField {
+        object: LocalId,
+        field_index: u16,
+        value: Expr,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -124,6 +130,25 @@ pub enum ExprKind {
     CallExtern {
         extern_id: ExternId,
         args: Vec<Expr>,
+    },
+
+    StructLiteral {
+        type_id: u32,
+        fields: Vec<Expr>, // in declaration order
+    },
+
+    TupleLiteral {
+        elements: Vec<Expr>,
+    },
+
+    FieldGet {
+        object: Box<Expr>,
+        index: u16,
+    },
+
+    TupleIndex {
+        tuple: Box<Expr>,
+        index: u16,
     },
 }
 
@@ -473,6 +498,81 @@ mod tests {
             expr.kind,
             ExprKind::CallBuiltin {
                 builtin: Builtin::AssertMsg,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn expr_struct_literal() {
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::StructLiteral {
+                type_id: 7,
+                fields: vec![int_expr(10), int_expr(20)],
+            },
+        };
+        assert!(matches!(
+            expr.kind,
+            ExprKind::StructLiteral { type_id: 7, .. }
+        ));
+    }
+
+    #[test]
+    fn expr_tuple_literal() {
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::TupleLiteral {
+                elements: vec![int_expr(1), bool_expr(false)],
+            },
+        };
+        assert!(matches!(expr.kind, ExprKind::TupleLiteral { .. }));
+    }
+
+    #[test]
+    fn expr_field_get() {
+        let obj = int_expr(0);
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::FieldGet {
+                object: Box::new(obj),
+                index: 2,
+            },
+        };
+        assert!(matches!(expr.kind, ExprKind::FieldGet { index: 2, .. }));
+    }
+
+    #[test]
+    fn expr_tuple_index() {
+        let tup = int_expr(0);
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::TupleIndex {
+                tuple: Box::new(tup),
+                index: 1,
+            },
+        };
+        assert!(matches!(expr.kind, ExprKind::TupleIndex { index: 1, .. }));
+    }
+
+    #[test]
+    fn stmt_set_field() {
+        let stmt = Stmt {
+            span: dummy_span(),
+            kind: StmtKind::SetField {
+                object: LocalId(0),
+                field_index: 3,
+                value: int_expr(99),
+            },
+        };
+        assert!(matches!(
+            stmt.kind,
+            StmtKind::SetField {
+                field_index: 3,
                 ..
             }
         ));

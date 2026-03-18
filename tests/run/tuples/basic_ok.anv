@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 10
+// hello
+// @match-end
+
+fn main() {
+    let t = (10, "hello");
+    println("{t.0}");
+    println(t.1);
+}

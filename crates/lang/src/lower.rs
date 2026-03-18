@@ -81,6 +81,7 @@ struct LowerCtx<'a> {
     funcs: HashMap<Ident, hir::FuncId>,
     externs: HashMap<Ident, hir::ExternId>,
     type_overrides: Option<&'a HashMap<ExprId, (Span, Type)>>,
+    struct_type_ids: HashMap<Ident, u32>,
 }
 
 struct FuncLower {
@@ -93,11 +94,33 @@ pub fn lower_program(
     tcx: &TypeChecker,
     module_list: &[(Vec<String>, Vec<ast::StmtNode>)],
 ) -> Result<hir::Program, LowerError> {
+    let mut struct_type_ids: HashMap<Ident, u32> = HashMap::new();
+    let mut next_type_id = 0u32;
+    for name in tcx.struct_names() {
+        struct_type_ids.entry(name).or_insert_with(|| {
+            let id = next_type_id;
+            next_type_id += 1;
+            id
+        });
+    }
+    for (_path, stmts) in module_list {
+        for stmt_node in stmts {
+            if let ast::Stmt::Struct(s) = &stmt_node.node {
+                struct_type_ids.entry(s.node.name).or_insert_with(|| {
+                    let id = next_type_id;
+                    next_type_id += 1;
+                    id
+                });
+            }
+        }
+    }
+
     let mut ctx = LowerCtx {
         tcx,
         funcs: HashMap::new(),
         externs: HashMap::new(),
         type_overrides: None,
+        struct_type_ids,
     };
 
     let mut func_nodes: Vec<&ast::FuncNode> = vec![];
@@ -269,6 +292,7 @@ pub fn lower_program(
             funcs: ctx.funcs.clone(),
             externs: ctx.externs.clone(),
             type_overrides: Some(&spec_result.body_types),
+            struct_type_ids: ctx.struct_type_ids.clone(),
         };
 
         let mut fc = FuncLower {
@@ -506,15 +530,9 @@ fn lower_stmt(
             kind: "nested function".to_string(),
         }),
 
-        Stmt::Struct(_) => Err(LowerError::UnsupportedStmtKind {
-            span,
-            kind: "struct declaration".to_string(),
-        }),
+        Stmt::Struct(_) => Ok(None),
 
-        Stmt::Enum(_) => Err(LowerError::UnsupportedStmtKind {
-            span,
-            kind: "enum declaration".to_string(),
-        }),
+        Stmt::Enum(_) => Ok(None),
     }
 }
 
@@ -558,30 +576,84 @@ fn lower_assign(
         });
     }
 
-    let name = match &assign_node.node.target.node.kind {
-        ast::ExprKind::Ident(name) => *name,
-        _ => {
-            return Err(LowerError::UnsupportedAssign {
+    match &assign_node.node.target.node.kind {
+        ast::ExprKind::Ident(name) => {
+            let local_id = *fc
+                .local_map
+                .get(name)
+                .ok_or(LowerError::UnknownLocal { name: *name, span })?;
+            let value = lower_expr(&assign_node.node.value, ctx, fc)?;
+            Ok(hir::Stmt {
                 span,
-                detail: "assignment target must be a plain local variable".to_string(),
-            });
+                kind: hir::StmtKind::Assign {
+                    local: local_id,
+                    value,
+                },
+            })
         }
-    };
 
-    let local_id = *fc
-        .local_map
-        .get(&name)
-        .ok_or(LowerError::UnknownLocal { name, span })?;
+        ast::ExprKind::Field(field_access) => {
+            let field_name = field_access.node.field;
 
-    let value = lower_expr(&assign_node.node.value, ctx, fc)?;
+            let root_name = match &field_access.node.target.node.kind {
+                ast::ExprKind::Ident(n) => *n,
+                _ => {
+                    return Err(LowerError::UnsupportedAssign {
+                        span,
+                        detail: "nested field assignment is not yet supported".to_string(),
+                    });
+                }
+            };
 
-    Ok(hir::Stmt {
-        span,
-        kind: hir::StmtKind::Assign {
-            local: local_id,
-            value,
-        },
-    })
+            let local_id = *fc
+                .local_map
+                .get(&root_name)
+                .ok_or(LowerError::UnknownLocal {
+                    name: root_name,
+                    span,
+                })?;
+
+            let target_ty = {
+                let (_, ty) = ctx
+                    .type_overrides
+                    .and_then(|overrides| overrides.get(&field_access.node.target.node.id))
+                    .or_else(|| ctx.tcx.get_type(field_access.node.target.node.id))
+                    .ok_or(LowerError::MissingExprType { span })?;
+                ty.clone()
+            };
+
+            let field_index = match &target_ty {
+                Type::Struct { name, .. } => ctx
+                    .tcx
+                    .struct_field_index(*name, field_name)
+                    .ok_or_else(|| LowerError::UnsupportedAssign {
+                        span,
+                        detail: format!("unknown field '{field_name}' on struct '{name}'"),
+                    })? as u16,
+                other => {
+                    return Err(LowerError::UnsupportedAssign {
+                        span,
+                        detail: format!("field assignment on unsupported type '{other}'"),
+                    });
+                }
+            };
+
+            let value = lower_expr(&assign_node.node.value, ctx, fc)?;
+            Ok(hir::Stmt {
+                span,
+                kind: hir::StmtKind::SetField {
+                    object: local_id,
+                    field_index,
+                    value,
+                },
+            })
+        }
+
+        _ => Err(LowerError::UnsupportedAssign {
+            span,
+            detail: "assignment target must be a plain local variable or field access".to_string(),
+        }),
+    }
 }
 
 fn lower_string_interp(
@@ -747,6 +819,103 @@ fn lower_expr(
                     name: callee_name,
                     span,
                 });
+            }
+        }
+
+        ast::ExprKind::StructLiteral(lit) => {
+            let struct_name = lit.node.name;
+            let type_id = *ctx.struct_type_ids.get(&struct_name).ok_or_else(|| {
+                LowerError::UnsupportedExprKind {
+                    span,
+                    kind: format!("unknown struct '{struct_name}'"),
+                }
+            })?;
+
+            let field_names = ctx.tcx.struct_field_names(struct_name).ok_or_else(|| {
+                LowerError::UnsupportedExprKind {
+                    span,
+                    kind: format!("unknown struct '{struct_name}'"),
+                }
+            })?;
+
+            // build a lookup from field name -> provided expr
+            let provided: HashMap<Ident, &ast::ExprNode> = lit
+                .node
+                .fields
+                .iter()
+                .map(|(name, expr)| (*name, expr))
+                .collect();
+
+            // lower fields in declaration order
+            let fields = field_names
+                .iter()
+                .map(|name| {
+                    let expr = provided
+                        .get(name)
+                        .expect("typechecker ensures all declared fields are provided");
+                    lower_expr(expr, ctx, fc)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+
+            hir::ExprKind::StructLiteral { type_id, fields }
+        }
+
+        ast::ExprKind::Tuple(elements) => {
+            let lowered = elements
+                .iter()
+                .map(|el| lower_expr(el, ctx, fc))
+                .collect::<Result<Vec<_>, _>>()?;
+            hir::ExprKind::TupleLiteral { elements: lowered }
+        }
+
+        ast::ExprKind::Field(field_access) => {
+            let target = &field_access.node.target;
+            let field_name = field_access.node.field;
+
+            let target_ty = {
+                let (_, ty) = ctx
+                    .type_overrides
+                    .and_then(|overrides| overrides.get(&target.node.id))
+                    .or_else(|| ctx.tcx.get_type(target.node.id))
+                    .ok_or(LowerError::MissingExprType { span })?;
+                ty.clone()
+            };
+
+            let index = match &target_ty {
+                Type::Struct { name, .. } => ctx
+                    .tcx
+                    .struct_field_index(*name, field_name)
+                    .ok_or_else(|| LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("unknown field '{field_name}' on struct '{name}'"),
+                    })? as u16,
+                Type::NamedTuple(fields) => fields
+                    .iter()
+                    .position(|(label, _)| *label == field_name)
+                    .ok_or_else(|| LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("unknown field '{field_name}' on named tuple"),
+                    })? as u16,
+                other => {
+                    return Err(LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("field access on unsupported type '{other}'"),
+                    });
+                }
+            };
+
+            let object = lower_expr(target, ctx, fc)?;
+            hir::ExprKind::FieldGet {
+                object: Box::new(object),
+                index,
+            }
+        }
+
+        ast::ExprKind::TupleIndex(tuple_idx) => {
+            let tuple = lower_expr(&tuple_idx.node.target, ctx, fc)?;
+            hir::ExprKind::TupleIndex {
+                tuple: Box::new(tuple),
+                index: tuple_idx.node.index as u16,
             }
         }
 
@@ -1236,9 +1405,31 @@ mod tests {
     }
 
     #[test]
-    fn rejects_tuple() {
-        let err = lower_err("fn main() { let x = (1, 2); }");
-        assert!(matches!(err, LowerError::UnsupportedExprKind { .. }));
+    fn tuple_literal_lowers_to_hir() {
+        let prog = lower_ok("fn main() { let t = (1, 2); }");
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("expected Let stmt")
+        };
+        assert!(
+            matches!(init.kind, ExprKind::TupleLiteral { .. }),
+            "expected TupleLiteral, got {:?}",
+            init.kind
+        );
+    }
+
+    #[test]
+    fn tuple_index_lowers_to_hir() {
+        let prog = lower_ok("fn main() { let t = (10, 20); let v = t.0; }");
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[1].kind else {
+            panic!("expected Let stmt")
+        };
+        assert!(
+            matches!(init.kind, ExprKind::TupleIndex { index: 0, .. }),
+            "expected TupleIndex(0), got {:?}",
+            init.kind
+        );
     }
 
     #[test]
@@ -1294,11 +1485,88 @@ mod tests {
     }
 
     #[test]
-    fn rejects_struct_literal() {
-        let err = lower_err(
-            "struct Point { x: int, y: int } fn main() { let p = Point { x: 1, y: 2 }; }",
+    fn struct_literal_lowers_to_hir() {
+        let prog =
+            lower_ok("struct Point { x: int, y: int } fn main() { let p = Point { x: 1, y: 2 }; }");
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("expected Let stmt")
+        };
+        assert!(
+            matches!(init.kind, ExprKind::StructLiteral { .. }),
+            "expected StructLiteral, got {:?}",
+            init.kind
         );
-        assert!(matches!(err, LowerError::UnsupportedExprKind { .. }));
+    }
+
+    #[test]
+    fn struct_literal_fields_in_declaration_order() {
+        // fields provided in reversed order, lowering must reorder to declaration order
+        let prog =
+            lower_ok("struct Pair { a: int, b: int } fn main() { let p = Pair { b: 2, a: 1 }; }");
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("expected Let stmt")
+        };
+        let ExprKind::StructLiteral { fields, .. } = &init.kind else {
+            panic!("expected StructLiteral")
+        };
+        // declaration order: a=0, b=1; provided b=2,a=1 -> fields[0]=Int(1), fields[1]=Int(2)
+        assert!(matches!(fields[0].kind, ExprKind::Int(1)));
+        assert!(matches!(fields[1].kind, ExprKind::Int(2)));
+    }
+
+    #[test]
+    fn struct_literal_has_correct_type_id() {
+        let prog = lower_ok(
+            "struct A { x: int } struct B { y: int } fn main() { let a = A { x: 1 }; let b = B { y: 2 }; }",
+        );
+        let main = find_main(&prog);
+        let StmtKind::Let { init: init_a, .. } = &main.body.stmts[0].kind else {
+            panic!()
+        };
+        let StmtKind::Let { init: init_b, .. } = &main.body.stmts[1].kind else {
+            panic!()
+        };
+        let ExprKind::StructLiteral { type_id: id_a, .. } = &init_a.kind else {
+            panic!()
+        };
+        let ExprKind::StructLiteral { type_id: id_b, .. } = &init_b.kind else {
+            panic!()
+        };
+        assert_ne!(id_a, id_b, "different structs must have different type_ids");
+    }
+
+    #[test]
+    fn field_get_lowers_to_hir() {
+        let prog = lower_ok(
+            "struct Point { x: int, y: int } fn main() { let p = Point { x: 5, y: 10 }; let v = p.x; }",
+        );
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[1].kind else {
+            panic!("expected Let stmt")
+        };
+        assert!(
+            matches!(init.kind, ExprKind::FieldGet { index: 0, .. }),
+            "expected FieldGet(index=0), got {:?}",
+            init.kind
+        );
+    }
+
+    #[test]
+    fn set_field_lowers_to_hir() {
+        let prog = lower_ok(
+            "struct Point { x: int, y: int } fn main() { var p = Point { x: 1, y: 2 }; p.x = 99; }",
+        );
+        let main = find_main(&prog);
+        assert!(
+            matches!(
+                main.body.stmts[1].kind,
+                StmtKind::SetField { field_index: 0, .. }
+            ),
+            "expected SetField, got {:?}",
+            main.body.stmts[1].kind
+        );
     }
 
     #[test]

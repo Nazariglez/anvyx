@@ -3,10 +3,11 @@ use crate::builtin::Builtin;
 use super::builtins;
 use super::bytecode::Op;
 use super::compiler::CompiledProgram;
+use super::managed_rc::ManagedRc;
 use super::value::{
-    RuntimeError, Value, value_add, value_and, value_div, value_eq, value_gt, value_gte, value_lt,
-    value_lte, value_mul, value_negate, value_neq, value_not, value_or, value_rem, value_sub,
-    value_xor,
+    RuntimeError, StructData, Value, value_add, value_and, value_div, value_eq, value_gt,
+    value_gte, value_lt, value_lte, value_mul, value_negate, value_neq, value_not, value_or,
+    value_rem, value_sub, value_xor,
 };
 
 pub type ExternHandler = Box<dyn Fn(Vec<Value>) -> Result<Value, RuntimeError>>;
@@ -268,6 +269,59 @@ impl<'a> VM<'a> {
                     // push return value for the caller
                     self.push(return_val);
                 }
+
+                Op::ConstructStruct(type_id, field_count) => {
+                    let count = field_count as usize;
+                    let start = self.stack.len() - count;
+                    let fields: Vec<Value> = self.stack.drain(start..).collect();
+                    let data = StructData { type_id, fields };
+                    self.push(Value::Struct(ManagedRc::new(data)));
+                }
+
+                Op::ConstructTuple(count) => {
+                    let count = count as usize;
+                    let start = self.stack.len() - count;
+                    let elements: Vec<Value> = self.stack.drain(start..).collect();
+                    self.push(Value::Tuple(ManagedRc::new(elements)));
+                }
+
+                Op::GetField(index) => {
+                    let obj = self.pop();
+                    let idx = index as usize;
+                    let field_val = match obj {
+                        Value::Struct(s) => s.fields.get(idx).cloned().ok_or_else(|| {
+                            RuntimeError::new(format!("field index {idx} out of bounds on struct"))
+                        })?,
+                        Value::Tuple(t) => t.get(idx).cloned().ok_or_else(|| {
+                            RuntimeError::new(format!("index {idx} out of bounds on tuple"))
+                        })?,
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "GetField on non-struct/tuple value: {}",
+                                other
+                            )));
+                        }
+                    };
+                    self.push(field_val);
+                }
+
+                Op::SetField(index) => {
+                    let new_value = self.pop();
+                    let obj = self.pop();
+                    let idx = index as usize;
+                    match obj {
+                        Value::Struct(mut s) => {
+                            ManagedRc::make_mut(&mut s).fields[idx] = new_value;
+                            self.push(Value::Struct(s));
+                        }
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "SetField on non-struct value: {}",
+                                other
+                            )));
+                        }
+                    }
+                }
             }
         }
     }
@@ -454,5 +508,83 @@ mod tests {
         let result = vm.run();
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("zero"));
+    }
+
+    #[test]
+    fn construct_struct_pushes_struct_value() {
+        // push two Int constants, then ConstructStruct(42, 2)
+        let mut chunk = Chunk::new("main", 0, 0);
+        let i10 = chunk.add_constant(Value::Int(10));
+        let i20 = chunk.add_constant(Value::Int(20));
+        chunk.emit(Op::Constant(i10));
+        chunk.emit(Op::Constant(i20));
+        chunk.emit(Op::ConstructStruct(42, 2));
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+    }
+
+    #[test]
+    fn get_field_reads_struct_field() {
+        // construct struct with fields [10, 20], then GetField(1) -> 20
+        let mut chunk = Chunk::new("main", 1, 0);
+        let i10 = chunk.add_constant(Value::Int(10));
+        let i20 = chunk.add_constant(Value::Int(20));
+        chunk.emit(Op::Constant(i10));
+        chunk.emit(Op::Constant(i20));
+        chunk.emit(Op::ConstructStruct(1, 2));
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::GetField(1));
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+    }
+
+    #[test]
+    fn construct_tuple_and_get_field() {
+        // tuple (true, 99), GetField(1) -> 99
+        let mut chunk = Chunk::new("main", 0, 0);
+        let i99 = chunk.add_constant(Value::Int(99));
+        chunk.emit(Op::True);
+        chunk.emit(Op::Constant(i99));
+        chunk.emit(Op::ConstructTuple(2));
+        chunk.emit(Op::GetField(1));
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+    }
+
+    #[test]
+    fn set_field_mutates_struct() {
+        // local 0 = struct{10, 20}, SetField(0) with 99, GetField(0) -> 99
+        let mut chunk = Chunk::new("main", 1, 0);
+        let i10 = chunk.add_constant(Value::Int(10));
+        let i20 = chunk.add_constant(Value::Int(20));
+        let i99 = chunk.add_constant(Value::Int(99));
+        // construct
+        chunk.emit(Op::Constant(i10));
+        chunk.emit(Op::Constant(i20));
+        chunk.emit(Op::ConstructStruct(0, 2));
+        chunk.emit(Op::SetLocal(0));
+        // set field 0 to 99
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(i99));
+        chunk.emit(Op::SetField(0));
+        chunk.emit(Op::SetLocal(0));
+        // read field 0 and return
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::GetField(0));
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
     }
 }
