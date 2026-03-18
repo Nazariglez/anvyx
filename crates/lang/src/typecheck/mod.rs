@@ -19,7 +19,7 @@ mod tests;
 
 pub use error::{TypeErr, TypeErrKind};
 pub use infer::subst_type;
-pub use types::{SpecializationKey, SpecializationResult, TypeChecker};
+pub use types::{SpecializationKey, TypeChecker};
 
 use crate::ast::{Program, StmtNode};
 use crate::builtin::Builtin;
@@ -32,10 +32,6 @@ fn register_builtins(type_checker: &mut TypeChecker) {
     for builtin in Builtin::all() {
         type_checker.set_var(builtin.ident(), builtin.func_type(), false);
     }
-}
-
-pub fn check_program(program: &Program) -> Result<TypeChecker, Vec<TypeErr>> {
-    check_program_with_modules(program, &[])
 }
 
 pub fn check_program_with_modules(

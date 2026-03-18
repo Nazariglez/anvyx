@@ -47,7 +47,7 @@ provider!(sin, cos, sqrt, floor, ceil, round, pow, log);
 pub fn module() -> StdModule {
     StdModule {
         name: "math",
-        anv_source: include_str!("../anv/math.anv"),
+        anv_source: include_str!("./math.anv"),
         handlers: anvyx_externs,
     }
 }

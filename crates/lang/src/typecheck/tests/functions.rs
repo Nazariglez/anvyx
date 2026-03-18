@@ -355,7 +355,7 @@ fn check_src(src: &str) -> Result<crate::typecheck::TypeChecker, Vec<crate::type
     let mut stmts = prelude.stmts;
     stmts.extend(user_ast.stmts);
     let combined = crate::ast::Program { stmts };
-    crate::typecheck::check_program(&combined)
+    crate::typecheck::check_program_with_modules(&combined, &[])
 }
 
 #[test]

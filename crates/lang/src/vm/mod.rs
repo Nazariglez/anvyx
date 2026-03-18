@@ -11,10 +11,6 @@ pub use runtime::ExternHandler;
 pub use value::RuntimeError;
 pub use value::Value;
 
-pub fn run(hir_prog: &hir::Program) -> Result<String, String> {
-    run_with_externs(hir_prog, HashMap::new())
-}
-
 pub fn run_with_externs(
     hir_prog: &hir::Program,
     externs: HashMap<String, ExternHandler>,
@@ -53,12 +49,12 @@ mod tests {
     }
 
     fn vm_ok_with_externs(source: &str, externs: HashMap<String, ExternHandler>) -> String {
-        let hir = crate::generate_hir(source, "<test>").expect("generate_hir failed");
+        let hir = crate::test_helpers::generate_hir(source, "<test>").expect("generate_hir failed");
         run_with_externs(&hir, externs).expect("vm run failed")
     }
 
     fn vm_err_with_externs(source: &str, externs: HashMap<String, ExternHandler>) -> String {
-        let hir = crate::generate_hir(source, "<test>").expect("generate_hir failed");
+        let hir = crate::test_helpers::generate_hir(source, "<test>").expect("generate_hir failed");
         run_with_externs(&hir, externs).expect_err("expected vm error")
     }
 

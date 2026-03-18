@@ -165,23 +165,6 @@ pub fn generate_ast_with_std(
     Ok(ast)
 }
 
-pub(crate) fn generate_hir(program: &str, file_path: &str) -> Result<hir::Program, String> {
-    generate_hir_with_externs(program, file_path, &std::collections::HashMap::new())
-}
-
-pub(crate) fn generate_hir_with_externs(
-    program: &str,
-    file_path: &str,
-    extern_metadata: &std::collections::HashMap<String, String>,
-) -> Result<hir::Program, String> {
-    generate_hir_with_std(
-        program,
-        file_path,
-        extern_metadata,
-        &std::collections::HashMap::new(),
-    )
-}
-
 pub(crate) fn generate_hir_with_std(
     program: &str,
     file_path: &str,
@@ -329,7 +312,7 @@ mod extern_import_tests {
     #[test]
     fn hir_contains_extern_decls() {
         let src = "import my_extern { add, greet };\nfn main() { let x = add(1, 2); }";
-        let hir = generate_hir_with_externs(src, "<test>", &sample_metadata());
+        let hir = generate_hir_with_std(src, "<test>", &sample_metadata(), &HashMap::new());
         assert!(hir.is_ok(), "unexpected error: {:?}", hir.err());
         let program = hir.unwrap();
         assert!(!program.externs.is_empty(), "expected extern decls in HIR");

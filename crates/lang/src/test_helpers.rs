@@ -4,9 +4,14 @@ use crate::ast::{BinaryOp, Ident, Type};
 use crate::hir::{Block, Expr, ExprKind, Func, FuncId, Local, LocalId, Program, Stmt, StmtKind};
 use crate::lower::LowerError;
 use crate::span::Span;
-use crate::{ast, hir, lower, typecheck, CORE_PRELUDE};
+use crate::{ast, hir, lower, typecheck, vm, CORE_PRELUDE};
+use std::collections::HashMap;
 
 // ---- pipeline helpers ----
+
+pub(crate) fn generate_hir(source: &str, file_path: &str) -> Result<hir::Program, String> {
+    crate::generate_hir_with_std(source, file_path, &HashMap::new(), &HashMap::new())
+}
 
 pub(crate) struct TestCtx;
 
@@ -25,14 +30,14 @@ impl TestCtx {
 
     #[track_caller]
     pub(crate) fn vm_ok(source: &str) -> String {
-        let hir = crate::generate_hir(source, "<test>").expect("generate_hir failed");
-        crate::vm::run(&hir).expect("vm run failed")
+        let hir = generate_hir(source, "<test>").expect("generate_hir failed");
+        vm::run_with_externs(&hir, HashMap::new()).expect("vm run failed")
     }
 
     #[track_caller]
     pub(crate) fn vm_err(source: &str) -> String {
-        let hir = crate::generate_hir(source, "<test>").expect("generate_hir failed");
-        crate::vm::run(&hir).expect_err("expected vm error")
+        let hir = generate_hir(source, "<test>").expect("generate_hir failed");
+        vm::run_with_externs(&hir, HashMap::new()).expect_err("expected vm error")
     }
 
     fn pipeline(source: &str) -> (ast::Program, typecheck::TypeChecker) {
@@ -48,7 +53,7 @@ impl TestCtx {
         stmts.extend(user_ast.stmts);
         let combined = ast::Program { stmts };
 
-        let tcx = typecheck::check_program(&combined).expect("source must typecheck");
+        let tcx = typecheck::check_program_with_modules(&combined, &[]).expect("source must typecheck");
         (combined, tcx)
     }
 }

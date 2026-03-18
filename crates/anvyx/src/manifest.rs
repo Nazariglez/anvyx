@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::Deserialize;
 
@@ -40,17 +40,6 @@ pub fn parse_manifest() -> Result<Option<Manifest>, String> {
         .map_err(|e| format!("Failed to parse anvyx.toml: {e}"))?;
 
     Ok(Some(manifest))
-}
-
-pub fn resolve_entry(file: Option<&Path>) -> Result<PathBuf, String> {
-    if let Some(path) = file {
-        return Ok(path.to_path_buf());
-    }
-
-    let manifest = parse_manifest()?
-        .ok_or("No file provided and no anvyx.toml found in the current directory")?;
-
-    Ok(PathBuf::from(manifest.project.entry))
 }
 
 #[cfg(test)]
