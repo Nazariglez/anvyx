@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 1
+// 42
+// @match-end
+
+fn main() {
+    let a: int? = nil;
+    println((a ?? 0) + 1);
+
+    let b: int? = 42;
+    println(b ?? 0);
+}

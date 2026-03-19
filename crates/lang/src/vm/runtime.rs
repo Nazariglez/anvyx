@@ -251,7 +251,10 @@ impl<'a> VM<'a> {
                     let result = match self.extern_handlers.get(idx) {
                         Some(Some(handler)) => handler(args)?,
                         _ => {
-                            let name = self.program.extern_names.get(idx)
+                            let name = self
+                                .program
+                                .extern_names
+                                .get(idx)
                                 .map(|s| s.as_str())
                                 .unwrap_or("<unknown>");
                             return Err(RuntimeError::new(format!(
@@ -296,7 +299,11 @@ impl<'a> VM<'a> {
                     let count = field_count as usize;
                     let start = self.stack.len() - count;
                     let fields: Vec<Value> = self.stack.drain(start..).collect();
-                    let data = EnumData { type_id, variant, fields };
+                    let data = EnumData {
+                        type_id,
+                        variant,
+                        fields,
+                    };
                     self.push(Value::Enum(ManagedRc::new(data)));
                 }
 
@@ -304,12 +311,8 @@ impl<'a> VM<'a> {
                     let val = self.pop();
                     match val {
                         Value::Enum(e) => self.push(Value::Int(e.variant as i64)),
-                        other => {
-                            return Err(RuntimeError::new(format!(
-                                "GetEnumVariant on non-enum value: {}",
-                                other
-                            )));
-                        }
+                        Value::Nil => self.push(Value::Int(0)),
+                        _ => self.push(Value::Int(1)),
                     }
                 }
 
@@ -324,14 +327,11 @@ impl<'a> VM<'a> {
                             RuntimeError::new(format!("index {idx} out of bounds on tuple"))
                         })?,
                         Value::Enum(e) => e.fields.get(idx).cloned().ok_or_else(|| {
-                            RuntimeError::new(format!("field index {idx} out of bounds on enum variant"))
+                            RuntimeError::new(format!(
+                                "field index {idx} out of bounds on enum variant"
+                            ))
                         })?,
-                        other => {
-                            return Err(RuntimeError::new(format!(
-                                "GetField on non-struct/tuple/enum value: {}",
-                                other
-                            )));
-                        }
+                        other => other,
                     };
                     self.push(field_val);
                 }
@@ -470,7 +470,11 @@ mod tests {
     use crate::vm::managed_rc::ManagedRc;
 
     fn make_program(chunks: Vec<Chunk>, main_idx: usize) -> CompiledProgram {
-        CompiledProgram { chunks, main_idx, extern_names: vec![] }
+        CompiledProgram {
+            chunks,
+            main_idx,
+            extern_names: vec![],
+        }
     }
 
     fn simple_chunk(name: &str, ops: Vec<Op>, constants: Vec<Value>) -> Chunk {
@@ -779,7 +783,7 @@ mod tests {
     }
 
     #[test]
-    fn get_enum_variant_on_non_enum_is_error() {
+    fn get_enum_variant_on_raw_value_returns_one() {
         let mut chunk = Chunk::new("main", 0, 0);
         chunk.emit(Op::True);
         chunk.emit(Op::GetEnumVariant);
@@ -787,7 +791,19 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_err());
+        vm.run().unwrap();
+    }
+
+    #[test]
+    fn get_enum_variant_on_nil_returns_zero() {
+        let mut chunk = Chunk::new("main", 0, 0);
+        chunk.emit(Op::Nil);
+        chunk.emit(Op::GetEnumVariant);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
     }
 
     #[test]

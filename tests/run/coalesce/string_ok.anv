@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// default
+// hello
+// @match-end
+
+fn main() {
+    let a: string? = nil;
+    println(a ?? "default");
+
+    let b: string? = "hello";
+    println(b ?? "default");
+}

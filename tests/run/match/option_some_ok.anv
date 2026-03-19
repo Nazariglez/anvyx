@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 42
+// @match-end
+
+fn main() {
+    let x: int? = 42;
+    match x {
+        Option.Some(v) => {
+            println(v);
+        },
+        Option.None => {
+            println("none");
+        },
+    }
+}

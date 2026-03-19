@@ -411,7 +411,7 @@ fn lower_block(
     let mut stmts = vec![];
 
     for stmt_node in &block.node.stmts {
-        if let Some(hir_stmt) = lower_stmt(stmt_node, ctx, fc)? {
+        if let Some(hir_stmt) = lower_stmt(stmt_node, ctx, fc, &mut stmts)? {
             stmts.push(hir_stmt);
         }
     }
@@ -420,23 +420,20 @@ fn lower_block(
         let span = tail_expr.span;
         match &tail_expr.node.kind {
             ast::ExprKind::If(if_node) => {
-                stmts.push(lower_if(if_node, span, ctx, fc, is_func_body, ret_ty)?);
+                let s = lower_if(if_node, span, ctx, fc, is_func_body, ret_ty, &mut stmts)?;
+                stmts.push(s);
             }
             ast::ExprKind::Assign(assign_node) => {
-                stmts.push(lower_assign(assign_node, span, ctx, fc)?);
+                let s = lower_assign(assign_node, span, ctx, fc, &mut stmts)?;
+                stmts.push(s);
             }
             ast::ExprKind::Match(match_node) => {
-                stmts.push(lower_match_stmts(
-                    match_node,
-                    span,
-                    ctx,
-                    fc,
-                    is_func_body,
-                    ret_ty,
-                )?);
+                let s =
+                    lower_match_stmts(match_node, span, ctx, fc, is_func_body, ret_ty, &mut stmts)?;
+                stmts.push(s);
             }
             _ => {
-                let hir_expr = lower_expr(tail_expr, ctx, fc)?;
+                let hir_expr = lower_expr(tail_expr, ctx, fc, &mut stmts)?;
                 let kind = if is_func_body && !ret_ty.is_void() {
                     hir::StmtKind::Return(Some(hir_expr))
                 } else {
@@ -458,6 +455,7 @@ fn lower_stmt(
     stmt_node: &ast::StmtNode,
     ctx: &LowerCtx,
     fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
 ) -> Result<Option<hir::Stmt>, LowerError> {
     let span = stmt_node.span;
 
@@ -487,7 +485,7 @@ fn lower_stmt(
 
             // lower the init before inserting into local_map to prevent `let x = x` from
             // accidentally resolving to the new local.
-            let init = lower_expr(&binding.value, ctx, fc)?;
+            let init = lower_expr(&binding.value, ctx, fc, out)?;
 
             fc.locals.push(hir::Local {
                 name: Some(name),
@@ -505,11 +503,17 @@ fn lower_stmt(
         }
 
         Stmt::Expr(expr_node) => match &expr_node.node.kind {
-            ast::ExprKind::If(if_node) => {
-                Ok(Some(lower_if(if_node, span, ctx, fc, false, &Type::Void)?))
-            }
+            ast::ExprKind::If(if_node) => Ok(Some(lower_if(
+                if_node,
+                span,
+                ctx,
+                fc,
+                false,
+                &Type::Void,
+                out,
+            )?)),
             ast::ExprKind::Assign(assign_node) => {
-                Ok(Some(lower_assign(assign_node, span, ctx, fc)?))
+                Ok(Some(lower_assign(assign_node, span, ctx, fc, out)?))
             }
             ast::ExprKind::Match(match_node) => Ok(Some(lower_match_stmts(
                 match_node,
@@ -518,9 +522,10 @@ fn lower_stmt(
                 fc,
                 false,
                 &Type::Void,
+                out,
             )?)),
             _ => {
-                let hir_expr = lower_expr(expr_node, ctx, fc)?;
+                let hir_expr = lower_expr(expr_node, ctx, fc, out)?;
                 Ok(Some(hir::Stmt {
                     span,
                     kind: hir::StmtKind::Expr(hir_expr),
@@ -530,7 +535,7 @@ fn lower_stmt(
 
         Stmt::Return(return_node) => {
             let value = match &return_node.node.value {
-                Some(expr) => Some(lower_expr(expr, ctx, fc)?),
+                Some(expr) => Some(lower_expr(expr, ctx, fc, out)?),
                 None => None,
             };
             Ok(Some(hir::Stmt {
@@ -540,7 +545,7 @@ fn lower_stmt(
         }
 
         Stmt::While(while_node) => {
-            let cond = lower_expr(&while_node.node.cond, ctx, fc)?;
+            let cond = lower_expr(&while_node.node.cond, ctx, fc, out)?;
             let body = lower_block(&while_node.node.body, ctx, fc, false, &Type::Void)?;
             Ok(Some(hir::Stmt {
                 span,
@@ -585,8 +590,9 @@ fn lower_if(
     fc: &mut FuncLower,
     is_func_body: bool,
     ret_ty: &Type,
+    out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::Stmt, LowerError> {
-    let cond = lower_expr(&if_node.node.cond, ctx, fc)?;
+    let cond = lower_expr(&if_node.node.cond, ctx, fc, out)?;
     let then_block = lower_block(&if_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
     let else_block = match &if_node.node.else_block {
         Some(b) => Some(lower_block(b, ctx, fc, is_func_body, ret_ty)?),
@@ -607,6 +613,7 @@ fn lower_assign(
     span: Span,
     ctx: &LowerCtx,
     fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::Stmt, LowerError> {
     if assign_node.node.op != AssignOp::Assign {
         return Err(LowerError::UnsupportedAssign {
@@ -624,7 +631,7 @@ fn lower_assign(
                 .local_map
                 .get(name)
                 .ok_or(LowerError::UnknownLocal { name: *name, span })?;
-            let value = lower_expr(&assign_node.node.value, ctx, fc)?;
+            let value = lower_expr(&assign_node.node.value, ctx, fc, out)?;
             Ok(hir::Stmt {
                 span,
                 kind: hir::StmtKind::Assign {
@@ -680,7 +687,7 @@ fn lower_assign(
                 }
             };
 
-            let value = lower_expr(&assign_node.node.value, ctx, fc)?;
+            let value = lower_expr(&assign_node.node.value, ctx, fc, out)?;
             Ok(hir::Stmt {
                 span,
                 kind: hir::StmtKind::SetField {
@@ -710,8 +717,8 @@ fn lower_assign(
                     span,
                 })?;
 
-            let index = lower_expr(&index_node.node.index, ctx, fc)?;
-            let value = lower_expr(&assign_node.node.value, ctx, fc)?;
+            let index = lower_expr(&index_node.node.index, ctx, fc, out)?;
+            let value = lower_expr(&assign_node.node.value, ctx, fc, out)?;
 
             Ok(hir::Stmt {
                 span,
@@ -742,15 +749,15 @@ fn lower_arm_body(
         lower_block(block_node, ctx, fc, is_func_body, ret_ty)
     } else {
         let span = body_expr.span;
-        let hir_expr = lower_expr(body_expr, ctx, fc)?;
+        let mut arm_stmts = vec![];
+        let hir_expr = lower_expr(body_expr, ctx, fc, &mut arm_stmts)?;
         let kind = if is_func_body && !ret_ty.is_void() {
             hir::StmtKind::Return(Some(hir_expr))
         } else {
             hir::StmtKind::Expr(hir_expr)
         };
-        Ok(hir::Block {
-            stmts: vec![hir::Stmt { span, kind }],
-        })
+        arm_stmts.push(hir::Stmt { span, kind });
+        Ok(hir::Block { stmts: arm_stmts })
     }
 }
 
@@ -761,8 +768,9 @@ fn lower_match_stmts(
     fc: &mut FuncLower,
     is_func_body: bool,
     ret_ty: &Type,
+    out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::Stmt, LowerError> {
-    let scrutinee_expr = lower_expr(&match_node.node.scrutinee, ctx, fc)?;
+    let scrutinee_expr = lower_expr(&match_node.node.scrutinee, ctx, fc, out)?;
     let scrutinee_ty = scrutinee_expr.ty.clone();
 
     let scrutinee_local = hir::LocalId(fc.locals.len() as u32);
@@ -949,7 +957,8 @@ fn lower_string_interp(
     span: Span,
     ty: &Type,
     ctx: &LowerCtx,
-    fc: &FuncLower,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::ExprKind, LowerError> {
     let mut hir_parts: Vec<hir::Expr> = vec![];
 
@@ -960,7 +969,7 @@ fn lower_string_interp(
                 span,
                 kind: hir::ExprKind::String(s.clone()),
             },
-            StringPart::Expr(e) => lower_expr(e, ctx, fc)?,
+            StringPart::Expr(e) => lower_expr(e, ctx, fc, out)?,
         };
         hir_parts.push(expr);
     }
@@ -988,7 +997,8 @@ fn lower_string_interp(
 fn lower_expr(
     ast_expr: &ast::ExprNode,
     ctx: &LowerCtx,
-    fc: &FuncLower,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::Expr, LowerError> {
     let span = ast_expr.span;
     let ty = {
@@ -1018,7 +1028,7 @@ fn lower_expr(
         },
 
         ast::ExprKind::Unary(u) => {
-            let inner = lower_expr(&u.node.expr, ctx, fc)?;
+            let inner = lower_expr(&u.node.expr, ctx, fc, out)?;
             hir::ExprKind::Unary {
                 op: u.node.op,
                 expr: Box::new(inner),
@@ -1026,15 +1036,97 @@ fn lower_expr(
         }
 
         ast::ExprKind::Binary(b) => {
-            // coalesce is sugar that must be desugared before HIR
             if b.node.op == BinaryOp::Coalesce {
-                return Err(LowerError::UnsupportedExprKind {
+                // desugar `a ?? b` into a match on Option
+                let scrutinee_expr = lower_expr(&b.node.left, ctx, fc, out)?;
+                let scrutinee_ty = scrutinee_expr.ty.clone();
+                let inner_ty = scrutinee_ty.option_inner().cloned().unwrap_or(ty.clone());
+
+                let enum_name = match &scrutinee_ty {
+                    Type::Enum { name, .. } => *name,
+                    _ => {
+                        return Err(LowerError::UnsupportedExprKind {
+                            span,
+                            kind: "coalesce on non-optional type".to_string(),
+                        });
+                    }
+                };
+
+                let scrutinee_local = hir::LocalId(fc.locals.len() as u32);
+                fc.locals.push(hir::Local {
+                    name: None,
+                    ty: scrutinee_ty,
+                });
+
+                let result_local = hir::LocalId(fc.locals.len() as u32);
+                fc.locals.push(hir::Local {
+                    name: None,
+                    ty: ty.clone(),
+                });
+
+                let some_variant = ctx
+                    .tcx
+                    .enum_variant_index(enum_name, Ident(Intern::new("Some".to_string())))
+                    .unwrap_or(1);
+                let inner_local = hir::LocalId(fc.locals.len() as u32);
+                fc.locals.push(hir::Local {
+                    name: None,
+                    ty: inner_ty.clone(),
+                });
+
+                let some_arm = hir::MatchArm {
+                    variant: some_variant,
+                    bindings: vec![hir::MatchBinding {
+                        field_index: 0,
+                        local: inner_local,
+                    }],
+                    body: hir::Block {
+                        stmts: vec![hir::Stmt {
+                            span,
+                            kind: hir::StmtKind::Assign {
+                                local: result_local,
+                                value: hir::Expr {
+                                    ty: inner_ty,
+                                    span,
+                                    kind: hir::ExprKind::Local(inner_local),
+                                },
+                            },
+                        }],
+                    },
+                };
+
+                let rhs_expr = lower_expr(&b.node.right, ctx, fc, out)?;
+                let none_else = hir::MatchElse {
+                    binding: None,
+                    body: hir::Block {
+                        stmts: vec![hir::Stmt {
+                            span,
+                            kind: hir::StmtKind::Assign {
+                                local: result_local,
+                                value: rhs_expr,
+                            },
+                        }],
+                    },
+                };
+
+                out.push(hir::Stmt {
                     span,
-                    kind: "coalesce operator (??)".to_string(),
+                    kind: hir::StmtKind::Match {
+                        scrutinee_init: Box::new(scrutinee_expr),
+                        scrutinee: scrutinee_local,
+                        arms: vec![some_arm],
+                        else_body: Some(none_else),
+                    },
+                });
+
+                return Ok(hir::Expr {
+                    ty,
+                    span,
+                    kind: hir::ExprKind::Local(result_local),
                 });
             }
-            let lhs = lower_expr(&b.node.left, ctx, fc)?;
-            let rhs = lower_expr(&b.node.right, ctx, fc)?;
+            let lhs = lower_expr(&b.node.left, ctx, fc, out)?;
+            let rhs = lower_expr(&b.node.right, ctx, fc, out)?;
             hir::ExprKind::Binary {
                 op: b.node.op,
                 lhs: Box::new(lhs),
@@ -1042,7 +1134,7 @@ fn lower_expr(
             }
         }
 
-        ast::ExprKind::StringInterp(parts) => lower_string_interp(parts, span, &ty, ctx, fc)?,
+        ast::ExprKind::StringInterp(parts) => lower_string_interp(parts, span, &ty, ctx, fc, out)?,
 
         ast::ExprKind::Call(c) => {
             if let Type::Enum {
@@ -1068,12 +1160,10 @@ fn lower_expr(
                                     "unknown variant '{variant_name}' on enum '{enum_name}'"
                                 ),
                             })?;
-                        let fields = c
-                            .node
-                            .args
-                            .iter()
-                            .map(|arg| lower_expr(arg, ctx, fc))
-                            .collect::<Result<Vec<_>, _>>()?;
+                        let mut fields = vec![];
+                        for arg in &c.node.args {
+                            fields.push(lower_expr(arg, ctx, fc, out)?);
+                        }
                         return Ok(hir::Expr {
                             ty,
                             span,
@@ -1116,12 +1206,10 @@ fn lower_expr(
                 }
                 _ => return Err(LowerError::NonDirectCall { span }),
             };
-            let args = c
-                .node
-                .args
-                .iter()
-                .map(|arg| lower_expr(arg, ctx, fc))
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut args = vec![];
+            for arg in &c.node.args {
+                args.push(lower_expr(arg, ctx, fc, out)?);
+            }
 
             // builtins take precedence over user functions and externs of the same name
             if let Some(builtin) = Builtin::from_name(callee_name.0.as_ref()) {
@@ -1184,15 +1272,13 @@ fn lower_expr(
                     .iter()
                     .map(|(name, expr)| (*name, expr))
                     .collect();
-                let fields = field_names
-                    .iter()
-                    .map(|name| {
-                        let expr = provided
-                            .get(name)
-                            .expect("typechecker ensures all declared fields are provided");
-                        lower_expr(expr, ctx, fc)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                let mut fields = vec![];
+                for name in &field_names {
+                    let expr = provided
+                        .get(name)
+                        .expect("typechecker ensures all declared fields are provided");
+                    fields.push(lower_expr(expr, ctx, fc, out)?);
+                }
                 return Ok(hir::Expr {
                     ty,
                     span,
@@ -1228,24 +1314,22 @@ fn lower_expr(
                 .collect();
 
             // lower fields in declaration order
-            let fields = field_names
-                .iter()
-                .map(|name| {
-                    let expr = provided
-                        .get(name)
-                        .expect("typechecker ensures all declared fields are provided");
-                    lower_expr(expr, ctx, fc)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut fields = vec![];
+            for name in &field_names {
+                let expr = provided
+                    .get(name)
+                    .expect("typechecker ensures all declared fields are provided");
+                fields.push(lower_expr(expr, ctx, fc, out)?);
+            }
 
             hir::ExprKind::StructLiteral { type_id, fields }
         }
 
         ast::ExprKind::Tuple(elements) => {
-            let lowered = elements
-                .iter()
-                .map(|el| lower_expr(el, ctx, fc))
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut lowered = vec![];
+            for el in elements {
+                lowered.push(lower_expr(el, ctx, fc, out)?);
+            }
             hir::ExprKind::TupleLiteral { elements: lowered }
         }
 
@@ -1315,7 +1399,7 @@ fn lower_expr(
                 }
             };
 
-            let object = lower_expr(target, ctx, fc)?;
+            let object = lower_expr(target, ctx, fc, out)?;
             hir::ExprKind::FieldGet {
                 object: Box::new(object),
                 index,
@@ -1323,7 +1407,7 @@ fn lower_expr(
         }
 
         ast::ExprKind::TupleIndex(tuple_idx) => {
-            let tuple = lower_expr(&tuple_idx.node.target, ctx, fc)?;
+            let tuple = lower_expr(&tuple_idx.node.target, ctx, fc, out)?;
             hir::ExprKind::TupleIndex {
                 tuple: Box::new(tuple),
                 index: tuple_idx.node.index as u16,
@@ -1331,12 +1415,10 @@ fn lower_expr(
         }
 
         ast::ExprKind::ArrayLiteral(lit) => {
-            let elements: Vec<hir::Expr> = lit
-                .node
-                .elements
-                .iter()
-                .map(|e| lower_expr(e, ctx, fc))
-                .collect::<Result<_, _>>()?;
+            let mut elements = vec![];
+            for e in &lit.node.elements {
+                elements.push(lower_expr(e, ctx, fc, out)?);
+            }
 
             match &ty {
                 Type::Array { .. } => hir::ExprKind::ArrayLiteral { elements },
@@ -1351,7 +1433,7 @@ fn lower_expr(
         }
 
         ast::ExprKind::ArrayFill(fill) => {
-            let value = lower_expr(&fill.node.value, ctx, fc)?;
+            let value = lower_expr(&fill.node.value, ctx, fc, out)?;
 
             let len = match &ty {
                 Type::Array {
@@ -1389,8 +1471,8 @@ fn lower_expr(
         }
 
         ast::ExprKind::Index(index_node) => {
-            let target = lower_expr(&index_node.node.target, ctx, fc)?;
-            let index = lower_expr(&index_node.node.index, ctx, fc)?;
+            let target = lower_expr(&index_node.node.target, ctx, fc, out)?;
+            let index = lower_expr(&index_node.node.index, ctx, fc, out)?;
             hir::ExprKind::IndexGet {
                 target: Box::new(target),
                 index: Box::new(index),
@@ -1398,16 +1480,12 @@ fn lower_expr(
         }
 
         ast::ExprKind::MapLiteral(lit) => {
-            let entries: Vec<(hir::Expr, hir::Expr)> = lit
-                .node
-                .entries
-                .iter()
-                .map(|(k, v)| {
-                    let key = lower_expr(k, ctx, fc)?;
-                    let value = lower_expr(v, ctx, fc)?;
-                    Ok((key, value))
-                })
-                .collect::<Result<_, _>>()?;
+            let mut entries = vec![];
+            for (k, v) in &lit.node.entries {
+                let key = lower_expr(k, ctx, fc, out)?;
+                let value = lower_expr(v, ctx, fc, out)?;
+                entries.push((key, value));
+            }
 
             hir::ExprKind::MapLiteral { entries }
         }
@@ -2175,9 +2253,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_coalesce() {
-        let err = lower_err("fn main() { var x: int? = nil; let y = x ?? 0; }");
-        assert!(matches!(err, LowerError::UnsupportedExprKind { .. }));
+    fn coalesce_lowers_to_match() {
+        let prog = lower_ok("fn main() { var x: int? = nil; let y = x ?? 0; }");
+        let main = find_main(&prog);
+        assert!(matches!(main.body.stmts[1].kind, StmtKind::Match { .. }));
     }
 
     #[test]
@@ -2360,5 +2439,16 @@ mod tests {
         };
         assert_eq!(arms[0].bindings.len(), 1);
         assert_eq!(arms[0].bindings[0].field_index, 0);
+    }
+
+    #[test]
+    fn coalesce_desugars_to_match() {
+        let prog = lower_ok("fn main() { let a: int? = nil; let x = a ?? 0; }");
+        let main = find_main(&prog);
+        assert!(matches!(main.body.stmts[1].kind, StmtKind::Match { .. }));
+        let StmtKind::Let { init, .. } = &main.body.stmts[2].kind else {
+            panic!("expected Let stmt for x");
+        };
+        assert!(matches!(init.kind, ExprKind::Local(_)));
     }
 }

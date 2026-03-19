@@ -1,0 +1,28 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// got: 10
+// default
+// @match-end
+
+fn main() {
+    let a: int? = 10;
+    match a {
+        Option.Some(v) => {
+            println("got: {v}");
+        },
+        _ => {
+            println("default");
+        },
+    }
+
+    let b: int? = nil;
+    match b {
+        Option.Some(v) => {
+            println("got: {v}");
+        },
+        _ => {
+            println("default");
+        },
+    }
+}
