@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+fn first<T>(items: [T]) -> T {
+    items[0]
+}
+
+fn main() {
+    let nums: [int] = [1, 2, 3];
+    let x = first(nums);
+    let _: string = x;
+}

@@ -1,0 +1,24 @@
+// @mode: check
+// @expect: success
+
+enum Wrapper<T> {
+    Val(T),
+    Empty,
+}
+
+fn extract<T>(w: Wrapper<T>, fallback: T) -> T {
+    match w {
+        Wrapper.Val(v) => v,
+        Wrapper.Empty => fallback,
+    }
+}
+
+fn main() {
+    let w = Wrapper.Val(42);
+    let a = extract(w, 0);
+    let _: int = a;
+
+    let s = Wrapper.Val("hello");
+    let b = extract(s, "");
+    let _: string = b;
+}

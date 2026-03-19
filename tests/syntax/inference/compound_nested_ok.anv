@@ -1,0 +1,21 @@
+// @mode: check
+// @expect: success
+
+fn unwrap_first<T>(items: [T?], default: T) -> T {
+    items[0] ?? default
+}
+
+fn get_or<K, V>(m: [K: V], key: K, default: V) -> V {
+    m[key] ?? default
+}
+
+fn main() {
+    let some_val: int? = 42;
+    let opts: [int?] = [some_val, some_val];
+    let a = unwrap_first(opts, 0);
+    let _: int = a;
+
+    let m: [string: int] = ["hp": 100];
+    let c = get_or(m, "hp", 0);
+    let _: int = c;
+}

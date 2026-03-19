@@ -1,0 +1,17 @@
+// @mode: check
+// @expect: success
+
+fn wrap<T>(x: T) -> T? {
+    x
+}
+
+fn main() {
+    let a = wrap(42);
+    let _: int? = a;
+
+    let b = wrap("hello");
+    let _: string? = b;
+
+    let c = wrap(true);
+    let _: bool? = c;
+}

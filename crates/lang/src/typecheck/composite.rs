@@ -11,7 +11,7 @@ use super::{
     constraint::TypeRef,
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
-    infer::{create_inference_slots, type_to_ref_with_inference},
+    infer::{build_param_ref, constrain_slots_from_type, create_inference_slots},
     range::{range_inclusive_type, range_type},
     types::{TypeChecker, is_keyable, keyable_reason},
 };
@@ -147,7 +147,13 @@ pub(super) fn check_struct_lit(
         };
         let field_ref = TypeRef::Expr(field_expr.node.id);
         let expected_ref = if is_generic {
-            type_to_ref_with_inference(&expected.ty, &slots)
+            if let Some((_, field_ty)) = type_checker.get_type(field_expr.node.id) {
+                let field_ty = field_ty.clone();
+                constrain_slots_from_type(
+                    &expected.ty, &field_ty, &slots, field_expr.span, type_checker, errors,
+                );
+            }
+            build_param_ref(&expected.ty, &slots, type_checker)
         } else {
             TypeRef::Concrete(type_checker.resolve_type(&expected.ty))
         };
@@ -504,7 +510,13 @@ fn check_enum_struct_variant(
         };
         let field_ref = TypeRef::Expr(field_expr.node.id);
         let expected_ref = if is_generic {
-            type_to_ref_with_inference(&expected.ty, &slots)
+            if let Some((_, field_ty)) = type_checker.get_type(field_expr.node.id) {
+                let field_ty = field_ty.clone();
+                constrain_slots_from_type(
+                    &expected.ty, &field_ty, &slots, field_expr.span, type_checker, errors,
+                );
+            }
+            build_param_ref(&expected.ty, &slots, type_checker)
         } else {
             TypeRef::Concrete(type_checker.resolve_type(&expected.ty))
         };

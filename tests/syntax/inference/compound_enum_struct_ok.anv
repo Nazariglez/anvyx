@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+enum Data<T> {
+    Val { inner: [T] },
+    Empty,
+}
+
+fn main() {
+    let nums: [int] = [1, 2, 3];
+    let d = Data.Val { inner: nums };
+
+    let strs: [string] = ["a", "b"];
+    let e = Data.Val { inner: strs };
+}

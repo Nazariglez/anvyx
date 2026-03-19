@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+fn unwrap_or<T>(opt: T?, default: T) -> T {
+    opt ?? default
+}
+
+fn main() {
+    let x: int? = 42;
+    let y = unwrap_or(x, 0);
+    let _: int = y;
+
+    let s: string? = "hello";
+    let z = unwrap_or(s, "");
+    let _: string = z;
+}

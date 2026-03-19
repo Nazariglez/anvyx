@@ -1,0 +1,21 @@
+// @mode: check
+// @expect: success
+
+fn first_of_three<T>(arr: [T; 3]) -> T {
+    arr[0]
+}
+
+fn pair_first<T>(arr: [T; 2]) -> T {
+    arr[0]
+}
+
+fn main() {
+    let a = first_of_three([10, 20, 30]);
+    let _: int = a;
+
+    let b = first_of_three(["a", "b", "c"]);
+    let _: string = b;
+
+    let c = pair_first([true, false]);
+    let _: bool = c;
+}

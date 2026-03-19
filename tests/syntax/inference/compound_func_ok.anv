@@ -1,0 +1,17 @@
+// @mode: check
+// @expect: success
+
+fn apply<T>(f: fn(T) -> T, x: T) -> T {
+    f(x)
+}
+
+fn inc(n: int) -> int { n + 1 }
+fn negate(b: bool) -> bool { !b }
+
+fn main() {
+    let a = apply(inc, 10);
+    let _: int = a;
+
+    let b = apply(negate, true);
+    let _: bool = b;
+}

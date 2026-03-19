@@ -8,13 +8,13 @@ use crate::{
 use std::collections::HashMap;
 
 use super::{
-    constraint::TypeRef,
+    constraint::{TypeRef, resolve_constraints},
     decl::{check_body_common, check_fn_body},
     error::{TypeErr, TypeErrKind},
     expr::{check_expr, root_ident},
     infer::{
-        create_inference_slots, infer_type_args_from_call, instantiate_func_type, subst_type,
-        type_to_ref_with_inference,
+        build_param_ref, constrain_slots_from_type, create_inference_slots,
+        infer_type_args_from_call, instantiate_func_type, subst_type,
     },
     types::{
         EnumDef, MethodContext, MethodDef, MethodSpecKey, ModuleDef, SpecializationKey,
@@ -630,12 +630,22 @@ fn check_enum_tuple_variant(
         check_expr(arg_expr, type_checker, errors, None);
         let arg_ref = TypeRef::Expr(arg_expr.node.id);
         let expected_ref = if is_generic {
-            type_to_ref_with_inference(expected_ty, &slots)
+            if let Some((_, arg_ty)) = type_checker.get_type(arg_expr.node.id) {
+                let arg_ty = arg_ty.clone();
+                constrain_slots_from_type(
+                    expected_ty, &arg_ty, &slots, arg_expr.span, type_checker, errors,
+                );
+            }
+            build_param_ref(expected_ty, &slots, type_checker)
         } else {
             let resolved = type_checker.resolve_type(expected_ty);
             TypeRef::Concrete(resolved)
         };
         type_checker.constrain_assignable(arg_expr.span, arg_ref, expected_ref, errors);
+    }
+
+    if is_generic {
+        resolve_constraints(type_checker, errors);
     }
 
     // build the result type
@@ -1113,9 +1123,9 @@ pub(super) fn instantiate_and_check_fn(
     let specialized_param_types: Vec<Type> = func
         .params
         .iter()
-        .map(|p| subst_type(&p.ty, &subst))
+        .map(|p| subst_type(&type_checker.resolve_type(&p.ty), &subst))
         .collect();
-    let specialized_ret = subst_type(&func.ret, &subst);
+    let specialized_ret = subst_type(&type_checker.resolve_type(&func.ret), &subst);
 
     // typecheck the body with specialized types, capturing expression types per specialization
     let prev_snapshot = type_checker.spec_type_snapshot.take();

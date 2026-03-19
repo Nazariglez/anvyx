@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+fn head<T>(xs: [T; ..]) -> T {
+    xs[0]
+}
+
+fn main() {
+    let arr = [10, 20, 30];
+    let a = head(arr);
+    let _: int = a;
+
+    let lst: [string] = ["hello", "world"];
+    let b = head(lst);
+    let _: string = b;
+}

@@ -1,0 +1,25 @@
+// @mode: check
+// @expect: success
+
+fn fst<T>(pair: (T, int)) -> T {
+    pair.0
+}
+
+fn snd<T>(pair: (int, T)) -> T {
+    pair.1
+}
+
+fn both<T, U>(pair: (T, U)) -> T {
+    pair.0
+}
+
+fn main() {
+    let a = fst(("hello", 42));
+    let _: string = a;
+
+    let b = snd((10, true));
+    let _: bool = b;
+
+    let c = both(("hi", 99));
+    let _: string = c;
+}

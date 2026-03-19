@@ -1,0 +1,24 @@
+// @mode: check
+// @expect: success
+
+fn pick<T>(items: [T]) -> T {
+    items[0]
+}
+
+fn get_value<K, V>(m: [K: V], k: K) -> V? {
+    m[k]
+}
+
+fn main() {
+    let nums: [int] = [1, 2, 3];
+    let x = pick(nums);
+    let _: int = x;
+
+    let strs: [string] = ["a", "b"];
+    let y = pick(strs);
+    let _: string = y;
+
+    let m: [string: int] = ["hp": 100];
+    let v = get_value(m, "hp");
+    let _: int? = v;
+}

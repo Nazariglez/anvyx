@@ -117,74 +117,27 @@ pub(super) fn create_inference_slots(
         .collect()
 }
 
-/// Converts 'Type::Var' references to 'TypeRef' for constraints
-pub(super) fn type_to_ref_with_inference(ty: &Type, slots: &InferenceSlots) -> TypeRef {
+pub(super) fn build_param_ref(
+    ty: &Type,
+    slots: &InferenceSlots,
+    type_checker: &TypeChecker,
+) -> TypeRef {
     match ty {
-        // use the synthetic variable ref for type variables
         Type::Var(id) => slots
             .get(id)
             .cloned()
             .map(TypeRef::Var)
             .unwrap_or_else(|| TypeRef::Concrete(ty.clone())),
-
-        // anything else just use concrete
-        _ => TypeRef::Concrete(substitute_vars_with_infer(ty, slots)),
-    }
-}
-
-/// Substitutes 'Type::Var' with 'Type::Infer' for nested positions in compound types
-/// imagine infer T from fn my_fn(T?) -> T then my_fn(10) and we should infer int from T?
-pub(super) fn substitute_vars_with_infer(ty: &Type, slots: &InferenceSlots) -> Type {
-    match ty {
-        Type::Var(id) if slots.contains_key(id) => Type::Infer,
-        Type::Func { params, ret } => Type::Func {
-            params: params
+        _ => {
+            let subst: HashMap<TypeVarId, Type> = slots
                 .iter()
-                .map(|p| substitute_vars_with_infer(p, slots))
-                .collect(),
-            ret: substitute_vars_with_infer(ret, slots).boxed(),
-        },
-        Type::Tuple(elems) => Type::Tuple(
-            elems
-                .iter()
-                .map(|e| substitute_vars_with_infer(e, slots))
-                .collect(),
-        ),
-        Type::NamedTuple(fields) => Type::NamedTuple(
-            fields
-                .iter()
-                .map(|(n, t)| (*n, substitute_vars_with_infer(t, slots)))
-                .collect(),
-        ),
-        Type::Struct { name, type_args } => Type::Struct {
-            name: *name,
-            type_args: type_args
-                .iter()
-                .map(|a| substitute_vars_with_infer(a, slots))
-                .collect(),
-        },
-        Type::Enum { name, type_args } => Type::Enum {
-            name: *name,
-            type_args: type_args
-                .iter()
-                .map(|a| substitute_vars_with_infer(a, slots))
-                .collect(),
-        },
-        Type::Array { elem, len } => Type::Array {
-            elem: substitute_vars_with_infer(elem, slots).boxed(),
-            len: *len,
-        },
-        Type::ArrayView { elem } => Type::ArrayView {
-            elem: substitute_vars_with_infer(elem, slots).boxed(),
-        },
-        Type::List { elem } => Type::List {
-            elem: substitute_vars_with_infer(elem, slots).boxed(),
-        },
-        Type::Map { key, value } => Type::Map {
-            key: substitute_vars_with_infer(key, slots).boxed(),
-            value: substitute_vars_with_infer(value, slots).boxed(),
-        },
-        _ => ty.clone(),
+                .filter_map(|(var_id, slot_name)| {
+                    let slot_ty = type_checker.get_var(*slot_name)?.ty.clone();
+                    Some((*var_id, slot_ty))
+                })
+                .collect();
+            TypeRef::Concrete(subst_type(ty, &subst))
+        }
     }
 }
 
@@ -218,14 +171,29 @@ pub(super) fn infer_type_args_from_call(
 
     for (arg_expr, param_ty) in args.iter().zip(param_template_types.iter()) {
         check_expr(arg_expr, type_checker, errors, None);
+
+        let resolved_param_ty = type_checker.resolve_type(param_ty);
+        if let Some((_, arg_ty)) = type_checker.get_type(arg_expr.node.id) {
+            let arg_ty = arg_ty.clone();
+            constrain_slots_from_type(
+                &resolved_param_ty,
+                &arg_ty,
+                &slots,
+                arg_expr.span,
+                type_checker,
+                errors,
+            );
+        }
+
         let arg_ref = TypeRef::Expr(arg_expr.node.id);
-        let param_ref = type_to_ref_with_inference(param_ty, &slots);
+        let param_ref = build_param_ref(&resolved_param_ty, &slots, type_checker);
         type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
     }
 
     if let Some(expected) = expected_ret {
-        constrain_type_vars_from_expected(
-            ret_template,
+        let resolved_ret_template = type_checker.resolve_type(ret_template);
+        constrain_slots_from_type(
+            &resolved_ret_template,
             expected,
             &slots,
             call_span,
@@ -262,7 +230,7 @@ pub(super) fn infer_type_args_from_call(
     Some(inferred_type_args)
 }
 
-fn constrain_type_vars_from_expected(
+pub(super) fn constrain_slots_from_type(
     template: &Type,
     expected: &Type,
     slots: &InferenceSlots,
@@ -275,21 +243,27 @@ fn constrain_type_vars_from_expected(
             if let Some(slot_name) = slots.get(id) {
                 let slot_ref = TypeRef::Var(*slot_name);
                 let expected_ref = TypeRef::Concrete(expected.clone());
-                type_checker.constrain_assignable(span, slot_ref, expected_ref, errors);
+                type_checker.constrain_equal(span, slot_ref, expected_ref, errors);
             }
         }
         (Type::Map { key: tk, value: tv }, Type::Map { key: ek, value: ev }) => {
-            constrain_type_vars_from_expected(tk, ek, slots, span, type_checker, errors);
-            constrain_type_vars_from_expected(tv, ev, slots, span, type_checker, errors);
+            constrain_slots_from_type(tk, ek, slots, span, type_checker, errors);
+            constrain_slots_from_type(tv, ev, slots, span, type_checker, errors);
         }
         (Type::List { elem: te }, Type::List { elem: ee }) => {
-            constrain_type_vars_from_expected(te, ee, slots, span, type_checker, errors);
+            constrain_slots_from_type(te, ee, slots, span, type_checker, errors);
         }
         (Type::Array { elem: te, .. }, Type::Array { elem: ee, .. }) => {
-            constrain_type_vars_from_expected(te, ee, slots, span, type_checker, errors);
+            constrain_slots_from_type(te, ee, slots, span, type_checker, errors);
         }
         (Type::ArrayView { elem: te }, Type::ArrayView { elem: ee }) => {
-            constrain_type_vars_from_expected(te, ee, slots, span, type_checker, errors);
+            constrain_slots_from_type(te, ee, slots, span, type_checker, errors);
+        }
+        (Type::ArrayView { elem: te }, Type::Array { elem: ee, .. }) => {
+            constrain_slots_from_type(te, ee, slots, span, type_checker, errors);
+        }
+        (Type::ArrayView { elem: te }, Type::List { elem: ee }) => {
+            constrain_slots_from_type(te, ee, slots, span, type_checker, errors);
         }
         (
             Type::Func {
@@ -302,18 +276,18 @@ fn constrain_type_vars_from_expected(
             },
         ) => {
             for (t, e) in tp.iter().zip(ep.iter()) {
-                constrain_type_vars_from_expected(t, e, slots, span, type_checker, errors);
+                constrain_slots_from_type(t, e, slots, span, type_checker, errors);
             }
-            constrain_type_vars_from_expected(tr, er, slots, span, type_checker, errors);
+            constrain_slots_from_type(tr, er, slots, span, type_checker, errors);
         }
         (Type::Tuple(te), Type::Tuple(ee)) => {
             for (t, e) in te.iter().zip(ee.iter()) {
-                constrain_type_vars_from_expected(t, e, slots, span, type_checker, errors);
+                constrain_slots_from_type(t, e, slots, span, type_checker, errors);
             }
         }
         (Type::NamedTuple(tf), Type::NamedTuple(ef)) => {
             for ((_, t), (_, e)) in tf.iter().zip(ef.iter()) {
-                constrain_type_vars_from_expected(t, e, slots, span, type_checker, errors);
+                constrain_slots_from_type(t, e, slots, span, type_checker, errors);
             }
         }
         (
@@ -327,7 +301,7 @@ fn constrain_type_vars_from_expected(
             },
         ) if tn == en => {
             for (t, e) in ta.iter().zip(ea.iter()) {
-                constrain_type_vars_from_expected(t, e, slots, span, type_checker, errors);
+                constrain_slots_from_type(t, e, slots, span, type_checker, errors);
             }
         }
         (
@@ -341,7 +315,7 @@ fn constrain_type_vars_from_expected(
             },
         ) if tn == en => {
             for (t, e) in ta.iter().zip(ea.iter()) {
-                constrain_type_vars_from_expected(t, e, slots, span, type_checker, errors);
+                constrain_slots_from_type(t, e, slots, span, type_checker, errors);
             }
         }
         _ => {}
