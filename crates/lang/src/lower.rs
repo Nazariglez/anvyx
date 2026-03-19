@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::ast::{
-    self, AssignOp, BinaryOp, ExprId, Ident, Lit, Pattern, Stmt, StringPart, Type, TypeVarId,
+    self, ArrayLen, AssignOp, BinaryOp, ExprId, Ident, Lit, Pattern, Stmt, StringPart, Type,
+    TypeVarId,
 };
 use crate::builtin::Builtin;
 use crate::hir;
@@ -690,9 +691,42 @@ fn lower_assign(
             })
         }
 
+        ast::ExprKind::Index(index_node) => {
+            let root_name = match &index_node.node.target.node.kind {
+                ast::ExprKind::Ident(n) => *n,
+                _ => {
+                    return Err(LowerError::UnsupportedAssign {
+                        span,
+                        detail: "nested index assignment target is not yet supported".to_string(),
+                    });
+                }
+            };
+
+            let local_id = *fc
+                .local_map
+                .get(&root_name)
+                .ok_or(LowerError::UnknownLocal {
+                    name: root_name,
+                    span,
+                })?;
+
+            let index = lower_expr(&index_node.node.index, ctx, fc)?;
+            let value = lower_expr(&assign_node.node.value, ctx, fc)?;
+
+            Ok(hir::Stmt {
+                span,
+                kind: hir::StmtKind::SetIndex {
+                    object: local_id,
+                    index: Box::new(index),
+                    value,
+                },
+            })
+        }
+
         _ => Err(LowerError::UnsupportedAssign {
             span,
-            detail: "assignment target must be a plain local variable or field access".to_string(),
+            detail: "assignment target must be a variable, field access, or index expression"
+                .to_string(),
         }),
     }
 }
@@ -1296,6 +1330,73 @@ fn lower_expr(
             }
         }
 
+        ast::ExprKind::ArrayLiteral(lit) => {
+            let elements: Vec<hir::Expr> = lit
+                .node
+                .elements
+                .iter()
+                .map(|e| lower_expr(e, ctx, fc))
+                .collect::<Result<_, _>>()?;
+
+            match &ty {
+                Type::Array { .. } => hir::ExprKind::ArrayLiteral { elements },
+                Type::List { .. } => hir::ExprKind::ListLiteral { elements },
+                other => {
+                    return Err(LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("array literal with unexpected type '{other}'"),
+                    });
+                }
+            }
+        }
+
+        ast::ExprKind::ArrayFill(fill) => {
+            let value = lower_expr(&fill.node.value, ctx, fc)?;
+
+            let len = match &ty {
+                Type::Array {
+                    len: ArrayLen::Fixed(n),
+                    ..
+                } => *n,
+                Type::List { .. } => match &fill.node.len.node.kind {
+                    ast::ExprKind::Lit(Lit::Int(n)) => *n as usize,
+                    _ => {
+                        return Err(LowerError::UnsupportedExprKind {
+                            span,
+                            kind: "list fill with non-literal length".to_string(),
+                        });
+                    }
+                },
+                other => {
+                    return Err(LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("array fill with unexpected type '{other}'"),
+                    });
+                }
+            };
+
+            match &ty {
+                Type::Array { .. } => hir::ExprKind::ArrayFill {
+                    value: Box::new(value),
+                    len,
+                },
+                Type::List { .. } => hir::ExprKind::ListFill {
+                    value: Box::new(value),
+                    len,
+                },
+                _ => unreachable!(),
+            }
+        }
+
+        ast::ExprKind::Index(index_node) => {
+            let target = lower_expr(&index_node.node.target, ctx, fc)?;
+            let index = lower_expr(&index_node.node.index, ctx, fc)?;
+            hir::ExprKind::IndexGet {
+                target: Box::new(target),
+                index: Box::new(index),
+            }
+        }
+
         other => {
             return Err(LowerError::UnsupportedExprKind {
                 span,
@@ -1770,9 +1871,94 @@ mod tests {
     }
 
     #[test]
-    fn rejects_array_literal() {
-        let err = lower_err("fn main() { let x = [1, 2, 3]; }");
-        assert!(matches!(err, LowerError::UnsupportedExprKind { .. }));
+    fn lowers_array_literal() {
+        let prog = lower_ok("fn main() { let x = [1, 2, 3]; }");
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("expected Let stmt")
+        };
+        assert!(
+            matches!(init.kind, ExprKind::ArrayLiteral { .. }),
+            "expected ArrayLiteral, got {:?}",
+            init.kind
+        );
+    }
+
+    #[test]
+    fn lowers_list_literal() {
+        let prog = lower_ok("fn main() { let x: [int] = [1, 2, 3]; }");
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("expected Let stmt")
+        };
+        assert!(
+            matches!(init.kind, ExprKind::ListLiteral { .. }),
+            "expected ListLiteral, got {:?}",
+            init.kind
+        );
+        if let ExprKind::ListLiteral { elements } = &init.kind {
+            assert_eq!(elements.len(), 3);
+        }
+    }
+
+    #[test]
+    fn lowers_array_fill() {
+        let prog = lower_ok("fn main() { let x = [0; 3]; }");
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("expected Let stmt")
+        };
+        assert!(
+            matches!(init.kind, ExprKind::ArrayFill { len: 3, .. }),
+            "expected ArrayFill {{ len: 3 }}, got {:?}",
+            init.kind
+        );
+    }
+
+    #[test]
+    fn lowers_list_fill() {
+        let prog = lower_ok("fn main() { let x: [int] = [0; 3]; }");
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+            panic!("expected Let stmt")
+        };
+        assert!(
+            matches!(init.kind, ExprKind::ListFill { len: 3, .. }),
+            "expected ListFill {{ len: 3 }}, got {:?}",
+            init.kind
+        );
+    }
+
+    #[test]
+    fn lowers_index_get() {
+        let prog = lower_ok("fn main() { let a = [1, 2]; let x = a[0]; }");
+        let main = find_main(&prog);
+        let StmtKind::Let { init, .. } = &main.body.stmts[1].kind else {
+            panic!("expected Let stmt at index 1")
+        };
+        assert!(
+            matches!(init.kind, ExprKind::IndexGet { .. }),
+            "expected IndexGet, got {:?}",
+            init.kind
+        );
+    }
+
+    #[test]
+    fn lowers_index_set() {
+        let prog = lower_ok("fn main() { var a = [1, 2, 3]; a[0] = 99; }");
+        let main = find_main(&prog);
+        let second_stmt = &main.body.stmts[1];
+        assert!(
+            matches!(
+                second_stmt.kind,
+                StmtKind::SetIndex {
+                    object: LocalId(0),
+                    ..
+                }
+            ),
+            "expected SetIndex {{ object: LocalId(0) }}, got {:?}",
+            second_stmt.kind
+        );
     }
 
     #[test]

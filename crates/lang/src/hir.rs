@@ -88,6 +88,12 @@ pub enum StmtKind {
         value: Expr,
     },
 
+    SetIndex {
+        object: LocalId,
+        index: Box<Expr>,
+        value: Expr,
+    },
+
     Match {
         scrutinee_init: Box<Expr>, // evaluated once and stored to scrutinee local
         scrutinee: LocalId,
@@ -181,6 +187,29 @@ pub enum ExprKind {
         type_id: u32,
         variant: u16,
         fields: Vec<Expr>, // in declaration order
+    },
+
+    ArrayLiteral {
+        elements: Vec<Expr>,
+    },
+
+    ListLiteral {
+        elements: Vec<Expr>,
+    },
+
+    ArrayFill {
+        value: Box<Expr>,
+        len: usize,
+    },
+
+    ListFill {
+        value: Box<Expr>,
+        len: usize,
+    },
+
+    IndexGet {
+        target: Box<Expr>,
+        index: Box<Expr>,
     },
 }
 
@@ -718,6 +747,97 @@ mod tests {
             body: Block { stmts: vec![] },
         };
         assert!(else_b.binding.is_none());
+    }
+
+    #[test]
+    fn expr_array_literal() {
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::ArrayLiteral {
+                elements: vec![int_expr(1), int_expr(2)],
+            },
+        };
+        assert!(matches!(expr.kind, ExprKind::ArrayLiteral { .. }));
+        if let ExprKind::ArrayLiteral { elements } = &expr.kind {
+            assert_eq!(elements.len(), 2);
+        }
+    }
+
+    #[test]
+    fn expr_list_literal() {
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::ListLiteral {
+                elements: vec![int_expr(10), int_expr(20)],
+            },
+        };
+        assert!(matches!(expr.kind, ExprKind::ListLiteral { .. }));
+        if let ExprKind::ListLiteral { elements } = &expr.kind {
+            assert_eq!(elements.len(), 2);
+        }
+    }
+
+    #[test]
+    fn expr_array_fill() {
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::ArrayFill {
+                value: Box::new(int_expr(0)),
+                len: 3,
+            },
+        };
+        assert!(matches!(expr.kind, ExprKind::ArrayFill { .. }));
+        if let ExprKind::ArrayFill { len, .. } = &expr.kind {
+            assert_eq!(*len, 3);
+        }
+    }
+
+    #[test]
+    fn expr_list_fill() {
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::ListFill {
+                value: Box::new(int_expr(0)),
+                len: 5,
+            },
+        };
+        assert!(matches!(expr.kind, ExprKind::ListFill { .. }));
+        if let ExprKind::ListFill { len, .. } = &expr.kind {
+            assert_eq!(*len, 5);
+        }
+    }
+
+    #[test]
+    fn expr_index_get() {
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::IndexGet {
+                target: Box::new(int_expr(0)),
+                index: Box::new(int_expr(1)),
+            },
+        };
+        assert!(matches!(expr.kind, ExprKind::IndexGet { .. }));
+    }
+
+    #[test]
+    fn stmt_set_index() {
+        let stmt = Stmt {
+            span: dummy_span(),
+            kind: StmtKind::SetIndex {
+                object: LocalId(0),
+                index: Box::new(int_expr(1)),
+                value: int_expr(99),
+            },
+        };
+        assert!(matches!(stmt.kind, StmtKind::SetIndex { .. }));
+        if let StmtKind::SetIndex { object, .. } = &stmt.kind {
+            assert_eq!(*object, LocalId(0));
+        }
     }
 
     #[test]

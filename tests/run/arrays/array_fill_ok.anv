@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 7
+// 7
+// @match-end
+
+fn main() {
+    let a = [7; 3];
+    println("{a[0]}");
+    println("{a[2]}");
+}

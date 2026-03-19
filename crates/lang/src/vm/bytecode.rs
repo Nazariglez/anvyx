@@ -56,6 +56,12 @@ pub enum Op {
     GetField(u16),             // field_index
     SetField(u16),             // field_index
     GetEnumVariant,            // pops enum, pushes variant index as Int
+
+    // arrays and lists
+    ConstructArray(u16),       // pops N values, pushes Value::Array
+    ConstructList(u16),        // pops N values, pushes Value::List
+    IndexGet,                  // pops index (Int), pops collection (Array|List), pushes element
+    IndexSet,                  // pops value, pops index (Int), pops collection, pushes mutated collection
 }
 
 pub struct Chunk {

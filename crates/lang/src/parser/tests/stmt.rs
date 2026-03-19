@@ -298,3 +298,49 @@ fn extern_type_and_extern_fn_in_same_program() {
     assert!(matches!(prog.stmts[0].node, ast::Stmt::ExternType(_)));
     assert!(matches!(prog.stmts[1].node, ast::Stmt::ExternFunc(_)));
 }
+
+#[test]
+fn index_assign_parses() {
+    use super::helpers::{expect_index, expect_int, expect_ident};
+    let prog = parse_program("fn main() { var a = [1, 2, 3]; a[0] = 5; }");
+    let ast::Stmt::Func(func_node) = &prog.stmts[0].node else {
+        panic!("expected Func");
+    };
+    let body = &func_node.node.body.node.stmts;
+    assert_eq!(body.len(), 2);
+
+    let ast::Stmt::Expr(assign_expr) = &body[1].node else {
+        panic!("expected Expr stmt for assignment");
+    };
+    let ast::ExprKind::Assign(assign_node) = &assign_expr.node.kind else {
+        panic!("expected Assign expr");
+    };
+    let (target, index) = expect_index(&assign_node.node.target, false);
+    expect_ident(target, "a");
+    expect_int(index, 0);
+}
+
+#[test]
+fn field_then_index_assign_parses() {
+    use super::helpers::{expect_index, expect_int, expect_field};
+    let prog = parse_program("fn main() { a.x[0] = 5; }");
+    let ast::Stmt::Func(func_node) = &prog.stmts[0].node else {
+        panic!("expected Func");
+    };
+    let body = &func_node.node.body.node.stmts;
+    assert_eq!(body.len(), 1);
+
+    let ast::Stmt::Expr(assign_expr) = &body[0].node else {
+        panic!("expected Expr stmt for assignment");
+    };
+    let ast::ExprKind::Assign(assign_node) = &assign_expr.node.kind else {
+        panic!("expected Assign expr");
+    };
+    let (field_target, index) = expect_index(&assign_node.node.target, false);
+    expect_int(index, 0);
+    let base = expect_field(field_target, "x", false);
+    match &base.node.kind {
+        ast::ExprKind::Ident(ident) => assert_eq!(ident.0.as_ref(), "a"),
+        other => panic!("expected Ident 'a', got {other:?}"),
+    }
+}

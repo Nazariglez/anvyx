@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 0
+// 0
+// @match-end
+
+fn main() {
+    let l: [int] = [0; 4];
+    println("{l[0]}");
+    println("{l[3]}");
+}

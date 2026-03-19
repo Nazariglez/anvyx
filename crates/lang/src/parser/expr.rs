@@ -54,7 +54,13 @@ fn if_expr<'src>(
             // else-if wraps the nested if in a block with the if as the tail
             if_parser.map_with(|nested_if: ast::ExprNode, _| {
                 let span = nested_if.span;
-                Spanned::new(ast::Block { stmts: vec![], tail: Some(Box::new(nested_if)) }, span)
+                Spanned::new(
+                    ast::Block {
+                        stmts: vec![],
+                        tail: Some(Box::new(nested_if)),
+                    },
+                    span,
+                )
             }),
             // else { ... }
             block_stmt(stmt.clone(), expr.clone()),
@@ -308,7 +314,11 @@ fn string_interp<'src>(
         .map(ast::StringPart::Expr);
 
     interp_start
-        .ignore_then(choice((text_part, expr_part)).repeated().collect::<Vec<_>>())
+        .ignore_then(
+            choice((text_part, expr_part))
+                .repeated()
+                .collect::<Vec<_>>(),
+        )
         .then_ignore(interp_end)
         .map_with(|parts, e| {
             let s = e.span();
@@ -739,9 +749,7 @@ fn postfix_expr<'src>(
     .boxed()
 }
 
-fn cast_expr<'src>(
-    unary: impl AnvParser<'src, ast::ExprNode>,
-) -> BoxedParser<'src, ast::ExprNode> {
+fn cast_expr<'src>(unary: impl AnvParser<'src, ast::ExprNode>) -> BoxedParser<'src, ast::ExprNode> {
     let as_kw = select! { (Token::Keyword(Keyword::As), _) => () };
     unary
         .foldl_with(
@@ -894,6 +902,11 @@ fn ternary_expr<'src>(
         .boxed()
 }
 
+enum LvalueSuffix {
+    Field(ast::Ident),
+    Index(ast::ExprNode),
+}
+
 fn lvalue_expr<'src>() -> BoxedParser<'src, ast::ExprNode> {
     let base = identifier().map_with(|ident, e| {
         let s = e.span();
@@ -903,22 +916,65 @@ fn lvalue_expr<'src>() -> BoxedParser<'src, ast::ExprNode> {
         Spanned::new(expr, span)
     });
 
-    let field_suffix = select! { (Token::Dot, _) => () }.ignore_then(identifier());
+    let index_atom = choice((
+        literal().map_with(|lit, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Lit(lit), expr_id);
+            Spanned::new(expr, span)
+        }),
+        identifier().map_with(|ident, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::Ident(ident), expr_id);
+            Spanned::new(expr, span)
+        }),
+    ));
 
-    base.foldl_with(field_suffix.repeated(), |target, field, e| {
+    let field_suffix = select! { (Token::Dot, _) => () }
+        .ignore_then(identifier())
+        .map(LvalueSuffix::Field);
+
+    let index_suffix = select! { (Token::Open(Delimiter::Bracket), _) => () }
+        .ignore_then(index_atom)
+        .then_ignore(select! { (Token::Close(Delimiter::Bracket), _) => () })
+        .map(LvalueSuffix::Index);
+
+    let suffix = choice((field_suffix, index_suffix));
+
+    base.foldl_with(suffix.repeated(), |target, suf, e| {
         let s = e.span();
         let span = Span::new(s.start, s.end);
-        let field_node = Spanned::new(
-            ast::FieldAccess {
-                target: Box::new(target),
-                field,
-                safe: false,
-            },
-            span,
-        );
-        let expr_id = e.state().new_expr_id();
-        let expr = ast::Expr::new(ast::ExprKind::Field(field_node), expr_id);
-        Spanned::new(expr, span)
+        match suf {
+            LvalueSuffix::Field(field) => {
+                let field_node = Spanned::new(
+                    ast::FieldAccess {
+                        target: Box::new(target),
+                        field,
+                        safe: false,
+                    },
+                    span,
+                );
+                let expr_id = e.state().new_expr_id();
+                let expr = ast::Expr::new(ast::ExprKind::Field(field_node), expr_id);
+                Spanned::new(expr, span)
+            }
+            LvalueSuffix::Index(index_expr) => {
+                let index_node = Spanned::new(
+                    ast::Index {
+                        target: Box::new(target),
+                        index: Box::new(index_expr),
+                        safe: false,
+                    },
+                    span,
+                );
+                let expr_id = e.state().new_expr_id();
+                let expr = ast::Expr::new(ast::ExprKind::Index(index_node), expr_id);
+                Spanned::new(expr, span)
+            }
+        }
     })
     .labelled("left value expr")
     .as_context()

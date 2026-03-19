@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 10
+// 20
+// @match-end
+
+fn main() {
+    let l: [int] = [10, 20, 30];
+    println("{l[0]}");
+    println("{l[1]}");
+}

@@ -346,6 +346,98 @@ impl<'a> VM<'a> {
                         }
                     }
                 }
+
+                Op::ConstructArray(count) => {
+                    let count = count as usize;
+                    let start = self.stack.len() - count;
+                    let elements: Vec<Value> = self.stack.drain(start..).collect();
+                    self.push(Value::Array(ManagedRc::new(elements)));
+                }
+
+                Op::ConstructList(count) => {
+                    let count = count as usize;
+                    let start = self.stack.len() - count;
+                    let elements: Vec<Value> = self.stack.drain(start..).collect();
+                    self.push(Value::List(ManagedRc::new(elements)));
+                }
+
+                Op::IndexGet => {
+                    let index_val = self.pop();
+                    let collection = self.pop();
+
+                    let idx = match index_val {
+                        Value::Int(i) => i as usize,
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "index must be int, got {other}"
+                            )));
+                        }
+                    };
+
+                    let element = match &collection {
+                        Value::Array(a) => a.get(idx).cloned().ok_or_else(|| {
+                            RuntimeError::new(format!(
+                                "index {idx} out of bounds for array of length {}",
+                                a.len()
+                            ))
+                        })?,
+                        Value::List(l) => l.get(idx).cloned().ok_or_else(|| {
+                            RuntimeError::new(format!(
+                                "index {idx} out of bounds for list of length {}",
+                                l.len()
+                            ))
+                        })?,
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "IndexGet on non-indexable value: {other}"
+                            )));
+                        }
+                    };
+                    self.push(element);
+                }
+
+                Op::IndexSet => {
+                    let new_value = self.pop();
+                    let index_val = self.pop();
+                    let collection = self.pop();
+
+                    let idx = match index_val {
+                        Value::Int(i) => i as usize,
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "index must be int, got {other}"
+                            )));
+                        }
+                    };
+
+                    match collection {
+                        Value::Array(mut a) => {
+                            let len = a.len();
+                            if idx >= len {
+                                return Err(RuntimeError::new(format!(
+                                    "index {idx} out of bounds for array of length {len}"
+                                )));
+                            }
+                            ManagedRc::make_mut(&mut a)[idx] = new_value;
+                            self.push(Value::Array(a));
+                        }
+                        Value::List(mut l) => {
+                            let len = l.len();
+                            if idx >= len {
+                                return Err(RuntimeError::new(format!(
+                                    "index {idx} out of bounds for list of length {len}"
+                                )));
+                            }
+                            ManagedRc::make_mut(&mut l)[idx] = new_value;
+                            self.push(Value::List(l));
+                        }
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "IndexSet on non-indexable value: {other}"
+                            )));
+                        }
+                    }
+                }
             }
         }
     }
@@ -676,5 +768,144 @@ mod tests {
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
         assert!(vm.run().is_err());
+    }
+
+    #[test]
+    fn construct_array_pushes_value() {
+        let mut chunk = Chunk::new("main", 0, 0);
+        let i1 = chunk.add_constant(Value::Int(1));
+        let i2 = chunk.add_constant(Value::Int(2));
+        chunk.emit(Op::Constant(i1));
+        chunk.emit(Op::Constant(i2));
+        chunk.emit(Op::ConstructArray(2));
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn construct_list_pushes_value() {
+        let mut chunk = Chunk::new("main", 0, 0);
+        let i1 = chunk.add_constant(Value::Int(10));
+        let i2 = chunk.add_constant(Value::Int(20));
+        chunk.emit(Op::Constant(i1));
+        chunk.emit(Op::Constant(i2));
+        chunk.emit(Op::ConstructList(2));
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn index_get_reads_element() {
+        // [Int(10), Int(20)][1] -> Int(20)
+        let mut chunk = Chunk::new("main", 0, 0);
+        let i10 = chunk.add_constant(Value::Int(10));
+        let i20 = chunk.add_constant(Value::Int(20));
+        let i1 = chunk.add_constant(Value::Int(1));
+        chunk.emit(Op::Constant(i10));
+        chunk.emit(Op::Constant(i20));
+        chunk.emit(Op::ConstructArray(2));
+        chunk.emit(Op::Constant(i1));
+        chunk.emit(Op::IndexGet);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn index_get_out_of_bounds_error() {
+        let mut chunk = Chunk::new("main", 0, 0);
+        let i10 = chunk.add_constant(Value::Int(10));
+        let i20 = chunk.add_constant(Value::Int(20));
+        let i5 = chunk.add_constant(Value::Int(5));
+        chunk.emit(Op::Constant(i10));
+        chunk.emit(Op::Constant(i20));
+        chunk.emit(Op::ConstructArray(2));
+        chunk.emit(Op::Constant(i5));
+        chunk.emit(Op::IndexGet);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_err());
+    }
+
+    #[test]
+    fn index_set_mutates_element() {
+        // local 0 = [10, 20]; local 0[0] = 99; result = local 0[0] -> 99
+        let mut chunk = Chunk::new("main", 1, 0);
+        let i10 = chunk.add_constant(Value::Int(10));
+        let i20 = chunk.add_constant(Value::Int(20));
+        let i99 = chunk.add_constant(Value::Int(99));
+        let i0 = chunk.add_constant(Value::Int(0));
+
+        // construct [10, 20], store in local 0
+        chunk.emit(Op::Constant(i10));
+        chunk.emit(Op::Constant(i20));
+        chunk.emit(Op::ConstructArray(2));
+        chunk.emit(Op::SetLocal(0));
+
+        // local 0[0] = 99
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(i0));
+        chunk.emit(Op::Constant(i99));
+        chunk.emit(Op::IndexSet);
+        chunk.emit(Op::SetLocal(0));
+
+        // read local 0[0]
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(i0));
+        chunk.emit(Op::IndexGet);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn index_set_cow_semantics() {
+        // local 0 = [10, 20]; local 1 = local 0 (shared)
+        // local 0[0] = 99  (COW: local 1 should remain [10, 20])
+        // verify local 1[0] == 10
+        let mut chunk = Chunk::new("main", 2, 0);
+        let i10 = chunk.add_constant(Value::Int(10));
+        let i20 = chunk.add_constant(Value::Int(20));
+        let i99 = chunk.add_constant(Value::Int(99));
+        let i0 = chunk.add_constant(Value::Int(0));
+
+        // construct [10, 20], store in local 0
+        chunk.emit(Op::Constant(i10));
+        chunk.emit(Op::Constant(i20));
+        chunk.emit(Op::ConstructArray(2));
+        chunk.emit(Op::SetLocal(0));
+
+        // copy to local 1 (shared reference)
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::SetLocal(1));
+
+        // mutate local 0[0] = 99
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(i0));
+        chunk.emit(Op::Constant(i99));
+        chunk.emit(Op::IndexSet);
+        chunk.emit(Op::SetLocal(0));
+
+        // read local 1[0] — should still be 10 due to COW
+        chunk.emit(Op::GetLocal(1));
+        chunk.emit(Op::Constant(i0));
+        chunk.emit(Op::IndexGet);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
     }
 }

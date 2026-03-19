@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 2
+// 3
+// @match-end
+
+fn main() {
+    let a: [[int; 2]; 2] = [[1, 2], [3, 4]];
+    println("{a[0][1]}");
+    println("{a[1][0]}");
+}

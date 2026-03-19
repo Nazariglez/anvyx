@@ -293,6 +293,14 @@ fn compile_stmt(fc: &mut FuncCompiler, stmt: &hir::Stmt) -> Result<(), CompileEr
                 fc.patch_jump(pos);
             }
         }
+
+        hir::StmtKind::SetIndex { object, index, value } => {
+            fc.emit(Op::GetLocal(object.0 as u16));
+            compile_expr(fc, index)?;
+            compile_expr(fc, value)?;
+            fc.emit(Op::IndexSet);
+            fc.emit(Op::SetLocal(object.0 as u16));
+        }
     }
 
     Ok(())
@@ -416,6 +424,40 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
                 compile_expr(fc, field)?;
             }
             fc.emit(Op::ConstructEnum(*type_id, *variant, fields.len() as u16));
+        }
+
+        hir::ExprKind::ArrayLiteral { elements } => {
+            for elem in elements {
+                compile_expr(fc, elem)?;
+            }
+            fc.emit(Op::ConstructArray(elements.len() as u16));
+        }
+
+        hir::ExprKind::ListLiteral { elements } => {
+            for elem in elements {
+                compile_expr(fc, elem)?;
+            }
+            fc.emit(Op::ConstructList(elements.len() as u16));
+        }
+
+        hir::ExprKind::ArrayFill { value, len } => {
+            for _ in 0..*len {
+                compile_expr(fc, value)?;
+            }
+            fc.emit(Op::ConstructArray(*len as u16));
+        }
+
+        hir::ExprKind::ListFill { value, len } => {
+            for _ in 0..*len {
+                compile_expr(fc, value)?;
+            }
+            fc.emit(Op::ConstructList(*len as u16));
+        }
+
+        hir::ExprKind::IndexGet { target, index } => {
+            compile_expr(fc, target)?;
+            compile_expr(fc, index)?;
+            fc.emit(Op::IndexGet);
         }
     }
 
@@ -907,5 +949,159 @@ mod tests {
         let has_eq = chunk.code.iter().any(|op| *op == Op::Eq);
         assert!(has_get_enum_variant, "expected GetEnumVariant opcode");
         assert!(has_eq, "expected Eq opcode");
+    }
+
+    #[test]
+    fn array_literal_emits_construct_array() {
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("main"),
+            locals: vec![Local { name: None, ty: Type::Int }],
+            params_len: 0,
+            ret: Type::Void,
+            body: Block {
+                stmts: vec![stmt(StmtKind::Let {
+                    local: LocalId(0),
+                    init: Expr {
+                        ty: Type::Int,
+                        span: dummy_span(),
+                        kind: ExprKind::ArrayLiteral {
+                            elements: vec![int_expr(1), int_expr(2)],
+                        },
+                    },
+                })],
+            },
+            span: dummy_span(),
+        };
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        assert_eq!(
+            &chunk.code[..4],
+            &[Op::Constant(0), Op::Constant(1), Op::ConstructArray(2), Op::SetLocal(0)]
+        );
+    }
+
+    #[test]
+    fn list_literal_emits_construct_list() {
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("main"),
+            locals: vec![Local { name: None, ty: Type::Int }],
+            params_len: 0,
+            ret: Type::Void,
+            body: Block {
+                stmts: vec![stmt(StmtKind::Let {
+                    local: LocalId(0),
+                    init: Expr {
+                        ty: Type::Int,
+                        span: dummy_span(),
+                        kind: ExprKind::ListLiteral {
+                            elements: vec![int_expr(1), int_expr(2)],
+                        },
+                    },
+                })],
+            },
+            span: dummy_span(),
+        };
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        assert_eq!(
+            &chunk.code[..4],
+            &[Op::Constant(0), Op::Constant(1), Op::ConstructList(2), Op::SetLocal(0)]
+        );
+    }
+
+    #[test]
+    fn array_fill_emits_repeated_values() {
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("main"),
+            locals: vec![Local { name: None, ty: Type::Int }],
+            params_len: 0,
+            ret: Type::Void,
+            body: Block {
+                stmts: vec![stmt(StmtKind::Let {
+                    local: LocalId(0),
+                    init: Expr {
+                        ty: Type::Int,
+                        span: dummy_span(),
+                        kind: ExprKind::ArrayFill {
+                            value: Box::new(int_expr(7)),
+                            len: 3,
+                        },
+                    },
+                })],
+            },
+            span: dummy_span(),
+        };
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        // each compile_expr call adds a new constant slot, so indices are 0, 1, 2
+        assert_eq!(
+            &chunk.code[..5],
+            &[
+                Op::Constant(0),
+                Op::Constant(1),
+                Op::Constant(2),
+                Op::ConstructArray(3),
+                Op::SetLocal(0),
+            ]
+        );
+        assert_eq!(chunk.constants, vec![Value::Int(7), Value::Int(7), Value::Int(7)]);
+    }
+
+    #[test]
+    fn index_get_emits_ops() {
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("main"),
+            locals: vec![Local { name: None, ty: Type::Int }],
+            params_len: 0,
+            ret: Type::Void,
+            body: Block {
+                stmts: vec![stmt(StmtKind::Expr(Expr {
+                    ty: Type::Int,
+                    span: dummy_span(),
+                    kind: ExprKind::IndexGet {
+                        target: Box::new(local_expr(0)),
+                        index: Box::new(int_expr(1)),
+                    },
+                }))],
+            },
+            span: dummy_span(),
+        };
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_get_local = chunk.code.iter().any(|op| *op == Op::GetLocal(0));
+        let has_index_get = chunk.code.iter().any(|op| *op == Op::IndexGet);
+        assert!(has_get_local, "expected GetLocal(0)");
+        assert!(has_index_get, "expected IndexGet");
+    }
+
+    #[test]
+    fn set_index_emits_ops() {
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("main"),
+            locals: vec![Local { name: None, ty: Type::Int }],
+            params_len: 0,
+            ret: Type::Void,
+            body: Block {
+                stmts: vec![stmt(StmtKind::SetIndex {
+                    object: LocalId(0),
+                    index: Box::new(int_expr(1)),
+                    value: int_expr(99),
+                })],
+            },
+            span: dummy_span(),
+        };
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        let has_get_local = chunk.code.iter().any(|op| *op == Op::GetLocal(0));
+        let has_index_set = chunk.code.iter().any(|op| *op == Op::IndexSet);
+        let has_set_local = chunk.code.iter().any(|op| *op == Op::SetLocal(0));
+        assert!(has_get_local, "expected GetLocal(0)");
+        assert!(has_index_set, "expected IndexSet");
+        assert!(has_set_local, "expected SetLocal(0)");
     }
 }

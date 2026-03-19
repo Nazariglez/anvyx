@@ -26,6 +26,7 @@ pub enum Value {
     Nil,
     String(ManagedRc<String>),
     List(ManagedRc<Vec<Value>>),
+    Array(ManagedRc<Vec<Value>>),
     Map(ManagedRc<IndexMap<Value, Value>>),
     Struct(ManagedRc<StructData>),
     Tuple(ManagedRc<Vec<Value>>),
@@ -45,6 +46,7 @@ impl Hash for Value {
             Value::Nil => {}
             Value::String(s) => s.hash(state),
             Value::List(l) => l.hash(state),
+            Value::Array(a) => a.hash(state),
 
             // maps-as-keys are rejected by the typechecker, hash only by discriminant
             Value::Map(_) => {}
@@ -67,6 +69,16 @@ impl fmt::Display for Value {
             Value::List(l) => {
                 write!(f, "[")?;
                 for (i, v) in l.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{v}")?;
+                }
+                write!(f, "]")
+            }
+            Value::Array(a) => {
+                write!(f, "[")?;
+                for (i, v) in a.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
@@ -129,6 +141,7 @@ fn type_name(v: &Value) -> &'static str {
         Value::String(_) => "string",
         Value::Nil => "nil",
         Value::List(_) => "list",
+        Value::Array(_) => "array",
         Value::Map(_) => "map",
         Value::Struct(_) => "struct",
         Value::Tuple(_) => "tuple",
@@ -502,6 +515,47 @@ mod tests {
         let a = Value::List(ManagedRc::new(vec![Value::Int(1)]));
         let b = Value::List(ManagedRc::new(vec![Value::Int(2)]));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn display_array() {
+        let v = Value::Array(ManagedRc::new(vec![Value::Int(1), Value::Int(2)]));
+        assert_eq!(v.to_string(), "[1, 2]");
+    }
+
+    #[test]
+    fn display_empty_array() {
+        let v = Value::Array(ManagedRc::new(vec![]));
+        assert_eq!(v.to_string(), "[]");
+    }
+
+    #[test]
+    fn type_name_array() {
+        assert_eq!(type_name(&Value::Array(ManagedRc::new(vec![]))), "array");
+    }
+
+    #[test]
+    fn array_eq() {
+        let a = Value::Array(ManagedRc::new(vec![Value::Int(1), Value::Int(2)]));
+        let b = Value::Array(ManagedRc::new(vec![Value::Int(1), Value::Int(2)]));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn array_neq() {
+        let a = Value::Array(ManagedRc::new(vec![Value::Int(1)]));
+        let b = Value::Array(ManagedRc::new(vec![Value::Int(2)]));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn array_clone_shares_rc() {
+        let v = Value::Array(ManagedRc::new(vec![Value::Int(1)]));
+        let v2 = v.clone();
+        let Value::Array(rc) = v else { panic!() };
+        let Value::Array(rc2) = v2 else { panic!() };
+        assert_eq!(rc.strong_count(), 2);
+        assert!(ManagedRc::ptr_eq(&rc, &rc2));
     }
 
     #[test]
