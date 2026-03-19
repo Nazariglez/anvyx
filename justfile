@@ -14,3 +14,6 @@ tests-release target="tests":
 
 install:
     cargo install --path crates/anvyx --force
+
+miri:
+    MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri test -p anvyx-lang --all-targets
