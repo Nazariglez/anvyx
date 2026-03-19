@@ -1,0 +1,10 @@
+// @mode: run
+// @expect: success
+
+fn main() {
+    var m = ["a": 1, "b": 2];
+    let removed: int? = m.remove("a");
+    assert(removed != nil);
+    let check: int? = m["a"];
+    assert(check == nil);
+}

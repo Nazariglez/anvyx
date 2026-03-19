@@ -467,6 +467,20 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             compile_expr(fc, index)?;
             fc.emit(Op::IndexGet);
         }
+
+        hir::ExprKind::CollectionMut { object, method, args } => {
+            fc.emit(Op::GetLocal(object.0 as u16));
+            for arg in args {
+                compile_expr(fc, arg)?;
+            }
+            fc.emit(match method {
+                hir::CollectionMethod::ListPush => Op::ListPush,
+                hir::CollectionMethod::ListPop => Op::ListPop,
+                hir::CollectionMethod::MapInsert => Op::MapInsert,
+                hir::CollectionMethod::MapRemove => Op::MapRemove,
+            });
+            fc.emit(Op::SetLocal(object.0 as u16));
+        }
     }
 
     Ok(())

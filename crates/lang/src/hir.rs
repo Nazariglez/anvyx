@@ -121,6 +121,14 @@ pub struct MatchElse {
     pub body: Block,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CollectionMethod {
+    ListPush,
+    ListPop,
+    MapInsert,
+    MapRemove,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expr {
     pub ty: Type,
@@ -214,6 +222,12 @@ pub enum ExprKind {
     IndexGet {
         target: Box<Expr>,
         index: Box<Expr>,
+    },
+
+    CollectionMut {
+        object: LocalId,
+        method: CollectionMethod,
+        args: Vec<Expr>,
     },
 }
 

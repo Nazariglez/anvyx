@@ -458,6 +458,76 @@ impl<'a> VM<'a> {
                         }
                     }
                 }
+
+                Op::ListPush => {
+                    let value = self.pop();
+                    let collection = self.pop();
+                    match collection {
+                        Value::List(mut l) => {
+                            ManagedRc::make_mut(&mut l).push(value);
+                            self.push(Value::Nil);
+                            self.push(Value::List(l));
+                        }
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "ListPush on non-list value: {other}"
+                            )));
+                        }
+                    }
+                }
+
+                Op::ListPop => {
+                    let collection = self.pop();
+                    match collection {
+                        Value::List(mut l) => {
+                            let popped = ManagedRc::make_mut(&mut l).pop().unwrap_or(Value::Nil);
+                            self.push(popped);
+                            self.push(Value::List(l));
+                        }
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "ListPop on non-list value: {other}"
+                            )));
+                        }
+                    }
+                }
+
+                Op::MapInsert => {
+                    let value = self.pop();
+                    let key = self.pop();
+                    let collection = self.pop();
+                    match collection {
+                        Value::Map(mut m) => {
+                            ManagedRc::make_mut(&mut m).insert(key, value);
+                            self.push(Value::Nil);
+                            self.push(Value::Map(m));
+                        }
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "MapInsert on non-map value: {other}"
+                            )));
+                        }
+                    }
+                }
+
+                Op::MapRemove => {
+                    let key = self.pop();
+                    let collection = self.pop();
+                    match collection {
+                        Value::Map(mut m) => {
+                            let removed = ManagedRc::make_mut(&mut m)
+                                .remove(&key)
+                                .unwrap_or(Value::Nil);
+                            self.push(removed);
+                            self.push(Value::Map(m));
+                        }
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "MapRemove on non-map value: {other}"
+                            )));
+                        }
+                    }
+                }
             }
         }
     }
@@ -1073,6 +1143,161 @@ mod tests {
         // read local 1["a"] — should still be 1 due to COW
         chunk.emit(Op::GetLocal(1));
         chunk.emit(Op::Constant(k));
+        chunk.emit(Op::IndexGet);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn list_push_basic() {
+        let mut chunk = Chunk::new("main", 1, 0);
+        let i1 = chunk.add_constant(Value::Int(1));
+        let i2 = chunk.add_constant(Value::Int(2));
+        let i3 = chunk.add_constant(Value::Int(3));
+        let i99 = chunk.add_constant(Value::Int(99));
+        chunk.emit(Op::Constant(i1));
+        chunk.emit(Op::Constant(i2));
+        chunk.emit(Op::Constant(i3));
+        chunk.emit(Op::ConstructList(3));
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(i99));
+        chunk.emit(Op::ListPush);
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(i3));
+        chunk.emit(Op::IndexGet);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn list_push_cow_semantics() {
+        let mut chunk = Chunk::new("main", 2, 0);
+        let i10 = chunk.add_constant(Value::Int(10));
+        let i20 = chunk.add_constant(Value::Int(20));
+        let i99 = chunk.add_constant(Value::Int(99));
+        let i0 = chunk.add_constant(Value::Int(0));
+        chunk.emit(Op::Constant(i10));
+        chunk.emit(Op::Constant(i20));
+        chunk.emit(Op::ConstructList(2));
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::SetLocal(1));
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(i99));
+        chunk.emit(Op::ListPush);
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::GetLocal(1));
+        chunk.emit(Op::Constant(i0));
+        chunk.emit(Op::IndexGet);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn list_pop_basic() {
+        let mut chunk = Chunk::new("main", 1, 0);
+        let i1 = chunk.add_constant(Value::Int(1));
+        let i2 = chunk.add_constant(Value::Int(2));
+        let i3 = chunk.add_constant(Value::Int(3));
+        let i0 = chunk.add_constant(Value::Int(0));
+        chunk.emit(Op::Constant(i1));
+        chunk.emit(Op::Constant(i2));
+        chunk.emit(Op::Constant(i3));
+        chunk.emit(Op::ConstructList(3));
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::ListPop);
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::Pop);
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(i0));
+        chunk.emit(Op::IndexGet);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn map_insert_basic() {
+        let mut chunk = Chunk::new("main", 1, 0);
+        let kb = chunk.add_constant(str_val("b"));
+        let v2 = chunk.add_constant(Value::Int(2));
+        chunk.emit(Op::ConstructMap(0));
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(kb));
+        chunk.emit(Op::Constant(v2));
+        chunk.emit(Op::MapInsert);
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(kb));
+        chunk.emit(Op::IndexGet);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn map_remove_basic() {
+        let mut chunk = Chunk::new("main", 1, 0);
+        let ka = chunk.add_constant(str_val("a"));
+        let kb = chunk.add_constant(str_val("b"));
+        let v1 = chunk.add_constant(Value::Int(1));
+        let v2 = chunk.add_constant(Value::Int(2));
+        chunk.emit(Op::Constant(ka));
+        chunk.emit(Op::Constant(v1));
+        chunk.emit(Op::Constant(kb));
+        chunk.emit(Op::Constant(v2));
+        chunk.emit(Op::ConstructMap(2));
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(ka));
+        chunk.emit(Op::MapRemove);
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::Pop);
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(ka));
+        chunk.emit(Op::IndexGet);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn map_remove_cow_semantics() {
+        let mut chunk = Chunk::new("main", 2, 0);
+        let kx = chunk.add_constant(str_val("x"));
+        let v10 = chunk.add_constant(Value::Int(10));
+        chunk.emit(Op::Constant(kx));
+        chunk.emit(Op::Constant(v10));
+        chunk.emit(Op::ConstructMap(1));
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::SetLocal(1));
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(kx));
+        chunk.emit(Op::MapRemove);
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::Pop);
+        chunk.emit(Op::GetLocal(1));
+        chunk.emit(Op::Constant(kx));
         chunk.emit(Op::IndexGet);
         chunk.emit(Op::Return);
 

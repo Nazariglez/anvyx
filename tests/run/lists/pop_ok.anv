@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 3
+// @match-end
+
+fn main() {
+    var list: [int] = [1, 2, 3];
+    match list.pop() {
+        Option.Some(v) => println("{v}"),
+        _ => println("-1"),
+    }
+}

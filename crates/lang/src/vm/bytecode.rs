@@ -50,21 +50,27 @@ pub enum Op {
     Return,
 
     // composite types
-    ConstructStruct(u32, u16), // (type_id, field_count)
-    ConstructTuple(u16),       // element_count
+    ConstructStruct(u32, u16),    // (type_id, field_count)
+    ConstructTuple(u16),          // element_count
     ConstructEnum(u32, u16, u16), // (type_id, variant_index, field_count)
-    GetField(u16),             // field_index
-    SetField(u16),             // field_index
-    GetEnumVariant,            // pops enum, pushes variant index as Int
+    GetField(u16),                // field_index
+    SetField(u16),                // field_index
+    GetEnumVariant,               // pops enum, pushes variant index as Int
 
     // arrays and lists
-    ConstructArray(u16),       // pops N values, pushes Value::Array
-    ConstructList(u16),        // pops N values, pushes Value::List
-    IndexGet,                  // pops index, pops collection (Array|List|Map), pushes element
-    IndexSet,                  // pops value, pops index, pops collection (Array|List|Map), pushes mutated collection
+    ConstructArray(u16), // pops N values, pushes Value::Array
+    ConstructList(u16),  // pops N values, pushes Value::List
+    IndexGet,            // pops index, pops collection (Array|List|Map), pushes element
+    IndexSet, // pops value, pops index, pops collection (Array|List|Map), pushes mutated collection
 
     // maps
-    ConstructMap(u16),         // pops 2*N values (key, value pairs), pushes Value::Map
+    ConstructMap(u16), // pops 2*N values (key, value pairs), pushes Value::Map
+
+    // mutating collection methods
+    ListPush,  // pops value, list -> pushes Nil, modified list
+    ListPop,   // pops list -> pushes popped or Nil, modified list
+    MapInsert, // pops value, key, map -> pushes Nil, modified map
+    MapRemove, // pops key, map -> pushes removed or Nil, modified map
 }
 
 pub struct Chunk {

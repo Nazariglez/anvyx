@@ -1,0 +1,10 @@
+// @mode: run
+// @expect: success
+
+fn main() {
+    var a = ["x": 10];
+    let b = a;
+    a.remove("x");
+    let bx: int? = b["x"];
+    assert(bx != nil);
+}

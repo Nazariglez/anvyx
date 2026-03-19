@@ -2,8 +2,8 @@ use crate::ast::{ExprId, ExprKind, ExprNode, Type};
 
 use super::{
     call::{
-        check_call, check_instance_method_call, check_module_func_call, check_var_param_args,
-        type_call_on_base,
+        check_call, check_instance_method_call, check_list_method, check_map_method,
+        check_module_func_call, check_var_param_args, type_call_on_base,
     },
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
@@ -256,10 +256,6 @@ fn handle_method_call_if_applicable(
         _ => None,
     };
 
-    let Some((struct_name, struct_type_args)) = struct_info else {
-        return Some(MethodCallOutcome::NotMethod);
-    };
-
     let op_safe = field_op.safe() || call_op.safe();
     if op_safe {
         let error_span = if field_op.safe() {
@@ -283,30 +279,69 @@ fn handle_method_call_if_applicable(
         }
     }
 
-    let Some(struct_def) = type_checker.get_struct(struct_name).cloned() else {
-        errors.push(TypeErr::new(
-            field_node.span,
-            TypeErrKind::UnknownStruct { name: struct_name },
-        ));
+    if let Some((struct_name, struct_type_args)) = struct_info {
+        let Some(struct_def) = type_checker.get_struct(struct_name).cloned() else {
+            errors.push(TypeErr::new(
+                field_node.span,
+                TypeErrKind::UnknownStruct { name: struct_name },
+            ));
+            return Some(MethodCallOutcome::Handled {
+                ty: Type::Infer,
+                chain_optional: chain_is_optional || op_safe,
+                next_index: index + 2,
+                call_expr: call_op.expr_id(),
+                call_span: call_op.span(),
+            });
+        };
+
+        let method_ret = check_instance_method_call(
+            call_node,
+            struct_name,
+            field_node.node.field,
+            &struct_type_args,
+            &struct_def,
+            Some(base),
+            type_checker,
+            errors,
+        );
+
+        let mut result_ty = method_ret;
+        let mut chain_optional = chain_is_optional;
+        if op_safe || chain_is_optional {
+            chain_optional = true;
+            result_ty = Type::option_of(result_ty);
+        }
+
         return Some(MethodCallOutcome::Handled {
-            ty: Type::Infer,
-            chain_optional: chain_is_optional || op_safe,
+            ty: result_ty,
+            chain_optional,
             next_index: index + 2,
             call_expr: call_op.expr_id(),
             call_span: call_op.span(),
         });
-    };
+    }
 
-    let method_ret = check_instance_method_call(
-        call_node,
-        struct_name,
-        field_node.node.field,
-        &struct_type_args,
-        &struct_def,
-        Some(base),
-        type_checker,
-        errors,
-    );
+    let method_target = field_node.node.target.as_ref();
+    let method_ret = match &detection_ty {
+        Type::List { elem } => check_list_method(
+            call_node,
+            method_target,
+            field_node.node.field,
+            elem.as_ref(),
+            type_checker,
+            errors,
+        ),
+        Type::Map { key, value } => check_map_method(
+            call_node,
+            method_target,
+            field_node.node.field,
+            key.as_ref(),
+            value.as_ref(),
+            type_checker,
+            errors,
+        ),
+        _ => return Some(MethodCallOutcome::NotMethod),
+    };
 
     let mut result_ty = method_ret;
     let mut chain_optional = chain_is_optional;

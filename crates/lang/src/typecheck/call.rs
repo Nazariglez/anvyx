@@ -5,6 +5,7 @@ use crate::{
     },
     span::Span,
 };
+use internment::Intern;
 use std::collections::HashMap;
 
 use super::{
@@ -95,6 +96,141 @@ fn check_mutating_receiver(
             )
             .with_help("declare with 'var' to allow calling mutating methods"),
         );
+    }
+}
+
+fn collection_type_label(list: bool) -> Ident {
+    Ident(Intern::new(if list {
+        "list"
+    } else {
+        "map"
+    }
+    .to_string()))
+}
+
+fn check_collection_receiver_mutability(
+    target: &ExprNode,
+    type_label: Ident,
+    method_name: Ident,
+    type_checker: &TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    let Some(root) = root_ident(target) else {
+        return;
+    };
+
+    let Some(info) = type_checker.get_var(root) else {
+        return;
+    };
+
+    if !info.mutable {
+        errors.push(
+            TypeErr::new(
+                target.span,
+                TypeErrKind::MutatingMethodOnImmutable {
+                    struct_name: type_label,
+                    method: method_name,
+                },
+            )
+            .with_help("declare with 'var' to allow calling mutating methods"),
+        );
+    }
+}
+
+pub(super) fn check_list_method(
+    call: &CallNode,
+    target: &ExprNode,
+    method_name: Ident,
+    elem: &Type,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let label = collection_type_label(true);
+    let node = &call.node;
+    match method_name.0.as_ref().as_str() {
+        "push" => {
+            check_collection_receiver_mutability(target, label, method_name, type_checker, errors);
+            check_call_signature(
+                call.span,
+                &[elem.clone()],
+                &Type::Void,
+                &node.args,
+                None,
+                type_checker,
+                errors,
+            )
+        }
+        "pop" => {
+            check_collection_receiver_mutability(target, label, method_name, type_checker, errors);
+            check_call_signature(
+                call.span,
+                &[],
+                &Type::option_of(elem.clone()),
+                &node.args,
+                None,
+                type_checker,
+                errors,
+            )
+        }
+        _ => {
+            errors.push(TypeErr::new(
+                call.span,
+                TypeErrKind::UnknownMethod {
+                    struct_name: label,
+                    method: method_name,
+                },
+            ));
+            Type::Infer
+        }
+    }
+}
+
+pub(super) fn check_map_method(
+    call: &CallNode,
+    target: &ExprNode,
+    method_name: Ident,
+    key: &Type,
+    value: &Type,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let label = collection_type_label(false);
+    let node = &call.node;
+    match method_name.0.as_ref().as_str() {
+        "insert" => {
+            check_collection_receiver_mutability(target, label, method_name, type_checker, errors);
+            check_call_signature(
+                call.span,
+                &[key.clone(), value.clone()],
+                &Type::Void,
+                &node.args,
+                None,
+                type_checker,
+                errors,
+            )
+        }
+        "remove" => {
+            check_collection_receiver_mutability(target, label, method_name, type_checker, errors);
+            check_call_signature(
+                call.span,
+                &[key.clone()],
+                &Type::option_of(value.clone()),
+                &node.args,
+                None,
+                type_checker,
+                errors,
+            )
+        }
+        _ => {
+            errors.push(TypeErr::new(
+                call.span,
+                TypeErrKind::UnknownMethod {
+                    struct_name: label,
+                    method: method_name,
+                },
+            ));
+            Type::Infer
+        }
     }
 }
 
@@ -548,6 +684,31 @@ pub(super) fn try_check_method_call(
             type_checker,
             errors,
         ));
+    }
+
+    match &target_ty {
+        Type::List { elem } => {
+            return Some(check_list_method(
+                call,
+                target,
+                method_name,
+                elem.as_ref(),
+                type_checker,
+                errors,
+            ));
+        }
+        Type::Map { key, value } => {
+            return Some(check_map_method(
+                call,
+                target,
+                method_name,
+                key.as_ref(),
+                value.as_ref(),
+                type_checker,
+                errors,
+            ));
+        }
+        _ => {}
     }
 
     None

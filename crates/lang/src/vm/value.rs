@@ -39,6 +39,13 @@ impl MapStorage {
         }
     }
 
+    pub fn remove(&mut self, key: &Value) -> Option<Value> {
+        match self {
+            MapStorage::Unordered(m) => m.remove(key),
+            MapStorage::Ordered(m) => m.shift_remove(key),
+        }
+    }
+
     pub fn len(&self) -> usize {
         match self {
             MapStorage::Unordered(m) => m.len(),
