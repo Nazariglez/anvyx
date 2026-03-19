@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 42
+// 3.14
+// true
+// @match-end
+
+fn main() {
+    println(42);
+    println(3.14);
+    println(true);
+}

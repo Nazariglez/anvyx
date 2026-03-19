@@ -36,6 +36,12 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
         return true;
     }
 
+    // any type accepts any concrete type
+    let has_any = matches!(from, Type::Any) || matches!(to, Type::Any);
+    if has_any {
+        return true;
+    }
+
     // if either side is Infer, we need to unify them
     let needs_inference = from.is_infer() || to.is_infer();
     if needs_inference {

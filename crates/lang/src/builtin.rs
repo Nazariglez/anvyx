@@ -32,7 +32,7 @@ impl Builtin {
 
     pub fn params(&self) -> Vec<Type> {
         match self {
-            Builtin::Println => vec![Type::String],
+            Builtin::Println => vec![Type::Any],
             Builtin::Assert => vec![Type::Bool],
             Builtin::AssertMsg => vec![Type::Bool, Type::String],
             Builtin::OrderedMap => vec![],
@@ -78,7 +78,7 @@ mod tests {
 
     #[test]
     fn println_params() {
-        assert_eq!(Builtin::Println.params(), vec![Type::String]);
+        assert_eq!(Builtin::Println.params(), vec![Type::Any]);
     }
 
     #[test]
@@ -91,7 +91,7 @@ mod tests {
         assert_eq!(
             Builtin::Println.func_type(),
             Type::Func {
-                params: vec![Type::String],
+                params: vec![Type::Any],
                 ret: Box::new(Type::Void),
             }
         );

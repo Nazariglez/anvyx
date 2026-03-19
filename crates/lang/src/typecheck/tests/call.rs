@@ -462,17 +462,21 @@ fn test_println_builtin_ok() {
 }
 
 #[test]
-fn test_println_builtin_wrong_arg_err() {
+fn test_println_builtin_int_ok() {
     reset_expr_ids();
-    // println(42) should fail — expected string, found int
-    let prog = program(vec![expr_stmt(call_expr(
-        ident_expr("println"),
-        vec![lit_int(42)],
-    ))]);
-    let errors = run_err(prog);
-    assert!(
-        errors
-            .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
-    );
+    let call = call_expr(ident_expr("println"), vec![lit_int(42)]);
+    let call_id = get_expr_id(&call);
+    let prog = program(vec![expr_stmt(call)]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, call_id, Type::Void);
+}
+
+#[test]
+fn test_println_builtin_bool_ok() {
+    reset_expr_ids();
+    let call = call_expr(ident_expr("println"), vec![lit_bool(true)]);
+    let call_id = get_expr_id(&call);
+    let prog = program(vec![expr_stmt(call)]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, call_id, Type::Void);
 }

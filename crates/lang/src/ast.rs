@@ -132,6 +132,8 @@ pub enum ArrayLen {
 pub enum Type {
     /// Unknown type that needs to be inferred
     Infer,
+    /// Accepts any concrete type (used for builtins like println)
+    Any,
     /// Int 64 type
     Int,
     /// Float 64 type
@@ -307,6 +309,7 @@ impl Display for Type {
                 ret
             ),
             Type::Infer => write!(f, "<infer>"),
+            Type::Any => write!(f, "any"),
             Type::Var(id) => write!(f, "{}", id),
             Type::UnresolvedName(ident) => write!(f, "{}", ident),
             Type::Tuple(elements) => {
