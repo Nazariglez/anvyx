@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+
+fn main() {
+    let m = ["a": 1, "b": 2];
+    let a: int? = m["a"];
+    let b: int? = m["b"];
+    let z: int? = m["z"];
+    let nothing: int? = nil;
+    assert(a != nothing);
+    assert(b != nothing);
+    assert(z == nothing);
+}

@@ -1397,6 +1397,21 @@ fn lower_expr(
             }
         }
 
+        ast::ExprKind::MapLiteral(lit) => {
+            let entries: Vec<(hir::Expr, hir::Expr)> = lit
+                .node
+                .entries
+                .iter()
+                .map(|(k, v)| {
+                    let key = lower_expr(k, ctx, fc)?;
+                    let value = lower_expr(v, ctx, fc)?;
+                    Ok((key, value))
+                })
+                .collect::<Result<_, _>>()?;
+
+            hir::ExprKind::MapLiteral { entries }
+        }
+
         other => {
             return Err(LowerError::UnsupportedExprKind {
                 span,
@@ -1962,9 +1977,36 @@ mod tests {
     }
 
     #[test]
-    fn rejects_map_literal() {
-        let err = lower_err(r#"fn main() { let x = ["a": 1]; }"#);
-        assert!(matches!(err, LowerError::UnsupportedExprKind { .. }));
+    fn lowers_map_literal() {
+        let prog = lower_ok(r#"fn main() { let x = ["a": 1]; }"#);
+        let main = find_main(&prog);
+        let init = &main.body.stmts[0];
+        match &init.kind {
+            StmtKind::Let { init, .. } => {
+                assert!(
+                    matches!(init.kind, ExprKind::MapLiteral { .. }),
+                    "expected MapLiteral, got {:?}",
+                    init.kind
+                );
+            }
+            other => panic!("expected Let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lowers_empty_map_literal() {
+        let prog = lower_ok(r#"fn main() { let x: [string: int] = [:]; }"#);
+        let main = find_main(&prog);
+        let init = &main.body.stmts[0];
+        match &init.kind {
+            StmtKind::Let { init, .. } => match &init.kind {
+                ExprKind::MapLiteral { entries } => {
+                    assert!(entries.is_empty(), "expected empty entries");
+                }
+                other => panic!("expected MapLiteral, got {other:?}"),
+            },
+            other => panic!("expected Let, got {other:?}"),
+        }
     }
 
     #[test]

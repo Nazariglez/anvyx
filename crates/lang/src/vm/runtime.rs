@@ -1,3 +1,5 @@
+use indexmap::IndexMap;
+
 use crate::builtin::Builtin;
 
 use super::builtins;
@@ -11,6 +13,13 @@ use super::value::{
 };
 
 pub type ExternHandler = Box<dyn Fn(Vec<Value>) -> Result<Value, RuntimeError>>;
+
+fn as_usize_index(val: &Value) -> Result<usize, RuntimeError> {
+    match val {
+        Value::Int(i) => Ok(*i as usize),
+        other => Err(RuntimeError::new(format!("index must be int, got {other}"))),
+    }
+}
 
 struct CallFrame {
     chunk_idx: usize,
@@ -361,39 +370,55 @@ impl<'a> VM<'a> {
                     self.push(Value::List(ManagedRc::new(elements)));
                 }
 
+                Op::ConstructMap(count) => {
+                    let count = count as usize;
+                    let total = count * 2;
+                    let start = self.stack.len() - total;
+                    let flat: Vec<Value> = self.stack.drain(start..).collect();
+                    let mut map = IndexMap::with_capacity(count);
+                    for pair in flat.chunks_exact(2) {
+                        let key = pair[0].clone();
+                        let value = pair[1].clone();
+                        map.insert(key, value);
+                    }
+                    self.push(Value::Map(ManagedRc::new(map)));
+                }
+
                 Op::IndexGet => {
                     let index_val = self.pop();
                     let collection = self.pop();
 
-                    let idx = match index_val {
-                        Value::Int(i) => i as usize,
-                        other => {
-                            return Err(RuntimeError::new(format!(
-                                "index must be int, got {other}"
-                            )));
+                    match collection {
+                        Value::Map(m) => {
+                            let element = m.get(&index_val).cloned().unwrap_or(Value::Nil);
+                            self.push(element);
                         }
-                    };
-
-                    let element = match &collection {
-                        Value::Array(a) => a.get(idx).cloned().ok_or_else(|| {
-                            RuntimeError::new(format!(
-                                "index {idx} out of bounds for array of length {}",
-                                a.len()
-                            ))
-                        })?,
-                        Value::List(l) => l.get(idx).cloned().ok_or_else(|| {
-                            RuntimeError::new(format!(
-                                "index {idx} out of bounds for list of length {}",
-                                l.len()
-                            ))
-                        })?,
+                        Value::Array(a) => {
+                            let idx = as_usize_index(&index_val)?;
+                            let element = a.get(idx).cloned().ok_or_else(|| {
+                                RuntimeError::new(format!(
+                                    "index {idx} out of bounds for array of length {}",
+                                    a.len()
+                                ))
+                            })?;
+                            self.push(element);
+                        }
+                        Value::List(l) => {
+                            let idx = as_usize_index(&index_val)?;
+                            let element = l.get(idx).cloned().ok_or_else(|| {
+                                RuntimeError::new(format!(
+                                    "index {idx} out of bounds for list of length {}",
+                                    l.len()
+                                ))
+                            })?;
+                            self.push(element);
+                        }
                         other => {
                             return Err(RuntimeError::new(format!(
                                 "IndexGet on non-indexable value: {other}"
                             )));
                         }
-                    };
-                    self.push(element);
+                    }
                 }
 
                 Op::IndexSet => {
@@ -401,17 +426,13 @@ impl<'a> VM<'a> {
                     let index_val = self.pop();
                     let collection = self.pop();
 
-                    let idx = match index_val {
-                        Value::Int(i) => i as usize,
-                        other => {
-                            return Err(RuntimeError::new(format!(
-                                "index must be int, got {other}"
-                            )));
-                        }
-                    };
-
                     match collection {
+                        Value::Map(mut m) => {
+                            ManagedRc::make_mut(&mut m).insert(index_val, new_value);
+                            self.push(Value::Map(m));
+                        }
                         Value::Array(mut a) => {
+                            let idx = as_usize_index(&index_val)?;
                             let len = a.len();
                             if idx >= len {
                                 return Err(RuntimeError::new(format!(
@@ -422,6 +443,7 @@ impl<'a> VM<'a> {
                             self.push(Value::Array(a));
                         }
                         Value::List(mut l) => {
+                            let idx = as_usize_index(&index_val)?;
                             let len = l.len();
                             if idx >= len {
                                 return Err(RuntimeError::new(format!(
@@ -901,6 +923,142 @@ mod tests {
         // read local 1[0] — should still be 10 due to COW
         chunk.emit(Op::GetLocal(1));
         chunk.emit(Op::Constant(i0));
+        chunk.emit(Op::IndexGet);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn construct_map_basic() {
+        let mut chunk = Chunk::new("main", 0, 0);
+        let k = chunk.add_constant(str_val("a"));
+        let v = chunk.add_constant(Value::Int(1));
+        chunk.emit(Op::Constant(k));
+        chunk.emit(Op::Constant(v));
+        chunk.emit(Op::ConstructMap(1));
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn construct_empty_map() {
+        let mut chunk = Chunk::new("main", 0, 0);
+        chunk.emit(Op::ConstructMap(0));
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn index_get_map_hit() {
+        let mut chunk = Chunk::new("main", 0, 0);
+        let k = chunk.add_constant(str_val("a"));
+        let v = chunk.add_constant(Value::Int(1));
+        chunk.emit(Op::Constant(k));
+        chunk.emit(Op::Constant(v));
+        chunk.emit(Op::ConstructMap(1));
+        chunk.emit(Op::Constant(k));
+        chunk.emit(Op::IndexGet);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn index_get_map_miss() {
+        let mut chunk = Chunk::new("main", 0, 0);
+        let k = chunk.add_constant(str_val("a"));
+        let v = chunk.add_constant(Value::Int(1));
+        let miss = chunk.add_constant(str_val("b"));
+        chunk.emit(Op::Constant(k));
+        chunk.emit(Op::Constant(v));
+        chunk.emit(Op::ConstructMap(1));
+        chunk.emit(Op::Constant(miss));
+        chunk.emit(Op::IndexGet);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn index_set_map_insert() {
+        let mut chunk = Chunk::new("main", 1, 0);
+        let k = chunk.add_constant(str_val("x"));
+        let v = chunk.add_constant(Value::Int(42));
+        chunk.emit(Op::ConstructMap(0));
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(k));
+        chunk.emit(Op::Constant(v));
+        chunk.emit(Op::IndexSet);
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn index_set_map_update() {
+        let mut chunk = Chunk::new("main", 1, 0);
+        let k = chunk.add_constant(str_val("a"));
+        let v1 = chunk.add_constant(Value::Int(1));
+        let v2 = chunk.add_constant(Value::Int(99));
+        chunk.emit(Op::Constant(k));
+        chunk.emit(Op::Constant(v1));
+        chunk.emit(Op::ConstructMap(1));
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(k));
+        chunk.emit(Op::Constant(v2));
+        chunk.emit(Op::IndexSet);
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn map_cow_semantics() {
+        // local 0 = {"a": 1}; local 1 = local 0 (shared)
+        // local 0["a"] = 99 (COW: local 1 should remain {"a": 1})
+        let mut chunk = Chunk::new("main", 2, 0);
+        let k = chunk.add_constant(str_val("a"));
+        let v1 = chunk.add_constant(Value::Int(1));
+        let v2 = chunk.add_constant(Value::Int(99));
+
+        chunk.emit(Op::Constant(k));
+        chunk.emit(Op::Constant(v1));
+        chunk.emit(Op::ConstructMap(1));
+        chunk.emit(Op::SetLocal(0));
+
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::SetLocal(1));
+
+        chunk.emit(Op::GetLocal(0));
+        chunk.emit(Op::Constant(k));
+        chunk.emit(Op::Constant(v2));
+        chunk.emit(Op::IndexSet);
+        chunk.emit(Op::SetLocal(0));
+
+        // read local 1["a"] — should still be 1 due to COW
+        chunk.emit(Op::GetLocal(1));
+        chunk.emit(Op::Constant(k));
         chunk.emit(Op::IndexGet);
         chunk.emit(Op::Return);
 

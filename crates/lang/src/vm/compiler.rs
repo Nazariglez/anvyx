@@ -454,6 +454,14 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             fc.emit(Op::ConstructList(*len as u16));
         }
 
+        hir::ExprKind::MapLiteral { entries } => {
+            for (key, value) in entries {
+                compile_expr(fc, key)?;
+                compile_expr(fc, value)?;
+            }
+            fc.emit(Op::ConstructMap(entries.len() as u16));
+        }
+
         hir::ExprKind::IndexGet { target, index } => {
             compile_expr(fc, target)?;
             compile_expr(fc, index)?;
@@ -1103,5 +1111,63 @@ mod tests {
         assert!(has_get_local, "expected GetLocal(0)");
         assert!(has_index_set, "expected IndexSet");
         assert!(has_set_local, "expected SetLocal(0)");
+    }
+
+    #[test]
+    fn map_literal_emits_construct_map() {
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("main"),
+            locals: vec![Local { name: None, ty: Type::Int }],
+            params_len: 0,
+            ret: Type::Void,
+            body: Block {
+                stmts: vec![stmt(StmtKind::Let {
+                    local: LocalId(0),
+                    init: Expr {
+                        ty: Type::Int,
+                        span: dummy_span(),
+                        kind: ExprKind::MapLiteral {
+                            entries: vec![(int_expr(1), bool_expr(true))],
+                        },
+                    },
+                })],
+            },
+            span: dummy_span(),
+        };
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        assert_eq!(
+            &chunk.code[..4],
+            &[Op::Constant(0), Op::True, Op::ConstructMap(1), Op::SetLocal(0)]
+        );
+    }
+
+    #[test]
+    fn empty_map_literal_emits_construct_map_zero() {
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("main"),
+            locals: vec![Local { name: None, ty: Type::Int }],
+            params_len: 0,
+            ret: Type::Void,
+            body: Block {
+                stmts: vec![stmt(StmtKind::Let {
+                    local: LocalId(0),
+                    init: Expr {
+                        ty: Type::Int,
+                        span: dummy_span(),
+                        kind: ExprKind::MapLiteral { entries: vec![] },
+                    },
+                })],
+            },
+            span: dummy_span(),
+        };
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        assert_eq!(
+            &chunk.code[..2],
+            &[Op::ConstructMap(0), Op::SetLocal(0)]
+        );
     }
 }

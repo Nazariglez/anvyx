@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+
+fn main() {
+    let m = [1: "one", 2: "two"];
+    let v1: string? = m[1];
+    let v2: string? = m[2];
+    let v3: string? = m[3];
+    let nothing: string? = nil;
+    assert(v1 != nothing);
+    assert(v2 != nothing);
+    assert(v3 == nothing);
+}

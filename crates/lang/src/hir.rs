@@ -207,6 +207,10 @@ pub enum ExprKind {
         len: usize,
     },
 
+    MapLiteral {
+        entries: Vec<(Expr, Expr)>,
+    },
+
     IndexGet {
         target: Box<Expr>,
         index: Box<Expr>,
@@ -837,6 +841,21 @@ mod tests {
         assert!(matches!(stmt.kind, StmtKind::SetIndex { .. }));
         if let StmtKind::SetIndex { object, .. } = &stmt.kind {
             assert_eq!(*object, LocalId(0));
+        }
+    }
+
+    #[test]
+    fn expr_map_literal() {
+        let expr = Expr {
+            ty: Type::Int,
+            span: dummy_span(),
+            kind: ExprKind::MapLiteral {
+                entries: vec![(int_expr(1), bool_expr(true))],
+            },
+        };
+        assert!(matches!(expr.kind, ExprKind::MapLiteral { .. }));
+        if let ExprKind::MapLiteral { entries } = &expr.kind {
+            assert_eq!(entries.len(), 1);
         }
     }
 

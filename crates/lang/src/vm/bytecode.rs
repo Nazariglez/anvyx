@@ -60,8 +60,11 @@ pub enum Op {
     // arrays and lists
     ConstructArray(u16),       // pops N values, pushes Value::Array
     ConstructList(u16),        // pops N values, pushes Value::List
-    IndexGet,                  // pops index (Int), pops collection (Array|List), pushes element
-    IndexSet,                  // pops value, pops index (Int), pops collection, pushes mutated collection
+    IndexGet,                  // pops index, pops collection (Array|List|Map), pushes element
+    IndexSet,                  // pops value, pops index, pops collection (Array|List|Map), pushes mutated collection
+
+    // maps
+    ConstructMap(u16),         // pops 2*N values (key, value pairs), pushes Value::Map
 }
 
 pub struct Chunk {

@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+
+fn main() {
+    let m = ["hp": 100, "mp": 50];
+    let hp: int? = m["hp"];
+    let mp: int? = m["mp"];
+    let nothing: int? = nil;
+    assert(hp != nothing);
+    assert(mp != nothing);
+}
