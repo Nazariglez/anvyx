@@ -16,7 +16,7 @@ pub use anvyx_macros::{export_fn, provider};
 pub use metadata::{
     ExternDecl, ExternFuncMeta, ExternProviderMeta, exports_to_json, parse_provider_json,
 };
-pub use vm::{EnumData, ExternHandler, ManagedRc, RuntimeError, StructData, Value};
+pub use vm::{EnumData, ExternHandler, ManagedRc, MapStorage, RuntimeError, StructData, Value};
 
 pub struct StdModuleSource {
     pub anv_source: String,

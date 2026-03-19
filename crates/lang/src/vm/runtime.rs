@@ -1,5 +1,3 @@
-use indexmap::IndexMap;
-
 use crate::builtin::Builtin;
 
 use super::builtins;
@@ -7,9 +5,9 @@ use super::bytecode::Op;
 use super::compiler::CompiledProgram;
 use super::managed_rc::ManagedRc;
 use super::value::{
-    EnumData, RuntimeError, StructData, Value, value_add, value_and, value_div, value_eq,
-    value_gt, value_gte, value_lt, value_lte, value_mul, value_negate, value_neq, value_not,
-    value_or, value_rem, value_sub, value_xor,
+    EnumData, MapStorage, RuntimeError, StructData, Value, value_add, value_and, value_div,
+    value_eq, value_gt, value_gte, value_lt, value_lte, value_mul, value_negate, value_neq,
+    value_not, value_or, value_rem, value_sub, value_xor,
 };
 
 pub type ExternHandler = Box<dyn Fn(Vec<Value>) -> Result<Value, RuntimeError>>;
@@ -375,13 +373,13 @@ impl<'a> VM<'a> {
                     let total = count * 2;
                     let start = self.stack.len() - total;
                     let flat: Vec<Value> = self.stack.drain(start..).collect();
-                    let mut map = IndexMap::with_capacity(count);
+                    let mut storage = MapStorage::with_capacity_unordered(count);
                     for pair in flat.chunks_exact(2) {
                         let key = pair[0].clone();
                         let value = pair[1].clone();
-                        map.insert(key, value);
+                        storage.insert(key, value);
                     }
-                    self.push(Value::Map(ManagedRc::new(map)));
+                    self.push(Value::Map(ManagedRc::new(storage)));
                 }
 
                 Op::IndexGet => {

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 pub use managed_rc::ManagedRc;
 pub use runtime::ExternHandler;
 pub use value::RuntimeError;
-pub use value::{EnumData, StructData, Value};
+pub use value::{EnumData, MapStorage, StructData, Value};
 
 pub fn run_with_externs(
     hir_prog: &hir::Program,

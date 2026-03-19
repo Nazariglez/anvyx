@@ -1,9 +1,87 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
 use indexmap::IndexMap;
 
 use super::managed_rc::ManagedRc;
+
+#[derive(Debug, Clone)]
+pub enum MapStorage {
+    Unordered(HashMap<Value, Value>),
+    Ordered(IndexMap<Value, Value>),
+}
+
+impl MapStorage {
+    pub fn new_unordered() -> Self {
+        MapStorage::Unordered(HashMap::new())
+    }
+
+    pub fn new_ordered() -> Self {
+        MapStorage::Ordered(IndexMap::new())
+    }
+
+    pub fn with_capacity_unordered(cap: usize) -> Self {
+        MapStorage::Unordered(HashMap::with_capacity(cap))
+    }
+
+    pub fn get(&self, key: &Value) -> Option<&Value> {
+        match self {
+            MapStorage::Unordered(m) => m.get(key),
+            MapStorage::Ordered(m) => m.get(key),
+        }
+    }
+
+    pub fn insert(&mut self, key: Value, value: Value) -> Option<Value> {
+        match self {
+            MapStorage::Unordered(m) => m.insert(key, value),
+            MapStorage::Ordered(m) => m.insert(key, value),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            MapStorage::Unordered(m) => m.len(),
+            MapStorage::Ordered(m) => m.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn is_ordered(&self) -> bool {
+        matches!(self, MapStorage::Ordered(_))
+    }
+
+    pub fn iter(&self) -> Box<dyn Iterator<Item = (&Value, &Value)> + '_> {
+        match self {
+            MapStorage::Unordered(m) => Box::new(m.iter()),
+            MapStorage::Ordered(m) => Box::new(m.iter()),
+        }
+    }
+}
+
+impl PartialEq for MapStorage {
+    fn eq(&self, other: &Self) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+        for (k, v) in self.iter() {
+            match other.get(k) {
+                Some(ov) if ov == v => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+}
+
+impl Eq for MapStorage {}
+
+impl Hash for MapStorage {
+    fn hash<H: Hasher>(&self, _state: &mut H) {}
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StructData {
@@ -27,7 +105,7 @@ pub enum Value {
     String(ManagedRc<String>),
     List(ManagedRc<Vec<Value>>),
     Array(ManagedRc<Vec<Value>>),
-    Map(ManagedRc<IndexMap<Value, Value>>),
+    Map(ManagedRc<MapStorage>),
     Struct(ManagedRc<StructData>),
     Tuple(ManagedRc<Vec<Value>>),
     Enum(ManagedRc<EnumData>),
@@ -88,11 +166,22 @@ impl fmt::Display for Value {
             }
             Value::Map(m) => {
                 write!(f, "[")?;
-                for (i, (k, v)) in m.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
+                if m.is_ordered() {
+                    for (i, (k, v)) in m.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{k}: {v}")?;
                     }
-                    write!(f, "{k}: {v}")?;
+                } else {
+                    let mut entries: Vec<_> = m.iter().collect();
+                    entries.sort_by(|(a, _), (b, _)| a.to_string().cmp(&b.to_string()));
+                    for (i, (k, v)) in entries.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{k}: {v}")?;
+                    }
                 }
                 write!(f, "]")
             }
@@ -343,7 +432,6 @@ pub fn value_xor(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
 mod tests {
     use super::*;
     use crate::vm::managed_rc::ManagedRc;
-    use indexmap::IndexMap;
 
     fn s(text: &str) -> Value {
         Value::String(ManagedRc::new(text.to_string()))
@@ -390,15 +478,15 @@ mod tests {
 
     #[test]
     fn display_empty_map() {
-        let v = Value::Map(ManagedRc::new(IndexMap::new()));
+        let v = Value::Map(ManagedRc::new(MapStorage::new_unordered()));
         assert_eq!(v.to_string(), "[]");
     }
 
     #[test]
     fn display_map() {
-        let mut map = IndexMap::new();
-        map.insert(s("key"), Value::Int(42));
-        let v = Value::Map(ManagedRc::new(map));
+        let mut storage = MapStorage::new_unordered();
+        storage.insert(s("key"), Value::Int(42));
+        let v = Value::Map(ManagedRc::new(storage));
         assert_eq!(v.to_string(), "[key: 42]");
     }
 
@@ -441,7 +529,7 @@ mod tests {
     #[test]
     fn type_name_map() {
         assert_eq!(
-            type_name(&Value::Map(ManagedRc::new(IndexMap::new()))),
+            type_name(&Value::Map(ManagedRc::new(MapStorage::new_unordered()))),
             "map"
         );
     }
@@ -495,12 +583,23 @@ mod tests {
 
     #[test]
     fn map_clone_shares_rc() {
-        let v = Value::Map(ManagedRc::new(IndexMap::new()));
+        let v = Value::Map(ManagedRc::new(MapStorage::new_unordered()));
         let v2 = v.clone();
         let Value::Map(rc) = v else { panic!() };
         let Value::Map(rc2) = v2 else { panic!() };
         assert_eq!(rc.strong_count(), 2);
         assert!(ManagedRc::ptr_eq(&rc, &rc2));
+    }
+
+    #[test]
+    fn map_eq_across_storage_variants() {
+        let mut unordered = MapStorage::new_unordered();
+        unordered.insert(s("a"), Value::Int(1));
+        let mut ordered = MapStorage::new_ordered();
+        ordered.insert(s("a"), Value::Int(1));
+        let a = Value::Map(ManagedRc::new(unordered));
+        let b = Value::Map(ManagedRc::new(ordered));
+        assert_eq!(a, b);
     }
 
     #[test]
