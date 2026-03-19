@@ -40,7 +40,8 @@ impl StdModule {
 }
 
 pub fn std_modules() -> Vec<StdModule> {
-    vec![math::module()]
+    vec![math::module(), maps::module()]
 }
 
+mod maps;
 mod math;

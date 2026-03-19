@@ -1,4 +1,5 @@
-use super::value::{RuntimeError, Value};
+use super::managed_rc::ManagedRc;
+use super::value::{MapStorage, RuntimeError, Value};
 use crate::builtin::Builtin;
 use std::fmt::Write;
 
@@ -22,5 +23,7 @@ pub fn call_builtin(
             Value::Bool(true) => Ok(Value::Nil),
             _ => Err(RuntimeError::new(format!("assertion failed: {}", args[1]))),
         },
+
+        Builtin::OrderedMap => Ok(Value::Map(ManagedRc::new(MapStorage::new_ordered()))),
     }
 }

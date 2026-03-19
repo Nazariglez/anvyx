@@ -6,9 +6,15 @@ pub(crate) enum Builtin {
     Println,
     Assert,
     AssertMsg,
+    OrderedMap,
 }
 
-const ALL: &[Builtin] = &[Builtin::Println, Builtin::Assert, Builtin::AssertMsg];
+const ALL: &[Builtin] = &[
+    Builtin::Println,
+    Builtin::Assert,
+    Builtin::AssertMsg,
+    Builtin::OrderedMap,
+];
 
 impl Builtin {
     pub fn name(&self) -> &'static str {
@@ -16,6 +22,7 @@ impl Builtin {
             Builtin::Println => "println",
             Builtin::Assert => "assert",
             Builtin::AssertMsg => "assert_msg",
+            Builtin::OrderedMap => "ordered_map",
         }
     }
 
@@ -28,6 +35,7 @@ impl Builtin {
             Builtin::Println => vec![Type::String],
             Builtin::Assert => vec![Type::Bool],
             Builtin::AssertMsg => vec![Type::Bool, Type::String],
+            Builtin::OrderedMap => vec![],
         }
     }
 
@@ -36,6 +44,10 @@ impl Builtin {
             Builtin::Println => Type::Void,
             Builtin::Assert => Type::Void,
             Builtin::AssertMsg => Type::Void,
+            Builtin::OrderedMap => Type::Map {
+                key: Type::Infer.boxed(),
+                value: Type::Infer.boxed(),
+            },
         }
     }
 
@@ -88,10 +100,40 @@ mod tests {
     #[test]
     fn all_contains_all_builtins() {
         let all = Builtin::all();
-        assert_eq!(all.len(), 3);
+        assert_eq!(all.len(), 4);
         assert_eq!(all[0], Builtin::Println);
         assert_eq!(all[1], Builtin::Assert);
         assert_eq!(all[2], Builtin::AssertMsg);
+        assert_eq!(all[3], Builtin::OrderedMap);
+    }
+
+    #[test]
+    fn ordered_map_name() {
+        assert_eq!(Builtin::OrderedMap.name(), "ordered_map");
+    }
+
+    #[test]
+    fn ordered_map_params() {
+        assert_eq!(Builtin::OrderedMap.params(), vec![]);
+    }
+
+    #[test]
+    fn ordered_map_ret() {
+        assert_eq!(
+            Builtin::OrderedMap.ret(),
+            Type::Map {
+                key: Type::Infer.boxed(),
+                value: Type::Infer.boxed(),
+            }
+        );
+    }
+
+    #[test]
+    fn from_name_ordered_map() {
+        assert_eq!(
+            Builtin::from_name("ordered_map"),
+            Some(Builtin::OrderedMap)
+        );
     }
 
     #[test]

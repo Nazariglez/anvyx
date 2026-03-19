@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @contains: ok
+
+import std.maps;
+
+fn main() {
+    var m = maps.ordered<string, int>();
+    m["hp"] = 100;
+    m["mp"] = 50;
+    let hp: int? = m["hp"];
+    let mp: int? = m["mp"];
+    let nothing: int? = nil;
+    assert(hp != nothing);
+    assert(mp != nothing);
+    println("ok");
+}

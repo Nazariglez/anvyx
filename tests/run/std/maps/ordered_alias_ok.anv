@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @contains: ok
+
+import std.maps as m;
+
+fn main() {
+    var om = m.ordered<string, int>();
+    om["x"] = 42;
+    let v: int? = om["x"];
+    let nothing: int? = nil;
+    assert(v != nothing);
+    println("ok");
+}
