@@ -102,6 +102,7 @@ pub(super) fn check_call(
     call: &CallNode,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
+    expected: Option<&Type>,
 ) -> Type {
     let node = &call.node;
 
@@ -111,7 +112,7 @@ pub(super) fn check_call(
         return result;
     }
 
-    let func_ty = check_expr(&node.func, type_checker, errors);
+    let func_ty = check_expr(&node.func, type_checker, errors, None);
 
     // try to get the function name to look up type parameters
     let func_name = match &node.func.node.kind {
@@ -148,7 +149,7 @@ pub(super) fn check_call(
                 return Type::Infer;
             };
 
-            let Type::Func { params, ret: _ } = &func_ty else {
+            let Type::Func { params, ret } = &func_ty else {
                 errors.push(TypeErr::new(
                     call.span,
                     TypeErrKind::NotAFunction {
@@ -164,6 +165,8 @@ pub(super) fn check_call(
                 params,
                 &node.args,
                 func_ty.clone(),
+                ret,
+                expected,
                 type_checker,
                 errors,
             ) else {
@@ -254,7 +257,7 @@ pub(super) fn check_call(
 
             // check each argument against the substituted parameter type
             for (arg_expr, param_ty) in node.args.iter().zip(params.iter()) {
-                check_expr(arg_expr, type_checker, errors);
+                check_expr(arg_expr, type_checker, errors, None);
                 let instantiated_param_ty = subst_type(param_ty, &subst);
                 let arg_ref = TypeRef::Expr(arg_expr.node.id);
                 let param_ref = TypeRef::Concrete(instantiated_param_ty);
@@ -265,13 +268,8 @@ pub(super) fn check_call(
                 check_var_param_args(&param_info, &node.args, type_checker, errors);
             }
 
-            let ret = instantiate_and_check_fn(
-                name,
-                &node.type_args,
-                call.span,
-                type_checker,
-                errors,
-            );
+            let ret =
+                instantiate_and_check_fn(name, &node.type_args, call.span, type_checker, errors);
             type_checker
                 .resolved_call_type_args
                 .insert(node.func.node.id, (name, node.type_args.clone()));
@@ -320,7 +318,7 @@ pub(super) fn check_call_signature(
     }
 
     for (arg_expr, param_ty) in args.iter().zip(param_types.iter()) {
-        check_expr(arg_expr, type_checker, errors);
+        check_expr(arg_expr, type_checker, errors, None);
         let arg_ref = TypeRef::Expr(arg_expr.node.id);
         let param_ref = TypeRef::Concrete(param_ty.clone());
         type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
@@ -371,6 +369,7 @@ pub(super) fn check_module_func_call(
     module_def: &ModuleDef,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
+    expected: Option<&Type>,
 ) -> Type {
     let Some(func_ty) = module_def.funcs.get(&func_name).cloned() else {
         let err_kind = if module_def.all_names.contains(&func_name) {
@@ -425,12 +424,10 @@ pub(super) fn check_module_func_call(
                 .insert(node.func.node.id, (func_name, node.type_args.clone()));
             ret
         } else {
-            let Type::Func { params, .. } = &func_ty else {
+            let Type::Func { params, ret } = &func_ty else {
                 errors.push(TypeErr::new(
                     call.span,
-                    TypeErrKind::NotAFunction {
-                        expr_type: func_ty,
-                    },
+                    TypeErrKind::NotAFunction { expr_type: func_ty },
                 ));
                 restore_generic_maps(type_checker, func_name, prev_tp, prev_tmpl);
                 return Type::Infer;
@@ -442,6 +439,8 @@ pub(super) fn check_module_func_call(
                 params,
                 &node.args,
                 func_ty.clone(),
+                ret,
+                expected,
                 type_checker,
                 errors,
             ) else {
@@ -535,7 +534,7 @@ pub(super) fn try_check_method_call(
         ));
     }
 
-    let target_ty = check_expr(target, type_checker, errors);
+    let target_ty = check_expr(target, type_checker, errors, None);
     if let Type::Struct { name, type_args } = &target_ty
         && let Some(struct_def) = type_checker.get_struct(*name).cloned()
     {
@@ -628,7 +627,7 @@ fn check_enum_tuple_variant(
 
     // check each argument
     for (arg_expr, expected_ty) in node.args.iter().zip(expected_types.iter()) {
-        check_expr(arg_expr, type_checker, errors);
+        check_expr(arg_expr, type_checker, errors, None);
         let arg_ref = TypeRef::Expr(arg_expr.node.id);
         let expected_ref = if is_generic {
             type_to_ref_with_inference(expected_ty, &slots)
@@ -726,6 +725,8 @@ pub(super) fn check_static_method_call(
                     &param_templates,
                     &node.args,
                     expected_ty,
+                    &method.ret,
+                    None,
                     type_checker,
                     errors,
                 ) else {
@@ -745,8 +746,7 @@ pub(super) fn check_static_method_call(
                 .cloned()
                 .collect();
 
-            let param_templates: Vec<Type> =
-                method.params.iter().map(|p| p.ty.clone()).collect();
+            let param_templates: Vec<Type> = method.params.iter().map(|p| p.ty.clone()).collect();
             let expected_ty = Type::Func {
                 params: param_templates.clone(),
                 ret: Box::new(method.ret.clone()),
@@ -758,6 +758,8 @@ pub(super) fn check_static_method_call(
                 &param_templates,
                 &node.args,
                 expected_ty,
+                &method.ret,
+                None,
                 type_checker,
                 errors,
             ) else {
@@ -802,6 +804,8 @@ pub(super) fn check_static_method_call(
             &param_templates,
             &node.args,
             expected_ty,
+            &method.ret,
+            None,
             type_checker,
             errors,
         ) else {
@@ -930,7 +934,7 @@ pub(super) fn check_instance_method_call(
                 .collect();
 
             for (arg_expr, param_ty) in node.args.iter().zip(partially_subst_params.iter()) {
-                check_expr(arg_expr, type_checker, errors);
+                check_expr(arg_expr, type_checker, errors, None);
                 let instantiated_param = subst_type(param_ty, &combined_subst);
                 let arg_ref = TypeRef::Expr(arg_expr.node.id);
                 let param_ref = TypeRef::Concrete(instantiated_param);
@@ -942,7 +946,7 @@ pub(super) fn check_instance_method_call(
             let partially_subst_ret = subst_type(&method.ret, &struct_subst);
             let expected_ty = Type::Func {
                 params: partially_subst_params.clone(),
-                ret: Box::new(partially_subst_ret),
+                ret: Box::new(partially_subst_ret.clone()),
             };
 
             let Some(inferred) = infer_type_args_from_call(
@@ -951,6 +955,8 @@ pub(super) fn check_instance_method_call(
                 &partially_subst_params,
                 &node.args,
                 expected_ty,
+                &partially_subst_ret,
+                None,
                 type_checker,
                 errors,
             ) else {
@@ -1140,8 +1146,7 @@ pub(super) fn instantiate_and_check_fn(
     );
 
     // report body errors with original spans, attaching call-site context
-    let (label, note) =
-        generic_context_strings(&func_name.to_string(), &type_params, type_args);
+    let (label, note) = generic_context_strings(&func_name.to_string(), &type_params, type_args);
     for mut err in body_errors {
         err.secondary.push((call_span, label.clone()));
         err.notes.push(note.clone());
@@ -1261,8 +1266,7 @@ fn instantiate_method_body(
 
     // report body errors with original spans, attaching call-site context
     let context_name = format!("{struct_name}.{method_name}");
-    let (label, note) =
-        generic_context_strings(&context_name, &all_type_params, &all_type_args);
+    let (label, note) = generic_context_strings(&context_name, &all_type_params, &all_type_args);
     for mut err in body_errors {
         err.secondary.push((call_span, label.clone()));
         err.notes.push(note.clone());
@@ -1280,7 +1284,7 @@ pub(super) fn type_call_on_base(
 ) -> Type {
     // check each argument
     for arg in &call_node.node.args {
-        check_expr(arg, type_checker, errors);
+        check_expr(arg, type_checker, errors, None);
     }
 
     let Type::Func { params, ret } = base_ty else {

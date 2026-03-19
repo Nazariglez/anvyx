@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+fn make_map<K, V>() -> [K: V] {
+    [:]
+}
+
+fn identity<T>(x: T) -> T {
+    x
+}
+
+fn main() {
+    let m: [string: int] = make_map();
+    let n: [int: bool] = make_map();
+    let x: int = identity(42);
+}

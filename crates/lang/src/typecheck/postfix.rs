@@ -53,9 +53,10 @@ pub(super) fn check_postfix_chain(
     chain: &[PostfixNodeRef<'_>],
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
+    expected: Option<&Type>,
 ) -> Type {
     // handle type name postfixes without looking them up as value variables
-    if let Some(outcome) = try_type_name_dispatch(base, chain, type_checker, errors) {
+    if let Some(outcome) = try_type_name_dispatch(base, chain, type_checker, errors, expected) {
         let (ty, steps_consumed, safe) = outcome;
         let current_ty = if safe {
             Type::option_of(ty.clone())
@@ -80,10 +81,11 @@ pub(super) fn check_postfix_chain(
             safe,
             type_checker,
             errors,
+            expected,
         );
     }
 
-    let current_ty = check_expr(base, type_checker, errors);
+    let current_ty = check_expr(base, type_checker, errors, None);
     continue_postfix_chain(
         expr_node,
         base,
@@ -92,6 +94,7 @@ pub(super) fn check_postfix_chain(
         false,
         type_checker,
         errors,
+        expected,
     )
 }
 
@@ -103,6 +106,7 @@ fn continue_postfix_chain(
     initial_optional: bool,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
+    expected: Option<&Type>,
 ) -> Type {
     let mut current_ty = initial_ty;
     let mut chain_is_optional = initial_optional;
@@ -172,7 +176,9 @@ fn continue_postfix_chain(
             }
         }
 
-        let op_result_inner = apply_postfix_op(op, &base_ty, type_checker, errors);
+        let is_last = i + 1 == chain.len();
+        let op_expected = if is_last { expected } else { None };
+        let op_result_inner = apply_postfix_op(op, &base_ty, type_checker, errors, op_expected);
         // map indexing already returns an optional value, so dont wrap it twice
         let map_index = matches!(
             (op, &base_ty),
@@ -340,6 +346,7 @@ fn try_type_name_dispatch(
     chain: &[PostfixNodeRef<'_>],
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
+    expected: Option<&Type>,
 ) -> Option<(Type, usize, bool)> {
     let ExprKind::Ident(type_name) = &base.node.kind else {
         return None;
@@ -388,6 +395,7 @@ fn try_type_name_dispatch(
                             &sub_def,
                             type_checker,
                             errors,
+                            expected,
                         );
                         return Some((ty, 3, sub_op_safe));
                     }
@@ -419,6 +427,7 @@ fn try_type_name_dispatch(
                     &module_def,
                     type_checker,
                     errors,
+                    expected,
                 );
                 return Some((ty, 2, op_safe));
             } else {
@@ -473,7 +482,7 @@ fn try_type_name_dispatch(
         let op_safe = field_node.node.safe || call_op.safe();
 
         if let Some(enum_def) = type_checker.get_enum(*type_name).cloned() {
-            let ty = check_call(call_node, type_checker, errors);
+            let ty = check_call(call_node, type_checker, errors, expected);
             let _ = enum_def;
             return Some((ty, 2, op_safe));
         }
@@ -563,6 +572,7 @@ fn apply_postfix_op(
     base_ty: &Type,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
+    expected: Option<&Type>,
 ) -> Type {
     match op {
         PostfixNodeRef::Field {
@@ -577,7 +587,7 @@ fn apply_postfix_op(
         PostfixNodeRef::Index {
             node: index_node, ..
         } => {
-            let index_ty = check_expr(&index_node.node.index, type_checker, errors);
+            let index_ty = check_expr(&index_node.node.index, type_checker, errors, None);
             let result = type_index_on_base(
                 base_ty,
                 &index_ty,
@@ -606,7 +616,7 @@ fn apply_postfix_op(
                 let has_type_args = !call_node.node.type_args.is_empty();
                 // delegate generic and explicit type ar calls to check_call
                 if is_generic || has_type_args {
-                    return check_call(call_node, type_checker, errors);
+                    return check_call(call_node, type_checker, errors, expected);
                 }
                 // for plain ident calls use base_ty and check var-params separately
                 let result = type_call_on_base(base_ty, call_node, type_checker, errors);

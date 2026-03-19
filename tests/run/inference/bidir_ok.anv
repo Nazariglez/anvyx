@@ -1,12 +1,11 @@
 // @mode: run
 // @expect: success
-// @contains: ok
+// @match: 42
 
 import std.maps;
 
 fn main() {
     var m: [string: int] = maps.ordered();
-    let v: int? = m["any"];
-    assert(v == nil);
-    println("ok");
+    m["hello"] = 42;
+    println(m["hello"] ?? 0);
 }

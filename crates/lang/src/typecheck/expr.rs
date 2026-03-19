@@ -17,6 +17,7 @@ pub(super) fn check_expr(
     expr_node: &ExprNode,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
+    expected: Option<&Type>,
 ) -> Type {
     // route all postfix expressions through the shared chain checker
     if matches!(
@@ -24,7 +25,7 @@ pub(super) fn check_expr(
         ExprKind::Field(_) | ExprKind::Index(_) | ExprKind::Call(_)
     ) {
         let (base, chain) = collect_postfix_chain(expr_node);
-        return check_postfix_chain(expr_node, base, &chain, type_checker, errors);
+        return check_postfix_chain(expr_node, base, &chain, type_checker, errors, expected);
     }
 
     let expr = &expr_node.node;
@@ -40,7 +41,7 @@ pub(super) fn check_expr(
             }
         },
         ExprKind::Block(spanned) => {
-            let (block_ty, _) = check_block_expr(spanned, type_checker, errors);
+            let (block_ty, _) = check_block_expr(spanned, type_checker, errors, None);
             block_ty
         }
         ExprKind::Lit(lit) => type_from_lit(lit),
@@ -94,7 +95,7 @@ fn check_cast(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
-    let from_ty = check_expr(&cast_node.node.expr, type_checker, errors);
+    let from_ty = check_expr(&cast_node.node.expr, type_checker, errors, None);
     let to_ty = &cast_node.node.target;
 
     let valid = match (&from_ty, to_ty) {
@@ -124,7 +125,7 @@ fn check_string_interp(
         let StringPart::Expr(expr_node) = part else {
             continue;
         };
-        let expr_ty = check_expr(expr_node, type_checker, errors);
+        let expr_ty = check_expr(expr_node, type_checker, errors, None);
         let is_valid = expr_ty.is_str()
             || expr_ty.is_stringable_primitive()
             || expr_ty.is_infer();

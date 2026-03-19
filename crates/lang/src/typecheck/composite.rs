@@ -23,7 +23,7 @@ pub(super) fn check_tuple(
 ) -> Type {
     let element_types: Vec<Type> = elements
         .iter()
-        .map(|el| check_expr(el, type_checker, errors))
+        .map(|el| check_expr(el, type_checker, errors, None))
         .collect();
     Type::Tuple(element_types)
 }
@@ -38,7 +38,7 @@ pub(super) fn check_named_tuple(
     let mut fields = Vec::with_capacity(elements.len());
 
     for (label, expr) in elements {
-        let ty = check_expr(expr, type_checker, errors);
+        let ty = check_expr(expr, type_checker, errors, None);
 
         let inserted = seen_labels.insert(*label);
         if !inserted {
@@ -127,7 +127,7 @@ pub(super) fn check_struct_lit(
 
     // typecheck all field expressions before name validation
     for (_, field_expr) in &lit.fields {
-        check_expr(field_expr, type_checker, errors);
+        check_expr(field_expr, type_checker, errors, None);
     }
 
     let provided: Vec<(Ident, Span)> = lit.fields.iter().map(|(n, e)| (*n, e.span)).collect();
@@ -182,7 +182,7 @@ pub(super) fn check_tuple_index(
     errors: &mut Vec<TypeErr>,
 ) -> Type {
     let node = &index_node.node;
-    let target_ty = check_expr(&node.target, type_checker, errors);
+    let target_ty = check_expr(&node.target, type_checker, errors, None);
     let index = node.index;
 
     let Some(element_types) = target_ty.tuple_element_types() else {
@@ -225,8 +225,8 @@ pub(super) fn check_range(
     let start_expr = range.node.start.as_ref();
     let end_expr = range.node.end.as_ref();
 
-    let start_ty = check_expr(start_expr, type_checker, errors);
-    let _ = check_expr(end_expr, type_checker, errors);
+    let start_ty = check_expr(start_expr, type_checker, errors, None);
+    let _ = check_expr(end_expr, type_checker, errors, None);
 
     let start_ref = TypeRef::Expr(start_expr.node.id);
     let end_ref = TypeRef::Expr(end_expr.node.id);
@@ -260,7 +260,7 @@ pub(super) fn check_array_literal(
     let mut elem_types = vec![];
 
     for elem in elements {
-        let ty = check_expr(elem, type_checker, errors);
+        let ty = check_expr(elem, type_checker, errors, None);
         elem_types.push(ty);
     }
 
@@ -307,8 +307,8 @@ pub(super) fn check_array_fill(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
-    let value_ty = check_expr(&fill.node.value, type_checker, errors);
-    check_expr(&fill.node.len, type_checker, errors);
+    let value_ty = check_expr(&fill.node.value, type_checker, errors, None);
+    check_expr(&fill.node.len, type_checker, errors, None);
 
     let len_expr = &fill.node.len;
     match &len_expr.node.kind {
@@ -359,8 +359,8 @@ pub(super) fn check_map_literal(
             }
         }
 
-        let key_ty = check_expr(key_expr, type_checker, errors);
-        let value_ty = check_expr(value_expr, type_checker, errors);
+        let key_ty = check_expr(key_expr, type_checker, errors, None);
+        let value_ty = check_expr(value_expr, type_checker, errors, None);
         key_types.push(key_ty);
         value_types.push(value_ty);
     }
@@ -472,7 +472,7 @@ fn check_enum_struct_variant(
 
     // typecheck all field expressions before name validation
     for (_, field_expr) in &lit.fields {
-        check_expr(field_expr, type_checker, errors);
+        check_expr(field_expr, type_checker, errors, None);
     }
 
     let provided: Vec<(Ident, Span)> = lit.fields.iter().map(|(n, e)| (*n, e.span)).collect();

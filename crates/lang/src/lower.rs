@@ -475,8 +475,9 @@ fn lower_stmt(
             // after constraint solving, this is always a fully-resolved monomorphic type.
             let ty = {
                 let (_, ty) = ctx
-                    .tcx
-                    .get_type(binding.value.node.id)
+                    .type_overrides
+                    .and_then(|overrides| overrides.get(&binding.value.node.id))
+                    .or_else(|| ctx.tcx.get_type(binding.value.node.id))
                     .ok_or(LowerError::MissingExprType { span })?;
                 ty.clone()
             };

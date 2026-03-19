@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+import std.maps;
+
+fn main() {
+    var m: [string: int] = maps.ordered();
+}

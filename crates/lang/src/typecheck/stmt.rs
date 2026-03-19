@@ -28,6 +28,7 @@ pub(super) fn check_block_stmts(
     tail: Option<&ExprNode>,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
+    expected_tail: Option<&Type>,
 ) -> Option<ExprId> {
     type_checker.push_scope();
     collect_scope_types(stmts, type_checker);
@@ -37,7 +38,7 @@ pub(super) fn check_block_stmts(
     }
 
     let tail_id = tail.map(|expr| {
-        let _ = check_expr(expr, type_checker, errors);
+        let _ = check_expr(expr, type_checker, errors, expected_tail);
         expr.node.id
     });
 
@@ -49,12 +50,14 @@ pub(super) fn check_block_expr(
     block: &BlockNode,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
+    expected_tail: Option<&Type>,
 ) -> (Type, Option<ExprId>) {
     let last_expr_id = check_block_stmts(
         &block.node.stmts,
         block.node.tail.as_deref(),
         type_checker,
         errors,
+        expected_tail,
     );
     let Some(id) = last_expr_id else {
         return (Type::Void, None);
@@ -542,7 +545,7 @@ pub(super) fn check_stmt(
             // no additional checking needed at this point
         }
         Stmt::Expr(node) => {
-            let _ = check_expr(node, type_checker, errors);
+            let _ = check_expr(node, type_checker, errors, None);
         }
         Stmt::Binding(node) => check_binding(node, type_checker, errors),
         Stmt::Return(node) => check_ret(node, type_checker, errors),
@@ -559,7 +562,8 @@ pub(super) fn check_binding(
     errors: &mut Vec<TypeErr>,
 ) {
     let node = &binding.node;
-    check_expr(&node.value, type_checker, errors);
+    let expected = node.ty.as_ref().map(|annot_ty| type_checker.resolve_type(annot_ty));
+    check_expr(&node.value, type_checker, errors, expected.as_ref());
 
     if is_if_without_else(&node.value) {
         errors.push(
@@ -773,7 +777,7 @@ pub(super) fn check_ret(
     match (&node.value, &expected_ret) {
         // returning a value in a non-void fn needs constraining
         (Some(value_expr), expected_ty) => {
-            check_expr(value_expr, type_checker, errors);
+            check_expr(value_expr, type_checker, errors, Some(expected_ty));
             let expr_ref = TypeRef::Expr(value_expr.node.id);
             let ret_ref = TypeRef::Concrete(expected_ty.clone());
             type_checker.constrain_assignable(ret.span, expr_ref, ret_ref, errors);

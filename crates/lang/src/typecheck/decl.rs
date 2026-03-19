@@ -27,7 +27,8 @@ pub(super) fn check_body_common(
         type_checker.set_var(*name, ty.clone(), *mutable);
     }
 
-    let (body_ty, last_expr_id) = check_block_expr(body, type_checker, errors);
+    let expected_tail = if ret_ty.is_void() { None } else { Some(ret_ty) };
+    let (body_ty, last_expr_id) = check_block_expr(body, type_checker, errors, expected_tail);
     let had_explicit_return = type_checker.has_explicit_return();
 
     if ret_ty.is_void() {

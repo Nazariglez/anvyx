@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+import std.maps;
+
+fn make_map() -> [string: int] {
+    maps.ordered()
+}
+
+fn main() {
+    var m: [string: int] = make_map();
+}

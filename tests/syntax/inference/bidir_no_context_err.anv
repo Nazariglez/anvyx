@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: Could not infer type
+
+import std.maps;
+
+fn main() {
+    var m = maps.ordered();
+}

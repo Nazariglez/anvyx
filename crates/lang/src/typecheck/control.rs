@@ -18,7 +18,7 @@ pub(super) fn check_while(
     errors: &mut Vec<TypeErr>,
 ) {
     let node = &while_node.node;
-    let cond_ty = check_expr(&node.cond, type_checker, errors);
+    let cond_ty = check_expr(&node.cond, type_checker, errors, None);
     let maybe_bool = cond_ty.is_bool() || cond_ty.is_infer();
     if !maybe_bool {
         errors.push(TypeErr::new(
@@ -31,7 +31,7 @@ pub(super) fn check_while(
     }
 
     type_checker.enter_loop();
-    let _ = check_block_stmts(&node.body.node.stmts, node.body.node.tail.as_deref(), type_checker, errors);
+    let _ = check_block_stmts(&node.body.node.stmts, node.body.node.tail.as_deref(), type_checker, errors, None);
     type_checker.exit_loop();
 }
 
@@ -42,11 +42,11 @@ pub(super) fn check_for(
 ) {
     let node = &for_node.node;
 
-    let iterable_ty = check_expr(&node.iterable, type_checker, errors);
+    let iterable_ty = check_expr(&node.iterable, type_checker, errors, None);
     let item_ty = extract_range_item_type(&iterable_ty, for_node.span, errors);
 
     if let Some(ref step_expr) = node.step {
-        let step_ty = check_expr(step_expr, type_checker, errors);
+        let step_ty = check_expr(step_expr, type_checker, errors, None);
         let item_is_int = matches!(item_ty, Type::Int | Type::Infer);
         let step_is_int = matches!(step_ty, Type::Int | Type::Infer);
         if !item_is_int || !step_is_int {
@@ -65,7 +65,7 @@ pub(super) fn check_for(
 
     check_pattern(&node.pattern, &item_ty, false, type_checker, errors);
 
-    let _ = check_block_stmts(&node.body.node.stmts, node.body.node.tail.as_deref(), type_checker, errors);
+    let _ = check_block_stmts(&node.body.node.stmts, node.body.node.tail.as_deref(), type_checker, errors, None);
 
     type_checker.exit_loop();
     type_checker.pop_scope();
@@ -103,7 +103,7 @@ pub(super) fn check_if(
 ) -> Type {
     let node = &if_node.node;
 
-    let cond_ty = check_expr(&node.cond, type_checker, errors);
+    let cond_ty = check_expr(&node.cond, type_checker, errors, None);
     let maybe_bool = cond_ty.is_bool() || cond_ty.is_infer();
     if !maybe_bool {
         errors.push(TypeErr::new(
@@ -112,14 +112,14 @@ pub(super) fn check_if(
         ));
     }
 
-    let (then_ty, then_expr_id) = check_block_expr(&node.then_block, type_checker, errors);
+    let (then_ty, then_expr_id) = check_block_expr(&node.then_block, type_checker, errors, None);
 
     // if there is no else block then the type is void and this must be a statment
     let Some(else_block) = &node.else_block else {
         return Type::Void;
     };
 
-    let (else_ty, else_expr_id) = check_block_expr(else_block, type_checker, errors);
+    let (else_ty, else_expr_id) = check_block_expr(else_block, type_checker, errors, None);
 
     // unify branch types
     let same_ty = then_ty == else_ty;
@@ -182,7 +182,7 @@ pub(super) fn check_match(
     errors: &mut Vec<TypeErr>,
 ) -> Type {
     let scrutinee = &match_node.node.scrutinee;
-    let scrutinee_ty = check_expr(scrutinee, type_checker, errors);
+    let scrutinee_ty = check_expr(scrutinee, type_checker, errors, None);
 
     let Type::Enum {
         name: enum_name, ..
@@ -223,7 +223,7 @@ pub(super) fn check_match(
             errors,
         );
 
-        let arm_ty = check_expr(&arm.node.body, type_checker, errors);
+        let arm_ty = check_expr(&arm.node.body, type_checker, errors, None);
         arm_types.push(arm_ty);
 
         type_checker.pop_scope();

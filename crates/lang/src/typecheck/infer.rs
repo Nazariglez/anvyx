@@ -6,7 +6,7 @@ use internment::Intern;
 use std::collections::HashMap;
 
 use super::{
-    constraint::{resolve_constraints, TypeRef},
+    constraint::{TypeRef, resolve_constraints},
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
     types::{InferenceSlots, TypeChecker},
@@ -194,6 +194,8 @@ pub(super) fn infer_type_args_from_call(
     param_template_types: &[Type],
     args: &[ExprNode],
     expected_on_mismatch: Type,
+    ret_template: &Type,
+    expected_ret: Option<&Type>,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Option<Vec<Type>> {
@@ -215,10 +217,21 @@ pub(super) fn infer_type_args_from_call(
     }
 
     for (arg_expr, param_ty) in args.iter().zip(param_template_types.iter()) {
-        check_expr(arg_expr, type_checker, errors);
+        check_expr(arg_expr, type_checker, errors, None);
         let arg_ref = TypeRef::Expr(arg_expr.node.id);
         let param_ref = type_to_ref_with_inference(param_ty, &slots);
         type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
+    }
+
+    if let Some(expected) = expected_ret {
+        constrain_type_vars_from_expected(
+            ret_template,
+            expected,
+            &slots,
+            call_span,
+            type_checker,
+            errors,
+        );
     }
 
     resolve_constraints(type_checker, errors);
@@ -226,10 +239,9 @@ pub(super) fn infer_type_args_from_call(
     let mut inferred_type_args = Vec::with_capacity(type_params.len());
     let mut inference_failed = false;
     for param in type_params {
-        let slot_ty = slots
-            .get(&param.id)
-            .and_then(|slot_ident| type_checker.get_var(*slot_ident))
-            .map(|info| &info.ty);
+        let slot_ident = slots.get(&param.id);
+        let slot_info = slot_ident.and_then(|si| type_checker.get_var(*si));
+        let slot_ty = slot_info.map(|info| &info.ty);
 
         let ty = slot_ty
             .filter(|ty| !contains_infer(ty))
@@ -248,4 +260,90 @@ pub(super) fn infer_type_args_from_call(
     }
 
     Some(inferred_type_args)
+}
+
+fn constrain_type_vars_from_expected(
+    template: &Type,
+    expected: &Type,
+    slots: &InferenceSlots,
+    span: Span,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    match (template, expected) {
+        (Type::Var(id), _) => {
+            if let Some(slot_name) = slots.get(id) {
+                let slot_ref = TypeRef::Var(*slot_name);
+                let expected_ref = TypeRef::Concrete(expected.clone());
+                type_checker.constrain_assignable(span, slot_ref, expected_ref, errors);
+            }
+        }
+        (Type::Map { key: tk, value: tv }, Type::Map { key: ek, value: ev }) => {
+            constrain_type_vars_from_expected(tk, ek, slots, span, type_checker, errors);
+            constrain_type_vars_from_expected(tv, ev, slots, span, type_checker, errors);
+        }
+        (Type::List { elem: te }, Type::List { elem: ee }) => {
+            constrain_type_vars_from_expected(te, ee, slots, span, type_checker, errors);
+        }
+        (Type::Array { elem: te, .. }, Type::Array { elem: ee, .. }) => {
+            constrain_type_vars_from_expected(te, ee, slots, span, type_checker, errors);
+        }
+        (Type::ArrayView { elem: te }, Type::ArrayView { elem: ee }) => {
+            constrain_type_vars_from_expected(te, ee, slots, span, type_checker, errors);
+        }
+        (
+            Type::Func {
+                params: tp,
+                ret: tr,
+            },
+            Type::Func {
+                params: ep,
+                ret: er,
+            },
+        ) => {
+            for (t, e) in tp.iter().zip(ep.iter()) {
+                constrain_type_vars_from_expected(t, e, slots, span, type_checker, errors);
+            }
+            constrain_type_vars_from_expected(tr, er, slots, span, type_checker, errors);
+        }
+        (Type::Tuple(te), Type::Tuple(ee)) => {
+            for (t, e) in te.iter().zip(ee.iter()) {
+                constrain_type_vars_from_expected(t, e, slots, span, type_checker, errors);
+            }
+        }
+        (Type::NamedTuple(tf), Type::NamedTuple(ef)) => {
+            for ((_, t), (_, e)) in tf.iter().zip(ef.iter()) {
+                constrain_type_vars_from_expected(t, e, slots, span, type_checker, errors);
+            }
+        }
+        (
+            Type::Struct {
+                name: tn,
+                type_args: ta,
+            },
+            Type::Struct {
+                name: en,
+                type_args: ea,
+            },
+        ) if tn == en => {
+            for (t, e) in ta.iter().zip(ea.iter()) {
+                constrain_type_vars_from_expected(t, e, slots, span, type_checker, errors);
+            }
+        }
+        (
+            Type::Enum {
+                name: tn,
+                type_args: ta,
+            },
+            Type::Enum {
+                name: en,
+                type_args: ea,
+            },
+        ) if tn == en => {
+            for (t, e) in ta.iter().zip(ea.iter()) {
+                constrain_type_vars_from_expected(t, e, slots, span, type_checker, errors);
+            }
+        }
+        _ => {}
+    }
 }

@@ -337,12 +337,18 @@ impl TypeChecker {
 
     pub fn set_type(&mut self, id: ExprId, ty: Type, span: Span) {
         if let Some(snapshot) = &mut self.spec_type_snapshot {
-            snapshot.insert(id, (span, ty.clone()));
+            snapshot.insert(id, (span, ty));
+            return;
         }
         self.types.insert(id, (span, ty));
     }
 
     pub fn get_type(&self, id: ExprId) -> Option<&(Span, Type)> {
+        if let Some(snapshot) = &self.spec_type_snapshot {
+            if let Some(entry) = snapshot.get(&id) {
+                return Some(entry);
+            }
+        }
         self.types.get(&id)
     }
 

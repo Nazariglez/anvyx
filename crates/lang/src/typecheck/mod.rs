@@ -64,7 +64,7 @@ pub fn check_program_with_modules(
 
     // first pass we collect the types from the ast
     // we don't need the type of the file scope blocks
-    let _ = check_block_stmts(&program.stmts, None, &mut type_checker, &mut errors);
+    let _ = check_block_stmts(&program.stmts, None, &mut type_checker, &mut errors, None);
 
     if !errors.is_empty() {
         return Err(errors);
@@ -74,7 +74,7 @@ pub fn check_program_with_modules(
     let baseline_struct_defs = type_checker.struct_defs.clone();
     let baseline_enum_defs = type_checker.enum_defs.clone();
     for (_path, stmts) in module_list {
-        let _ = check_block_stmts(stmts, None, &mut type_checker, &mut errors);
+        let _ = check_block_stmts(stmts, None, &mut type_checker, &mut errors, None);
         type_checker.module_defs = baseline_module_defs.clone();
         type_checker.struct_defs = baseline_struct_defs.clone();
         type_checker.enum_defs = baseline_enum_defs.clone();

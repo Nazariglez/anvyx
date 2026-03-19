@@ -5,7 +5,7 @@
 import std.maps;
 
 fn main() {
-    var m = maps.ordered<string, int>();
+    var m: [string: int] = maps.ordered();
     m["hp"] = 100;
     m["mp"] = 50;
     let hp: int? = m["hp"];

@@ -18,8 +18,8 @@ pub(super) fn check_binary(
     use BinaryOp::*;
 
     let node = &bin.node;
-    let left_ty = check_expr(&node.left, type_checker, errors);
-    let right_ty = check_expr(&node.right, type_checker, errors);
+    let left_ty = check_expr(&node.left, type_checker, errors, None);
+    let right_ty = check_expr(&node.right, type_checker, errors, None);
     let same_ty = left_ty == right_ty;
 
     match node.op {
@@ -207,7 +207,7 @@ pub(super) fn check_unary(
     errors: &mut Vec<TypeErr>,
 ) -> Type {
     let node = &unary.node;
-    let expr_ty = check_expr(&node.expr, type_checker, errors);
+    let expr_ty = check_expr(&node.expr, type_checker, errors, None);
 
     match node.op {
         UnaryOp::Neg if expr_ty.is_num() => expr_ty,
@@ -286,8 +286,8 @@ pub(super) fn check_assign(
     }
 
     let node = &assign.node;
-    check_expr(&node.target, type_checker, errors);
-    check_expr(&node.value, type_checker, errors);
+    check_expr(&node.target, type_checker, errors, None);
+    check_expr(&node.value, type_checker, errors, None);
 
     let target_ref = TypeRef::Expr(node.target.node.id);
     let value_ref = TypeRef::Expr(node.value.node.id);
