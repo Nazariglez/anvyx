@@ -7,7 +7,6 @@ import std.maps;
 fn main() {
     var m = maps.ordered<string, int>();
     let v: int? = m["any"];
-    let nothing: int? = nil;
-    assert(v == nothing);
+    assert(v == nil);
     println("ok");
 }

@@ -9,7 +9,6 @@ fn main() {
     m[1] = "one";
     m[2] = "two";
     let v: string? = m[1];
-    let nothing: string? = nil;
-    assert(v != nothing);
+    assert(v != nil);
     println("ok");
 }

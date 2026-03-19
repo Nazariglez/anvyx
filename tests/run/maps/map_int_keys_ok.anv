@@ -6,8 +6,7 @@ fn main() {
     let v1: string? = m[1];
     let v2: string? = m[2];
     let v3: string? = m[3];
-    let nothing: string? = nil;
-    assert(v1 != nothing);
-    assert(v2 != nothing);
-    assert(v3 == nothing);
+    assert(v1 != nil);
+    assert(v2 != nil);
+    assert(v3 == nil);
 }

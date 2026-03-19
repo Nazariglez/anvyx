@@ -10,8 +10,7 @@ fn main() {
     m["mp"] = 50;
     let hp: int? = m["hp"];
     let mp: int? = m["mp"];
-    let nothing: int? = nil;
-    assert(hp != nothing);
-    assert(mp != nothing);
+    assert(hp != nil);
+    assert(mp != nil);
     println("ok");
 }

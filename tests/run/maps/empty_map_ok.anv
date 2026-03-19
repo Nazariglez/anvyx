@@ -4,6 +4,5 @@
 fn main() {
     let m: [string: int] = [:];
     let v: int? = m["any"];
-    let nothing: int? = nil;
-    assert(v == nothing);
+    assert(v == nil);
 }

@@ -7,6 +7,7 @@ use super::{
     error::{TypeErr, TypeErrKind},
     expr::{check_expr, root_ident},
     types::{TypeChecker, equatable_reason, is_equatable},
+    unify::unify_types,
 };
 
 pub(super) fn check_binary(
@@ -60,21 +61,37 @@ pub(super) fn check_binary(
 
         // equal ops must be the same type and both sides must be equatable
         Eq | NotEq => {
-            if !same_ty {
-                errors.push(TypeErr::new(
-                    bin.span,
-                    TypeErrKind::MismatchedTypes {
-                        expected: left_ty.clone(),
-                        found: right_ty.clone(),
-                    },
-                ));
-            } else if !left_ty.is_infer() && !is_equatable(&left_ty, type_checker) {
-                let mut err =
-                    TypeErr::new(bin.span, TypeErrKind::NotEquatable { ty: left_ty.clone() });
-                if let Some(reason) = equatable_reason(&left_ty, type_checker) {
-                    err.notes.push(reason);
+            let eq_ty = if same_ty {
+                Some(left_ty.clone())
+            } else {
+                let both_optional = left_ty.is_option() && right_ty.is_option();
+                let unified = both_optional
+                    .then(|| unify_types(&left_ty, &right_ty, bin.span, &mut vec![]))
+                    .flatten();
+                if let Some(ref ty) = unified {
+                    type_checker.set_type(node.left.node.id, ty.clone(), bin.span);
+                    type_checker.set_type(node.right.node.id, ty.clone(), bin.span);
+                } else {
+                    errors.push(TypeErr::new(
+                        bin.span,
+                        TypeErrKind::MismatchedTypes {
+                            expected: left_ty.clone(),
+                            found: right_ty.clone(),
+                        },
+                    ));
                 }
-                errors.push(err);
+                unified
+            };
+
+            if let Some(ty) = eq_ty {
+                if !ty.is_infer() && !is_equatable(&ty, type_checker) {
+                    let mut err =
+                        TypeErr::new(bin.span, TypeErrKind::NotEquatable { ty: ty.clone() });
+                    if let Some(reason) = equatable_reason(&ty, type_checker) {
+                        err.notes.push(reason);
+                    }
+                    errors.push(err);
+                }
             }
             Type::Bool
         }
@@ -175,7 +192,11 @@ fn check_coalesce(
         .unwrap_or(left_inner_ty);
 
     // set the left expression's type to the unified inner type
-    type_checker.set_type(node.left.node.id, Type::option_of(unified_inner.clone()), bin.span);
+    type_checker.set_type(
+        node.left.node.id,
+        Type::option_of(unified_inner.clone()),
+        bin.span,
+    );
 
     unified_inner
 }
@@ -204,10 +225,7 @@ pub(super) fn check_unary(
     }
 }
 
-fn immutable_assignment_error(
-    assign: &AssignNode,
-    type_checker: &TypeChecker,
-) -> Option<TypeErr> {
+fn immutable_assignment_error(assign: &AssignNode, type_checker: &TypeChecker) -> Option<TypeErr> {
     let root = root_ident(&assign.node.target)?;
     let info = type_checker.get_var(root)?;
     if info.mutable {
@@ -303,9 +321,7 @@ fn check_compound_assign_op(
     let target_ty = type_checker
         .get_type_ref(&target_ref)
         .unwrap_or(Type::Infer);
-    let value_ty = type_checker
-        .get_type_ref(&value_ref)
-        .unwrap_or(Type::Infer);
+    let value_ty = type_checker.get_type_ref(&value_ref).unwrap_or(Type::Infer);
 
     let is_add_assign = assign.node.op == AssignOp::AddAssign;
     let is_str_concat = is_add_assign
@@ -319,7 +335,8 @@ fn check_compound_assign_op(
     let target_ty = type_checker
         .get_type_ref(&target_ref)
         .unwrap_or(Type::Infer);
-    let is_valid = target_ty.is_num() || target_ty.is_infer() || (is_add_assign && target_ty.is_str());
+    let is_valid =
+        target_ty.is_num() || target_ty.is_infer() || (is_add_assign && target_ty.is_str());
     if !is_valid {
         errors.push(TypeErr::new(
             assign.span,

@@ -8,7 +8,6 @@ fn main() {
     var om = m.ordered<string, int>();
     om["x"] = 42;
     let v: int? = om["x"];
-    let nothing: int? = nil;
-    assert(v != nothing);
+    assert(v != nil);
     println("ok");
 }

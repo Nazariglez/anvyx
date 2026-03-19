@@ -1,8 +1,8 @@
 use super::helpers::{
     array_literal, assert_expr_type, binary_expr, call_expr, enum_decl, field_expr, fn_decl,
-    get_expr_id, ident_expr, let_binding, lit_bool, lit_float, lit_int, lit_string,
-    map_literal_expr, program, reset_expr_ids, return_stmt, run_err, run_ok, struct_decl,
-    struct_literal_expr,
+    get_expr_id, ident_expr, let_binding, lit_bool, lit_float, lit_int, lit_nil, lit_string,
+    map_literal_expr, opt_type, program, reset_expr_ids, return_stmt, run_err, run_ok,
+    struct_decl, struct_literal_expr,
 };
 use crate::ast::{ArrayLen, BinaryOp, Type, VariantKind};
 use crate::typecheck::error::TypeErrKind;
@@ -848,5 +848,62 @@ fn test_eq_map_fn_value_reason_note() {
             .any(|n| n.contains("value type") && n.contains("not equatable")),
         "Expected note mentioning 'value type' and 'not equatable', got: {:?}",
         not_eq_err.notes
+    );
+}
+
+// ---- nil equality unification ----
+
+#[test]
+fn test_eq_optional_int_vs_nil_ok() {
+    reset_expr_ids();
+    // let v: int? = 10; v == nil  ->  bool
+    let v_binding = let_binding("v", Some(opt_type(Type::Int)), lit_int(10));
+    let nil_expr = lit_nil();
+    let nil_id = get_expr_id(&nil_expr);
+    let eq = binary_expr(ident_expr("v"), BinaryOp::Eq, nil_expr);
+    let eq_id = get_expr_id(&eq);
+    let prog = program(vec![v_binding, super::helpers::expr_stmt(eq)]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, eq_id, Type::Bool);
+    assert_expr_type(&tcx, nil_id, opt_type(Type::Int));
+}
+
+#[test]
+fn test_neq_optional_int_vs_nil_ok() {
+    reset_expr_ids();
+    // let v: int? = 10; v != nil  ->  bool
+    let v_binding = let_binding("v", Some(opt_type(Type::Int)), lit_int(10));
+    let eq = binary_expr(ident_expr("v"), BinaryOp::NotEq, lit_nil());
+    let eq_id = get_expr_id(&eq);
+    let prog = program(vec![v_binding, super::helpers::expr_stmt(eq)]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, eq_id, Type::Bool);
+}
+
+#[test]
+fn test_eq_nil_vs_optional_string_ok() {
+    reset_expr_ids();
+    // let v: string? = nil; nil == v  ->  bool (reversed order)
+    let v_binding = let_binding("v", Some(opt_type(Type::String)), lit_nil());
+    let eq = binary_expr(lit_nil(), BinaryOp::Eq, ident_expr("v"));
+    let eq_id = get_expr_id(&eq);
+    let prog = program(vec![v_binding, super::helpers::expr_stmt(eq)]);
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, eq_id, Type::Bool);
+}
+
+#[test]
+fn test_eq_int_vs_nil_mismatch() {
+    reset_expr_ids();
+    // 1 == nil  ->  MismatchedTypes (non-optional int cannot unify with <infer>?)
+    let eq = binary_expr(lit_int(1), BinaryOp::Eq, lit_nil());
+    let prog = program(vec![super::helpers::expr_stmt(eq)]);
+    let errors = run_err(prog);
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+        "Expected MismatchedTypes, got: {:?}",
+        errors
     );
 }
