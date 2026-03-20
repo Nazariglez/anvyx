@@ -564,10 +564,7 @@ fn lower_stmt(
             kind: hir::StmtKind::Continue,
         })),
 
-        Stmt::For(_) => Err(LowerError::UnsupportedStmtKind {
-            span,
-            kind: "for loop".to_string(),
-        }),
+        Stmt::For(for_node) => lower_for(for_node, span, ctx, fc, out),
 
         Stmt::ExternFunc(_) => Ok(None),
         Stmt::ExternType(_) => Ok(None),
@@ -582,6 +579,915 @@ fn lower_stmt(
 
         Stmt::Enum(_) => Ok(None),
     }
+}
+
+enum IterableKind {
+    Range,
+    Sequence(Type),
+    Map { key_ty: Type, value_ty: Type },
+}
+
+fn classify_iterable(ty: &Type) -> Option<IterableKind> {
+    match ty {
+        Type::Struct { name, type_args } => {
+            let name_str = name.0.as_ref();
+            let is_range = name_str == "Range" || name_str == "RangeInclusive";
+            if is_range && type_args.len() == 1 {
+                Some(IterableKind::Range)
+            } else {
+                None
+            }
+        }
+        Type::Array { elem, .. } => Some(IterableKind::Sequence(*elem.clone())),
+        Type::List { elem } => Some(IterableKind::Sequence(*elem.clone())),
+        Type::ArrayView { elem } => Some(IterableKind::Sequence(*elem.clone())),
+        Type::Map { key, value } => Some(IterableKind::Map {
+            key_ty: *key.clone(),
+            value_ty: *value.clone(),
+        }),
+        _ => None,
+    }
+}
+
+fn lower_for(
+    for_node: &ast::ForNode,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<Option<hir::Stmt>, LowerError> {
+    let iterable_ty = expr_type(ctx, &for_node.node.iterable, span)?;
+    match classify_iterable(&iterable_ty) {
+        Some(IterableKind::Range) => lower_for_range(for_node, span, ctx, fc, out),
+        Some(IterableKind::Sequence(elem_ty)) => {
+            lower_for_sequence(for_node, span, ctx, fc, out, &elem_ty)
+        }
+        Some(IterableKind::Map { key_ty, value_ty }) => {
+            lower_for_map(for_node, span, ctx, fc, out, &key_ty, &value_ty)
+        }
+        None => Err(LowerError::UnsupportedStmtKind {
+            span,
+            kind: "for loop over unsupported iterable type".to_string(),
+        }),
+    }
+}
+
+fn lower_for_range(
+    for_node: &ast::ForNode,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<Option<hir::Stmt>, LowerError> {
+    let ast::ExprKind::Range(range) = &for_node.node.iterable.node.kind else {
+        return Err(LowerError::UnsupportedStmtKind {
+            span,
+            kind: "for loop over non-range iterable".to_string(),
+        });
+    };
+    let range = &range.node;
+
+    let item_ty = expr_type(ctx, &range.start, span)?;
+    let saved_local_map = fc.local_map.clone();
+
+    let start_expr = lower_expr(&range.start, ctx, fc, out)?;
+    let end_expr = lower_expr(&range.end, ctx, fc, out)?;
+    let step_expr = match &for_node.node.step {
+        Some(s) => lower_expr(s, ctx, fc, out)?,
+        None => hir::Expr {
+            ty: item_ty.clone(),
+            span,
+            kind: hir::ExprKind::Int(1),
+        },
+    };
+
+    let reversed = for_node.node.reversed;
+
+    if reversed {
+        let start_local = alloc_assign_temp(fc, item_ty.clone());
+        out.push(hir::Stmt {
+            span,
+            kind: hir::StmtKind::Let {
+                local: start_local,
+                init: start_expr,
+            },
+        });
+
+        let step_local = alloc_assign_temp(fc, item_ty.clone());
+        out.push(hir::Stmt {
+            span,
+            kind: hir::StmtKind::Let {
+                local: step_local,
+                init: step_expr,
+            },
+        });
+
+        let i_init = if range.inclusive {
+            end_expr
+        } else {
+            hir::Expr {
+                ty: item_ty.clone(),
+                span,
+                kind: hir::ExprKind::Binary {
+                    op: BinaryOp::Sub,
+                    lhs: Box::new(end_expr),
+                    rhs: Box::new(hir::Expr {
+                        ty: item_ty.clone(),
+                        span,
+                        kind: hir::ExprKind::Int(1),
+                    }),
+                },
+            }
+        };
+        let i_local = alloc_assign_temp(fc, item_ty.clone());
+        out.push(hir::Stmt {
+            span,
+            kind: hir::StmtKind::Let {
+                local: i_local,
+                init: i_init,
+            },
+        });
+
+        let cond = hir::Expr {
+            ty: Type::Bool,
+            span,
+            kind: hir::ExprKind::Binary {
+                op: BinaryOp::GreaterThanEq,
+                lhs: Box::new(hir::Expr {
+                    ty: item_ty.clone(),
+                    span,
+                    kind: hir::ExprKind::Local(i_local),
+                }),
+                rhs: Box::new(hir::Expr {
+                    ty: item_ty.clone(),
+                    span,
+                    kind: hir::ExprKind::Local(start_local),
+                }),
+            },
+        };
+
+        let body_stmts = lower_for_body(
+            for_node,
+            span,
+            ctx,
+            fc,
+            &item_ty,
+            i_local,
+            step_local,
+            BinaryOp::Sub,
+        )?;
+
+        fc.local_map = saved_local_map;
+        Ok(Some(hir::Stmt {
+            span,
+            kind: hir::StmtKind::While {
+                cond,
+                body: hir::Block { stmts: body_stmts },
+            },
+        }))
+    } else {
+        let end_local = alloc_assign_temp(fc, item_ty.clone());
+        out.push(hir::Stmt {
+            span,
+            kind: hir::StmtKind::Let {
+                local: end_local,
+                init: end_expr,
+            },
+        });
+
+        let step_local = alloc_assign_temp(fc, item_ty.clone());
+        out.push(hir::Stmt {
+            span,
+            kind: hir::StmtKind::Let {
+                local: step_local,
+                init: step_expr,
+            },
+        });
+
+        let i_local = alloc_assign_temp(fc, item_ty.clone());
+        out.push(hir::Stmt {
+            span,
+            kind: hir::StmtKind::Let {
+                local: i_local,
+                init: start_expr,
+            },
+        });
+
+        let cmp_op = if range.inclusive {
+            BinaryOp::LessThanEq
+        } else {
+            BinaryOp::LessThan
+        };
+        let cond = hir::Expr {
+            ty: Type::Bool,
+            span,
+            kind: hir::ExprKind::Binary {
+                op: cmp_op,
+                lhs: Box::new(hir::Expr {
+                    ty: item_ty.clone(),
+                    span,
+                    kind: hir::ExprKind::Local(i_local),
+                }),
+                rhs: Box::new(hir::Expr {
+                    ty: item_ty.clone(),
+                    span,
+                    kind: hir::ExprKind::Local(end_local),
+                }),
+            },
+        };
+
+        let body_stmts = lower_for_body(
+            for_node,
+            span,
+            ctx,
+            fc,
+            &item_ty,
+            i_local,
+            step_local,
+            BinaryOp::Add,
+        )?;
+
+        fc.local_map = saved_local_map;
+        Ok(Some(hir::Stmt {
+            span,
+            kind: hir::StmtKind::While {
+                cond,
+                body: hir::Block { stmts: body_stmts },
+            },
+        }))
+    }
+}
+
+fn lower_for_sequence(
+    for_node: &ast::ForNode,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+    elem_ty: &Type,
+) -> Result<Option<hir::Stmt>, LowerError> {
+    let saved_local_map = fc.local_map.clone();
+
+    let xs_expr = lower_expr(&for_node.node.iterable, ctx, fc, out)?;
+    let xs_ty = xs_expr.ty.clone();
+
+    let xs_local = alloc_assign_temp(fc, xs_ty.clone());
+    out.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Let {
+            local: xs_local,
+            init: xs_expr,
+        },
+    });
+
+    let len_expr = hir::Expr {
+        ty: Type::Int,
+        span,
+        kind: hir::ExprKind::CollectionLen {
+            collection: Box::new(hir::Expr {
+                ty: xs_ty.clone(),
+                span,
+                kind: hir::ExprKind::Local(xs_local),
+            }),
+        },
+    };
+    let len_local = alloc_assign_temp(fc, Type::Int);
+    out.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Let {
+            local: len_local,
+            init: len_expr,
+        },
+    });
+
+    let step_expr = match &for_node.node.step {
+        Some(s) => lower_expr(s, ctx, fc, out)?,
+        None => hir::Expr {
+            ty: Type::Int,
+            span,
+            kind: hir::ExprKind::Int(1),
+        },
+    };
+    let step_local = alloc_assign_temp(fc, Type::Int);
+    out.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Let {
+            local: step_local,
+            init: step_expr,
+        },
+    });
+
+    let reversed = for_node.node.reversed;
+
+    let i_init = if reversed {
+        hir::Expr {
+            ty: Type::Int,
+            span,
+            kind: hir::ExprKind::Binary {
+                op: BinaryOp::Sub,
+                lhs: Box::new(hir::Expr {
+                    ty: Type::Int,
+                    span,
+                    kind: hir::ExprKind::Local(len_local),
+                }),
+                rhs: Box::new(hir::Expr {
+                    ty: Type::Int,
+                    span,
+                    kind: hir::ExprKind::Int(1),
+                }),
+            },
+        }
+    } else {
+        hir::Expr {
+            ty: Type::Int,
+            span,
+            kind: hir::ExprKind::Int(0),
+        }
+    };
+    let i_local = alloc_assign_temp(fc, Type::Int);
+    out.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Let {
+            local: i_local,
+            init: i_init,
+        },
+    });
+
+    let cond = if reversed {
+        hir::Expr {
+            ty: Type::Bool,
+            span,
+            kind: hir::ExprKind::Binary {
+                op: BinaryOp::GreaterThanEq,
+                lhs: Box::new(hir::Expr {
+                    ty: Type::Int,
+                    span,
+                    kind: hir::ExprKind::Local(i_local),
+                }),
+                rhs: Box::new(hir::Expr {
+                    ty: Type::Int,
+                    span,
+                    kind: hir::ExprKind::Int(0),
+                }),
+            },
+        }
+    } else {
+        hir::Expr {
+            ty: Type::Bool,
+            span,
+            kind: hir::ExprKind::Binary {
+                op: BinaryOp::LessThan,
+                lhs: Box::new(hir::Expr {
+                    ty: Type::Int,
+                    span,
+                    kind: hir::ExprKind::Local(i_local),
+                }),
+                rhs: Box::new(hir::Expr {
+                    ty: Type::Int,
+                    span,
+                    kind: hir::ExprKind::Local(len_local),
+                }),
+            },
+        }
+    };
+
+    let inc_op = if reversed {
+        BinaryOp::Sub
+    } else {
+        BinaryOp::Add
+    };
+
+    let body_stmts = lower_for_seq_body(
+        for_node, span, ctx, fc, elem_ty, xs_local, &xs_ty, i_local, step_local, inc_op,
+    )?;
+
+    fc.local_map = saved_local_map;
+    Ok(Some(hir::Stmt {
+        span,
+        kind: hir::StmtKind::While {
+            cond,
+            body: hir::Block { stmts: body_stmts },
+        },
+    }))
+}
+
+fn lower_for_seq_body(
+    for_node: &ast::ForNode,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    elem_ty: &Type,
+    xs_local: hir::LocalId,
+    xs_ty: &Type,
+    i_local: hir::LocalId,
+    step_local: hir::LocalId,
+    inc_op: BinaryOp,
+) -> Result<Vec<hir::Stmt>, LowerError> {
+    let mut body_stmts = vec![];
+
+    let index_get_expr = || hir::Expr {
+        ty: elem_ty.clone(),
+        span,
+        kind: hir::ExprKind::IndexGet {
+            target: Box::new(hir::Expr {
+                ty: xs_ty.clone(),
+                span,
+                kind: hir::ExprKind::Local(xs_local),
+            }),
+            index: Box::new(hir::Expr {
+                ty: Type::Int,
+                span,
+                kind: hir::ExprKind::Local(i_local),
+            }),
+        },
+    };
+
+    match &for_node.node.pattern.node {
+        Pattern::Ident(name) => {
+            let local_id = hir::LocalId(fc.locals.len() as u32);
+            fc.locals.push(hir::Local {
+                name: Some(*name),
+                ty: elem_ty.clone(),
+            });
+            fc.local_map.insert(*name, local_id);
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let {
+                    local: local_id,
+                    init: index_get_expr(),
+                },
+            });
+        }
+        Pattern::Wildcard => {}
+        Pattern::Tuple(subs) if subs.len() == 2 => {
+            let is_2_tuple = elem_ty
+                .tuple_element_types()
+                .is_some_and(|elems| elems.len() == 2);
+
+            if is_2_tuple {
+                let tuple_elems = elem_ty.tuple_element_types().unwrap();
+
+                let el_local = alloc_assign_temp(fc, elem_ty.clone());
+                body_stmts.push(hir::Stmt {
+                    span,
+                    kind: hir::StmtKind::Let {
+                        local: el_local,
+                        init: index_get_expr(),
+                    },
+                });
+
+                for (k, sub) in subs.iter().enumerate() {
+                    if let Pattern::Ident(name) = &sub.node {
+                        let local_id = hir::LocalId(fc.locals.len() as u32);
+                        fc.locals.push(hir::Local {
+                            name: Some(*name),
+                            ty: tuple_elems[k].clone(),
+                        });
+                        fc.local_map.insert(*name, local_id);
+                        body_stmts.push(hir::Stmt {
+                            span,
+                            kind: hir::StmtKind::Let {
+                                local: local_id,
+                                init: hir::Expr {
+                                    ty: tuple_elems[k].clone(),
+                                    span,
+                                    kind: hir::ExprKind::TupleIndex {
+                                        tuple: Box::new(hir::Expr {
+                                            ty: elem_ty.clone(),
+                                            span,
+                                            kind: hir::ExprKind::Local(el_local),
+                                        }),
+                                        index: k as u16,
+                                    },
+                                },
+                            },
+                        });
+                    }
+                }
+            } else {
+                if let Pattern::Ident(name) = &subs[0].node {
+                    let local_id = hir::LocalId(fc.locals.len() as u32);
+                    fc.locals.push(hir::Local {
+                        name: Some(*name),
+                        ty: Type::Int,
+                    });
+                    fc.local_map.insert(*name, local_id);
+                    body_stmts.push(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Let {
+                            local: local_id,
+                            init: hir::Expr {
+                                ty: Type::Int,
+                                span,
+                                kind: hir::ExprKind::Local(i_local),
+                            },
+                        },
+                    });
+                }
+
+                if let Pattern::Ident(name) = &subs[1].node {
+                    let local_id = hir::LocalId(fc.locals.len() as u32);
+                    fc.locals.push(hir::Local {
+                        name: Some(*name),
+                        ty: elem_ty.clone(),
+                    });
+                    fc.local_map.insert(*name, local_id);
+                    body_stmts.push(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Let {
+                            local: local_id,
+                            init: index_get_expr(),
+                        },
+                    });
+                }
+            }
+        }
+        _ => return Err(LowerError::UnsupportedPattern { span }),
+    }
+
+    // counter increment/decrement
+    body_stmts.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Assign {
+            local: i_local,
+            value: hir::Expr {
+                ty: Type::Int,
+                span,
+                kind: hir::ExprKind::Binary {
+                    op: inc_op,
+                    lhs: Box::new(hir::Expr {
+                        ty: Type::Int,
+                        span,
+                        kind: hir::ExprKind::Local(i_local),
+                    }),
+                    rhs: Box::new(hir::Expr {
+                        ty: Type::Int,
+                        span,
+                        kind: hir::ExprKind::Local(step_local),
+                    }),
+                },
+            },
+        },
+    });
+
+    let user_body = lower_block(&for_node.node.body, ctx, fc, false, &Type::Void)?;
+    body_stmts.extend(user_body.stmts);
+
+    Ok(body_stmts)
+}
+
+fn lower_for_map(
+    for_node: &ast::ForNode,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+    key_ty: &Type,
+    value_ty: &Type,
+) -> Result<Option<hir::Stmt>, LowerError> {
+    let saved_local_map = fc.local_map.clone();
+
+    let m_expr = lower_expr(&for_node.node.iterable, ctx, fc, out)?;
+    let m_ty = m_expr.ty.clone();
+
+    let m_local = alloc_assign_temp(fc, m_ty.clone());
+    out.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Let {
+            local: m_local,
+            init: m_expr,
+        },
+    });
+
+    let len_expr = hir::Expr {
+        ty: Type::Int,
+        span,
+        kind: hir::ExprKind::MapLen {
+            map: Box::new(hir::Expr {
+                ty: m_ty.clone(),
+                span,
+                kind: hir::ExprKind::Local(m_local),
+            }),
+        },
+    };
+    let len_local = alloc_assign_temp(fc, Type::Int);
+    out.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Let {
+            local: len_local,
+            init: len_expr,
+        },
+    });
+
+    let i_local = alloc_assign_temp(fc, Type::Int);
+    out.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Let {
+            local: i_local,
+            init: hir::Expr {
+                ty: Type::Int,
+                span,
+                kind: hir::ExprKind::Int(0),
+            },
+        },
+    });
+
+    let cond = hir::Expr {
+        ty: Type::Bool,
+        span,
+        kind: hir::ExprKind::Binary {
+            op: BinaryOp::LessThan,
+            lhs: Box::new(hir::Expr {
+                ty: Type::Int,
+                span,
+                kind: hir::ExprKind::Local(i_local),
+            }),
+            rhs: Box::new(hir::Expr {
+                ty: Type::Int,
+                span,
+                kind: hir::ExprKind::Local(len_local),
+            }),
+        },
+    };
+
+    let entry_ty = Type::Tuple(vec![key_ty.clone(), value_ty.clone()]);
+    let body_stmts = lower_for_map_body(
+        for_node, span, ctx, fc, key_ty, value_ty, &entry_ty, m_local, &m_ty, i_local,
+    )?;
+
+    fc.local_map = saved_local_map;
+    Ok(Some(hir::Stmt {
+        span,
+        kind: hir::StmtKind::While {
+            cond,
+            body: hir::Block { stmts: body_stmts },
+        },
+    }))
+}
+
+fn lower_for_map_body(
+    for_node: &ast::ForNode,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    key_ty: &Type,
+    value_ty: &Type,
+    entry_ty: &Type,
+    m_local: hir::LocalId,
+    m_ty: &Type,
+    i_local: hir::LocalId,
+) -> Result<Vec<hir::Stmt>, LowerError> {
+    let mut body_stmts = vec![];
+
+    let entry_at_expr = || hir::Expr {
+        ty: entry_ty.clone(),
+        span,
+        kind: hir::ExprKind::MapEntryAt {
+            map: Box::new(hir::Expr {
+                ty: m_ty.clone(),
+                span,
+                kind: hir::ExprKind::Local(m_local),
+            }),
+            index: Box::new(hir::Expr {
+                ty: Type::Int,
+                span,
+                kind: hir::ExprKind::Local(i_local),
+            }),
+        },
+    };
+
+    match &for_node.node.pattern.node {
+        Pattern::Ident(name) => {
+            let local_id = hir::LocalId(fc.locals.len() as u32);
+            fc.locals.push(hir::Local {
+                name: Some(*name),
+                ty: entry_ty.clone(),
+            });
+            fc.local_map.insert(*name, local_id);
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let {
+                    local: local_id,
+                    init: entry_at_expr(),
+                },
+            });
+        }
+        Pattern::Wildcard => {}
+        Pattern::Tuple(subs) if subs.len() == 2 => {
+            let is_enumerate = matches!(&subs[1].node, Pattern::Tuple(inner_subs) if {
+                value_ty.tuple_element_types()
+                    .is_none_or(|t2_elems| t2_elems.len() != inner_subs.len())
+            });
+
+            if is_enumerate {
+                if let Pattern::Ident(name) = &subs[0].node {
+                    let local_id = hir::LocalId(fc.locals.len() as u32);
+                    fc.locals.push(hir::Local {
+                        name: Some(*name),
+                        ty: Type::Int,
+                    });
+                    fc.local_map.insert(*name, local_id);
+                    body_stmts.push(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Let {
+                            local: local_id,
+                            init: hir::Expr {
+                                ty: Type::Int,
+                                span,
+                                kind: hir::ExprKind::Local(i_local),
+                            },
+                        },
+                    });
+                }
+
+                let entry_local = alloc_assign_temp(fc, entry_ty.clone());
+                body_stmts.push(hir::Stmt {
+                    span,
+                    kind: hir::StmtKind::Let {
+                        local: entry_local,
+                        init: entry_at_expr(),
+                    },
+                });
+
+                let Pattern::Tuple(inner_subs) = &subs[1].node else {
+                    return Err(LowerError::UnsupportedPattern { span });
+                };
+
+                let types = [key_ty, value_ty];
+                for (k, sub) in inner_subs.iter().enumerate() {
+                    match &sub.node {
+                        Pattern::Ident(name) => {
+                            let local_id = hir::LocalId(fc.locals.len() as u32);
+                            fc.locals.push(hir::Local {
+                                name: Some(*name),
+                                ty: types[k].clone(),
+                            });
+                            fc.local_map.insert(*name, local_id);
+                            body_stmts.push(hir::Stmt {
+                                span,
+                                kind: hir::StmtKind::Let {
+                                    local: local_id,
+                                    init: hir::Expr {
+                                        ty: types[k].clone(),
+                                        span,
+                                        kind: hir::ExprKind::TupleIndex {
+                                            tuple: Box::new(hir::Expr {
+                                                ty: entry_ty.clone(),
+                                                span,
+                                                kind: hir::ExprKind::Local(entry_local),
+                                            }),
+                                            index: k as u16,
+                                        },
+                                    },
+                                },
+                            });
+                        }
+                        Pattern::Wildcard => {}
+                        _ => return Err(LowerError::UnsupportedPattern { span }),
+                    }
+                }
+            } else {
+                let entry_local = alloc_assign_temp(fc, entry_ty.clone());
+                body_stmts.push(hir::Stmt {
+                    span,
+                    kind: hir::StmtKind::Let {
+                        local: entry_local,
+                        init: entry_at_expr(),
+                    },
+                });
+
+                let types = [key_ty, value_ty];
+                for (k, sub) in subs.iter().enumerate() {
+                    match &sub.node {
+                        Pattern::Ident(name) => {
+                            let local_id = hir::LocalId(fc.locals.len() as u32);
+                            fc.locals.push(hir::Local {
+                                name: Some(*name),
+                                ty: types[k].clone(),
+                            });
+                            fc.local_map.insert(*name, local_id);
+                            body_stmts.push(hir::Stmt {
+                                span,
+                                kind: hir::StmtKind::Let {
+                                    local: local_id,
+                                    init: hir::Expr {
+                                        ty: types[k].clone(),
+                                        span,
+                                        kind: hir::ExprKind::TupleIndex {
+                                            tuple: Box::new(hir::Expr {
+                                                ty: entry_ty.clone(),
+                                                span,
+                                                kind: hir::ExprKind::Local(entry_local),
+                                            }),
+                                            index: k as u16,
+                                        },
+                                    },
+                                },
+                            });
+                        }
+                        Pattern::Wildcard => {}
+                        _ => return Err(LowerError::UnsupportedPattern { span }),
+                    }
+                }
+            }
+        }
+        _ => return Err(LowerError::UnsupportedPattern { span }),
+    }
+
+    body_stmts.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Assign {
+            local: i_local,
+            value: hir::Expr {
+                ty: Type::Int,
+                span,
+                kind: hir::ExprKind::Binary {
+                    op: BinaryOp::Add,
+                    lhs: Box::new(hir::Expr {
+                        ty: Type::Int,
+                        span,
+                        kind: hir::ExprKind::Local(i_local),
+                    }),
+                    rhs: Box::new(hir::Expr {
+                        ty: Type::Int,
+                        span,
+                        kind: hir::ExprKind::Int(1),
+                    }),
+                },
+            },
+        },
+    });
+
+    let user_body = lower_block(&for_node.node.body, ctx, fc, false, &Type::Void)?;
+    body_stmts.extend(user_body.stmts);
+
+    Ok(body_stmts)
+}
+
+fn lower_for_body(
+    for_node: &ast::ForNode,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    item_ty: &Type,
+    i_local: hir::LocalId,
+    step_local: hir::LocalId,
+    inc_op: BinaryOp,
+) -> Result<Vec<hir::Stmt>, LowerError> {
+    let mut body_stmts = vec![];
+
+    match &for_node.node.pattern.node {
+        Pattern::Ident(name) => {
+            let local_id = hir::LocalId(fc.locals.len() as u32);
+            fc.locals.push(hir::Local {
+                name: Some(*name),
+                ty: item_ty.clone(),
+            });
+            fc.local_map.insert(*name, local_id);
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let {
+                    local: local_id,
+                    init: hir::Expr {
+                        ty: item_ty.clone(),
+                        span,
+                        kind: hir::ExprKind::Local(i_local),
+                    },
+                },
+            });
+        }
+        Pattern::Wildcard => {}
+        _ => return Err(LowerError::UnsupportedPattern { span }),
+    }
+
+    body_stmts.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Assign {
+            local: i_local,
+            value: hir::Expr {
+                ty: item_ty.clone(),
+                span,
+                kind: hir::ExprKind::Binary {
+                    op: inc_op,
+                    lhs: Box::new(hir::Expr {
+                        ty: item_ty.clone(),
+                        span,
+                        kind: hir::ExprKind::Local(i_local),
+                    }),
+                    rhs: Box::new(hir::Expr {
+                        ty: item_ty.clone(),
+                        span,
+                        kind: hir::ExprKind::Local(step_local),
+                    }),
+                },
+            },
+        },
+    });
+
+    let user_body = lower_block(&for_node.node.body, ctx, fc, false, &Type::Void)?;
+    body_stmts.extend(user_body.stmts);
+
+    Ok(body_stmts)
 }
 
 fn lower_if(
@@ -713,8 +1619,9 @@ fn extract_assign_access_chain<'a>(
             _ => {
                 return Err(LowerError::UnsupportedAssign {
                     span,
-                    detail: "assignment target must be a variable, field access, or index expression"
-                        .to_string(),
+                    detail:
+                        "assignment target must be a variable, field access, or index expression"
+                            .to_string(),
                 });
             }
         }
@@ -1385,7 +2292,8 @@ fn lower_expr(
                     if !is_type_name {
                         let method_name = field.node.field;
                         let target_ty = expr_type(ctx, &field.node.target, span)?;
-                        let collection_method = match (&target_ty, method_name.0.as_ref().as_str()) {
+                        let collection_method = match (&target_ty, method_name.0.as_ref().as_str())
+                        {
                             (Type::List { .. }, "push") => Some(hir::CollectionMethod::ListPush),
                             (Type::List { .. }, "pop") => Some(hir::CollectionMethod::ListPop),
                             (Type::Map { .. }, "insert") => Some(hir::CollectionMethod::MapInsert),
@@ -1393,13 +2301,13 @@ fn lower_expr(
                             _ => None,
                         };
                         if let Some(method) = collection_method {
-                            let local_id = *fc
-                                .local_map
-                                .get(root_name)
-                                .ok_or(LowerError::UnknownLocal {
-                                    name: *root_name,
-                                    span,
-                                })?;
+                            let local_id =
+                                *fc.local_map
+                                    .get(root_name)
+                                    .ok_or(LowerError::UnknownLocal {
+                                        name: *root_name,
+                                        span,
+                                    })?;
                             let mut args = vec![];
                             for arg in &c.node.args {
                                 args.push(lower_expr(arg, ctx, fc, out)?);
@@ -2239,9 +3147,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_for_loop() {
-        let err = lower_err("fn main() { for n in 0..10 {} }");
-        assert!(matches!(err, LowerError::UnsupportedStmtKind { .. }));
+    fn lowers_for_range_to_while() {
+        let prog = lower_ok("fn main() { for n in 0..10 {} }");
+        let main = find_main(&prog);
+        assert_eq!(main.body.stmts.len(), 4);
+        assert!(matches!(main.body.stmts[0].kind, StmtKind::Let { .. }));
+        assert!(matches!(main.body.stmts[1].kind, StmtKind::Let { .. }));
+        assert!(matches!(main.body.stmts[2].kind, StmtKind::Let { .. }));
+        assert!(matches!(main.body.stmts[3].kind, StmtKind::While { .. }));
     }
 
     #[test]

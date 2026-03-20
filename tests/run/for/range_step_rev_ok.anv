@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 9
+// 6
+// 3
+// 0
+// @match-end
+
+fn main() {
+    for n in rev 0..10 step 3 {
+        println(n);
+    }
+}

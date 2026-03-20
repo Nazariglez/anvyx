@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 30
+// 20
+// 10
+// @match-end
+
+fn main() {
+    let arr: [int; 3] = [10, 20, 30];
+    for el in rev arr {
+        println(el);
+    }
+}

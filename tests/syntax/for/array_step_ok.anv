@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let arr: [int; 6] = [10, 20, 30, 40, 50, 60];
+    for el in arr step 2 {
+        let _: int = el;
+    }
+}

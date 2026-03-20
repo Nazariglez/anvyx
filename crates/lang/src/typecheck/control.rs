@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
-use crate::ast::{ExprKind, ExprNode, ForNode, Ident, IfNode, MatchNode, Type, WhileNode};
+use crate::ast::{
+    self, ExprKind, ExprNode, ForNode, Ident, IfNode, MatchNode, Pattern, Type, WhileNode,
+};
 use crate::span::Span;
 
 use super::{
@@ -31,7 +33,13 @@ pub(super) fn check_while(
     }
 
     type_checker.enter_loop();
-    let _ = check_block_stmts(&node.body.node.stmts, node.body.node.tail.as_deref(), type_checker, errors, None);
+    let _ = check_block_stmts(
+        &node.body.node.stmts,
+        node.body.node.tail.as_deref(),
+        type_checker,
+        errors,
+        None,
+    );
     type_checker.exit_loop();
 }
 
@@ -43,35 +51,74 @@ pub(super) fn check_for(
     let node = &for_node.node;
 
     let iterable_ty = check_expr(&node.iterable, type_checker, errors, None);
-    let item_ty = extract_range_item_type(&iterable_ty, for_node.span, errors);
+    let item_ty = extract_iterable_item_type(&iterable_ty, for_node.span, errors);
+
+    let is_map = iterable_ty.is_map();
 
     if let Some(ref step_expr) = node.step {
         let step_ty = check_expr(step_expr, type_checker, errors, None);
-        let item_is_int = matches!(item_ty, Type::Int | Type::Infer);
-        let step_is_int = matches!(step_ty, Type::Int | Type::Infer);
-        if !item_is_int || !step_is_int {
+
+        if is_map {
             errors.push(TypeErr::new(
                 step_expr.span,
-                TypeErrKind::ForStepNotInt {
-                    item_ty: item_ty.clone(),
-                    step_ty,
-                },
+                TypeErrKind::ForMapStepNotAllowed,
             ));
+        } else {
+            let is_seq = is_sequence_type(&iterable_ty);
+            let step_is_int = matches!(step_ty, Type::Int | Type::Infer);
+
+            if is_seq {
+                if !step_is_int {
+                    errors.push(TypeErr::new(
+                        step_expr.span,
+                        TypeErrKind::ForStepNotInt {
+                            item_ty: item_ty.clone(),
+                            step_ty,
+                        },
+                    ));
+                }
+            } else {
+                let item_is_int = matches!(item_ty, Type::Int | Type::Infer);
+                if !item_is_int || !step_is_int {
+                    errors.push(TypeErr::new(
+                        step_expr.span,
+                        TypeErrKind::ForStepNotInt {
+                            item_ty: item_ty.clone(),
+                            step_ty,
+                        },
+                    ));
+                }
+            }
         }
     }
+
+    if is_map && node.reversed {
+        errors.push(TypeErr::new(
+            for_node.span,
+            TypeErrKind::ForMapRevNotAllowed,
+        ));
+    }
+
+    let effective_ty = infer_for_effective_type(&node.pattern, &item_ty, &iterable_ty);
 
     type_checker.push_scope();
     type_checker.enter_loop();
 
-    check_pattern(&node.pattern, &item_ty, false, type_checker, errors);
+    check_pattern(&node.pattern, &effective_ty, false, type_checker, errors);
 
-    let _ = check_block_stmts(&node.body.node.stmts, node.body.node.tail.as_deref(), type_checker, errors, None);
+    let _ = check_block_stmts(
+        &node.body.node.stmts,
+        node.body.node.tail.as_deref(),
+        type_checker,
+        errors,
+        None,
+    );
 
     type_checker.exit_loop();
     type_checker.pop_scope();
 }
 
-pub(super) fn extract_range_item_type(ty: &Type, span: Span, errors: &mut Vec<TypeErr>) -> Type {
+pub(super) fn extract_iterable_item_type(ty: &Type, span: Span, errors: &mut Vec<TypeErr>) -> Type {
     match ty {
         Type::Struct { name, type_args } => {
             let name_str = name.0.as_ref();
@@ -81,19 +128,72 @@ pub(super) fn extract_range_item_type(ty: &Type, span: Span, errors: &mut Vec<Ty
             }
             errors.push(TypeErr::new(
                 span,
-                TypeErrKind::ForIterableNotRange { found: ty.clone() },
+                TypeErrKind::ForIterableNotSupported { found: ty.clone() },
             ));
             Type::Infer
         }
+        Type::Array { elem, .. } => *elem.clone(),
+        Type::List { elem } => *elem.clone(),
+        Type::ArrayView { elem } => *elem.clone(),
+        Type::Map { key, value } => Type::Tuple(vec![*key.clone(), *value.clone()]),
         Type::Infer => Type::Infer,
         _ => {
             errors.push(TypeErr::new(
                 span,
-                TypeErrKind::ForIterableNotRange { found: ty.clone() },
+                TypeErrKind::ForIterableNotSupported { found: ty.clone() },
             ));
             Type::Infer
         }
     }
+}
+
+fn is_range_type(ty: &Type) -> bool {
+    matches!(ty, Type::Struct { name, .. } if {
+        let s = name.0.as_ref();
+        s == "Range" || s == "RangeInclusive"
+    })
+}
+
+fn is_sequence_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Array { .. } | Type::List { .. } | Type::ArrayView { .. }
+    )
+}
+
+fn infer_for_effective_type(
+    pattern: &ast::PatternNode,
+    item_ty: &Type,
+    iterable_ty: &Type,
+) -> Type {
+    if is_range_type(iterable_ty) {
+        return item_ty.clone();
+    }
+
+    let Pattern::Tuple(subs) = &pattern.node else {
+        return item_ty.clone();
+    };
+
+    if subs.len() != 2 {
+        return item_ty.clone();
+    }
+
+    if let Some(elems) = item_ty.tuple_element_types()
+        && elems.len() == 2
+    {
+        if let Pattern::Tuple(inner_subs) = &subs[1].node {
+            let t2_matches = elems[1]
+                .tuple_element_types()
+                .is_some_and(|t2_elems| t2_elems.len() == inner_subs.len());
+            if t2_matches {
+                return item_ty.clone();
+            }
+            return Type::Tuple(vec![Type::Int, item_ty.clone()]);
+        }
+        return item_ty.clone();
+    }
+
+    Type::Tuple(vec![Type::Int, item_ty.clone()])
 }
 
 pub(super) fn check_if(
@@ -167,7 +267,6 @@ pub(super) fn check_if(
         then_ty
     }
 }
-
 
 pub(super) fn is_if_without_else(expr: &ExprNode) -> bool {
     match &expr.node.kind {

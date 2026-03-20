@@ -179,13 +179,15 @@ pub enum TypeErrKind {
         field: Ident,
     },
 
-    ForIterableNotRange {
+    ForIterableNotSupported {
         found: Type,
     },
     ForStepNotInt {
         item_ty: Type,
         step_ty: Type,
     },
+    ForMapStepNotAllowed,
+    ForMapRevNotAllowed,
     ArrayAllNilAmbiguous,
     ArrayFillLengthNotLiteral,
     IndexOnNonArray {

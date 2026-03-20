@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: rev is not supported for map iteration
+
+fn main() {
+    let m = ["a": 1, "b": 2];
+    for (k, v) in rev m {
+        println(k);
+    }
+}

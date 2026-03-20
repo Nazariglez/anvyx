@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let arr: [(int, string); 2] = [(1, "x"), (2, "y")];
+    for (a, b) in arr {
+        let _: int = a;
+        let _: string = b;
+    }
+}

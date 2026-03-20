@@ -224,6 +224,19 @@ pub enum ExprKind {
         index: Box<Expr>,
     },
 
+    CollectionLen {
+        collection: Box<Expr>,
+    },
+
+    MapLen {
+        map: Box<Expr>,
+    },
+
+    MapEntryAt {
+        map: Box<Expr>,
+        index: Box<Expr>,
+    },
+
     CollectionMut {
         object: LocalId,
         method: CollectionMethod,

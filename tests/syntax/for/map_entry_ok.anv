@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let m = ["a": 1, "b": 2];
+    for entry in m {
+        let _: (string, int) = entry;
+    }
+}

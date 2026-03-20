@@ -67,6 +67,13 @@ impl MapStorage {
             MapStorage::Ordered(m) => Box::new(m.iter()),
         }
     }
+
+    pub fn get_index(&self, idx: usize) -> Option<(&Value, &Value)> {
+        match self {
+            MapStorage::Ordered(m) => m.get_index(idx),
+            MapStorage::Unordered(m) => m.iter().nth(idx),
+        }
+    }
 }
 
 impl PartialEq for MapStorage {

@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: success
+
+fn iterate(xs: [int; ..]) {
+    for el in xs {
+        let _: int = el;
+    }
+}
+
+fn main() {
+    let arr: [int; 3] = [1, 2, 3];
+    iterate(arr);
+}

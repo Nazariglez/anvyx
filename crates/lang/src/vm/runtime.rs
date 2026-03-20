@@ -459,6 +459,59 @@ impl<'a> VM<'a> {
                     }
                 }
 
+                Op::CollectionLen => {
+                    let collection = self.pop();
+                    match collection {
+                        Value::Array(a) => self.push(Value::Int(a.len() as i64)),
+                        Value::List(l) => self.push(Value::Int(l.len() as i64)),
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "CollectionLen: expected array or list, got {other}"
+                            )));
+                        }
+                    }
+                }
+
+                Op::MapLen => {
+                    let map = self.pop();
+                    match map {
+                        Value::Map(m) => self.push(Value::Int(m.len() as i64)),
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "MapLen: expected map, got {other}"
+                            )));
+                        }
+                    }
+                }
+
+                Op::MapEntryAt => {
+                    let index_val = self.pop();
+                    let map = self.pop();
+                    match (&map, &index_val) {
+                        (Value::Map(m), Value::Int(idx)) => {
+                            let idx = *idx as usize;
+                            match m.get_index(idx) {
+                                Some((k, v)) => {
+                                    let entry =
+                                        Value::Tuple(ManagedRc::new(vec![k.clone(), v.clone()]));
+                                    self.push(entry);
+                                }
+                                None => {
+                                    return Err(RuntimeError::new(format!(
+                                        "MapEntryAt: index {idx} out of bounds for map of length {}",
+                                        m.len()
+                                    )));
+                                }
+                            }
+                        }
+                        _ => {
+                            return Err(RuntimeError::new(format!(
+                                "MapEntryAt: expected (map, int), got ({map}, {index_val})"
+                            )));
+                        }
+                    }
+                }
+
                 Op::ListPush => {
                     let value = self.pop();
                     let collection = self.pop();

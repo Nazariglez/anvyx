@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 60
+// @match-end
+
+fn main() {
+    let list: [int] = [10, 20, 30];
+    var sum = 0;
+    for el in list {
+        sum = sum + el;
+    }
+    println(sum);
+}

@@ -468,6 +468,22 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             fc.emit(Op::IndexGet);
         }
 
+        hir::ExprKind::CollectionLen { collection } => {
+            compile_expr(fc, collection)?;
+            fc.emit(Op::CollectionLen);
+        }
+
+        hir::ExprKind::MapLen { map } => {
+            compile_expr(fc, map)?;
+            fc.emit(Op::MapLen);
+        }
+
+        hir::ExprKind::MapEntryAt { map, index } => {
+            compile_expr(fc, map)?;
+            compile_expr(fc, index)?;
+            fc.emit(Op::MapEntryAt);
+        }
+
         hir::ExprKind::CollectionMut { object, method, args } => {
             fc.emit(Op::GetLocal(object.0 as u16));
             for arg in args {

@@ -61,10 +61,13 @@ pub enum Op {
     ConstructArray(u16), // pops N values, pushes Value::Array
     ConstructList(u16),  // pops N values, pushes Value::List
     IndexGet,            // pops index, pops collection (Array|List|Map), pushes element
-    IndexSet, // pops value, pops index, pops collection (Array|List|Map), pushes mutated collection
+    IndexSet,      // pops value, pops index, pops collection (Array|List|Map), pushes mutated collection
+    CollectionLen, // pops Array|List, pushes Int(len)
 
     // maps
     ConstructMap(u16), // pops 2*N values (key, value pairs), pushes Value::Map
+    MapLen,            // pops Map, pushes Int(len)
+    MapEntryAt,        // pops index, pops Map, pushes Tuple(key, value)
 
     // mutating collection methods
     ListPush,  // pops value, list -> pushes Nil, modified list

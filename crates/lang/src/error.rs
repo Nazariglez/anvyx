@@ -334,13 +334,21 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
                 "'self' is readonly in this method of '{struct_name}'; use 'var self' for mutating methods"
             ),
         ),
-        TypeErrKind::ForIterableNotRange { found } => (
-            "for can currently only iterate over ranges".to_string(),
-            format!("found '{found}', expected Range<T> or RangeInclusive<T>"),
+        TypeErrKind::ForIterableNotSupported { found } => (
+            "type is not iterable".to_string(),
+            format!("found '{found}'; expected a range, array, list, view, or map"),
         ),
         TypeErrKind::ForStepNotInt { item_ty, step_ty } => (
             "step is only supported for integer ranges".to_string(),
             format!("item type is '{item_ty}', step type is '{step_ty}'; both must be 'int'"),
+        ),
+        TypeErrKind::ForMapStepNotAllowed => (
+            "step is not supported for map iteration".to_string(),
+            "maps do not have a meaningful index stride; remove the 'step' clause".to_string(),
+        ),
+        TypeErrKind::ForMapRevNotAllowed => (
+            "rev is not supported for map iteration".to_string(),
+            "map iteration order is unspecified; remove the 'rev' keyword".to_string(),
         ),
         TypeErrKind::ArrayAllNilAmbiguous => (
             "cannot infer element type for all-nil array literal".to_string(),

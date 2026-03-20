@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let list: [int] = [1, 2, 3];
+    for el in list {
+        let _: int = el;
+    }
+}
