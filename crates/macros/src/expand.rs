@@ -1,31 +1,75 @@
+use std::collections::HashMap;
+
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    FnArg, ItemFn, LitStr, Pat, Result, ReturnType, Token, Type,
+    FnArg, ItemFn, LitStr, Pat, Result, ReturnType, Token,
     parse::{Parse, ParseStream},
 };
 
-use crate::type_map::map_type;
+use crate::type_map::{
+    ExternTypeInfo, ParamMode, ReturnMode, classify_param, classify_return,
+};
 
 struct ExportFnArgs {
     name: Option<String>,
+    ret: Option<String>,
+    params: HashMap<String, String>,
 }
 
 impl Parse for ExportFnArgs {
     fn parse(input: ParseStream) -> Result<Self> {
-        if input.is_empty() {
-            return Ok(Self { name: None });
+        let mut name = None;
+        let mut ret = None;
+        let mut params = HashMap::new();
+
+        while !input.is_empty() {
+            let key: syn::Ident = input.parse()?;
+            match key.to_string().as_str() {
+                "name" => {
+                    let _eq: Token![=] = input.parse()?;
+                    let lit: LitStr = input.parse()?;
+                    name = Some(lit.value());
+                }
+                "ret" => {
+                    let _eq: Token![=] = input.parse()?;
+                    let lit: LitStr = input.parse()?;
+                    ret = Some(lit.value());
+                }
+                "params" => {
+                    let content;
+                    syn::parenthesized!(content in input);
+                    while !content.is_empty() {
+                        let param_name: syn::Ident = content.parse()?;
+                        let _eq: Token![=] = content.parse()?;
+                        let lit: LitStr = content.parse()?;
+                        params.insert(param_name.to_string(), lit.value());
+                        if !content.is_empty() {
+                            let _comma: Token![,] = content.parse()?;
+                        }
+                    }
+                }
+                _ => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "expected `name`, `ret`, or `params`",
+                    ));
+                }
+            }
+            if !input.is_empty() {
+                let _comma: Token![,] = input.parse()?;
+            }
         }
-        let key: syn::Ident = input.parse()?;
-        if key != "name" {
-            return Err(syn::Error::new(key.span(), "expected `name = \"...\"`"));
-        }
-        let _eq: Token![=] = input.parse()?;
-        let lit: LitStr = input.parse()?;
-        Ok(Self {
-            name: Some(lit.value()),
-        })
+
+        Ok(Self { name, ret, params })
     }
+}
+
+struct BorrowParam {
+    param_name: syn::Ident,
+    store_ident: syn::Ident,
+    handle_ident: syn::Ident,
+    is_mut: bool,
 }
 
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -51,6 +95,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let mut extractions = vec![];
     let mut param_names = vec![];
     let mut param_tuples = vec![];
+    let mut borrow_params = vec![];
 
     for (i, arg) in func.sig.inputs.iter().enumerate() {
         let FnArg::Typed(pat_type) = arg else {
@@ -70,34 +115,115 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             }
         };
 
-        let mapping = map_type(&pat_type.ty).ok_or_else(|| {
+        let param_name_str = param_name.to_string();
+        let handle_ident = format_ident!("__handle_{}", i);
+
+        let mode = classify_param(&pat_type.ty).ok_or_else(|| {
             syn::Error::new_spanned(
                 &pat_type.ty,
-                "unsupported type in #[export_fn]: only i64, f64, bool, and String are supported",
+                "unsupported type in #[export_fn]",
             )
         })?;
 
-        let extract_variant = &mapping.extract_variant;
-        let convert_extracted = &mapping.convert_extracted;
-        let param_name_str = param_name.to_string();
-        let anvyx_type_str = mapping.anvyx_type;
+        match mode {
+            ParamMode::ValuePassthrough => {
+                let anvyx_type = args
+                    .params
+                    .get(&param_name_str)
+                    .cloned()
+                    .unwrap_or_else(|| "any".to_string());
 
-        extractions.push(quote! {
-            let #extract_variant = args[#i].clone() else {
-                return Err(anvyx_lang::RuntimeError::new(format!(
-                    "expected correct type for parameter '{}' in extern fn '{}'",
-                    #param_name_str, #export_name
-                )));
-            };
-            let #param_name = #convert_extracted;
-        });
+                extractions.push(quote! {
+                    let #param_name = args[#i].clone();
+                });
+                param_tuples.push(quote! { (#param_name_str, #anvyx_type) });
+            }
+            ParamMode::Primitive(mapping) => {
+                let extract_variant = &mapping.extract_variant;
+                let convert_extracted = &mapping.convert_extracted;
+                let anvyx_type_str = args
+                    .params
+                    .get(&param_name_str)
+                    .cloned()
+                    .unwrap_or_else(|| mapping.anvyx_type.to_string());
+
+                extractions.push(quote! {
+                    let #extract_variant = args[#i].clone() else {
+                        return Err(anvyx_lang::RuntimeError::new(format!(
+                            "expected correct type for parameter '{}' in extern fn '{}'",
+                            #param_name_str, #export_name
+                        )));
+                    };
+                    let #param_name = #convert_extracted;
+                });
+                param_tuples.push(quote! { (#param_name_str, #anvyx_type_str) });
+            }
+            ParamMode::ExternOwned(info) => {
+                let store_ident = &info.store_ident;
+                let type_decl_ident = &info.decl_ident;
+
+                extractions.push(quote! {
+                    let anvyx_lang::Value::ExternHandle(#handle_ident) = args[#i].clone() else {
+                        return Err(anvyx_lang::RuntimeError::new(format!(
+                            "expected extern handle for parameter '{}' in extern fn '{}'",
+                            #param_name_str, #export_name
+                        )));
+                    };
+                    let #param_name = #store_ident.with(|__s| __s.borrow_mut().remove(#handle_ident))?;
+                });
+                param_tuples.push(quote! { (#param_name_str, #type_decl_ident.name) });
+            }
+            ParamMode::ExternRef(info) => {
+                let ExternTypeInfo { store_ident, decl_ident } = info;
+
+                extractions.push(quote! {
+                    let anvyx_lang::Value::ExternHandle(#handle_ident) = args[#i].clone() else {
+                        return Err(anvyx_lang::RuntimeError::new(format!(
+                            "expected extern handle for parameter '{}' in extern fn '{}'",
+                            #param_name_str, #export_name
+                        )));
+                    };
+                });
+                param_tuples.push(quote! { (#param_name_str, #decl_ident.name) });
+                borrow_params.push(BorrowParam {
+                    param_name: param_name.clone(),
+                    store_ident,
+                    handle_ident,
+                    is_mut: false,
+                });
+            }
+            ParamMode::ExternMutRef(info) => {
+                let ExternTypeInfo { store_ident, decl_ident } = info;
+
+                extractions.push(quote! {
+                    let anvyx_lang::Value::ExternHandle(#handle_ident) = args[#i].clone() else {
+                        return Err(anvyx_lang::RuntimeError::new(format!(
+                            "expected extern handle for parameter '{}' in extern fn '{}'",
+                            #param_name_str, #export_name
+                        )));
+                    };
+                });
+                param_tuples.push(quote! { (#param_name_str, #decl_ident.name) });
+                borrow_params.push(BorrowParam {
+                    param_name: param_name.clone(),
+                    store_ident,
+                    handle_ident,
+                    is_mut: true,
+                });
+            }
+        }
 
         param_names.push(param_name);
-        param_tuples.push(quote! { (#param_name_str, #anvyx_type_str) });
     }
 
-    let ret_type_str = ret_anvyx_type(&func.sig.output, &export_name)?;
-    let call_and_wrap = build_return(&func.sig.output, fn_ident, &param_names, &export_name)?;
+    let ret_type_ts = ret_anvyx_type(&func.sig.output, &export_name, &args.ret)?;
+    let call_body = build_call_body(
+        &func.sig.output,
+        fn_ident,
+        &param_names,
+        &export_name,
+        &borrow_params,
+    )?;
 
     Ok(quote! {
         #func
@@ -105,74 +231,167 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         pub const #decl_ident: anvyx_lang::ExternDecl = anvyx_lang::ExternDecl {
             name: #export_name,
             params: &[#(#param_tuples),*],
-            ret: #ret_type_str,
+            ret: #ret_type_ts,
         };
 
         pub fn #companion_ident() -> (&'static str, anvyx_lang::ExternHandler) {
             (#export_name, Box::new(|args: Vec<anvyx_lang::Value>| {
                 #(#extractions)*
-                #call_and_wrap
+                #call_body
             }))
         }
     })
 }
 
-fn ret_anvyx_type(output: &ReturnType, export_name: &str) -> syn::Result<&'static str> {
-    match output {
-        ReturnType::Default => Ok("void"),
-        ReturnType::Type(_, ty) => {
-            let is_unit = matches!(ty.as_ref(), Type::Tuple(t) if t.elems.is_empty());
-            if is_unit {
-                return Ok("void");
-            }
-            let mapping = map_type(ty).ok_or_else(|| {
-                syn::Error::new_spanned(
-                    ty,
-                    format!(
-                        "unsupported return type in #[export_fn] '{export_name}': \
-                        only i64, f64, bool, and String are supported"
-                    ),
-                )
-            })?;
-            Ok(mapping.anvyx_type)
+fn ret_anvyx_type(
+    output: &ReturnType,
+    export_name: &str,
+    ret_override: &Option<String>,
+) -> syn::Result<TokenStream> {
+    if let Some(ret_str) = ret_override {
+        return Ok(quote! { #ret_str });
+    }
+
+    let mode = classify_return(output).ok_or_else(|| {
+        syn::Error::new_spanned(
+            output,
+            format!(
+                "unsupported return type in #[export_fn] '{export_name}': \
+                 only i64, f64, bool, String, Value, and exported types are supported"
+            ),
+        )
+    })?;
+
+    match mode {
+        ReturnMode::Void => Ok(quote! { "void" }),
+        ReturnMode::Primitive(m) => {
+            let s = m.anvyx_type;
+            Ok(quote! { #s })
+        }
+        ReturnMode::ValuePassthrough => Ok(quote! { "any" }),
+        ReturnMode::ExternOwned(info) => {
+            let decl_ident = info.decl_ident;
+            Ok(quote! { #decl_ident.name })
         }
     }
 }
 
-fn build_return(
+fn build_call_body(
     output: &ReturnType,
     fn_ident: &syn::Ident,
     param_names: &[syn::Ident],
     export_name: &str,
+    borrow_params: &[BorrowParam],
 ) -> syn::Result<TokenStream> {
     let call = quote! { #fn_ident(#(#param_names),*) };
 
-    match output {
-        ReturnType::Default => Ok(quote! {
+    let mode = classify_return(output).ok_or_else(|| {
+        syn::Error::new_spanned(
+            output,
+            format!(
+                "unsupported return type in #[export_fn] '{export_name}': \
+                 only i64, f64, bool, String, Value, and exported types are supported"
+            ),
+        )
+    })?;
+
+    if borrow_params.is_empty() {
+        return build_flat_call(&call, &mode);
+    }
+
+    let is_void = matches!(mode, ReturnMode::Void);
+    let innermost = if is_void {
+        quote! { #call; Ok(()) }
+    } else {
+        quote! { Ok(#call) }
+    };
+
+    let mut current = innermost;
+    for bp in borrow_params.iter().rev() {
+        let param_name = &bp.param_name;
+        let store_ident = &bp.store_ident;
+        let handle_ident = &bp.handle_ident;
+        let param_name_str = param_name.to_string();
+
+        current = if bp.is_mut {
+            quote! {
+                #store_ident.with(|__store| {
+                    let mut __borrow = __store.borrow_mut();
+                    let #param_name = __borrow.get_mut(#handle_ident).map_err(|e| {
+                        anvyx_lang::RuntimeError::new(format!(
+                            "invalid handle for parameter '{}' in extern fn '{}': {}",
+                            #param_name_str, #export_name, e.message
+                        ))
+                    })?;
+                    #current
+                })
+            }
+        } else {
+            quote! {
+                #store_ident.with(|__store| {
+                    let __borrow = __store.borrow();
+                    let #param_name = __borrow.get(#handle_ident).map_err(|e| {
+                        anvyx_lang::RuntimeError::new(format!(
+                            "invalid handle for parameter '{}' in extern fn '{}': {}",
+                            #param_name_str, #export_name, e.message
+                        ))
+                    })?;
+                    #current
+                })
+            }
+        };
+    }
+
+    match &mode {
+        ReturnMode::Void => Ok(quote! {
+            #current?;
+            Ok(anvyx_lang::Value::Nil)
+        }),
+        ReturnMode::Primitive(m) => {
+            let wrap_result = &m.wrap_result;
+            Ok(quote! {
+                let result = #current?;
+                Ok(#wrap_result)
+            })
+        }
+        ReturnMode::ValuePassthrough => Ok(quote! {
+            let result = #current?;
+            Ok(result)
+        }),
+        ReturnMode::ExternOwned(info) => {
+            let ret_store = &info.store_ident;
+            Ok(quote! {
+                let result = #current?;
+                let id = #ret_store.with(|__s| __s.borrow_mut().insert(result));
+                Ok(anvyx_lang::Value::ExternHandle(id))
+            })
+        }
+    }
+}
+
+fn build_flat_call(call: &TokenStream, mode: &ReturnMode) -> syn::Result<TokenStream> {
+    match mode {
+        ReturnMode::Void => Ok(quote! {
             #call;
             Ok(anvyx_lang::Value::Nil)
         }),
-        ReturnType::Type(_, ty) => {
-            let is_unit = matches!(ty.as_ref(), Type::Tuple(t) if t.elems.is_empty());
-            if is_unit {
-                return Ok(quote! {
-                    #call;
-                    Ok(anvyx_lang::Value::Nil)
-                });
-            }
-            let mapping = map_type(ty).ok_or_else(|| {
-                syn::Error::new_spanned(
-                    ty,
-                    format!(
-                        "unsupported return type in #[export_fn] '{export_name}': \
-                        only i64, f64, bool, and String are supported"
-                    ),
-                )
-            })?;
-            let wrap_result = &mapping.wrap_result;
+        ReturnMode::Primitive(m) => {
+            let wrap_result = &m.wrap_result;
             Ok(quote! {
                 let result = #call;
                 Ok(#wrap_result)
+            })
+        }
+        ReturnMode::ValuePassthrough => Ok(quote! {
+            let result = #call;
+            Ok(result)
+        }),
+        ReturnMode::ExternOwned(info) => {
+            let store_ident = &info.store_ident;
+            Ok(quote! {
+                let result = #call;
+                let id = #store_ident.with(|__s| __s.borrow_mut().insert(result));
+                Ok(anvyx_lang::Value::ExternHandle(id))
             })
         }
     }

@@ -1,9 +1,9 @@
 // @mode: check
 // @expect: success
 
-extern fn add(a: int, b: int) -> int
-extern fn tick()
-extern fn greet(name: string) -> string
+extern fn add(a: int, b: int) -> int;
+extern fn tick();
+extern fn greet(name: string) -> string;
 
 fn main() {
     let x = add(1, 2);

@@ -1,10 +1,10 @@
 // @mode: check
 // @expect: success
 
-extern type Sprite
-extern fn create_sprite(path: string) -> Sprite
-extern fn draw_sprite(s: Sprite)
-extern fn destroy_sprite(s: Sprite)
+extern type Sprite;
+extern fn create_sprite(path: string) -> Sprite;
+extern fn draw_sprite(s: Sprite);
+extern fn destroy_sprite(s: Sprite);
 
 fn main() {
     let s = create_sprite("hero.png");

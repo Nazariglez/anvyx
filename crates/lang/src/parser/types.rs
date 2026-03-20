@@ -28,6 +28,7 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
             (Token::Keyword(Keyword::Bool), _) => ast::Type::Bool,
             (Token::Keyword(Keyword::String), _) => ast::Type::String,
             (Token::Keyword(Keyword::Void), _) => ast::Type::Void,
+            (Token::Keyword(Keyword::Any), _) => ast::Type::Any,
         };
 
         let type_args = select! { (Token::Op(Op::LessThan), _) => () }

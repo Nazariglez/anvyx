@@ -269,6 +269,25 @@ impl Type {
         matches!(self, Type::ArrayView { .. })
     }
 
+    pub fn contains_any(&self) -> bool {
+        match self {
+            Type::Any => true,
+            Type::Func { params, ret } => {
+                params.iter().any(|p| p.contains_any()) || ret.contains_any()
+            }
+            Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+                elem.contains_any()
+            }
+            Type::Map { key, value } => key.contains_any() || value.contains_any(),
+            Type::Tuple(elems) => elems.iter().any(|e| e.contains_any()),
+            Type::NamedTuple(fields) => fields.iter().any(|(_, ty)| ty.contains_any()),
+            Type::Struct { type_args, .. } | Type::Enum { type_args, .. } => {
+                type_args.iter().any(|a| a.contains_any())
+            }
+            _ => false,
+        }
+    }
+
     pub fn tuple_arity(&self) -> Option<usize> {
         match self {
             Type::Tuple(elems) => Some(elems.len()),

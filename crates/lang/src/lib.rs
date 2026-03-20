@@ -12,11 +12,12 @@ mod vm;
 
 pub mod metadata;
 
-pub use anvyx_macros::{export_fn, provider};
+pub use anvyx_macros::{export_fn, export_type, provider};
 pub use metadata::{
-    ExternDecl, ExternFuncMeta, ExternProviderMeta, exports_to_json, parse_provider_json,
+    ExternDecl, ExternTypeDecl, ExternFuncMeta, ExternProviderMeta, exports_to_json,
+    parse_provider_json,
 };
-pub use vm::{EnumData, ExternHandler, ManagedRc, MapStorage, RuntimeError, StructData, Value};
+pub use vm::{EnumData, ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData, Value};
 
 pub struct StdModuleSource {
     pub anv_source: String,
@@ -336,7 +337,7 @@ mod std_import_tests {
         m.insert(
             "math".to_string(),
             StdModuleSource {
-                anv_source: "extern fn sin(x: float) -> float\nextern fn cos(x: float) -> float\n"
+                anv_source: "extern fn sin(x: float) -> float;\nextern fn cos(x: float) -> float;\n"
                     .to_string(),
             },
         );

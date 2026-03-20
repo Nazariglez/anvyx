@@ -1,4 +1,5 @@
 mod expand;
+mod export_type;
 mod provider;
 mod type_map;
 
@@ -24,6 +25,11 @@ pub fn export_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// anvyx_lang::provider!(math::add);
 /// ```
+#[proc_macro_attribute]
+pub fn export_type(attr: TokenStream, item: TokenStream) -> TokenStream {
+    export_type::expand(attr.into(), item.into()).into()
+}
+
 #[proc_macro]
 pub fn provider(input: TokenStream) -> TokenStream {
     provider::expand(input.into()).into()

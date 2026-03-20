@@ -360,34 +360,34 @@ fn check_src(src: &str) -> Result<crate::typecheck::TypeChecker, Vec<crate::type
 
 #[test]
 fn extern_fn_call_correct_types_ok() {
-    let result = check_src("extern fn add(a: int, b: int) -> int\nfn main() { let x = add(1, 2); }");
+    let result = check_src("extern fn add(a: int, b: int) -> int;\nfn main() { let x = add(1, 2); }");
     assert!(result.is_ok(), "expected typecheck to pass, got: {:?}", result.err());
 }
 
 #[test]
 fn extern_fn_call_wrong_arg_type_typecheck_err() {
-    let result = check_src("extern fn add(a: int, b: int) -> int\nfn main() { add(true, 2); }");
+    let result = check_src("extern fn add(a: int, b: int) -> int;\nfn main() { add(true, 2); }");
     assert!(result.is_err(), "expected type error for wrong arg type");
 }
 
 #[test]
 fn extern_fn_call_wrong_arity_typecheck_err() {
-    let result = check_src("extern fn add(a: int, b: int) -> int\nfn main() { add(1); }");
+    let result = check_src("extern fn add(a: int, b: int) -> int;\nfn main() { add(1); }");
     assert!(result.is_err(), "expected type error for wrong arity");
 }
 
 #[test]
 fn extern_fn_void_return_ok() {
-    let result = check_src("extern fn tick()\nfn main() { tick(); }");
+    let result = check_src("extern fn tick();\nfn main() { tick(); }");
     assert!(result.is_ok(), "expected typecheck to pass, got: {:?}", result.err());
 }
 
 #[test]
 fn extern_type_used_in_extern_fn_ok() {
     let src = "
-extern type Sprite
-extern fn create() -> Sprite
-extern fn draw(s: Sprite)
+extern type Sprite;
+extern fn create() -> Sprite;
+extern fn draw(s: Sprite);
 fn main() {
     let s = create();
     draw(s);
@@ -399,14 +399,14 @@ fn main() {
 #[test]
 fn extern_type_mismatch_err() {
     let src = "
-extern type Sprite
-extern type Sound
-extern fn play(s: Sound)
+extern type Sprite;
+extern type Sound;
+extern fn play(s: Sound);
 fn main() {
     let spr = create_sprite();
     play(spr);
 }
-extern fn create_sprite() -> Sprite";
+extern fn create_sprite() -> Sprite;";
     let result = check_src(src);
     assert!(result.is_err(), "expected type error for wrong extern type");
 }
@@ -414,8 +414,8 @@ extern fn create_sprite() -> Sprite";
 #[test]
 fn extern_type_not_assignable_to_int_err() {
     let src = "
-extern type Sprite
-extern fn create() -> Sprite
+extern type Sprite;
+extern fn create() -> Sprite;
 fn main() {
     let x: int = create();
 }";
@@ -426,8 +426,8 @@ fn main() {
 #[test]
 fn int_not_assignable_to_extern_type_err() {
     let src = "
-extern type Sprite
-extern fn draw(s: Sprite)
+extern type Sprite;
+extern fn draw(s: Sprite);
 fn main() {
     draw(42);
 }";
@@ -438,8 +438,8 @@ fn main() {
 #[test]
 fn extern_type_optional_ok() {
     let src = "
-extern type Sprite
-extern fn find() -> Sprite?
+extern type Sprite;
+extern fn find() -> Sprite?;
 fn main() {
     let s = find();
 }";

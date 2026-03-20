@@ -96,6 +96,8 @@ pub(super) fn import_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
 }
 
 pub(super) fn extern_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
+    let semicolon = select! { (Token::Semicolon, _) => () };
+
     select! { (Token::Keyword(Keyword::Extern), _) => () }
         .ignore_then(choice((
             // extern fn
@@ -127,6 +129,7 @@ pub(super) fn extern_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
                     Spanned::new(ast::Stmt::ExternType(node), span)
                 }),
         )))
+        .then_ignore(semicolon)
         .labelled("extern declaration")
         .as_context()
         .boxed()

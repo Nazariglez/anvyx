@@ -4,11 +4,12 @@
 
 extern type Sprite;
 extern type Sound;
-extern fn play_sound(s: Sound);
+extern fn create_sound(path: string) -> Sound;
+
+fn make_sprite() -> Sprite {
+    create_sound("oops.wav")
+}
 
 fn main() {
     let s = make_sprite();
-    play_sound(s);
 }
-
-extern fn make_sprite() -> Sprite;

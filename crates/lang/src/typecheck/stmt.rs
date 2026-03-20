@@ -1,11 +1,11 @@
 use crate::{
     ast::{
         ArrayLen, BlockNode, ExprId, ExprKind, ExprNode, Ident, ImportKind, Mutability, ReturnNode,
-        Stmt, StmtNode, Type, Visibility,
+        Stmt, StmtNode, Type, VariantKind, Visibility,
     },
     span::Span,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::{
     composite::{is_all_nil_array_literal, is_empty_map_literal},
@@ -110,7 +110,9 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
 
             Stmt::Func(node) => {
                 let func = &node.node;
-                type_checker.set_var(func.name, type_from_fn(func), false);
+                let raw_ty = type_from_fn(func);
+                let func_ty = type_checker.resolve_type(&raw_ty);
+                type_checker.set_var(func.name, func_ty, false);
 
                 let param_info: Vec<_> =
                     func.params.iter().map(|p| (p.name, p.mutability)).collect();
@@ -203,18 +205,24 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                     ImportKind::Selective(items) => {
                         for item in items {
                             let bind_as = item.alias.unwrap_or(item.name);
-                            inject_module_item(item.name, bind_as, &module_def, type_checker);
+                            inject_module_item(
+                                item.name,
+                                bind_as,
+                                &module_def,
+                                &path_key,
+                                type_checker,
+                            );
                         }
                     }
                     ImportKind::Wildcard => {
                         let names: Vec<Ident> = module_def.all_public_names().collect();
                         for name in names {
-                            inject_module_item(name, name, &module_def, type_checker);
+                            inject_module_item(name, name, &module_def, &path_key, type_checker);
                         }
                         let sub_module_names: Vec<Ident> =
                             module_def.re_exported_modules.keys().copied().collect();
                         for name in sub_module_names {
-                            inject_module_item(name, name, &module_def, type_checker);
+                            inject_module_item(name, name, &module_def, &path_key, type_checker);
                         }
                     }
                 }
@@ -232,6 +240,28 @@ pub(super) fn build_module_def_with_reexports(
     let mut module_def = ModuleDef::default();
     let mut errors: Vec<TypeErr> = vec![];
 
+    let mut local_extern_types = HashSet::new();
+    for stmt in stmts {
+        if let Stmt::ExternType(node) = &stmt.node {
+            local_extern_types.insert(node.node.name);
+        }
+    }
+
+    let resolve = |ty: &Type| -> Type {
+        fn pre_resolve(ty: &Type, local: &HashSet<Ident>) -> Type {
+            match ty {
+                Type::UnresolvedName(name) if local.contains(name) => Type::Extern { name: *name },
+                Type::Func { params, ret } => Type::Func {
+                    params: params.iter().map(|t| pre_resolve(t, local)).collect(),
+                    ret: Box::new(pre_resolve(ret, local)),
+                },
+                _ => ty.clone(),
+            }
+        }
+        let pre = pre_resolve(ty, &local_extern_types);
+        type_checker.resolve_type(&pre)
+    };
+
     let mut reexported_from: HashMap<Ident, String> = HashMap::new();
 
     for stmt in stmts {
@@ -243,7 +273,7 @@ pub(super) fn build_module_def_with_reexports(
                     continue;
                 }
                 let raw_ty = type_from_fn(func);
-                let func_ty = type_checker.resolve_type(&raw_ty);
+                let func_ty = resolve(&raw_ty);
                 module_def.funcs.insert(func.name, func_ty);
 
                 let param_info: Vec<_> =
@@ -423,19 +453,24 @@ pub(super) fn build_module_def_with_reexports(
                 let extern_func = &node.node;
                 module_def.all_names.insert(extern_func.name);
                 let func_ty = Type::Func {
-                    params: extern_func
-                        .params
-                        .iter()
-                        .map(|p| type_checker.resolve_type(&p.ty))
-                        .collect(),
-                    ret: Box::new(type_checker.resolve_type(&extern_func.ret)),
+                    params: extern_func.params.iter().map(|p| resolve(&p.ty)).collect(),
+                    ret: Box::new(resolve(&extern_func.ret)),
                 };
                 module_def.funcs.insert(extern_func.name, func_ty);
-                let param_info: Vec<_> =
-                    extern_func.params.iter().map(|p| (p.name, p.mutability)).collect();
-                module_def.func_param_info.insert(extern_func.name, param_info);
+                let param_info: Vec<_> = extern_func
+                    .params
+                    .iter()
+                    .map(|p| (p.name, p.mutability))
+                    .collect();
+                module_def
+                    .func_param_info
+                    .insert(extern_func.name, param_info);
             }
-            Stmt::ExternType(_) => {}
+            Stmt::ExternType(node) => {
+                let name = node.node.name;
+                module_def.all_names.insert(name);
+                module_def.extern_types.insert(name);
+            }
             _ => {}
         }
     }
@@ -462,6 +497,9 @@ fn merge_symbol(name: Ident, bind_as: Ident, source: &ModuleDef, target: &mut Mo
     } else if let Some(enum_def) = source.enum_defs.get(&name) {
         target.enum_defs.insert(bind_as, enum_def.clone());
         target.all_names.insert(bind_as);
+    } else if source.extern_types.contains(&name) {
+        target.extern_types.insert(bind_as);
+        target.all_names.insert(bind_as);
     }
 }
 
@@ -469,6 +507,7 @@ fn inject_module_item(
     name: Ident,
     bind_as: Ident,
     module_def: &ModuleDef,
+    module_path: &[String],
     type_checker: &mut TypeChecker,
 ) {
     if let Some(ty) = module_def.funcs.get(&name) {
@@ -485,11 +524,16 @@ fn inject_module_item(
             type_checker
                 .generic_func_templates
                 .insert(bind_as, tmpl.clone());
+            type_checker
+                .generic_func_source_module
+                .insert(bind_as, module_path.to_vec());
         }
     } else if let Some(struct_def) = module_def.struct_defs.get(&name) {
         type_checker.struct_defs.insert(bind_as, struct_def.clone());
     } else if let Some(enum_def) = module_def.enum_defs.get(&name) {
         type_checker.enum_defs.insert(bind_as, enum_def.clone());
+    } else if module_def.extern_types.contains(&name) {
+        type_checker.extern_type_defs.insert(bind_as);
     } else if let Some(sub_module) = module_def.re_exported_modules.get(&name) {
         type_checker.module_defs.insert(bind_as, sub_module.clone());
     }
@@ -518,6 +562,7 @@ pub(super) fn check_stmt(
                     let is_public = module_def.funcs.contains_key(&item.name)
                         || module_def.struct_defs.contains_key(&item.name)
                         || module_def.enum_defs.contains_key(&item.name)
+                        || module_def.extern_types.contains(&item.name)
                         || module_def.re_exported_modules.contains_key(&item.name);
                     if !is_public {
                         let err_kind = if module_def.all_names.contains(&item.name) {
@@ -540,9 +585,18 @@ pub(super) fn check_stmt(
         Stmt::ExternType(_) => {}
         Stmt::Func(node) => check_func(node, type_checker, errors),
         Stmt::Struct(node) => check_struct(node, type_checker, errors),
-        Stmt::Enum(_) => {
-            // enum declarations are collected in collect_scope_types
-            // no additional checking needed at this point
+        Stmt::Enum(node) => {
+            let decl = &node.node;
+            for variant in &decl.variants {
+                let has_any = match &variant.kind {
+                    VariantKind::Unit => false,
+                    VariantKind::Tuple(types) => types.iter().any(|t| t.contains_any()),
+                    VariantKind::Struct(fields) => fields.iter().any(|f| f.ty.contains_any()),
+                };
+                if has_any {
+                    errors.push(TypeErr::new(node.span, TypeErrKind::AnyTypeNotAllowed));
+                }
+            }
         }
         Stmt::Expr(node) => {
             let _ = check_expr(node, type_checker, errors, None);
@@ -562,7 +616,15 @@ pub(super) fn check_binding(
     errors: &mut Vec<TypeErr>,
 ) {
     let node = &binding.node;
-    let expected = node.ty.as_ref().map(|annot_ty| type_checker.resolve_type(annot_ty));
+    if let Some(annot_ty) = &node.ty {
+        if annot_ty.contains_any() {
+            errors.push(TypeErr::new(binding.span, TypeErrKind::AnyTypeNotAllowed));
+        }
+    }
+    let expected = node
+        .ty
+        .as_ref()
+        .map(|annot_ty| type_checker.resolve_type(annot_ty));
     check_expr(&node.value, type_checker, errors, expected.as_ref());
 
     if is_if_without_else(&node.value) {

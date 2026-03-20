@@ -1,7 +1,7 @@
 // @mode: check
 // @expect: error
 
-extern fn add(a: int, b: int) -> int
+extern fn add(a: int, b: int) -> int;
 
 fn main() {
     let x = add(1);

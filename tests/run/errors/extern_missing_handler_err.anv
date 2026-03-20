@@ -2,7 +2,7 @@
 // @expect: error
 // @contains: missing extern implementation
 
-extern fn foo() -> int
+extern fn foo() -> int;
 
 fn main() {
     let x = foo();

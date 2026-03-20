@@ -1,0 +1,21 @@
+// @mode: check
+// @expect: success
+
+extern type Sprite;
+extern type Sound;
+
+extern fn create_sprite(name: string) -> Sprite;
+extern fn sprite_name(s: Sprite) -> string;
+extern fn create_sound(path: string) -> Sound;
+extern fn play_sound(s: Sound);
+
+// Functions that accept and return different extern types
+extern fn attach_sound(s: Sprite, snd: Sound);
+
+fn main() {
+    let s = create_sprite("hero");
+    let snd = create_sound("bgm.ogg");
+    attach_sound(s, snd);
+    play_sound(snd);
+    let name = sprite_name(s);
+}

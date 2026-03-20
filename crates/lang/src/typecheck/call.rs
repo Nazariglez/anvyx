@@ -100,12 +100,7 @@ fn check_mutating_receiver(
 }
 
 fn collection_type_label(list: bool) -> Ident {
-    Ident(Intern::new(if list {
-        "list"
-    } else {
-        "map"
-    }
-    .to_string()))
+    Ident(Intern::new(if list { "list" } else { "map" }.to_string()))
 }
 
 fn check_collection_receiver_mutability(
@@ -544,6 +539,13 @@ pub(super) fn check_module_func_call(
             .generic_func_templates
             .insert(func_name, template);
 
+        type_checker.push_scope();
+        for (name, ty) in &module_def.funcs {
+            if *name != func_name {
+                type_checker.set_var(*name, ty.clone(), false);
+            }
+        }
+
         let node = &call.node;
         let has_explicit_type_args = !node.type_args.is_empty();
 
@@ -592,6 +594,7 @@ pub(super) fn check_module_func_call(
             ret
         };
 
+        type_checker.pop_scope();
         restore_generic_maps(type_checker, func_name, prev_tp, prev_tmpl);
 
         if let Some(param_info) = module_def.func_param_info.get(&func_name).cloned() {
@@ -794,7 +797,12 @@ fn check_enum_tuple_variant(
             if let Some((_, arg_ty)) = type_checker.get_type(arg_expr.node.id) {
                 let arg_ty = arg_ty.clone();
                 constrain_slots_from_type(
-                    expected_ty, &arg_ty, &slots, arg_expr.span, type_checker, errors,
+                    expected_ty,
+                    &arg_ty,
+                    &slots,
+                    arg_expr.span,
+                    type_checker,
+                    errors,
                 );
             }
             build_param_ref(expected_ty, &slots, type_checker)
@@ -1292,6 +1300,19 @@ pub(super) fn instantiate_and_check_fn(
     let prev_snapshot = type_checker.spec_type_snapshot.take();
     type_checker.spec_type_snapshot = Some(HashMap::new());
 
+    let module_scope = type_checker
+        .generic_func_source_module
+        .get(&func_name)
+        .and_then(|path| type_checker.resolved_module_defs.get(path).cloned());
+    if let Some(ref module_def) = module_scope {
+        type_checker.push_scope();
+        for (name, ty) in &module_def.funcs {
+            if *name != func_name {
+                type_checker.set_var(*name, ty.clone(), false);
+            }
+        }
+    }
+
     let mut body_errors = vec![];
     check_fn_body(
         func,
@@ -1301,6 +1322,10 @@ pub(super) fn instantiate_and_check_fn(
         type_checker,
         &mut body_errors,
     );
+
+    if module_scope.is_some() {
+        type_checker.pop_scope();
+    }
 
     let body_types = type_checker.spec_type_snapshot.take().unwrap_or_default();
     type_checker.spec_type_snapshot = prev_snapshot;

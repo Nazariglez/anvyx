@@ -92,6 +92,7 @@ pub(super) struct ModuleDef {
     pub func_param_info: HashMap<Ident, Vec<(Ident, Mutability)>>,
     pub struct_defs: HashMap<Ident, StructDef>,
     pub enum_defs: HashMap<Ident, EnumDef>,
+    pub extern_types: HashSet<Ident>,
     pub func_type_params: HashMap<Ident, Vec<TypeParam>>,
     pub generic_func_templates: HashMap<Ident, FuncNode>,
 
@@ -109,6 +110,7 @@ impl ModuleDef {
             .keys()
             .chain(self.struct_defs.keys())
             .chain(self.enum_defs.keys())
+            .chain(self.extern_types.iter())
             .copied()
     }
 }
@@ -175,6 +177,9 @@ pub struct TypeChecker {
 
     /// Resolved type args per call site, keyed by callee ExprId
     pub resolved_call_type_args: HashMap<ExprId, (Ident, Vec<Type>)>,
+
+    /// Tracks which module a generic function was imported from
+    pub(super) generic_func_source_module: HashMap<Ident, Vec<String>>,
 }
 
 impl TypeChecker {
@@ -209,11 +214,17 @@ impl TypeChecker {
     }
 
     pub fn struct_field_names(&self, name: Ident) -> Option<Vec<Ident>> {
-        self.struct_defs.get(&name).map(|def| def.fields.iter().map(|f| f.name).collect())
+        self.struct_defs
+            .get(&name)
+            .map(|def| def.fields.iter().map(|f| f.name).collect())
     }
 
     pub fn struct_field_index(&self, struct_name: Ident, field_name: Ident) -> Option<usize> {
-        self.struct_defs.get(&struct_name)?.fields.iter().position(|f| f.name == field_name)
+        self.struct_defs
+            .get(&struct_name)?
+            .fields
+            .iter()
+            .position(|f| f.name == field_name)
     }
 
     pub fn enum_names(&self) -> impl Iterator<Item = Ident> + '_ {

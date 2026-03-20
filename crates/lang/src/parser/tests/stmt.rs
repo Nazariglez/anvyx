@@ -229,7 +229,7 @@ fn test_var_self_parses() {
 
 #[test]
 fn extern_fn_no_params_parses() {
-    let prog = parse_program("extern fn tick() -> void");
+    let prog = parse_program("extern fn tick() -> void;");
     assert_eq!(prog.stmts.len(), 1);
     let ast::Stmt::ExternFunc(node) = &prog.stmts[0].node else {
         panic!("expected ExternFunc");
@@ -241,7 +241,7 @@ fn extern_fn_no_params_parses() {
 
 #[test]
 fn extern_fn_with_params_parses() {
-    let prog = parse_program("extern fn add(a: int, b: int) -> int");
+    let prog = parse_program("extern fn add(a: int, b: int) -> int;");
     assert_eq!(prog.stmts.len(), 1);
     let ast::Stmt::ExternFunc(node) = &prog.stmts[0].node else {
         panic!("expected ExternFunc");
@@ -258,7 +258,7 @@ fn extern_fn_with_params_parses() {
 
 #[test]
 fn extern_fn_no_return_type_defaults_void() {
-    let prog = parse_program("extern fn fire()");
+    let prog = parse_program("extern fn fire();");
     assert_eq!(prog.stmts.len(), 1);
     let ast::Stmt::ExternFunc(node) = &prog.stmts[0].node else {
         panic!("expected ExternFunc");
@@ -268,7 +268,7 @@ fn extern_fn_no_return_type_defaults_void() {
 
 #[test]
 fn extern_type_parses() {
-    let prog = parse_program("extern type Sprite");
+    let prog = parse_program("extern type Sprite;");
     assert_eq!(prog.stmts.len(), 1);
     let ast::Stmt::ExternType(node) = &prog.stmts[0].node else {
         panic!("expected ExternType");
@@ -278,7 +278,7 @@ fn extern_type_parses() {
 
 #[test]
 fn extern_fn_still_parses_after_refactor() {
-    let prog = parse_program("extern fn add(a: int, b: int) -> int");
+    let prog = parse_program("extern fn add(a: int, b: int) -> int;");
     assert_eq!(prog.stmts.len(), 1);
     let ast::Stmt::ExternFunc(node) = &prog.stmts[0].node else {
         panic!("expected ExternFunc");
@@ -292,7 +292,7 @@ fn extern_fn_still_parses_after_refactor() {
 #[test]
 fn extern_type_and_extern_fn_in_same_program() {
     let prog = parse_program(
-        "extern type Sprite\nextern fn create() -> Sprite",
+        "extern type Sprite;\nextern fn create() -> Sprite;",
     );
     assert_eq!(prog.stmts.len(), 2);
     assert!(matches!(prog.stmts[0].node, ast::Stmt::ExternType(_)));

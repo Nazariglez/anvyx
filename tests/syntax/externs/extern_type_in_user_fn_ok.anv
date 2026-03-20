@@ -1,0 +1,19 @@
+// @mode: check
+// @expect: success
+
+extern type Widget;
+extern fn create_widget(id: int) -> Widget;
+extern fn widget_id(w: Widget) -> int;
+
+fn make_default_widget() -> Widget {
+    create_widget(0)
+}
+
+fn read_id(w: Widget) -> int {
+    widget_id(w)
+}
+
+fn main() {
+    let w = make_default_widget();
+    let id = read_id(w);
+}

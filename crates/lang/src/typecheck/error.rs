@@ -270,4 +270,6 @@ pub enum TypeErrKind {
         first_source: String,
         second_source: String,
     },
+
+    AnyTypeNotAllowed,
 }

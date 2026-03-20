@@ -167,6 +167,15 @@ pub(super) fn check_func(
 ) {
     let func = &fn_node.node;
 
+    for param in &func.params {
+        if param.ty.contains_any() {
+            errors.push(TypeErr::new(fn_node.span, TypeErrKind::AnyTypeNotAllowed));
+        }
+    }
+    if func.ret.contains_any() {
+        errors.push(TypeErr::new(fn_node.span, TypeErrKind::AnyTypeNotAllowed));
+    }
+
     // if the function is generic we skip checking here
     // it will be done at instantiation time with concrete types
     let is_generic = !func.type_params.is_empty();
@@ -197,12 +206,18 @@ pub(super) fn check_func(
     }
 
     // build param types from the functions declared parameters
-    let param_types: Vec<Type> = func.params.iter().map(|p| p.ty.clone()).collect();
+    let param_types: Vec<Type> = func
+        .params
+        .iter()
+        .map(|p| type_checker.resolve_type(&p.ty))
+        .collect();
+
+    let ret_ty = type_checker.resolve_type(&func.ret);
 
     check_fn_body(
         func,
         &param_types,
-        func.ret.clone(),
+        ret_ty,
         fn_node.span,
         type_checker,
         errors,
@@ -216,6 +231,12 @@ pub(super) fn check_struct(
 ) {
     let decl = &struct_node.node;
     let struct_name = decl.name;
+
+    for field in &decl.fields {
+        if field.ty.contains_any() {
+            errors.push(TypeErr::new(struct_node.span, TypeErrKind::AnyTypeNotAllowed));
+        }
+    }
 
     let Some(struct_def) = type_checker.get_struct(struct_name).cloned() else {
         return;

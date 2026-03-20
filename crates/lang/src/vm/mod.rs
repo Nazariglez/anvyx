@@ -1,6 +1,7 @@
 mod builtins;
 mod bytecode;
 mod compiler;
+pub mod handle_store;
 pub mod managed_rc;
 mod runtime;
 mod value;
@@ -8,6 +9,7 @@ mod value;
 use crate::hir;
 use std::collections::HashMap;
 
+pub use handle_store::HandleStore;
 pub use managed_rc::ManagedRc;
 pub use runtime::ExternHandler;
 pub use value::RuntimeError;
@@ -353,7 +355,7 @@ mod tests {
             }),
         );
         let src = r#"
-            extern fn add(a: int, b: int) -> int
+            extern fn add(a: int, b: int) -> int;
             fn main() {
                 let result = add(3, 4);
                 assert(result == 7);
@@ -372,7 +374,7 @@ mod tests {
             Box::new(|_args| Ok(Value::Int(42))),
         );
         let src = r#"
-            extern fn get_answer() -> int
+            extern fn get_answer() -> int;
             fn main() {
                 let x = get_answer();
                 assert(x == 42);
@@ -397,7 +399,7 @@ mod tests {
             }),
         );
         let src = r#"
-            extern fn increment()
+            extern fn increment();
             fn main() {
                 increment();
                 increment();
@@ -413,7 +415,7 @@ mod tests {
     fn extern_fn_missing_handler_errors() {
         let externs: HashMap<String, ExternHandler> = HashMap::new();
         let src = r#"
-            extern fn add(a: int, b: int) -> int
+            extern fn add(a: int, b: int) -> int;
             fn main() { let x = add(1, 2); }
         "#;
         let err = vm_err_with_externs(src, externs);
@@ -445,8 +447,8 @@ mod tests {
             }),
         );
         let src = r#"
-            extern fn double(n: int) -> int
-            extern fn negate(n: int) -> int
+            extern fn double(n: int) -> int;
+            extern fn negate(n: int) -> int;
             fn main() {
                 let x = double(5);
                 let y = negate(x);
@@ -476,9 +478,9 @@ mod tests {
             }),
         );
         let src = "
-extern type Foo
-extern fn make_handle() -> Foo
-extern fn use_handle(h: Foo)
+extern type Foo;
+extern fn make_handle() -> Foo;
+extern fn use_handle(h: Foo);
 fn main() {
     let h = make_handle();
     use_handle(h);

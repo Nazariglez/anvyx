@@ -533,6 +533,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("symbol '{name}' re-exported by both '{first_source}' and '{second_source}'"),
             format!("'{name}' is introduced by 'pub import' from '{first_source}' and also from '{second_source}'"),
         ),
+        TypeErrKind::AnyTypeNotAllowed => (
+            "'any' type is only allowed in extern function declarations".to_string(),
+            "'any' cannot be used in user-written type annotations".to_string(),
+        ),
     }
 }
 

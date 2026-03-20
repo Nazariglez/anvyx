@@ -3482,7 +3482,7 @@ mod tests {
     #[test]
     fn extern_fn_emits_call_extern_node() {
         let prog =
-            lower_ok("extern fn add(a: int, b: int) -> int\nfn main() { let x = add(1, 2); }");
+            lower_ok("extern fn add(a: int, b: int) -> int;\nfn main() { let x = add(1, 2); }");
         let main = find_main(&prog);
         let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
             panic!("expected Let stmt");
@@ -3496,7 +3496,7 @@ mod tests {
 
     #[test]
     fn extern_fn_decl_is_in_hir_program() {
-        let prog = lower_ok("extern fn tick()\nextern fn add(a: int, b: int) -> int\nfn main() {}");
+        let prog = lower_ok("extern fn tick();\nextern fn add(a: int, b: int) -> int;\nfn main() {}");
         assert_eq!(prog.externs.len(), 2);
         assert_eq!(prog.externs[0].name.to_string(), "tick");
         assert_eq!(prog.externs[1].name.to_string(), "add");
@@ -3507,7 +3507,7 @@ mod tests {
     #[test]
     fn extern_fn_call_extern_has_correct_id() {
         let prog =
-            lower_ok("extern fn add(a: int, b: int) -> int\nfn main() { let x = add(1, 2); }");
+            lower_ok("extern fn add(a: int, b: int) -> int;\nfn main() { let x = add(1, 2); }");
         assert_eq!(prog.externs[0].id, hir::ExternId(0));
         let main = find_main(&prog);
         let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
@@ -3523,7 +3523,7 @@ mod tests {
     #[test]
     fn extern_type_flows_through_hir() {
         let prog = lower_ok(
-            "extern type Sprite\nextern fn create() -> Sprite\nfn main() { let s = create(); }",
+            "extern type Sprite;\nextern fn create() -> Sprite;\nfn main() { let s = create(); }",
         );
         let main = find_main(&prog);
         let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {

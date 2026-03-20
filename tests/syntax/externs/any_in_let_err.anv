@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: only allowed in extern
+
+fn main() {
+    let x: any = 42;
+}

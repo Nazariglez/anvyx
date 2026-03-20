@@ -1,0 +1,6 @@
+// @mode: check
+// @expect: error
+// @contains: only allowed in extern
+
+fn foo(x: any) -> int { 0 }
+fn main() {}
