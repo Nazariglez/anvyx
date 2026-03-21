@@ -1,7 +1,7 @@
 use internment::Intern;
 
 use crate::ast::{BinaryOp, Ident, Type};
-use crate::hir::{Block, Expr, ExprKind, Func, FuncId, Local, LocalId, Program, Stmt, StmtKind};
+use crate::hir::{Block, Expr, Func, FuncId, Local, LocalId, Program, Stmt, StmtKind};
 use crate::lower::LowerError;
 use crate::span::Span;
 use crate::{ast, hir, lower, typecheck, vm, CORE_PRELUDE};
@@ -71,39 +71,19 @@ pub(crate) fn dummy_ident(name: &str) -> Ident {
 // ---- HIR expression builders ----
 
 pub(crate) fn hir_int_expr(v: i64) -> Expr {
-    Expr {
-        ty: Type::Int,
-        span: dummy_span(),
-        kind: ExprKind::Int(v),
-    }
+    Expr::int_lit(dummy_span(), v)
 }
 
 pub(crate) fn hir_bool_expr(v: bool) -> Expr {
-    Expr {
-        ty: Type::Bool,
-        span: dummy_span(),
-        kind: ExprKind::Bool(v),
-    }
+    Expr::bool_lit(dummy_span(), v)
 }
 
 pub(crate) fn hir_local_expr(id: u32) -> Expr {
-    Expr {
-        ty: Type::Int,
-        span: dummy_span(),
-        kind: ExprKind::Local(LocalId(id)),
-    }
+    Expr::local(Type::Int, dummy_span(), LocalId(id))
 }
 
 pub(crate) fn hir_binary_expr(op: BinaryOp, lhs: Expr, rhs: Expr) -> Expr {
-    Expr {
-        ty: Type::Int,
-        span: dummy_span(),
-        kind: ExprKind::Binary {
-            op,
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
-        },
-    }
+    Expr::binary(Type::Int, dummy_span(), op, lhs, rhs)
 }
 
 // ---- HIR statement / function / program builders ----

@@ -244,6 +244,33 @@ pub enum ExprKind {
     },
 }
 
+impl Expr {
+    pub fn local(ty: Type, span: Span, id: LocalId) -> Self {
+        Self { ty, span, kind: ExprKind::Local(id) }
+    }
+
+    pub fn int_lit(span: Span, v: i64) -> Self {
+        Self { ty: Type::Int, span, kind: ExprKind::Int(v) }
+    }
+
+    #[cfg(test)]
+    pub fn bool_lit(span: Span, v: bool) -> Self {
+        Self { ty: Type::Bool, span, kind: ExprKind::Bool(v) }
+    }
+
+    pub fn binary(ty: Type, span: Span, op: BinaryOp, lhs: Self, rhs: Self) -> Self {
+        Self {
+            ty,
+            span,
+            kind: ExprKind::Binary {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

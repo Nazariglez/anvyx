@@ -96,6 +96,34 @@ pub enum ExprKind {
     Cast(CastNode),
 }
 
+impl ExprKind {
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::Ident(_) => "Ident",
+            Self::Block(_) => "Block",
+            Self::Lit(_) => "Lit",
+            Self::Call(_) => "Call",
+            Self::Binary(_) => "Binary",
+            Self::Unary(_) => "Unary",
+            Self::Assign(_) => "Assign",
+            Self::If(_) => "If",
+            Self::Tuple(_) => "Tuple",
+            Self::NamedTuple(_) => "NamedTuple",
+            Self::TupleIndex(_) => "TupleIndex",
+            Self::Field(_) => "Field",
+            Self::StructLiteral(_) => "StructLiteral",
+            Self::Range(_) => "Range",
+            Self::ArrayLiteral(_) => "ArrayLiteral",
+            Self::ArrayFill(_) => "ArrayFill",
+            Self::MapLiteral(_) => "MapLiteral",
+            Self::Index(_) => "Index",
+            Self::Match(_) => "Match",
+            Self::StringInterp(_) => "StringInterp",
+            Self::Cast(_) => "Cast",
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Hash, Eq)]
 pub struct Ident(pub Intern<String>);
 
@@ -433,6 +461,21 @@ pub enum Pattern {
         variant: Ident,
         fields: Vec<(Ident, PatternNode)>,
     },
+}
+
+impl Pattern {
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::Ident(_) => "Ident",
+            Self::Tuple(_) => "Tuple",
+            Self::NamedTuple(_) => "NamedTuple",
+            Self::Wildcard => "Wildcard",
+            Self::Struct { .. } => "Struct",
+            Self::EnumUnit { .. } => "EnumUnit",
+            Self::EnumTuple { .. } => "EnumTuple",
+            Self::EnumStruct { .. } => "EnumStruct",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
