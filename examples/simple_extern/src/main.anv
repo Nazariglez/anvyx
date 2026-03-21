@@ -1,8 +1,0 @@
-import my_extern { add, greet };
-
-fn main() {
-    let result = add(3, 4);
-    println("{result}");
-    let msg = greet("Anvyx");
-    println(msg);
-}

@@ -171,9 +171,10 @@ fn resolve_extern_members(
     members
         .into_iter()
         .map(|member| match member {
-            ast::ExternTypeMember::Field { name, ty } => ast::ExternTypeMember::Field {
+            ast::ExternTypeMember::Field { name, ty, computed } => ast::ExternTypeMember::Field {
                 name,
                 ty: resolve_type_params_with_self(&ty, type_param_map, Some(self_type)),
+                computed,
             },
             ast::ExternTypeMember::Method {
                 name,
@@ -263,7 +264,7 @@ fn extern_type_field_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> 
     identifier()
         .then_ignore(select! { (Token::Colon, _) => () })
         .then(type_ident())
-        .map(|(name, ty)| ast::ExternTypeMember::Field { name, ty })
+        .map(|(name, ty)| ast::ExternTypeMember::Field { name, ty, computed: false })
         .boxed()
 }
 

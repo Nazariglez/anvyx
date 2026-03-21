@@ -293,12 +293,12 @@ fn extern_type_block_with_fields_parses() {
     };
     assert_eq!(node.node.name.0.as_ref(), "Point");
     assert_eq!(node.node.members.len(), 2);
-    let ast::ExternTypeMember::Field { name, ty } = &node.node.members[0] else {
+    let ast::ExternTypeMember::Field { name, ty, .. } = &node.node.members[0] else {
         panic!("expected Field");
     };
     assert_eq!(name.0.as_ref(), "x");
     assert_eq!(*ty, Type::Float);
-    let ast::ExternTypeMember::Field { name, ty } = &node.node.members[1] else {
+    let ast::ExternTypeMember::Field { name, ty, .. } = &node.node.members[1] else {
         panic!("expected Field");
     };
     assert_eq!(name.0.as_ref(), "y");

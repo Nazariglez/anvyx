@@ -1,0 +1,34 @@
+import colors { mix, Color };
+
+fn main() {
+    var red = Color { r: 1.0, g: 0.0, b: 0.0, a: 1.0, label: "red" };
+    println(red.r);
+
+    red.a = 0.5;
+    println(red.a);
+
+    let blue = Color.blue();
+    println(blue.b);
+
+    let gray = red.to_grayscale();
+    println(gray.r);
+
+    println(red.label);
+
+    red.label = "modified red";
+    println(red.label);
+
+    red.darken(0.2);
+    println(red.r);
+
+    let purple = mix(red, blue, 0.5);
+    println(purple.r);
+    println(purple.b);
+
+    let Color { r, g, b, a, label } = purple;
+    println(r);
+    println(g);
+    println(b);
+    println(a);
+    println(label);
+}

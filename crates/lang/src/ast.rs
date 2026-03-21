@@ -464,6 +464,7 @@ pub enum ExternTypeMember {
     Field {
         name: Ident,
         ty: Type,
+        computed: bool,
     },
     Method {
         name: Ident,

@@ -1,6 +1,0 @@
-[project]
-name = "extern_types"
-entry = "src/main.anv"
-
-[externs]
-shapes = { path = "./shapes" }

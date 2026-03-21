@@ -25,6 +25,7 @@ pub struct ExternTypeDeclConst {
 pub struct ExternFieldDecl {
     pub name: &'static str,
     pub ty: &'static str,
+    pub computed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,7 +64,11 @@ pub fn exports_to_json(decls: &[ExternDecl], type_decls: &[ExternTypeDecl]) -> S
             push_escaped(&mut out, field.name);
             out.push_str("\",\"type\":\"");
             push_escaped(&mut out, field.ty);
-            out.push_str("\"}");
+            out.push('"');
+            if field.computed {
+                out.push_str(",\"computed\":true");
+            }
+            out.push('}');
         }
         out.push_str("],\"methods\":[");
         for (j, method) in ty.methods.iter().enumerate() {
@@ -157,6 +162,7 @@ pub struct ExternTypeMeta {
 pub struct ExternFieldMeta {
     pub name: String,
     pub ty: String,
+    pub computed: bool,
 }
 
 #[derive(Debug)]
@@ -203,6 +209,7 @@ pub fn parse_provider_json(json: &str) -> Result<ExternProviderMeta, String> {
                         Ok(ExternFieldMeta {
                             name: f["name"].as_str().ok_or("Field missing 'name'")?.to_string(),
                             ty: f["type"].as_str().ok_or("Field missing 'type'")?.to_string(),
+                            computed: f["computed"].as_bool().unwrap_or(false),
                         })
                     })
                     .collect::<Result<Vec<_>, String>>()?;
@@ -316,6 +323,7 @@ pub(crate) fn metadata_to_extern_stmts(
             members.push(ExternTypeMember::Field {
                 name: Ident(Intern::new(field.name.clone())),
                 ty: anvyx_type_from_str(&field.ty)?,
+                computed: field.computed,
             });
         }
 
@@ -683,8 +691,8 @@ mod tests {
             name: "Point",
             has_init: false,
             fields: vec![
-                ExternFieldDecl { name: "x", ty: "float" },
-                ExternFieldDecl { name: "y", ty: "float" },
+                ExternFieldDecl { name: "x", ty: "float", computed: false },
+                ExternFieldDecl { name: "y", ty: "float", computed: false },
             ],
             methods: vec![ExternMethodDecl {
                 name: "move_by",
@@ -760,8 +768,8 @@ mod tests {
                 name: "Point".to_string(),
                 has_init: false,
                 fields: vec![
-                    ExternFieldMeta { name: "x".to_string(), ty: "float".to_string() },
-                    ExternFieldMeta { name: "y".to_string(), ty: "float".to_string() },
+                    ExternFieldMeta { name: "x".to_string(), ty: "float".to_string(), computed: false },
+                    ExternFieldMeta { name: "y".to_string(), ty: "float".to_string(), computed: false },
                 ],
                 methods: vec![ExternMethodMeta {
                     name: "move_by".to_string(),

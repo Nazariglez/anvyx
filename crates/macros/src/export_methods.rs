@@ -113,6 +113,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let mut static_decls = vec![];
     let mut getters: Vec<GetterInfo> = vec![];
     let mut found_init = false;
+    let mut init_field_decls: Vec<TokenStream> = vec![];
     let mut setters: Vec<SetterInfo> = vec![];
 
     for impl_item in &impl_block.items {
@@ -198,6 +199,10 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                                 )));
                             };
                             let #param_name = #convert_extracted;
+                        });
+                        let anvyx_type_str = mapping.anvyx_type;
+                        init_field_decls.push(quote! {
+                            anvyx_lang::ExternFieldDecl { name: #param_name_str, ty: #anvyx_type_str, computed: false }
                         });
                     }
                     _ => {
@@ -680,7 +685,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
 
         let anvyx_type = g.anvyx_type_str;
         getter_field_decls.push(quote! {
-            anvyx_lang::ExternFieldDecl { name: #field_name, ty: #anvyx_type }
+            anvyx_lang::ExternFieldDecl { name: #field_name, ty: #anvyx_type, computed: true }
         });
     }
     for s in &setters {
@@ -727,6 +732,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     }
 
     let getter_fields_fn_ident = format_ident!("__anvyx_getter_fields_{}", rust_type_ident);
+    let init_fields_fn_ident = format_ident!("__anvyx_init_fields_{}", rust_type_ident);
     let has_init_ident = format_ident!("__ANVYX_HAS_INIT_{}", type_upper);
 
     let mut cleaned_impl = impl_block.clone();
@@ -761,6 +767,11 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         #[allow(non_snake_case)]
         pub fn #getter_fields_fn_ident() -> Vec<anvyx_lang::ExternFieldDecl> {
             vec![#(#getter_field_decls),*]
+        }
+
+        #[allow(non_snake_case)]
+        pub fn #init_fields_fn_ident() -> Vec<anvyx_lang::ExternFieldDecl> {
+            vec![#(#init_field_decls),*]
         }
 
         pub const #has_init_ident: bool = #found_init;

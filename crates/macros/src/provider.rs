@@ -101,6 +101,7 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
         let companion_fn_ident = format_ident!("__anvyx_methods_{}", type_name);
         let fields_fn_ident = format_ident!("__anvyx_fields_{}", type_name);
         let getter_fields_fn_ident = format_ident!("__anvyx_getter_fields_{}", type_name);
+        let init_fields_fn_ident = format_ident!("__anvyx_init_fields_{}", type_name);
         let has_init_ident = format_ident!("__ANVYX_HAS_INIT_{}", name_upper);
 
         if segments.len() == 1 {
@@ -109,9 +110,29 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
                     name: #type_decl_ident.name,
                     has_init: #type_decl_ident.has_init || #has_init_ident,
                     fields: {
-                        let mut f = #type_decl_ident.fields.to_vec();
-                        f.extend(#getter_fields_fn_ident());
-                        f
+                        let init_fields = #init_fields_fn_ident();
+                        if !init_fields.is_empty() {
+                            let init_names: ::std::collections::HashSet<&str> =
+                                init_fields.iter().map(|fd| fd.name).collect();
+                            let mut f = init_fields;
+                            for fd in #type_decl_ident.fields.iter() {
+                                if !init_names.contains(fd.name) {
+                                    f.push(anvyx_lang::ExternFieldDecl {
+                                        name: fd.name, ty: fd.ty, computed: true
+                                    });
+                                }
+                            }
+                            for fd in #getter_fields_fn_ident().into_iter() {
+                                if !init_names.contains(fd.name) {
+                                    f.push(fd);
+                                }
+                            }
+                            f
+                        } else {
+                            let mut f = #type_decl_ident.fields.to_vec();
+                            f.extend(#getter_fields_fn_ident());
+                            f
+                        }
                     },
                     methods: #methods_decl_ident.to_vec(),
                     statics: #statics_decl_ident.to_vec(),
@@ -134,9 +155,29 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
                     name: #(#prefix)::*::#type_decl_ident.name,
                     has_init: #(#prefix)::*::#type_decl_ident.has_init || #(#prefix)::*::#has_init_ident,
                     fields: {
-                        let mut f = #(#prefix)::*::#type_decl_ident.fields.to_vec();
-                        f.extend(#(#prefix)::*::#getter_fields_fn_ident());
-                        f
+                        let init_fields = #(#prefix)::*::#init_fields_fn_ident();
+                        if !init_fields.is_empty() {
+                            let init_names: ::std::collections::HashSet<&str> =
+                                init_fields.iter().map(|fd| fd.name).collect();
+                            let mut f = init_fields;
+                            for fd in #(#prefix)::*::#type_decl_ident.fields.iter() {
+                                if !init_names.contains(fd.name) {
+                                    f.push(anvyx_lang::ExternFieldDecl {
+                                        name: fd.name, ty: fd.ty, computed: true
+                                    });
+                                }
+                            }
+                            for fd in #(#prefix)::*::#getter_fields_fn_ident().into_iter() {
+                                if !init_names.contains(fd.name) {
+                                    f.push(fd);
+                                }
+                            }
+                            f
+                        } else {
+                            let mut f = #(#prefix)::*::#type_decl_ident.fields.to_vec();
+                            f.extend(#(#prefix)::*::#getter_fields_fn_ident());
+                            f
+                        }
                     },
                     methods: #(#prefix)::*::#methods_decl_ident.to_vec(),
                     statics: #(#prefix)::*::#statics_decl_ident.to_vec(),
@@ -165,8 +206,8 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
         pub fn anvyx_externs() -> ::std::collections::HashMap<String, anvyx_lang::ExternHandler> {
             let mut m = ::std::collections::HashMap::new();
             #(#inserts)*
-            #(#method_inserts)*
             #(#field_inserts)*
+            #(#method_inserts)*
             m
         }
     })

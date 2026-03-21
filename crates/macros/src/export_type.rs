@@ -39,15 +39,20 @@ pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
-    let args: ExportTypeArgs = syn::parse2(attr)?;
     let item_struct: ItemStruct = syn::parse2(item)?;
-
     let struct_ident = &item_struct.ident;
+
+    let anvyx_name = if attr.is_empty() {
+        struct_ident.to_string()
+    } else {
+        let args: ExportTypeArgs = syn::parse2(attr)?;
+        args.name
+    };
+
     let name_upper = struct_ident.to_string().to_uppercase();
     let decl_ident = format_ident!("__ANVYX_TYPE_DECL_{}", name_upper);
     let store_ident = format_ident!("__ANVYX_STORE_{}", name_upper);
     let cleanup_fn_ident = format_ident!("__anvyx_cleanup_{}", struct_ident);
-    let anvyx_name = &args.name;
 
     let mut cleaned_struct = item_struct.clone();
     if let syn::Fields::Named(ref mut fields) = cleaned_struct.fields {
@@ -86,7 +91,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
         .map(|(ident, mapping)| {
             let name_str = ident.to_string();
             let ty_str = mapping.anvyx_type;
-            quote! { anvyx_lang::ExternFieldDecl { name: #name_str, ty: #ty_str } }
+            quote! { anvyx_lang::ExternFieldDecl { name: #name_str, ty: #ty_str, computed: false } }
         })
         .collect();
 
