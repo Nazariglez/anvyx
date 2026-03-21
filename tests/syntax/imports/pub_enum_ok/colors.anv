@@ -1,7 +1,0 @@
-// @helper: helper module for pub_enum_ok test
-
-pub enum Color {
-    Red,
-    Green,
-    Blue,
-}

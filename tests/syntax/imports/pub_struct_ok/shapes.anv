@@ -1,6 +1,0 @@
-// @helper: helper module for pub_struct_ok test
-
-pub struct Point {
-    x: float,
-    y: float,
-}

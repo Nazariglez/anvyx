@@ -2,5 +2,6 @@
 // @expect: success
 
 fn main() {
-    println("hello")
+    println("hello");
+    println(42);
 }

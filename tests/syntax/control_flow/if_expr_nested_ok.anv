@@ -7,7 +7,14 @@ fn sign(x: int) -> int {
     else { 1 }
 }
 
+fn classify(x: int) -> int {
+    x < 0 ? -1
+    : x == 0 ? 0
+    : 1
+}
+
 fn main() {
     let s: int = sign(10);
+    let t: int = classify(10);
 }
 

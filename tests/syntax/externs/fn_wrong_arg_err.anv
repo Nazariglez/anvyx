@@ -2,8 +2,8 @@
 // @expect: error
 // @contains: Mismatched types
 
-fn main() {
-    let cond: bool = true;
-    let x = cond ? 1 : 2.0;
-}
+extern fn add(a: int, b: int) -> int;
 
+fn main() {
+    let x = add(true, 2);
+}

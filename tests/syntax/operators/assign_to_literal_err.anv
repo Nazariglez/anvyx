@@ -1,5 +1,6 @@
 // @mode: check
-// @expect: error 
+// @expect: error
+// @contains: Unexpected token
 
 fn main() {
     let i: int = 10;

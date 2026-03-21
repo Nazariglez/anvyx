@@ -11,4 +11,10 @@ fn main() {
         },
         Option.None => {},
     }
+    match opt {
+        Option.None => {},
+        Option.Some(x) => {
+            let y: int = x;
+        },
+    }
 }

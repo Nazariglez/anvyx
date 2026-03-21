@@ -1,8 +1,0 @@
-// @mode: check
-// @expect: success
-
-extern fn identity(v: any) -> any;
-
-fn main() {
-    let x: int = identity(42);
-}

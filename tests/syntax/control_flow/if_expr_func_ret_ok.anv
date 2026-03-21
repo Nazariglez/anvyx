@@ -1,11 +1,16 @@
 // @mode: check
 // @expect: success
 
-fn scale(a: int, nice: bool) -> int {
+fn scale_if(a: int, nice: bool) -> int {
     if nice { a } else { a * 10 }
 }
 
+fn scale_ternary(a: int, nice: bool) -> int {
+    nice ? a : a * 10
+}
+
 fn main() {
-    let x: int = scale(2, true);
+    let x: int = scale_if(2, true);
+    let y: int = scale_ternary(2, true);
 }
 

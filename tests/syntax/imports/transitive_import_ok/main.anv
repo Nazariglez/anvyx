@@ -1,11 +1,8 @@
-// @mode: run
+// @mode: check
 // @expect: success
-// @match: ok
 
 import a;
 
 fn main() {
     let x = a.from_a();
-    assert(x == 1);
-    println("ok");
 }

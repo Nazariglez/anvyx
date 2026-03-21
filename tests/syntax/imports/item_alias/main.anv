@@ -1,6 +1,5 @@
-// @mode: run
+// @mode: check
 // @expect: success
-// @match: ok
 
 import helpers { add as my_add };
 

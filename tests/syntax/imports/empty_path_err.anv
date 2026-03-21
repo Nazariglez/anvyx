@@ -1,6 +1,7 @@
 // @mode: check
 // @expect: error
+// @contains: Unexpected token
 
-import foo.;
+import;
 
 fn main() {}

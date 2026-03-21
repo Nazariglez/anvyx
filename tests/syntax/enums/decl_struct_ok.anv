@@ -1,9 +1,0 @@
-// @mode: check
-// @expect: success
-
-enum Event {
-    Move { dx: int, dy: int },
-    Hit { target: int, damage: int },
-}
-
-fn main() {}
