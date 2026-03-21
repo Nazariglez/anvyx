@@ -42,6 +42,27 @@ pub(super) struct StructDef {
     pub methods: HashMap<Ident, MethodDef>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ExternFieldDef {
+    pub ty: Type,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternMethodDef {
+    pub receiver: Option<MethodReceiver>,
+    pub params: Vec<Param>,
+    pub ret: Type,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternTypeDef {
+    pub has_init: bool,
+    pub field_order: Vec<Ident>,
+    pub fields: HashMap<Ident, ExternFieldDef>,
+    pub methods: HashMap<Ident, ExternMethodDef>,
+    pub statics: HashMap<Ident, ExternMethodDef>,
+}
+
 pub(super) type InferenceSlots = HashMap<TypeVarId, Ident>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,7 +113,7 @@ pub(super) struct ModuleDef {
     pub func_param_info: HashMap<Ident, Vec<(Ident, Mutability)>>,
     pub struct_defs: HashMap<Ident, StructDef>,
     pub enum_defs: HashMap<Ident, EnumDef>,
-    pub extern_types: HashSet<Ident>,
+    pub extern_types: HashMap<Ident, ExternTypeDef>,
     pub func_type_params: HashMap<Ident, Vec<TypeParam>>,
     pub generic_func_templates: HashMap<Ident, FuncNode>,
 
@@ -110,7 +131,7 @@ impl ModuleDef {
             .keys()
             .chain(self.struct_defs.keys())
             .chain(self.enum_defs.keys())
-            .chain(self.extern_types.iter())
+            .chain(self.extern_types.keys())
             .copied()
     }
 }
@@ -154,8 +175,8 @@ pub struct TypeChecker {
     /// Stores enum definitions (name -> variants)
     pub(super) enum_defs: HashMap<Ident, EnumDef>,
 
-    /// Stores extern type names declared with 'extern type'
-    pub(super) extern_type_defs: HashSet<Ident>,
+    /// Stores extern type definitions declared with 'extern type'
+    pub(super) extern_type_defs: HashMap<Ident, ExternTypeDef>,
 
     /// Stores param info for free functions
     pub(super) func_param_info: HashMap<Ident, Vec<(Ident, Mutability)>>,
@@ -209,6 +230,14 @@ impl TypeChecker {
         self.enum_defs.get(&name)
     }
 
+    pub fn get_extern_type(&self, name: Ident) -> Option<&ExternTypeDef> {
+        self.extern_type_defs.get(&name)
+    }
+
+    pub fn extern_type_field_order(&self, name: Ident) -> Option<&[Ident]> {
+        self.extern_type_defs.get(&name).map(|def| def.field_order.as_slice())
+    }
+
     pub fn struct_names(&self) -> impl Iterator<Item = Ident> + '_ {
         self.struct_defs.keys().copied()
     }
@@ -225,6 +254,15 @@ impl TypeChecker {
             .fields
             .iter()
             .position(|f| f.name == field_name)
+    }
+
+    pub fn struct_field_type(&self, struct_name: Ident, field_name: Ident) -> Option<Type> {
+        self.struct_defs
+            .get(&struct_name)?
+            .fields
+            .iter()
+            .find(|f| f.name == field_name)
+            .map(|f| f.ty.clone())
     }
 
     pub fn enum_names(&self) -> impl Iterator<Item = Ident> + '_ {
@@ -285,7 +323,7 @@ impl TypeChecker {
 
     pub(super) fn resolve_type(&self, ty: &Type) -> Type {
         match ty {
-            Type::UnresolvedName(name) if self.extern_type_defs.contains(name) => {
+            Type::UnresolvedName(name) if self.extern_type_defs.contains_key(name) => {
                 Type::Extern { name: *name }
             }
             Type::UnresolvedName(name) if self.struct_defs.contains_key(name) => Type::Struct {
@@ -770,6 +808,31 @@ pub(super) fn type_field_on_base(
                 span,
                 TypeErrKind::StructUnknownField {
                     struct_name: *struct_name,
+                    field,
+                },
+            ));
+            Type::Infer
+        }
+        Type::Extern { name } => {
+            let Some(extern_def) = type_checker.get_extern_type(*name) else {
+                errors.push(TypeErr::new(
+                    span,
+                    TypeErrKind::FieldAccessOnNonNamedTuple {
+                        field,
+                        found: base_ty.clone(),
+                    },
+                ));
+                return Type::Infer;
+            };
+
+            if let Some(field_def) = extern_def.fields.get(&field) {
+                return field_def.ty.clone();
+            }
+
+            errors.push(TypeErr::new(
+                span,
+                TypeErrKind::ExternUnknownField {
+                    type_name: *name,
                     field,
                 },
             ));

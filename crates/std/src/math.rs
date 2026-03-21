@@ -49,7 +49,7 @@ pub fn module() -> StdModule {
         name: "math",
         anv_source: include_str!("./math.anv"),
         exports: ANVYX_EXPORTS,
-        type_exports: ANVYX_TYPE_EXPORTS,
+        type_exports: anvyx_type_exports,
         handlers: anvyx_externs,
     }
 }

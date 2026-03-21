@@ -2,8 +2,9 @@ use crate::ast::{ExprId, ExprKind, ExprNode, Type};
 
 use super::{
     call::{
-        check_call, check_instance_method_call, check_list_method, check_map_method,
-        check_module_func_call, check_var_param_args, type_call_on_base,
+        check_call, check_extern_instance_method_call, check_extern_static_method_call,
+        check_instance_method_call, check_list_method, check_map_method, check_module_func_call,
+        check_var_param_args, type_call_on_base,
     },
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
@@ -321,6 +322,63 @@ fn handle_method_call_if_applicable(
         });
     }
 
+    if let Type::Extern { name } = &detection_ty {
+        if let Some(extern_def) = type_checker.get_extern_type(*name).cloned() {
+            let method_name = field_node.node.field;
+            let Some(method) = extern_def.methods.get(&method_name) else {
+                if extern_def.statics.contains_key(&method_name) {
+                    errors.push(TypeErr::new(
+                        call_node.span,
+                        TypeErrKind::StaticMethodOnValue {
+                            struct_name: *name,
+                            method: method_name,
+                        },
+                    ));
+                } else {
+                    errors.push(TypeErr::new(
+                        field_node.span,
+                        TypeErrKind::ExternUnknownMethod {
+                            type_name: *name,
+                            method: method_name,
+                        },
+                    ));
+                }
+                return Some(MethodCallOutcome::Handled {
+                    ty: Type::Infer,
+                    chain_optional: chain_is_optional || op_safe,
+                    next_index: index + 2,
+                    call_expr: call_op.expr_id(),
+                    call_span: call_op.span(),
+                });
+            };
+
+            let method_ret = check_extern_instance_method_call(
+                call_node,
+                *name,
+                method_name,
+                method,
+                Some(base),
+                type_checker,
+                errors,
+            );
+
+            let mut result_ty = method_ret;
+            let mut chain_optional = chain_is_optional;
+            if op_safe || chain_is_optional {
+                chain_optional = true;
+                result_ty = Type::option_of(result_ty);
+            }
+
+            return Some(MethodCallOutcome::Handled {
+                ty: result_ty,
+                chain_optional,
+                next_index: index + 2,
+                call_expr: call_op.expr_id(),
+                call_span: call_op.span(),
+            });
+        }
+    }
+
     let method_target = field_node.node.target.as_ref();
     let method_ret = match &detection_ty {
         Type::List { elem } => check_list_method(
@@ -528,6 +586,18 @@ fn try_type_name_dispatch(
                 *type_name,
                 field_node.node.field,
                 &struct_def,
+                type_checker,
+                errors,
+            );
+            return Some((ty, 2, op_safe));
+        }
+
+        if let Some(extern_def) = type_checker.get_extern_type(*type_name).cloned() {
+            let ty = check_extern_static_method_call(
+                call_node,
+                *type_name,
+                field_node.node.field,
+                &extern_def,
                 type_checker,
                 errors,
             );

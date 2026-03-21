@@ -1,7 +1,8 @@
 use crate::{
     ast::{
-        ArrayLen, BlockNode, ExprId, ExprKind, ExprNode, Ident, ImportKind, Mutability, ReturnNode,
-        Stmt, StmtNode, Type, VariantKind, Visibility,
+        ArrayLen, BlockNode, ExprId, ExprKind, ExprNode, ExternTypeMember, Ident, ImportKind,
+        Mutability, Param, ReturnNode, Stmt, StmtNode, Type, VariantKind,
+        Visibility,
     },
     span::Span,
 };
@@ -17,8 +18,8 @@ use super::{
     infer::type_from_fn,
     pattern::check_pattern,
     types::{
-        EnumDef, EnumVariantDef, MethodDef, ModuleDef, StructDef, TypeChecker, is_keyable,
-        keyable_reason, unwrap_opt_typ,
+        EnumDef, EnumVariantDef, ExternFieldDef, ExternMethodDef, ExternTypeDef, MethodDef,
+        ModuleDef, StructDef, TypeChecker, is_keyable, keyable_reason, unwrap_opt_typ,
     },
     unify::contains_infer,
 };
@@ -77,14 +78,26 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
     // resolved when building function signatures that reference them
     for stmt in stmts {
         if let Stmt::ExternType(node) = &stmt.node {
-            type_checker.extern_type_defs.insert(node.node.name);
+            type_checker.extern_type_defs.insert(
+                node.node.name,
+                ExternTypeDef {
+                    has_init: false,
+                    field_order: vec![],
+                    fields: HashMap::new(),
+                    methods: HashMap::new(),
+                    statics: HashMap::new(),
+                },
+            );
         }
     }
 
     for stmt in stmts {
         match &stmt.node {
-            Stmt::ExternType(_) => {
-                // already handled in the pre-pass above
+            Stmt::ExternType(node) => {
+                let def = build_extern_type_def(node.node.has_init, &node.node.members, |ty| {
+                    type_checker.resolve_type(ty)
+                });
+                type_checker.extern_type_defs.insert(node.node.name, def);
             }
 
             Stmt::ExternFunc(node) => {
@@ -469,7 +482,8 @@ pub(super) fn build_module_def_with_reexports(
             Stmt::ExternType(node) => {
                 let name = node.node.name;
                 module_def.all_names.insert(name);
-                module_def.extern_types.insert(name);
+                let def = build_extern_type_def(node.node.has_init, &node.node.members, &resolve);
+                module_def.extern_types.insert(name, def);
             }
             _ => {}
         }
@@ -497,8 +511,8 @@ fn merge_symbol(name: Ident, bind_as: Ident, source: &ModuleDef, target: &mut Mo
     } else if let Some(enum_def) = source.enum_defs.get(&name) {
         target.enum_defs.insert(bind_as, enum_def.clone());
         target.all_names.insert(bind_as);
-    } else if source.extern_types.contains(&name) {
-        target.extern_types.insert(bind_as);
+    } else if let Some(extern_def) = source.extern_types.get(&name) {
+        target.extern_types.insert(bind_as, extern_def.clone());
         target.all_names.insert(bind_as);
     }
 }
@@ -532,13 +546,80 @@ fn inject_module_item(
         type_checker.struct_defs.insert(bind_as, struct_def.clone());
     } else if let Some(enum_def) = module_def.enum_defs.get(&name) {
         type_checker.enum_defs.insert(bind_as, enum_def.clone());
-    } else if module_def.extern_types.contains(&name) {
-        type_checker.extern_type_defs.insert(bind_as);
+    } else if let Some(extern_def) = module_def.extern_types.get(&name) {
+        type_checker.extern_type_defs.insert(bind_as, extern_def.clone());
     } else if let Some(sub_module) = module_def.re_exported_modules.get(&name) {
         type_checker.module_defs.insert(bind_as, sub_module.clone());
     }
 
     // symbol not found is silently skipped here, check_stmt will report the error
+}
+
+fn build_extern_type_def(
+    has_init: bool,
+    members: &[ExternTypeMember],
+    resolve: impl Fn(&Type) -> Type,
+) -> ExternTypeDef {
+    let mut field_order = vec![];
+    let mut fields = HashMap::new();
+    let mut methods = HashMap::new();
+    let mut statics = HashMap::new();
+
+    for member in members {
+        match member {
+            ExternTypeMember::Field { name, ty } => {
+                field_order.push(*name);
+                fields.insert(*name, ExternFieldDef { ty: resolve(ty) });
+            }
+            ExternTypeMember::Method {
+                name,
+                receiver,
+                params,
+                ret,
+            } => {
+                methods.insert(
+                    *name,
+                    ExternMethodDef {
+                        receiver: Some(*receiver),
+                        params: params
+                            .iter()
+                            .map(|p| Param {
+                                mutability: p.mutability,
+                                name: p.name,
+                                ty: resolve(&p.ty),
+                            })
+                            .collect(),
+                        ret: resolve(ret),
+                    },
+                );
+            }
+            ExternTypeMember::StaticMethod { name, params, ret } => {
+                statics.insert(
+                    *name,
+                    ExternMethodDef {
+                        receiver: None,
+                        params: params
+                            .iter()
+                            .map(|p| Param {
+                                mutability: p.mutability,
+                                name: p.name,
+                                ty: resolve(&p.ty),
+                            })
+                            .collect(),
+                        ret: resolve(ret),
+                    },
+                );
+            }
+        }
+    }
+
+    ExternTypeDef {
+        has_init,
+        field_order,
+        fields,
+        methods,
+        statics,
+    }
 }
 
 pub(super) fn check_stmt(
@@ -562,7 +643,7 @@ pub(super) fn check_stmt(
                     let is_public = module_def.funcs.contains_key(&item.name)
                         || module_def.struct_defs.contains_key(&item.name)
                         || module_def.enum_defs.contains_key(&item.name)
-                        || module_def.extern_types.contains(&item.name)
+                        || module_def.extern_types.contains_key(&item.name)
                         || module_def.re_exported_modules.contains_key(&item.name);
                     if !is_public {
                         let err_kind = if module_def.all_names.contains(&item.name) {

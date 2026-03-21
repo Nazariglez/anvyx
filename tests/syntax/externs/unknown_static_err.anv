@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: no method named 'fly'
+
+extern type Point {
+    x: float;
+    y: float;
+    fn new(x: float, y: float) -> Self;
+}
+
+fn main() {
+    let p = Point.fly(1.0);
+}

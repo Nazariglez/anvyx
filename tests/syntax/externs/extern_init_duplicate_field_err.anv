@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: Duplicate field 'x'
+
+extern type Point {
+    init;
+    x: float;
+    y: float;
+}
+
+fn main() {
+    let p = Point { x: 1.0, y: 2.0, x: 3.0 };
+}

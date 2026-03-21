@@ -19,7 +19,7 @@ mod tests;
 
 pub use error::{TypeErr, TypeErrKind};
 pub use infer::subst_type;
-pub use types::{SpecializationKey, TypeChecker};
+pub use types::{ExternTypeDef, SpecializationKey, TypeChecker};
 
 use crate::ast::{Program, StmtNode};
 use crate::builtin::Builtin;

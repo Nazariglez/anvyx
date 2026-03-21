@@ -1,0 +1,23 @@
+// @mode: check
+// @expect: success
+
+extern type Point {
+    x: float;
+    y: float;
+    fn new(x: float, y: float) -> Self;
+}
+
+extern type Rect {
+    x: float;
+    y: float;
+    w: float;
+    h: float;
+    fn new(x: float, y: float, w: float, h: float) -> Self;
+    fn contains(self, p: Point) -> bool;
+}
+
+fn main() {
+    let p = Point.new(5.0, 5.0);
+    let r = Rect.new(0.0, 0.0, 10.0, 10.0);
+    let inside: bool = r.contains(p);
+}

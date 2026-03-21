@@ -303,6 +303,38 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("Unknown field '{field}' for struct '{struct_name}'"),
             format!("struct '{struct_name}' has no field named '{field}'"),
         ),
+        TypeErrKind::ExternUnknownField { type_name, field } => (
+            format!("Unknown field '{field}' on extern type '{type_name}'"),
+            format!("extern type '{type_name}' has no field named '{field}'"),
+        ),
+        TypeErrKind::ExternUnknownMethod { type_name, method } => (
+            format!("Unknown method '{method}' on extern type '{type_name}'"),
+            format!("extern type '{type_name}' has no method named '{method}'"),
+        ),
+        TypeErrKind::ExternInitNoInit { type_name } => (
+            format!("Type '{type_name}' does not support struct literal construction"),
+            format!("use a static method like '{type_name}.new(...)' instead"),
+        ),
+        TypeErrKind::ExternInitMissingField { type_name, field } => (
+            format!("Missing field '{field}' in '{type_name}' literal"),
+            format!("type '{type_name}' requires field '{field}'"),
+        ),
+        TypeErrKind::ExternInitUnknownField { type_name, field } => (
+            format!("Unknown field '{field}' for type '{type_name}'"),
+            format!("type '{type_name}' has no field named '{field}'"),
+        ),
+        TypeErrKind::ExternInitDuplicateField { type_name, field } => (
+            format!("Duplicate field '{field}' in '{type_name}' literal"),
+            format!("field '{field}' is specified more than once"),
+        ),
+        TypeErrKind::StructDestructureUnknownField { type_name, field } => (
+            format!("Unknown field '{field}' in destructure of '{type_name}'"),
+            format!("type '{type_name}' has no field named '{field}'"),
+        ),
+        TypeErrKind::StructDestructureDuplicateField { type_name, field } => (
+            format!("Duplicate field '{field}' in destructure of '{type_name}'"),
+            format!("field '{field}' is specified more than once"),
+        ),
         TypeErrKind::StructDuplicateField { struct_name, field } => (
             format!("Duplicate field '{field}' in struct literal"),
             format!("field '{field}' is specified more than once in '{struct_name}'"),

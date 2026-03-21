@@ -12,6 +12,7 @@ pub struct TypeMapping {
 pub struct ExternTypeInfo {
     pub store_ident: syn::Ident,
     pub decl_ident: syn::Ident,
+    pub cleanup_fn_ident: syn::Ident,
 }
 
 pub enum ParamMode {
@@ -80,6 +81,7 @@ fn extern_type_info(ident: &syn::Ident) -> ExternTypeInfo {
     ExternTypeInfo {
         store_ident: format_ident!("__ANVYX_STORE_{}", name_upper),
         decl_ident: format_ident!("__ANVYX_TYPE_DECL_{}", name_upper),
+        cleanup_fn_ident: format_ident!("__anvyx_cleanup_{}", ident),
     }
 }
 

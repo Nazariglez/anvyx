@@ -139,6 +139,17 @@ fn check_pattern_inner(
                 check_pattern_inner(subpat, elem_ty, mutable, None, type_checker, errors);
             }
         }
+        Pattern::Struct { name, fields } => {
+            check_struct_destructure_pattern(
+                pattern,
+                *name,
+                fields,
+                value_ty,
+                mutable,
+                type_checker,
+                errors,
+            );
+        }
         Pattern::EnumUnit { qualifier, variant } => {
             check_enum_pattern(
                 pattern,
@@ -405,6 +416,112 @@ fn check_enum_struct_pattern(
         let resolved_ty = subst_type(&expected_field.ty, &subst);
         check_pattern_inner(subpat, &resolved_ty, mutable, None, type_checker, errors);
     }
+}
+
+fn check_struct_destructure_pattern(
+    pattern: &PatternNode,
+    type_name: Ident,
+    fields: &[(Ident, PatternNode)],
+    value_ty: &Type,
+    mutable: bool,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    // try native struct first
+    if let Some(struct_def) = type_checker.get_struct(type_name).cloned() {
+        let matches_type = matches!(value_ty, Type::Struct { name, .. } if *name == type_name);
+        if !matches_type {
+            errors.push(TypeErr::new(
+                pattern.span,
+                TypeErrKind::MismatchedTypes {
+                    expected: Type::Struct {
+                        name: type_name,
+                        type_args: vec![],
+                    },
+                    found: value_ty.clone(),
+                },
+            ));
+            return;
+        }
+
+        let mut seen = HashSet::new();
+        for (field_name, subpat) in fields {
+            if !seen.insert(*field_name) {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::StructDestructureDuplicateField {
+                        type_name,
+                        field: *field_name,
+                    },
+                ));
+                continue;
+            }
+            let Some(field_def) = struct_def.fields.iter().find(|f| f.name == *field_name) else {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::StructDestructureUnknownField {
+                        type_name,
+                        field: *field_name,
+                    },
+                ));
+                continue;
+            };
+            let resolved_ty = if let Type::Struct { type_args, .. } = value_ty {
+                let subst = build_type_subst(&struct_def.type_params, type_args);
+                subst_type(&field_def.ty, &subst)
+            } else {
+                field_def.ty.clone()
+            };
+            check_pattern_inner(subpat, &resolved_ty, mutable, None, type_checker, errors);
+        }
+        return;
+    }
+
+    // try extern type
+    if let Some(extern_def) = type_checker.get_extern_type(type_name).cloned() {
+        let matches_type = matches!(value_ty, Type::Extern { name } if *name == type_name);
+        if !matches_type {
+            errors.push(TypeErr::new(
+                pattern.span,
+                TypeErrKind::MismatchedTypes {
+                    expected: Type::Extern { name: type_name },
+                    found: value_ty.clone(),
+                },
+            ));
+            return;
+        }
+
+        let mut seen = HashSet::new();
+        for (field_name, subpat) in fields {
+            if !seen.insert(*field_name) {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::StructDestructureDuplicateField {
+                        type_name,
+                        field: *field_name,
+                    },
+                ));
+                continue;
+            }
+            let Some(field_def) = extern_def.fields.get(field_name) else {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::StructDestructureUnknownField {
+                        type_name,
+                        field: *field_name,
+                    },
+                ));
+                continue;
+            };
+            check_pattern_inner(subpat, &field_def.ty, mutable, None, type_checker, errors);
+        }
+        return;
+    }
+
+    errors.push(TypeErr::new(
+        pattern.span,
+        TypeErrKind::UnknownStruct { name: type_name },
+    ));
 }
 
 fn build_type_subst(type_params: &[TypeParam], type_args: &[Type]) -> HashMap<TypeVarId, Type> {

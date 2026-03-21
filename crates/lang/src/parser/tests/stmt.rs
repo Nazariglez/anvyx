@@ -1,5 +1,5 @@
 use super::helpers::parse_program;
-use crate::ast::{self, MethodReceiver, Mutability, Type};
+use crate::ast::{self, ExternTypeMember, MethodReceiver, Mutability, Type};
 
 #[test]
 fn while_with_binary_cond_parses() {
@@ -274,6 +274,168 @@ fn extern_type_parses() {
         panic!("expected ExternType");
     };
     assert_eq!(node.node.name.0.as_ref(), "Sprite");
+    assert!(node.node.members.is_empty());
+}
+
+#[test]
+fn extern_type_block_with_fields_parses() {
+    let prog = parse_program(
+        r#"
+        extern type Point {
+            x: float;
+            y: float;
+        }
+    "#,
+    );
+    assert_eq!(prog.stmts.len(), 1);
+    let ast::Stmt::ExternType(node) = &prog.stmts[0].node else {
+        panic!("expected ExternType");
+    };
+    assert_eq!(node.node.name.0.as_ref(), "Point");
+    assert_eq!(node.node.members.len(), 2);
+    let ast::ExternTypeMember::Field { name, ty } = &node.node.members[0] else {
+        panic!("expected Field");
+    };
+    assert_eq!(name.0.as_ref(), "x");
+    assert_eq!(*ty, Type::Float);
+    let ast::ExternTypeMember::Field { name, ty } = &node.node.members[1] else {
+        panic!("expected Field");
+    };
+    assert_eq!(name.0.as_ref(), "y");
+    assert_eq!(*ty, Type::Float);
+}
+
+#[test]
+fn extern_type_block_with_static_parses() {
+    let prog = parse_program(
+        r#"
+        extern type Point {
+            fn new(x: float, y: float) -> Point;
+        }
+    "#,
+    );
+    let ast::Stmt::ExternType(node) = &prog.stmts[0].node else {
+        panic!("expected ExternType");
+    };
+    assert_eq!(node.node.members.len(), 1);
+    let ast::ExternTypeMember::StaticMethod { name, params, ret } = &node.node.members[0] else {
+        panic!("expected StaticMethod");
+    };
+    assert_eq!(name.0.as_ref(), "new");
+    assert_eq!(params.len(), 2);
+    // Point is an UnresolvedName at parse time (resolved later by typechecker)
+    assert!(matches!(ret, Type::UnresolvedName(_)));
+}
+
+#[test]
+fn extern_type_block_with_methods_parses() {
+    let prog = parse_program(
+        r#"
+        extern type Point {
+            fn get_x(self) -> float;
+            fn move_by(var self, dx: float, dy: float);
+        }
+    "#,
+    );
+    let ast::Stmt::ExternType(node) = &prog.stmts[0].node else {
+        panic!("expected ExternType");
+    };
+    assert_eq!(node.node.members.len(), 2);
+
+    let ast::ExternTypeMember::Method {
+        name,
+        receiver,
+        params,
+        ret,
+    } = &node.node.members[0]
+    else {
+        panic!("expected Method");
+    };
+    assert_eq!(name.0.as_ref(), "get_x");
+    assert_eq!(*receiver, MethodReceiver::Value);
+    assert!(params.is_empty());
+    assert_eq!(*ret, Type::Float);
+
+    let ast::ExternTypeMember::Method {
+        name, receiver, ..
+    } = &node.node.members[1]
+    else {
+        panic!("expected Method");
+    };
+    assert_eq!(name.0.as_ref(), "move_by");
+    assert_eq!(*receiver, MethodReceiver::Var);
+}
+
+#[test]
+fn extern_type_self_in_return_resolves() {
+    let prog = parse_program(
+        r#"
+        extern type Point {
+            fn new(x: float, y: float) -> Self;
+        }
+    "#,
+    );
+    let ast::Stmt::ExternType(node) = &prog.stmts[0].node else {
+        panic!("expected ExternType");
+    };
+    let ast::ExternTypeMember::StaticMethod { ret, .. } = &node.node.members[0] else {
+        panic!("expected StaticMethod");
+    };
+    assert_eq!(
+        *ret,
+        Type::Extern {
+            name: ast::Ident(internment::Intern::new("Point".to_string()))
+        }
+    );
+}
+
+#[test]
+fn extern_type_block_full_parses() {
+    let prog = parse_program(
+        r#"
+        extern type Point {
+            x: float;
+            y: float;
+            fn new(x: float, y: float) -> Self;
+            fn move_by(var self, dx: float, dy: float);
+            fn distance_to(self, other: Point) -> float;
+        }
+    "#,
+    );
+    let ast::Stmt::ExternType(node) = &prog.stmts[0].node else {
+        panic!("expected ExternType");
+    };
+    assert_eq!(node.node.members.len(), 5);
+    assert!(matches!(
+        &node.node.members[0],
+        ast::ExternTypeMember::Field { .. }
+    ));
+    assert!(matches!(
+        &node.node.members[1],
+        ast::ExternTypeMember::Field { .. }
+    ));
+    assert!(matches!(
+        &node.node.members[2],
+        ast::ExternTypeMember::StaticMethod { .. }
+    ));
+    assert!(matches!(
+        &node.node.members[3],
+        ast::ExternTypeMember::Method { .. }
+    ));
+    assert!(matches!(
+        &node.node.members[4],
+        ast::ExternTypeMember::Method { .. }
+    ));
+}
+
+#[test]
+fn extern_type_empty_block_parses() {
+    let prog = parse_program("extern type Foo {}");
+    let ast::Stmt::ExternType(node) = &prog.stmts[0].node else {
+        panic!("expected ExternType");
+    };
+    assert_eq!(node.node.name.0.as_ref(), "Foo");
+    assert!(node.node.members.is_empty());
 }
 
 #[test]

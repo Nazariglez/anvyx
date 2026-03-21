@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: does not support struct literal construction
+
+extern type Handle;
+
+fn main() {
+    let h = Handle {};
+}

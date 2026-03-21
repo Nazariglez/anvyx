@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: error
+// @contains: immutable
+
+extern type Point {
+    x: float;
+    y: float;
+}
+
+extern fn make_point(x: float, y: float) -> Point;
+
+fn main() {
+    let p = make_point(1.0, 2.0);
+    p.x = 5.0;
+}

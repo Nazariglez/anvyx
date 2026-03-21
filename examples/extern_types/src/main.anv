@@ -1,34 +1,34 @@
-import shapes {
-    Point, Rect,
-    create_point, point_x, point_y, move_point, destroy_point,
-    create_rect, rect_area, point_in_rect, destroy_rect,
-};
+import shapes { Point, Rect };
 
 fn main() {
-    // Create a point and read its coordinates
-    let p = create_point(10.0, 20.0);
-    println(point_x(p));
-    println(point_y(p));
+    var p = Point { x: 10.0, y: 20.0 };
 
-    // Mutate the point
-    move_point(p, 5.0, -3.0);
-    println(point_x(p));
-    println(point_y(p));
+    println(p.x);
+    println(p.y);
 
-    // Create a rect and check area
-    let r = create_rect(0.0, 0.0, 100.0, 50.0);
-    println(rect_area(r));
+    p.move_by(5.0, -3.0);
+    println(p.x);
+    println(p.y);
 
-    // Cross-type: point in rect check
-    println(point_in_rect(p, r));
+    p.x = 100.0;
+    println(p.x);
 
-    // Move point outside rect
-    move_point(p, 200.0, 0.0);
-    println(point_in_rect(p, r));
+    let q = Point.new(1.0, 2.0);
+    println(q.x);
 
-    // Clean up
-    destroy_point(p);
-    destroy_rect(r);
+    println(p.distance_to(q));
+
+    let r = Rect { x: 0.0, y: 0.0, w: 200.0, h: 50.0 };
+    println(r.area());
+
+    println(r.contains(p));
+
+    let Point { x, y } = p;
+    println(x);
+    println(y);
+
+    let Point { y } = q;
+    println(y);
 
     println("done");
 }

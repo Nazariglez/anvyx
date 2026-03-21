@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: error
+// @contains: no field named 'z'
+
+extern type Point {
+    x: float;
+    y: float;
+}
+
+extern fn make_point(x: float, y: float) -> Point;
+
+fn main() {
+    let p = make_point(1.0, 2.0);
+    let a = p.z;
+}

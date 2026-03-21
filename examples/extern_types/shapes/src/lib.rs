@@ -1,213 +1,346 @@
-use anvyx_lang::{export_fn, export_type};
+use anvyx_lang::{export_methods, export_type};
 
 #[export_type(name = "Point")]
 pub struct Point {
-    pub x: f64,
-    pub y: f64,
+    #[field] pub x: f64,
+    #[field] pub y: f64,
+}
+
+#[export_methods]
+impl Point {
+    pub fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+    pub fn move_by(&mut self, dx: f64, dy: f64) {
+        self.x += dx;
+        self.y += dy;
+    }
+    pub fn distance_to(&self, other: &Point) -> f64 {
+        ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
+    }
 }
 
 #[export_type(name = "Rect")]
 pub struct Rect {
-    pub x: f64,
-    pub y: f64,
-    pub w: f64,
-    pub h: f64,
+    #[field] pub x: f64,
+    #[field] pub y: f64,
+    #[field] pub w: f64,
+    #[field] pub h: f64,
 }
 
-#[export_fn]
-pub fn create_point(x: f64, y: f64) -> Point {
-    Point { x, y }
+#[export_methods]
+impl Rect {
+    pub fn new(x: f64, y: f64, w: f64, h: f64) -> Self {
+        Self { x, y, w, h }
+    }
+    pub fn area(&self) -> f64 {
+        self.w * self.h
+    }
+    pub fn contains(&self, p: &Point) -> bool {
+        p.x >= self.x && p.x <= self.x + self.w && p.y >= self.y && p.y <= self.y + self.h
+    }
 }
 
-#[export_fn]
-pub fn point_x(p: &Point) -> f64 {
-    p.x
-}
-
-#[export_fn]
-pub fn point_y(p: &Point) -> f64 {
-    p.y
-}
-
-#[export_fn]
-pub fn move_point(p: &mut Point, dx: f64, dy: f64) {
-    p.x += dx;
-    p.y += dy;
-}
-
-#[export_fn]
-pub fn destroy_point(p: Point) {
-    let _ = p;
-}
-
-#[export_fn]
-pub fn create_rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
-    Rect { x, y, w, h }
-}
-
-#[export_fn]
-pub fn rect_area(r: &Rect) -> f64 {
-    r.w * r.h
-}
-
-#[export_fn]
-pub fn point_in_rect(p: &Point, r: &Rect) -> bool {
-    p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h
-}
-
-#[export_fn]
-pub fn destroy_rect(r: Rect) {
-    let _ = r;
-}
-
-anvyx_lang::provider!(
-    types: [Point, Rect],
-    create_point,
-    point_x,
-    point_y,
-    move_point,
-    destroy_point,
-    create_rect,
-    rect_area,
-    point_in_rect,
-    destroy_rect
-);
+anvyx_lang::provider!(types: [Point, Rect]);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anvyx_lang::{exports_to_json, Value};
+    use anvyx_lang::{Value, exports_to_json};
 
     #[test]
     fn anvyx_externs_contains_all() {
         let externs = anvyx_externs();
-        assert_eq!(externs.len(), 9);
-        assert!(externs.contains_key("create_point"));
-        assert!(externs.contains_key("point_x"));
-        assert!(externs.contains_key("point_y"));
-        assert!(externs.contains_key("move_point"));
-        assert!(externs.contains_key("destroy_point"));
-        assert!(externs.contains_key("create_rect"));
-        assert!(externs.contains_key("rect_area"));
-        assert!(externs.contains_key("point_in_rect"));
-        assert!(externs.contains_key("destroy_rect"));
+        assert_eq!(externs.len(), 20);
+        // Point (8)
+        assert!(externs.contains_key("Point::__init__"));
+        assert!(externs.contains_key("Point::new"));
+        assert!(externs.contains_key("Point::__get_x"));
+        assert!(externs.contains_key("Point::__set_x"));
+        assert!(externs.contains_key("Point::__get_y"));
+        assert!(externs.contains_key("Point::__set_y"));
+        assert!(externs.contains_key("Point::move_by"));
+        assert!(externs.contains_key("Point::distance_to"));
+        // Rect (12)
+        assert!(externs.contains_key("Rect::__init__"));
+        assert!(externs.contains_key("Rect::new"));
+        assert!(externs.contains_key("Rect::__get_x"));
+        assert!(externs.contains_key("Rect::__set_x"));
+        assert!(externs.contains_key("Rect::__get_y"));
+        assert!(externs.contains_key("Rect::__set_y"));
+        assert!(externs.contains_key("Rect::__get_w"));
+        assert!(externs.contains_key("Rect::__set_w"));
+        assert!(externs.contains_key("Rect::__get_h"));
+        assert!(externs.contains_key("Rect::__set_h"));
+        assert!(externs.contains_key("Rect::area"));
+        assert!(externs.contains_key("Rect::contains"));
     }
 
     #[test]
-    fn create_point_handler() {
+    fn point_new_handler() {
         let externs = anvyx_externs();
-        let result = externs["create_point"](vec![Value::Float(1.0), Value::Float(2.0)]).unwrap();
+        let result =
+            externs["Point::new"](vec![Value::Float(1.0), Value::Float(2.0)]).unwrap();
         let Value::ExternHandle(id) = result else {
             panic!("expected ExternHandle");
         };
-
-        // Verify it's in the store by reading it back
-        let x = externs["point_x"](vec![Value::ExternHandle(id)]).unwrap();
+        let x = externs["Point::__get_x"](vec![Value::ExternHandle(id)]).unwrap();
         assert_eq!(x, Value::Float(1.0));
     }
 
     #[test]
-    fn point_x_handler() {
+    fn point_getter_handlers() {
         let externs = anvyx_externs();
-        let result = externs["create_point"](vec![Value::Float(3.5), Value::Float(7.0)]).unwrap();
+        let result =
+            externs["Point::new"](vec![Value::Float(3.5), Value::Float(7.0)]).unwrap();
         let Value::ExternHandle(id) = result else {
             panic!("expected ExternHandle");
         };
-
-        let x = externs["point_x"](vec![Value::ExternHandle(id)]).unwrap();
+        let x = externs["Point::__get_x"](vec![Value::ExternHandle(id.clone())]).unwrap();
         assert_eq!(x, Value::Float(3.5));
-
-        let y = externs["point_y"](vec![Value::ExternHandle(id)]).unwrap();
+        let y = externs["Point::__get_y"](vec![Value::ExternHandle(id)]).unwrap();
         assert_eq!(y, Value::Float(7.0));
     }
 
     #[test]
-    fn move_point_handler() {
+    fn point_move_by_handler() {
         let externs = anvyx_externs();
-        let result = externs["create_point"](vec![Value::Float(10.0), Value::Float(20.0)]).unwrap();
+        let result =
+            externs["Point::new"](vec![Value::Float(10.0), Value::Float(20.0)]).unwrap();
         let Value::ExternHandle(id) = result else {
             panic!("expected ExternHandle");
         };
-
-        // Mutate the point
-        externs["move_point"](vec![Value::ExternHandle(id), Value::Float(5.0), Value::Float(-3.0)]).unwrap();
-
-        // Verify mutation persisted
-        let x = externs["point_x"](vec![Value::ExternHandle(id)]).unwrap();
+        externs["Point::move_by"](vec![
+            Value::ExternHandle(id.clone()),
+            Value::Float(5.0),
+            Value::Float(-3.0),
+        ])
+        .unwrap();
+        let x = externs["Point::__get_x"](vec![Value::ExternHandle(id.clone())]).unwrap();
         assert_eq!(x, Value::Float(15.0));
-        let y = externs["point_y"](vec![Value::ExternHandle(id)]).unwrap();
+        let y = externs["Point::__get_y"](vec![Value::ExternHandle(id)]).unwrap();
         assert_eq!(y, Value::Float(17.0));
     }
 
     #[test]
-    fn destroy_point_handler() {
+    fn point_distance_to_handler() {
         let externs = anvyx_externs();
-        let result = externs["create_point"](vec![Value::Float(1.0), Value::Float(2.0)]).unwrap();
-        let Value::ExternHandle(id) = result else {
+        let a = externs["Point::new"](vec![Value::Float(0.0), Value::Float(0.0)]).unwrap();
+        let Value::ExternHandle(aid) = a else {
             panic!("expected ExternHandle");
         };
-
-        // Destroy removes from store
-        externs["destroy_point"](vec![Value::ExternHandle(id)]).unwrap();
-
-        // Verify it's gone
-        let result = externs["point_x"](vec![Value::ExternHandle(id)]);
-        assert!(result.is_err());
+        let b = externs["Point::new"](vec![Value::Float(3.0), Value::Float(4.0)]).unwrap();
+        let Value::ExternHandle(bid) = b else {
+            panic!("expected ExternHandle");
+        };
+        let result = externs["Point::distance_to"](vec![
+            Value::ExternHandle(aid),
+            Value::ExternHandle(bid),
+        ])
+        .unwrap();
+        assert_eq!(result, Value::Float(5.0));
     }
 
     #[test]
-    fn point_in_rect_handler() {
+    fn rect_field_handlers() {
+        let externs = anvyx_externs();
+        let r = externs["Rect::new"](vec![
+            Value::Float(1.0),
+            Value::Float(2.0),
+            Value::Float(3.0),
+            Value::Float(4.0),
+        ])
+        .unwrap();
+        let Value::ExternHandle(rid) = r else {
+            panic!("expected ExternHandle for rect");
+        };
+        assert_eq!(
+            externs["Rect::__get_x"](vec![Value::ExternHandle(rid.clone())]).unwrap(),
+            Value::Float(1.0)
+        );
+        assert_eq!(
+            externs["Rect::__get_y"](vec![Value::ExternHandle(rid.clone())]).unwrap(),
+            Value::Float(2.0)
+        );
+        assert_eq!(
+            externs["Rect::__get_w"](vec![Value::ExternHandle(rid.clone())]).unwrap(),
+            Value::Float(3.0)
+        );
+        assert_eq!(
+            externs["Rect::__get_h"](vec![Value::ExternHandle(rid.clone())]).unwrap(),
+            Value::Float(4.0)
+        );
+        externs["Rect::__set_x"](vec![Value::ExternHandle(rid.clone()), Value::Float(10.0)])
+            .unwrap();
+        assert_eq!(
+            externs["Rect::__get_x"](vec![Value::ExternHandle(rid)]).unwrap(),
+            Value::Float(10.0)
+        );
+    }
+
+    #[test]
+    fn rect_contains_handler() {
         let externs = anvyx_externs();
 
-        let p = externs["create_point"](vec![Value::Float(5.0), Value::Float(5.0)]).unwrap();
+        let p = externs["Point::new"](vec![Value::Float(5.0), Value::Float(5.0)]).unwrap();
         let Value::ExternHandle(pid) = p else {
             panic!("expected ExternHandle for point");
         };
 
-        let r = externs["create_rect"](vec![
+        let r = externs["Rect::new"](vec![
             Value::Float(0.0),
             Value::Float(0.0),
             Value::Float(10.0),
             Value::Float(10.0),
-        ]).unwrap();
+        ])
+        .unwrap();
         let Value::ExternHandle(rid) = r else {
             panic!("expected ExternHandle for rect");
         };
 
-        // Point (5,5) is inside rect (0,0,10,10)
-        let result = externs["point_in_rect"](vec![Value::ExternHandle(pid), Value::ExternHandle(rid)]).unwrap();
+        let result =
+            externs["Rect::contains"](vec![Value::ExternHandle(rid.clone()), Value::ExternHandle(pid.clone())])
+                .unwrap();
         assert_eq!(result, Value::Bool(true));
 
-        // Move point outside
-        externs["move_point"](vec![Value::ExternHandle(pid), Value::Float(20.0), Value::Float(0.0)]).unwrap();
+        externs["Point::move_by"](vec![
+            Value::ExternHandle(pid.clone()),
+            Value::Float(20.0),
+            Value::Float(0.0),
+        ])
+        .unwrap();
 
-        // Point (25,5) is outside rect (0,0,10,10)
-        let result = externs["point_in_rect"](vec![Value::ExternHandle(pid), Value::ExternHandle(rid)]).unwrap();
+        let result =
+            externs["Rect::contains"](vec![Value::ExternHandle(rid), Value::ExternHandle(pid)])
+                .unwrap();
         assert_eq!(result, Value::Bool(false));
     }
 
     #[test]
     fn metadata_format() {
-        let json = exports_to_json(ANVYX_EXPORTS, ANVYX_TYPE_EXPORTS);
+        let json = exports_to_json(ANVYX_EXPORTS, &anvyx_type_exports());
 
-        // Types present
         assert!(json.contains("\"Point\""));
         assert!(json.contains("\"Rect\""));
 
-        // All function names present
-        assert!(json.contains("\"create_point\""));
-        assert!(json.contains("\"point_x\""));
-        assert!(json.contains("\"point_y\""));
-        assert!(json.contains("\"move_point\""));
-        assert!(json.contains("\"destroy_point\""));
-        assert!(json.contains("\"create_rect\""));
-        assert!(json.contains("\"rect_area\""));
-        assert!(json.contains("\"point_in_rect\""));
-        assert!(json.contains("\"destroy_rect\""));
+        assert!(json.contains("\"fields\":["));
+        assert!(json.contains("\"methods\":["));
+        assert!(json.contains("\"statics\":["));
 
-        // Verify create_point param/ret types
         assert!(json.contains("\"ret\":\"Point\""));
         assert!(json.contains("\"ret\":\"float\""));
         assert!(json.contains("\"ret\":\"bool\""));
+        assert!(json.contains("\"init\":true"));
+    }
+
+    #[test]
+    fn cleanup_point_dropped_when_handle_dropped() {
+        let externs = anvyx_externs();
+        let result = externs["Point::new"](vec![Value::Float(1.0), Value::Float(2.0)]).unwrap();
+        let Value::ExternHandle(handle) = result else {
+            panic!("expected ExternHandle");
+        };
+        let id = handle.id;
+        drop(handle);
+        __ANVYX_STORE_POINT.with(|s| assert!(s.borrow().borrow(id).is_err()));
+    }
+
+    #[test]
+    fn cleanup_loop_no_leak() {
+        let externs = anvyx_externs();
+        for i in 0..50 {
+            let _ = externs["Point::new"](vec![Value::Float(i as f64), Value::Float(0.0)]).unwrap();
+        }
+        __ANVYX_STORE_POINT.with(|s| assert_eq!(s.borrow().len(), 0));
+    }
+
+    #[test]
+    fn point_auto_init_field_order() {
+        let externs = anvyx_externs();
+        // __init__ expects args in field declaration order: x, y
+        let result = externs["Point::__init__"](vec![Value::Float(7.0), Value::Float(3.0)]).unwrap();
+        let Value::ExternHandle(id) = result else {
+            panic!("expected ExternHandle");
+        };
+        let x = externs["Point::__get_x"](vec![Value::ExternHandle(id.clone())]).unwrap();
+        assert_eq!(x, Value::Float(7.0));
+        let y = externs["Point::__get_y"](vec![Value::ExternHandle(id)]).unwrap();
+        assert_eq!(y, Value::Float(3.0));
+    }
+
+    #[test]
+    fn rect_init_round_trip() {
+        let externs = anvyx_externs();
+        let r = externs["Rect::__init__"](vec![
+            Value::Float(10.0),
+            Value::Float(20.0),
+            Value::Float(100.0),
+            Value::Float(50.0),
+        ])
+        .unwrap();
+        let Value::ExternHandle(rid) = r else {
+            panic!("expected ExternHandle");
+        };
+        assert_eq!(
+            externs["Rect::__get_x"](vec![Value::ExternHandle(rid.clone())]).unwrap(),
+            Value::Float(10.0)
+        );
+        assert_eq!(
+            externs["Rect::__get_y"](vec![Value::ExternHandle(rid.clone())]).unwrap(),
+            Value::Float(20.0)
+        );
+        assert_eq!(
+            externs["Rect::__get_w"](vec![Value::ExternHandle(rid.clone())]).unwrap(),
+            Value::Float(100.0)
+        );
+        assert_eq!(
+            externs["Rect::__get_h"](vec![Value::ExternHandle(rid)]).unwrap(),
+            Value::Float(50.0)
+        );
+    }
+
+    #[test]
+    fn point_init_move_destructure() {
+        let externs = anvyx_externs();
+        let result =
+            externs["Point::__init__"](vec![Value::Float(10.0), Value::Float(20.0)]).unwrap();
+        let Value::ExternHandle(id) = result else {
+            panic!("expected ExternHandle");
+        };
+        externs["Point::move_by"](vec![
+            Value::ExternHandle(id.clone()),
+            Value::Float(5.0),
+            Value::Float(-3.0),
+        ])
+        .unwrap();
+        let x = externs["Point::__get_x"](vec![Value::ExternHandle(id.clone())]).unwrap();
+        assert_eq!(x, Value::Float(15.0));
+        let y = externs["Point::__get_y"](vec![Value::ExternHandle(id)]).unwrap();
+        assert_eq!(y, Value::Float(17.0));
+    }
+
+    #[test]
+    fn rect_init_contains_point() {
+        let externs = anvyx_externs();
+        let p = externs["Point::__init__"](vec![Value::Float(5.0), Value::Float(5.0)]).unwrap();
+        let Value::ExternHandle(pid) = p else {
+            panic!("expected ExternHandle for point");
+        };
+        let r = externs["Rect::__init__"](vec![
+            Value::Float(0.0),
+            Value::Float(0.0),
+            Value::Float(10.0),
+            Value::Float(10.0),
+        ])
+        .unwrap();
+        let Value::ExternHandle(rid) = r else {
+            panic!("expected ExternHandle for rect");
+        };
+        let result = externs["Rect::contains"](vec![
+            Value::ExternHandle(rid),
+            Value::ExternHandle(pid),
+        ])
+        .unwrap();
+        assert_eq!(result, Value::Bool(true));
     }
 }

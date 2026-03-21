@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 10
+// @match-end
+
+struct Point { x: int, y: int }
+
+fn main() {
+    let p = Point { x: 10, y: 20 };
+    let Point { x } = p;
+    println("{x}");
+}

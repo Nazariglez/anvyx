@@ -415,6 +415,10 @@ pub enum Pattern {
     Tuple(Vec<PatternNode>),
     NamedTuple(Vec<(Ident, PatternNode)>),
     Wildcard,
+    Struct {
+        name: Ident,
+        fields: Vec<(Ident, PatternNode)>,
+    },
     EnumUnit {
         qualifier: Ident,
         variant: Ident,
@@ -451,6 +455,27 @@ pub struct ExternFunc {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternType {
     pub name: Ident,
+    pub has_init: bool,
+    pub members: Vec<ExternTypeMember>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExternTypeMember {
+    Field {
+        name: Ident,
+        ty: Type,
+    },
+    Method {
+        name: Ident,
+        receiver: MethodReceiver,
+        params: Vec<Param>,
+        ret: Type,
+    },
+    StaticMethod {
+        name: Ident,
+        params: Vec<Param>,
+        ret: Type,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

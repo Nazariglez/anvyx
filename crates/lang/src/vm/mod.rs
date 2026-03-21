@@ -13,7 +13,7 @@ pub use handle_store::HandleStore;
 pub use managed_rc::ManagedRc;
 pub use runtime::ExternHandler;
 pub use value::RuntimeError;
-pub use value::{EnumData, MapStorage, StructData, Value};
+pub use value::{EnumData, ExternHandleData, MapStorage, StructData, Value};
 
 pub fn run_with_externs(
     hir_prog: &hir::Program,
@@ -41,8 +41,16 @@ pub fn run_with_externs(
 #[cfg(test)]
 mod tests {
     use super::{ExternHandler, Value, run_with_externs};
+    use super::managed_rc::ManagedRc;
+    use super::value::ExternHandleData;
     use crate::test_helpers::TestCtx;
     use std::collections::HashMap;
+
+    fn noop_drop(_id: u64) {}
+
+    fn extern_handle(id: u64) -> Value {
+        Value::ExternHandle(ManagedRc::new(ExternHandleData { id, drop_fn: noop_drop }))
+    }
 
     fn vm_ok(source: &str) -> String {
         TestCtx::vm_ok(source)
@@ -465,14 +473,15 @@ mod tests {
         let mut externs: HashMap<String, ExternHandler> = HashMap::new();
         externs.insert(
             "make_handle".to_string(),
-            Box::new(|_args| Ok(Value::ExternHandle(42))),
+            Box::new(|_args| Ok(extern_handle(42))),
         );
         externs.insert(
             "use_handle".to_string(),
             Box::new(|args| {
-                let Value::ExternHandle(id) = args[0] else {
+                let Value::ExternHandle(ref data) = args[0] else {
                     panic!("expected ExternHandle");
                 };
+                let id = data.id;
                 assert_eq!(id, 42);
                 Ok(Value::Nil)
             }),
@@ -492,6 +501,485 @@ fn main() {
 
     #[test]
     fn extern_handle_display() {
-        assert_eq!(Value::ExternHandle(99).to_string(), "<extern:99>");
+        assert_eq!(extern_handle(99).to_string(), "<extern:99>");
+    }
+
+    #[test]
+    fn extern_type_field_get() {
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "make_point".to_string(),
+            Box::new(|_args| Ok(extern_handle(1))),
+        );
+        externs.insert(
+            "Point::__get_x".to_string(),
+            Box::new(|args| {
+                let Value::ExternHandle(ref data) = args[0] else {
+                    panic!("expected ExternHandle");
+                };
+                let id = data.id;
+                assert_eq!(id, 1);
+                Ok(Value::Float(3.5))
+            }),
+        );
+        let src = r#"
+extern type Point {
+    x: float;
+}
+extern fn make_point() -> Point;
+fn main() {
+    let p = make_point();
+    let v = p.x;
+    assert(v == 3.5);
+    println("ok");
+}
+"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+    }
+
+    #[test]
+    fn extern_type_field_set() {
+        use std::sync::{Arc, Mutex};
+        let captured = Arc::new(Mutex::new(0.0f64));
+        let captured_clone = captured.clone();
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "make_point".to_string(),
+            Box::new(|_args| Ok(extern_handle(1))),
+        );
+        externs.insert(
+            "Point::__set_x".to_string(),
+            Box::new(move |args| {
+                let Value::ExternHandle(ref data) = args[0] else {
+                    panic!("expected ExternHandle");
+                };
+                let id = data.id;
+                assert_eq!(id, 1);
+                let Value::Float(val) = args[1] else {
+                    panic!("expected Float");
+                };
+                *captured_clone.lock().unwrap() = val;
+                Ok(Value::Nil)
+            }),
+        );
+        let src = r#"
+extern type Point {
+    x: float;
+}
+extern fn make_point() -> Point;
+fn main() {
+    var p = make_point();
+    p.x = 42.0;
+    println("ok");
+}
+"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+        assert_eq!(*captured.lock().unwrap(), 42.0);
+    }
+
+    #[test]
+    fn extern_type_instance_method() {
+        use std::sync::{Arc, Mutex};
+        let captured = Arc::new(Mutex::new((0u64, 0.0f64, 0.0f64)));
+        let captured_clone = captured.clone();
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "make_point".to_string(),
+            Box::new(|_args| Ok(extern_handle(7))),
+        );
+        externs.insert(
+            "Point::move_by".to_string(),
+            Box::new(move |args| {
+                let Value::ExternHandle(ref data) = args[0] else {
+                    panic!("expected ExternHandle");
+                };
+                let id = data.id;
+                let Value::Float(dx) = args[1] else {
+                    panic!("expected Float dx");
+                };
+                let Value::Float(dy) = args[2] else {
+                    panic!("expected Float dy");
+                };
+                *captured_clone.lock().unwrap() = (id, dx, dy);
+                Ok(Value::Nil)
+            }),
+        );
+        let src = r#"
+extern type Point {
+    fn move_by(var self, dx: float, dy: float);
+}
+extern fn make_point() -> Point;
+fn main() {
+    var p = make_point();
+    p.move_by(5.0, -3.0);
+    println("ok");
+}
+"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+        let vals = *captured.lock().unwrap();
+        assert_eq!(vals, (7, 5.0, -3.0));
+    }
+
+    #[test]
+    fn extern_type_method_returns_value() {
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "make_point".to_string(),
+            Box::new(|_args| Ok(extern_handle(1))),
+        );
+        externs.insert(
+            "Point::length".to_string(),
+            Box::new(|args| {
+                let Value::ExternHandle(_) = args[0] else {
+                    panic!("expected ExternHandle");
+                };
+                Ok(Value::Float(5.0))
+            }),
+        );
+        let src = r#"
+extern type Point {
+    fn length(self) -> float;
+}
+extern fn make_point() -> Point;
+fn main() {
+    let p = make_point();
+    let d = p.length();
+    assert(d == 5.0);
+    println("ok");
+}
+"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+    }
+
+    #[test]
+    fn extern_type_combined() {
+        use std::sync::{Arc, Mutex};
+        let set_val = Arc::new(Mutex::new(0.0f64));
+        let set_val_clone = set_val.clone();
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "make_point".to_string(),
+            Box::new(|_args| Ok(extern_handle(1))),
+        );
+        externs.insert(
+            "Point::__get_x".to_string(),
+            Box::new(|args| {
+                let Value::ExternHandle(_) = args[0] else {
+                    panic!("expected ExternHandle");
+                };
+                Ok(Value::Float(10.0))
+            }),
+        );
+        externs.insert(
+            "Point::__set_x".to_string(),
+            Box::new(move |args| {
+                let Value::ExternHandle(_) = args[0] else {
+                    panic!("expected ExternHandle");
+                };
+                let Value::Float(val) = args[1] else {
+                    panic!("expected Float");
+                };
+                *set_val_clone.lock().unwrap() = val;
+                Ok(Value::Nil)
+            }),
+        );
+        externs.insert(
+            "Point::length".to_string(),
+            Box::new(|args| {
+                let Value::ExternHandle(_) = args[0] else {
+                    panic!("expected ExternHandle");
+                };
+                Ok(Value::Float(5.0))
+            }),
+        );
+        let src = r#"
+extern type Point {
+    x: float;
+    fn length(self) -> float;
+}
+extern fn make_point() -> Point;
+fn main() {
+    var p = make_point();
+    let v = p.x;
+    assert(v == 10.0);
+    let d = p.length();
+    assert(d == 5.0);
+    p.x = 99.0;
+    println("ok");
+}
+"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+        assert_eq!(*set_val.lock().unwrap(), 99.0);
+    }
+
+    #[test]
+    fn extern_type_static_method() {
+        use std::sync::{Arc, Mutex};
+        let called_args = Arc::new(Mutex::new(vec![]));
+        let called_args_clone = called_args.clone();
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "Point::new".to_string(),
+            Box::new(move |args| {
+                *called_args_clone.lock().unwrap() = args.to_vec();
+                Ok(extern_handle(42))
+            }),
+        );
+        let src = r#"
+extern type Point {
+    fn new(x: float, y: float) -> Self;
+}
+fn main() {
+    let p = Point.new(1.0, 2.0);
+    println("ok");
+}
+"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+        let args = called_args.lock().unwrap();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], Value::Float(1.0));
+        assert_eq!(args[1], Value::Float(2.0));
+    }
+
+    #[test]
+    fn extern_type_static_with_instance() {
+        use std::sync::{Arc, Mutex};
+        let move_args = Arc::new(Mutex::new((0u64, 0.0f64, 0.0f64)));
+        let move_args_clone = move_args.clone();
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "Point::new".to_string(),
+            Box::new(|_args| Ok(extern_handle(7))),
+        );
+        externs.insert(
+            "Point::__get_x".to_string(),
+            Box::new(|args| {
+                let Value::ExternHandle(_) = args[0] else {
+                    panic!("expected ExternHandle");
+                };
+                Ok(Value::Float(3.0))
+            }),
+        );
+        externs.insert(
+            "Point::move_by".to_string(),
+            Box::new(move |args| {
+                let Value::ExternHandle(ref data) = args[0] else {
+                    panic!("expected ExternHandle");
+                };
+                let id = data.id;
+                let Value::Float(dx) = args[1] else {
+                    panic!("expected Float dx");
+                };
+                let Value::Float(dy) = args[2] else {
+                    panic!("expected Float dy");
+                };
+                *move_args_clone.lock().unwrap() = (id, dx, dy);
+                Ok(Value::Nil)
+            }),
+        );
+        let src = r#"
+extern type Point {
+    x: float;
+    fn new(x: float, y: float) -> Self;
+    fn move_by(var self, dx: float, dy: float);
+}
+fn main() {
+    var p = Point.new(1.0, 2.0);
+    let v = p.x;
+    assert(v == 3.0);
+    p.move_by(5.0, -3.0);
+    println("ok");
+}
+"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+        let vals = *move_args.lock().unwrap();
+        assert_eq!(vals, (7, 5.0, -3.0));
+    }
+
+    #[test]
+    fn extern_type_static_void() {
+        use std::sync::{Arc, Mutex};
+        let called = Arc::new(Mutex::new(false));
+        let called_clone = called.clone();
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "Logger::reset".to_string(),
+            Box::new(move |_args| {
+                *called_clone.lock().unwrap() = true;
+                Ok(Value::Nil)
+            }),
+        );
+        let src = r#"
+extern type Logger {
+    fn reset();
+}
+fn main() {
+    Logger.reset();
+    println("ok");
+}
+"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+        assert!(*called.lock().unwrap());
+    }
+
+    #[test]
+    fn extern_type_struct_literal_init() {
+        use std::sync::{Arc, Mutex};
+        let init_args = Arc::new(Mutex::new(vec![]));
+        let init_args_clone = init_args.clone();
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "Point::__init__".to_string(),
+            Box::new(move |args| {
+                *init_args_clone.lock().unwrap() = args.to_vec();
+                Ok(extern_handle(10))
+            }),
+        );
+        externs.insert(
+            "Point::__get_x".to_string(),
+            Box::new(|args| {
+                let Value::ExternHandle(_) = args[0] else {
+                    panic!("expected ExternHandle")
+                };
+                Ok(Value::Float(1.0))
+            }),
+        );
+        externs.insert(
+            "Point::__get_y".to_string(),
+            Box::new(|args| {
+                let Value::ExternHandle(_) = args[0] else {
+                    panic!("expected ExternHandle")
+                };
+                Ok(Value::Float(2.0))
+            }),
+        );
+        let src = r#"
+extern type Point { init; x: float; y: float; }
+fn main() {
+    let p = Point { x: 1.0, y: 2.0 };
+    assert(p.x == 1.0);
+    assert(p.y == 2.0);
+    println("ok");
+}
+"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+        let args = init_args.lock().unwrap();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], Value::Float(1.0));
+        assert_eq!(args[1], Value::Float(2.0));
+    }
+
+    #[test]
+    fn extern_type_destructure() {
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert("make_point".to_string(), Box::new(|_| Ok(extern_handle(5))));
+        externs.insert(
+            "Point::__get_x".to_string(),
+            Box::new(|args| {
+                let Value::ExternHandle(_) = args[0] else {
+                    panic!("expected ExternHandle")
+                };
+                Ok(Value::Float(7.5))
+            }),
+        );
+        externs.insert(
+            "Point::__get_y".to_string(),
+            Box::new(|args| {
+                let Value::ExternHandle(_) = args[0] else {
+                    panic!("expected ExternHandle")
+                };
+                Ok(Value::Float(3.0))
+            }),
+        );
+        let src = r#"
+extern type Point { x: float; y: float; }
+extern fn make_point() -> Point;
+fn main() {
+    let p = make_point();
+    let Point { x, y } = p;
+    assert(x == 7.5);
+    assert(y == 3.0);
+    println("ok");
+}
+"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+    }
+
+    #[test]
+    fn extern_type_init_destructure_round_trip() {
+        use std::sync::{Arc, Mutex};
+        let state = Arc::new(Mutex::new((0.0f64, 0.0f64)));
+        let state_init = state.clone();
+        let state_move = state.clone();
+        let state_get_x = state.clone();
+        let state_get_y = state.clone();
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "Point::__init__".to_string(),
+            Box::new(move |args| {
+                let Value::Float(x) = args[0] else {
+                    panic!("expected Float")
+                };
+                let Value::Float(y) = args[1] else {
+                    panic!("expected Float")
+                };
+                *state_init.lock().unwrap() = (x, y);
+                Ok(extern_handle(1))
+            }),
+        );
+        externs.insert(
+            "Point::move_by".to_string(),
+            Box::new(move |args| {
+                let Value::ExternHandle(_) = args[0] else {
+                    panic!("expected ExternHandle")
+                };
+                let Value::Float(dx) = args[1] else {
+                    panic!("expected Float")
+                };
+                let Value::Float(dy) = args[2] else {
+                    panic!("expected Float")
+                };
+                let mut s = state_move.lock().unwrap();
+                s.0 += dx;
+                s.1 += dy;
+                Ok(Value::Nil)
+            }),
+        );
+        externs.insert(
+            "Point::__get_x".to_string(),
+            Box::new(move |_| Ok(Value::Float(state_get_x.lock().unwrap().0))),
+        );
+        externs.insert(
+            "Point::__get_y".to_string(),
+            Box::new(move |_| Ok(Value::Float(state_get_y.lock().unwrap().1))),
+        );
+        let src = r#"
+extern type Point {
+    init;
+    x: float;
+    y: float;
+    fn move_by(var self, dx: float, dy: float);
+}
+fn main() {
+    var p = Point { x: 10.0, y: 20.0 };
+    p.move_by(5.0, -3.0);
+    let Point { x, y } = p;
+    assert(x == 15.0);
+    assert(y == 17.0);
+    println("ok");
+}
+"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
     }
 }

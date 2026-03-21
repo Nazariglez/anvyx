@@ -1,4 +1,5 @@
 mod expand;
+mod export_methods;
 mod export_type;
 mod provider;
 mod type_map;
@@ -28,6 +29,11 @@ pub fn export_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn export_type(attr: TokenStream, item: TokenStream) -> TokenStream {
     export_type::expand(attr.into(), item.into()).into()
+}
+
+#[proc_macro_attribute]
+pub fn export_methods(attr: TokenStream, item: TokenStream) -> TokenStream {
+    export_methods::expand(attr.into(), item.into()).into()
 }
 
 #[proc_macro]

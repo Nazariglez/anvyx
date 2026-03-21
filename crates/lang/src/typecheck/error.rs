@@ -117,6 +117,37 @@ pub enum TypeErrKind {
         struct_name: Ident,
         field: Ident,
     },
+    ExternUnknownField {
+        type_name: Ident,
+        field: Ident,
+    },
+    ExternUnknownMethod {
+        type_name: Ident,
+        method: Ident,
+    },
+    ExternInitNoInit {
+        type_name: Ident,
+    },
+    ExternInitMissingField {
+        type_name: Ident,
+        field: Ident,
+    },
+    ExternInitUnknownField {
+        type_name: Ident,
+        field: Ident,
+    },
+    ExternInitDuplicateField {
+        type_name: Ident,
+        field: Ident,
+    },
+    StructDestructureUnknownField {
+        type_name: Ident,
+        field: Ident,
+    },
+    StructDestructureDuplicateField {
+        type_name: Ident,
+        field: Ident,
+    },
     StructDuplicateField {
         struct_name: Ident,
         field: Ident,

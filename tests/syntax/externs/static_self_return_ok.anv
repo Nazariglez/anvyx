@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+extern type Rect {
+    w: float;
+    h: float;
+    fn new(w: float, h: float) -> Self;
+    fn area(self) -> float;
+}
+
+fn main() {
+    let r = Rect.new(10.0, 20.0);
+    let a: float = r.area();
+    let w: float = r.w;
+}

@@ -84,6 +84,8 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
     }
 
     let mut type_decl_refs = vec![];
+    let mut method_inserts = vec![];
+    let mut field_inserts = vec![];
 
     for path in &args.type_paths {
         let segments = &path.segments;
@@ -94,25 +96,77 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
         let type_name = &segments.last().unwrap().ident;
         let name_upper = type_name.to_string().to_uppercase();
         let type_decl_ident = format_ident!("__ANVYX_TYPE_DECL_{}", name_upper);
+        let methods_decl_ident = format_ident!("__ANVYX_METHODS_DECL_{}", name_upper);
+        let statics_decl_ident = format_ident!("__ANVYX_STATICS_DECL_{}", name_upper);
+        let companion_fn_ident = format_ident!("__anvyx_methods_{}", type_name);
+        let fields_fn_ident = format_ident!("__anvyx_fields_{}", type_name);
+        let getter_fields_fn_ident = format_ident!("__anvyx_getter_fields_{}", type_name);
+        let has_init_ident = format_ident!("__ANVYX_HAS_INIT_{}", name_upper);
 
-        let type_decl_ref = if segments.len() == 1 {
-            quote! { #type_decl_ident }
+        if segments.len() == 1 {
+            type_decl_refs.push(quote! {
+                anvyx_lang::ExternTypeDecl {
+                    name: #type_decl_ident.name,
+                    has_init: #type_decl_ident.has_init || #has_init_ident,
+                    fields: {
+                        let mut f = #type_decl_ident.fields.to_vec();
+                        f.extend(#getter_fields_fn_ident());
+                        f
+                    },
+                    methods: #methods_decl_ident.to_vec(),
+                    statics: #statics_decl_ident.to_vec(),
+                }
+            });
+            method_inserts.push(quote! {
+                for (name, handler) in #companion_fn_ident() {
+                    m.insert(name.into(), handler);
+                }
+            });
+            field_inserts.push(quote! {
+                for (name, handler) in #fields_fn_ident() {
+                    m.insert(name.into(), handler);
+                }
+            });
         } else {
             let prefix: Vec<_> = segments.iter().take(segments.len() - 1).collect();
-            quote! { #(#prefix)::*::#type_decl_ident }
-        };
-
-        type_decl_refs.push(type_decl_ref);
+            type_decl_refs.push(quote! {
+                anvyx_lang::ExternTypeDecl {
+                    name: #(#prefix)::*::#type_decl_ident.name,
+                    has_init: #(#prefix)::*::#type_decl_ident.has_init || #(#prefix)::*::#has_init_ident,
+                    fields: {
+                        let mut f = #(#prefix)::*::#type_decl_ident.fields.to_vec();
+                        f.extend(#(#prefix)::*::#getter_fields_fn_ident());
+                        f
+                    },
+                    methods: #(#prefix)::*::#methods_decl_ident.to_vec(),
+                    statics: #(#prefix)::*::#statics_decl_ident.to_vec(),
+                }
+            });
+            method_inserts.push(quote! {
+                for (name, handler) in #(#prefix)::*::#companion_fn_ident() {
+                    m.insert(name.into(), handler);
+                }
+            });
+            field_inserts.push(quote! {
+                for (name, handler) in #(#prefix)::*::#fields_fn_ident() {
+                    m.insert(name.into(), handler);
+                }
+            });
+        }
     }
 
     Ok(quote! {
         pub const ANVYX_EXPORTS: &[anvyx_lang::ExternDecl] = &[#(#decl_refs),*];
 
-        pub const ANVYX_TYPE_EXPORTS: &[anvyx_lang::ExternTypeDecl] = &[#(#type_decl_refs),*];
+        pub fn anvyx_type_exports() -> Vec<anvyx_lang::ExternTypeDecl> {
+            vec![#(#type_decl_refs),*]
+        }
 
         pub fn anvyx_externs() -> ::std::collections::HashMap<String, anvyx_lang::ExternHandler> {
             let mut m = ::std::collections::HashMap::new();
             #(#inserts)*
+            #(#method_inserts)*
+            #(#field_inserts)*
             m
         }
     })

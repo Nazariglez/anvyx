@@ -13,7 +13,7 @@ use super::{
     expr::check_expr,
     infer::{build_param_ref, constrain_slots_from_type, create_inference_slots},
     range::{range_inclusive_type, range_type},
-    types::{TypeChecker, is_keyable, keyable_reason},
+    types::{ExternTypeDef, TypeChecker, is_keyable, keyable_reason},
 };
 
 pub(super) fn check_tuple(
@@ -110,6 +110,9 @@ pub(super) fn check_struct_lit(
     let struct_name = lit.name;
 
     let Some(struct_def) = type_checker.get_struct(struct_name).cloned() else {
+        if let Some(extern_def) = type_checker.get_extern_type(struct_name).cloned() {
+            return check_extern_init_lit(lit_node, struct_name, &extern_def, type_checker, errors);
+        }
         errors.push(TypeErr::new(
             lit_node.span,
             TypeErrKind::UnknownStruct { name: struct_name },
@@ -180,6 +183,57 @@ pub(super) fn check_struct_lit(
         name: struct_name,
         type_args,
     }
+}
+
+fn check_extern_init_lit(
+    lit_node: &StructLiteralNode,
+    type_name: Ident,
+    extern_def: &ExternTypeDef,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let lit = &lit_node.node;
+
+    if !extern_def.has_init {
+        errors.push(TypeErr::new(
+            lit_node.span,
+            TypeErrKind::ExternInitNoInit { type_name },
+        ));
+        return Type::Infer;
+    }
+
+    for (_, field_expr) in &lit.fields {
+        check_expr(field_expr, type_checker, errors, None);
+    }
+
+    let expected_fields: Vec<StructField> = extern_def
+        .field_order
+        .iter()
+        .map(|name| {
+            let def = &extern_def.fields[name];
+            StructField { name: *name, ty: def.ty.clone() }
+        })
+        .collect();
+
+    let provided: Vec<(Ident, Span)> = lit.fields.iter().map(|(n, e)| (*n, e.span)).collect();
+    let matched = validate_field_names(
+        &provided,
+        lit_node.span,
+        &expected_fields,
+        |field| TypeErrKind::ExternInitDuplicateField { type_name, field },
+        |field| TypeErrKind::ExternInitUnknownField { type_name, field },
+        |field| TypeErrKind::ExternInitMissingField { type_name, field },
+        errors,
+    );
+
+    for ((_, field_expr), matched_def) in lit.fields.iter().zip(matched.iter()) {
+        let Some(expected) = matched_def else { continue };
+        let field_ref = TypeRef::Expr(field_expr.node.id);
+        let expected_ref = TypeRef::Concrete(type_checker.resolve_type(&expected.ty));
+        type_checker.constrain_assignable(field_expr.span, field_ref, expected_ref, errors);
+    }
+
+    Type::Extern { name: type_name }
 }
 
 pub(super) fn check_tuple_index(

@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown field 'z'
+
+struct Point { x: int, y: int }
+
+fn main() {
+    let p = Point { x: 10, y: 20 };
+    let Point { z } = p;
+}

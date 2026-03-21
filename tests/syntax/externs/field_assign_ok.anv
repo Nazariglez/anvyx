@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+extern type Point {
+    x: float;
+    y: float;
+}
+
+extern fn make_point(x: float, y: float) -> Point;
+
+fn main() {
+    var p = make_point(1.0, 2.0);
+    p.x = 5.0;
+    p.y = 10.0;
+    let a: float = p.x;
+}

@@ -14,7 +14,7 @@ pub fn module() -> StdModule {
         name: "maps",
         anv_source: include_str!("./maps.anv"),
         exports: ANVYX_EXPORTS,
-        type_exports: ANVYX_TYPE_EXPORTS,
+        type_exports: anvyx_type_exports,
         handlers: anvyx_externs,
     }
 }

@@ -12,12 +12,13 @@ mod vm;
 
 pub mod metadata;
 
-pub use anvyx_macros::{export_fn, export_type, provider};
+pub use anvyx_macros::{export_fn, export_methods, export_type, provider};
 pub use metadata::{
-    ExternDecl, ExternTypeDecl, ExternFuncMeta, ExternProviderMeta, exports_to_json,
+    ExternDecl, ExternFieldDecl, ExternMethodDecl, ExternStaticMethodDecl,
+    ExternTypeDecl, ExternTypeDeclConst, ExternFuncMeta, ExternProviderMeta, exports_to_json,
     parse_provider_json,
 };
-pub use vm::{EnumData, ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData, Value};
+pub use vm::{EnumData, ExternHandleData, ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData, Value};
 
 pub struct StdModuleSource {
     pub anv_source: String,

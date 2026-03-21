@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: error
+// @contains: static method
+
+extern type Point {
+    x: float;
+    y: float;
+    fn new(x: float, y: float) -> Self;
+}
+
+extern fn make_point(x: float, y: float) -> Point;
+
+fn main() {
+    let p = make_point(1.0, 2.0);
+    p.new(1.0, 2.0);
+}

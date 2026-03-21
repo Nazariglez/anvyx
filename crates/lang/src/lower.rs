@@ -77,6 +77,95 @@ fn mangle_generic_name(name: Ident, type_args: &[Type]) -> Ident {
     Ident(Intern::new(format!("{name}${suffix}")))
 }
 
+fn register_extern_type_members(
+    type_name: Ident,
+    extern_def: &crate::typecheck::ExternTypeDef,
+    next_extern_id: &mut u32,
+    externs: &mut HashMap<Ident, hir::ExternId>,
+    extern_decls: &mut Vec<hir::ExternDecl>,
+) {
+    for (field_name, field_def) in &extern_def.fields {
+        let getter_name = Ident(Intern::new(format!("{type_name}::__get_{field_name}")));
+        if !externs.contains_key(&getter_name) {
+            let id = hir::ExternId(*next_extern_id);
+            *next_extern_id += 1;
+            externs.insert(getter_name, id);
+            extern_decls.push(hir::ExternDecl {
+                id,
+                name: getter_name,
+                params: vec![Type::Extern { name: type_name }],
+                ret: field_def.ty.clone(),
+            });
+        }
+
+        let setter_name = Ident(Intern::new(format!("{type_name}::__set_{field_name}")));
+        if !externs.contains_key(&setter_name) {
+            let id = hir::ExternId(*next_extern_id);
+            *next_extern_id += 1;
+            externs.insert(setter_name, id);
+            extern_decls.push(hir::ExternDecl {
+                id,
+                name: setter_name,
+                params: vec![Type::Extern { name: type_name }, field_def.ty.clone()],
+                ret: Type::Void,
+            });
+        }
+    }
+
+    for (method_name, method_def) in &extern_def.methods {
+        let qualified = Ident(Intern::new(format!("{type_name}::{method_name}")));
+        if !externs.contains_key(&qualified) {
+            let id = hir::ExternId(*next_extern_id);
+            *next_extern_id += 1;
+            let mut params = vec![Type::Extern { name: type_name }];
+            params.extend(method_def.params.iter().map(|p| p.ty.clone()));
+            externs.insert(qualified, id);
+            extern_decls.push(hir::ExternDecl {
+                id,
+                name: qualified,
+                params,
+                ret: method_def.ret.clone(),
+            });
+        }
+    }
+
+    for (method_name, method_def) in &extern_def.statics {
+        let qualified = Ident(Intern::new(format!("{type_name}::{method_name}")));
+        if !externs.contains_key(&qualified) {
+            let id = hir::ExternId(*next_extern_id);
+            *next_extern_id += 1;
+            let params = method_def.params.iter().map(|p| p.ty.clone()).collect();
+            externs.insert(qualified, id);
+            extern_decls.push(hir::ExternDecl {
+                id,
+                name: qualified,
+                params,
+                ret: method_def.ret.clone(),
+            });
+        }
+    }
+
+    if extern_def.has_init {
+        let init_name = Ident(Intern::new(format!("{type_name}::__init__")));
+        if !externs.contains_key(&init_name) {
+            let id = hir::ExternId(*next_extern_id);
+            *next_extern_id += 1;
+            let params = extern_def
+                .field_order
+                .iter()
+                .map(|name| extern_def.fields[name].ty.clone())
+                .collect();
+            externs.insert(init_name, id);
+            extern_decls.push(hir::ExternDecl {
+                id,
+                name: init_name,
+                params,
+                ret: Type::Extern { name: type_name },
+            });
+        }
+    }
+}
+
 struct LowerCtx<'a> {
     tcx: &'a TypeChecker,
     funcs: HashMap<Ident, hir::FuncId>,
@@ -203,6 +292,17 @@ pub fn lower_program(
                         }
                     }
                 }
+                Stmt::ExternType(ext) => {
+                    if let Some(extern_def) = ctx.tcx.get_extern_type(ext.node.name).cloned() {
+                        register_extern_type_members(
+                            ext.node.name,
+                            &extern_def,
+                            &mut next_extern_id,
+                            &mut ctx.externs,
+                            &mut extern_decls,
+                        );
+                    }
+                }
                 _ => {}
             }
         }
@@ -237,7 +337,17 @@ pub fn lower_program(
                     ret: extern_node.node.ret.clone(),
                 });
             }
-            Stmt::ExternType(_) => {}
+            Stmt::ExternType(ext) => {
+                if let Some(extern_def) = ctx.tcx.get_extern_type(ext.node.name).cloned() {
+                    register_extern_type_members(
+                        ext.node.name,
+                        &extern_def,
+                        &mut next_extern_id,
+                        &mut ctx.externs,
+                        &mut extern_decls,
+                    );
+                }
+            }
             Stmt::Import(import_node) => {
                 // for selective imports register aliases so they resolve to the
                 // same FuncId/ExternId as the original name
@@ -463,44 +573,191 @@ fn lower_stmt(
         Stmt::Binding(binding_node) => {
             let binding = &binding_node.node;
 
-            let name = match &binding.pattern.node {
-                Pattern::Ident(name) => *name,
-                _ => {
-                    return Err(LowerError::UnsupportedPattern {
-                        span: binding.pattern.span,
+            match &binding.pattern.node {
+                Pattern::Ident(name) => {
+                    let name = *name;
+
+                    // after constraint solving, this is always a fully-resolved monomorphic type.
+                    let ty = {
+                        let (_, ty) = ctx
+                            .type_overrides
+                            .and_then(|overrides| overrides.get(&binding.value.node.id))
+                            .or_else(|| ctx.tcx.get_type(binding.value.node.id))
+                            .ok_or(LowerError::MissingExprType { span })?;
+                        ty.clone()
+                    };
+
+                    let local_id = hir::LocalId(fc.locals.len() as u32);
+
+                    // lower the init before inserting into local_map to prevent `let x = x` from
+                    // accidentally resolving to the new local.
+                    let init = lower_expr(&binding.value, ctx, fc, out)?;
+
+                    fc.locals.push(hir::Local {
+                        name: Some(name),
+                        ty,
                     });
+                    fc.local_map.insert(name, local_id);
+
+                    Ok(Some(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Let {
+                            local: local_id,
+                            init,
+                        },
+                    }))
                 }
-            };
+                Pattern::Struct { name: type_name, fields } => {
+                    let type_name = *type_name;
 
-            // after constraint solving, this is always a fully-resolved monomorphic type.
-            let ty = {
-                let (_, ty) = ctx
-                    .type_overrides
-                    .and_then(|overrides| overrides.get(&binding.value.node.id))
-                    .or_else(|| ctx.tcx.get_type(binding.value.node.id))
-                    .ok_or(LowerError::MissingExprType { span })?;
-                ty.clone()
-            };
+                    let rhs_ty = {
+                        let (_, ty) = ctx
+                            .type_overrides
+                            .and_then(|overrides| overrides.get(&binding.value.node.id))
+                            .or_else(|| ctx.tcx.get_type(binding.value.node.id))
+                            .ok_or(LowerError::MissingExprType { span })?;
+                        ty.clone()
+                    };
 
-            let local_id = hir::LocalId(fc.locals.len() as u32);
+                    let rhs_expr = lower_expr(&binding.value, ctx, fc, out)?;
 
-            // lower the init before inserting into local_map to prevent `let x = x` from
-            // accidentally resolving to the new local.
-            let init = lower_expr(&binding.value, ctx, fc, out)?;
+                    let scrutinee_local = alloc_assign_temp(fc, rhs_ty.clone());
+                    out.push(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Let {
+                            local: scrutinee_local,
+                            init: rhs_expr,
+                        },
+                    });
 
-            fc.locals.push(hir::Local {
-                name: Some(name),
-                ty,
-            });
-            fc.local_map.insert(name, local_id);
+                    match &rhs_ty {
+                        Type::Struct { .. } => {
+                            for (field_name, subpat) in fields {
+                                let Pattern::Ident(binding_name) = &subpat.node else {
+                                    return Err(LowerError::UnsupportedPattern {
+                                        span: subpat.span,
+                                    });
+                                };
 
-            Ok(Some(hir::Stmt {
-                span,
-                kind: hir::StmtKind::Let {
-                    local: local_id,
-                    init,
-                },
-            }))
+                                let field_index = ctx
+                                    .tcx
+                                    .struct_field_index(type_name, *field_name)
+                                    .ok_or_else(|| LowerError::UnsupportedExprKind {
+                                        span,
+                                        kind: format!(
+                                            "unknown field '{field_name}' on struct '{type_name}'"
+                                        ),
+                                    })?
+                                    as u16;
+
+                                let field_ty = ctx
+                                    .tcx
+                                    .struct_field_type(type_name, *field_name)
+                                    .ok_or_else(|| LowerError::UnsupportedExprKind {
+                                        span,
+                                        kind: format!(
+                                            "unknown field type for '{field_name}' on '{type_name}'"
+                                        ),
+                                    })?;
+
+                                let local_id = hir::LocalId(fc.locals.len() as u32);
+                                fc.locals.push(hir::Local {
+                                    name: Some(*binding_name),
+                                    ty: field_ty.clone(),
+                                });
+                                fc.local_map.insert(*binding_name, local_id);
+
+                                out.push(hir::Stmt {
+                                    span,
+                                    kind: hir::StmtKind::Let {
+                                        local: local_id,
+                                        init: hir::Expr {
+                                            ty: field_ty,
+                                            span,
+                                            kind: hir::ExprKind::FieldGet {
+                                                object: Box::new(hir::Expr {
+                                                    ty: rhs_ty.clone(),
+                                                    span,
+                                                    kind: hir::ExprKind::Local(scrutinee_local),
+                                                }),
+                                                index: field_index,
+                                            },
+                                        },
+                                    },
+                                });
+                            }
+                        }
+                        Type::Extern { name: extern_name } => {
+                            let extern_name = *extern_name;
+                            for (field_name, subpat) in fields {
+                                let Pattern::Ident(binding_name) = &subpat.node else {
+                                    return Err(LowerError::UnsupportedPattern {
+                                        span: subpat.span,
+                                    });
+                                };
+
+                                let qualified =
+                                    Ident(Intern::new(format!("{extern_name}::__get_{field_name}")));
+                                let extern_id =
+                                    *ctx.externs.get(&qualified).ok_or_else(|| {
+                                        LowerError::UnsupportedExprKind {
+                                            span,
+                                            kind: format!(
+                                                "unknown extern field getter '{qualified}'"
+                                            ),
+                                        }
+                                    })?;
+
+                                let field_ty = ctx
+                                    .tcx
+                                    .get_extern_type(extern_name)
+                                    .and_then(|def| def.fields.get(field_name))
+                                    .map(|f| f.ty.clone())
+                                    .unwrap_or(Type::Void);
+
+                                let local_id = hir::LocalId(fc.locals.len() as u32);
+                                fc.locals.push(hir::Local {
+                                    name: Some(*binding_name),
+                                    ty: field_ty.clone(),
+                                });
+                                fc.local_map.insert(*binding_name, local_id);
+
+                                out.push(hir::Stmt {
+                                    span,
+                                    kind: hir::StmtKind::Let {
+                                        local: local_id,
+                                        init: hir::Expr {
+                                            ty: field_ty,
+                                            span,
+                                            kind: hir::ExprKind::CallExtern {
+                                                extern_id,
+                                                args: vec![hir::Expr {
+                                                    ty: rhs_ty.clone(),
+                                                    span,
+                                                    kind: hir::ExprKind::Local(scrutinee_local),
+                                                }],
+                                            },
+                                        },
+                                    },
+                                });
+                            }
+                        }
+                        other => {
+                            return Err(LowerError::UnsupportedExprKind {
+                                span,
+                                kind: format!(
+                                    "struct destructure on unsupported type '{other}'"
+                                ),
+                            });
+                        }
+                    }
+
+                    Ok(None)
+                }
+                _ => Err(LowerError::UnsupportedPattern {
+                    span: binding.pattern.span,
+                }),
+            }
         }
 
         Stmt::Expr(expr_node) => match &expr_node.node.kind {
@@ -1868,7 +2125,43 @@ fn lower_assign(
             })
         }
 
-        ast::ExprKind::Field(_) | ast::ExprKind::Index(_) => lower_assign_to_chain(
+        ast::ExprKind::Field(field_access) => {
+            let target_expr = &field_access.node.target;
+            let target_ty = expr_type(ctx, target_expr, span)?;
+            if let Type::Extern { name } = &target_ty {
+                let field_name = field_access.node.field;
+                let qualified = Ident(Intern::new(format!("{name}::__set_{field_name}")));
+                let extern_id = *ctx.externs.get(&qualified).ok_or_else(|| {
+                    LowerError::UnsupportedAssign {
+                        span,
+                        detail: format!("unknown extern field setter '{qualified}'"),
+                    }
+                })?;
+                let receiver = lower_expr(target_expr, ctx, fc, out)?;
+                let value = lower_expr(&assign_node.node.value, ctx, fc, out)?;
+                Ok(hir::Stmt {
+                    span,
+                    kind: hir::StmtKind::Expr(hir::Expr {
+                        ty: Type::Void,
+                        span,
+                        kind: hir::ExprKind::CallExtern {
+                            extern_id,
+                            args: vec![receiver, value],
+                        },
+                    }),
+                })
+            } else {
+                lower_assign_to_chain(
+                    &assign_node.node.target,
+                    &assign_node.node.value,
+                    span,
+                    ctx,
+                    fc,
+                    out,
+                )
+            }
+        }
+        ast::ExprKind::Index(_) => lower_assign_to_chain(
             &assign_node.node.target,
             &assign_node.node.value,
             span,
@@ -2288,7 +2581,8 @@ fn lower_expr(
                 if let ast::ExprKind::Ident(root_name) = &field.node.target.node.kind {
                     let is_type_name = ctx.tcx.is_module_name(*root_name)
                         || ctx.enum_type_ids.contains_key(root_name)
-                        || ctx.struct_type_ids.contains_key(root_name);
+                        || ctx.struct_type_ids.contains_key(root_name)
+                        || ctx.tcx.get_extern_type(*root_name).is_some();
                     if !is_type_name {
                         let method_name = field.node.field;
                         let target_ty = expr_type(ctx, &field.node.target, span)?;
@@ -2321,6 +2615,26 @@ fn lower_expr(
                                     args,
                                 },
                             });
+                        }
+
+                        if let Type::Extern { name: type_name } = &target_ty {
+                            let qualified =
+                                Ident(Intern::new(format!("{type_name}::{method_name}")));
+                            if let Some(&extern_id) = ctx.externs.get(&qualified) {
+                                let receiver = lower_expr(&field.node.target, ctx, fc, out)?;
+                                let mut args = vec![receiver];
+                                for arg in &c.node.args {
+                                    args.push(lower_expr(arg, ctx, fc, out)?);
+                                }
+                                return Ok(hir::Expr {
+                                    ty,
+                                    span,
+                                    kind: hir::ExprKind::CallExtern {
+                                        extern_id,
+                                        args,
+                                    },
+                                });
+                            }
                         }
                     }
                 }
@@ -2373,6 +2687,9 @@ fn lower_expr(
                     if let ast::ExprKind::Ident(module_name) = &field.node.target.node.kind {
                         if ctx.tcx.is_module_name(*module_name) {
                             field.node.field
+                        } else if ctx.tcx.get_extern_type(*module_name).is_some() {
+                            let method_name = field.node.field;
+                            Ident(Intern::new(format!("{module_name}::{method_name}")))
                         } else {
                             return Err(LowerError::NonDirectCall { span });
                         }
@@ -2479,6 +2796,44 @@ fn lower_expr(
                 });
             }
 
+            if let Type::Extern { name } = &ty {
+                let init_name = Ident(Intern::new(format!("{name}::__init__")));
+                let extern_id = *ctx.externs.get(&init_name).ok_or_else(|| {
+                    LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("extern type '{name}' has no __init__ handler"),
+                    }
+                })?;
+
+                let field_order = ctx.tcx.extern_type_field_order(*name).ok_or_else(|| {
+                    LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("unknown extern type '{name}'"),
+                    }
+                })?;
+
+                let provided: HashMap<Ident, &ast::ExprNode> = lit
+                    .node
+                    .fields
+                    .iter()
+                    .map(|(field_name, expr)| (*field_name, expr))
+                    .collect();
+
+                let mut args = vec![];
+                for field_name in field_order {
+                    let expr = provided
+                        .get(field_name)
+                        .expect("typechecker ensures all declared fields are provided");
+                    args.push(lower_expr(expr, ctx, fc, out)?);
+                }
+
+                return Ok(hir::Expr {
+                    ty,
+                    span,
+                    kind: hir::ExprKind::CallExtern { extern_id, args },
+                });
+            }
+
             let struct_name = lit.node.name;
             let type_id = *ctx.struct_type_ids.get(&struct_name).ok_or_else(|| {
                 LowerError::UnsupportedExprKind {
@@ -2580,6 +2935,24 @@ fn lower_expr(
                         span,
                         kind: format!("unknown field '{field_name}' on named tuple"),
                     })? as u16,
+                Type::Extern { name } => {
+                    let qualified = Ident(Intern::new(format!("{name}::__get_{field_name}")));
+                    let extern_id = *ctx.externs.get(&qualified).ok_or_else(|| {
+                        LowerError::UnsupportedExprKind {
+                            span,
+                            kind: format!("unknown extern field getter '{qualified}'"),
+                        }
+                    })?;
+                    let object = lower_expr(target, ctx, fc, out)?;
+                    return Ok(hir::Expr {
+                        ty,
+                        span,
+                        kind: hir::ExprKind::CallExtern {
+                            extern_id,
+                            args: vec![object],
+                        },
+                    });
+                }
                 other => {
                     return Err(LowerError::UnsupportedExprKind {
                         span,

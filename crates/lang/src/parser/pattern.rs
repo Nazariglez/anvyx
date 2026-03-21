@@ -21,13 +21,56 @@ pub(super) fn pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
         });
 
         let tuple_pat = tuple_pattern(pat.clone());
-        let enum_pat = enum_pattern(pat);
+        let enum_pat = enum_pattern(pat.clone());
+        let struct_pat = struct_pattern(pat);
 
-        choice((enum_pat, tuple_pat, ident_or_wildcard))
+        choice((enum_pat, struct_pat, tuple_pat, ident_or_wildcard))
     })
     .labelled("pattern")
     .as_context()
     .boxed()
+}
+
+fn struct_pattern<'src>(
+    pat: impl AnvParser<'src, ast::PatternNode>,
+) -> BoxedParser<'src, ast::PatternNode> {
+    let comma = select! { (Token::Comma, _) => () };
+    let colon = select! { (Token::Colon, _) => () };
+    let open_brace = select! { (Token::Open(Delimiter::Brace), _) => () };
+    let close_brace = select! { (Token::Close(Delimiter::Brace), _) => () };
+
+    let field_with_pattern = identifier()
+        .then_ignore(colon)
+        .then(pat.clone())
+        .map(|(name, p)| (name, p));
+
+    let field_shorthand = identifier().map_with(|name, e| {
+        let s = e.span();
+        let span = Span::new(s.start, s.end);
+        (name, Spanned::new(ast::Pattern::Ident(name), span))
+    });
+
+    let field = choice((field_with_pattern, field_shorthand));
+
+    identifier()
+        .then(
+            open_brace
+                .ignore_then(
+                    field
+                        .separated_by(comma)
+                        .allow_trailing()
+                        .collect::<Vec<_>>(),
+                )
+                .then_ignore(close_brace),
+        )
+        .map_with(|(name, fields), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            Spanned::new(ast::Pattern::Struct { name, fields }, span)
+        })
+        .labelled("struct pattern")
+        .as_context()
+        .boxed()
 }
 
 #[derive(Clone)]

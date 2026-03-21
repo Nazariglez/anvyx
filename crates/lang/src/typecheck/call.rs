@@ -18,8 +18,8 @@ use super::{
         infer_type_args_from_call, instantiate_func_type, subst_type,
     },
     types::{
-        EnumDef, MethodContext, MethodDef, MethodSpecKey, ModuleDef, SpecializationKey,
-        SpecializationResult, StructDef, TypeChecker,
+        EnumDef, ExternMethodDef, ExternTypeDef, MethodContext, MethodDef, MethodSpecKey, ModuleDef,
+        SpecializationKey, SpecializationResult, StructDef, TypeChecker,
     },
 };
 
@@ -1196,6 +1196,99 @@ pub(super) fn check_instance_method_call(
         .map(|p| (p.name, p.mutability))
         .collect();
     check_var_param_args(&param_info, &node.args, type_checker, errors);
+
+    result
+}
+
+pub(super) fn check_extern_instance_method_call(
+    call: &CallNode,
+    type_name: Ident,
+    method_name: Ident,
+    method: &ExternMethodDef,
+    target: Option<&ExprNode>,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    if let Some(target) = target {
+        check_mutating_receiver(
+            target,
+            type_name,
+            method_name,
+            method.receiver,
+            type_checker,
+            errors,
+        );
+    }
+
+    let param_types: Vec<Type> = method.params.iter().map(|p| p.ty.clone()).collect();
+
+    let result = check_call_signature(
+        call.span,
+        &param_types,
+        &method.ret,
+        &call.node.args,
+        None,
+        type_checker,
+        errors,
+    );
+
+    let param_info: Vec<_> = method
+        .params
+        .iter()
+        .map(|p| (p.name, p.mutability))
+        .collect();
+    check_var_param_args(&param_info, &call.node.args, type_checker, errors);
+
+    result
+}
+
+pub(super) fn check_extern_static_method_call(
+    call: &CallNode,
+    type_name: Ident,
+    method_name: Ident,
+    extern_def: &ExternTypeDef,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let Some(method) = extern_def.statics.get(&method_name) else {
+        if extern_def.methods.contains_key(&method_name) {
+            errors.push(TypeErr::new(
+                call.span,
+                TypeErrKind::InstanceMethodOnType {
+                    struct_name: type_name,
+                    method: method_name,
+                },
+            ));
+        } else {
+            errors.push(TypeErr::new(
+                call.span,
+                TypeErrKind::ExternUnknownMethod {
+                    type_name,
+                    method: method_name,
+                },
+            ));
+        }
+        return Type::Infer;
+    };
+
+    let param_types: Vec<Type> = method.params.iter().map(|p| p.ty.clone()).collect();
+
+    let result = check_call_signature(
+        call.span,
+        &param_types,
+        &method.ret,
+        &call.node.args,
+        None,
+        type_checker,
+        errors,
+    );
+
+    let param_info: Vec<_> = method
+        .params
+        .iter()
+        .map(|p| (p.name, p.mutability))
+        .collect();
+    check_var_param_args(&param_info, &call.node.args, type_checker, errors);
 
     result
 }

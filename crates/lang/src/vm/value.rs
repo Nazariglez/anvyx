@@ -110,6 +110,37 @@ pub struct EnumData {
     pub fields: Vec<Value>,
 }
 
+pub struct ExternHandleData {
+    pub id: u64,
+    pub drop_fn: fn(u64),
+}
+
+impl Drop for ExternHandleData {
+    fn drop(&mut self) {
+        (self.drop_fn)(self.id);
+    }
+}
+
+impl fmt::Debug for ExternHandleData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExternHandleData").field("id", &self.id).finish()
+    }
+}
+
+impl PartialEq for ExternHandleData {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for ExternHandleData {}
+
+impl Hash for ExternHandleData {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),
@@ -123,7 +154,7 @@ pub enum Value {
     Struct(ManagedRc<StructData>),
     Tuple(ManagedRc<Vec<Value>>),
     Enum(ManagedRc<EnumData>),
-    ExternHandle(u64),
+    ExternHandle(ManagedRc<ExternHandleData>),
 }
 
 impl Eq for Value {}
@@ -145,7 +176,7 @@ impl Hash for Value {
             Value::Struct(s) => s.hash(state),
             Value::Tuple(t) => t.hash(state),
             Value::Enum(e) => e.hash(state),
-            Value::ExternHandle(id) => id.hash(state),
+            Value::ExternHandle(data) => data.hash(state),
         }
     }
 }
@@ -211,7 +242,7 @@ impl fmt::Display for Value {
                 write!(f, ")")
             }
             Value::Enum(e) => write!(f, "<enum:{}:{}>", e.type_id, e.variant),
-            Value::ExternHandle(id) => write!(f, "<extern:{id}>"),
+            Value::ExternHandle(data) => write!(f, "<extern:{}>", data.id),
         }
     }
 }
@@ -920,5 +951,81 @@ mod tests {
     #[test]
     fn logical_type_error() {
         assert!(value_and(Value::Int(1), Value::Bool(true)).is_err());
+    }
+
+    fn noop_drop(_id: u64) {}
+
+    fn extern_handle(id: u64) -> Value {
+        Value::ExternHandle(ManagedRc::new(ExternHandleData { id, drop_fn: noop_drop }))
+    }
+
+    #[test]
+    fn extern_handle_display() {
+        assert_eq!(extern_handle(99).to_string(), "<extern:99>");
+    }
+
+    #[test]
+    fn extern_handle_eq_by_id() {
+        assert_eq!(extern_handle(42), extern_handle(42));
+        assert_ne!(extern_handle(1), extern_handle(2));
+    }
+
+    #[test]
+    fn extern_handle_clone_shares_rc() {
+        let v = extern_handle(10);
+        let v2 = v.clone();
+        let Value::ExternHandle(rc) = v else { panic!() };
+        let Value::ExternHandle(rc2) = v2 else { panic!() };
+        assert_eq!(rc.strong_count(), 2);
+        assert!(ManagedRc::ptr_eq(&rc, &rc2));
+    }
+
+    #[test]
+    fn extern_handle_data_drop_calls_cleanup() {
+        use std::cell::Cell;
+        thread_local! { static CLEANED: Cell<u64> = Cell::new(0); }
+        fn cleanup(id: u64) { CLEANED.with(|c| c.set(id)); }
+        {
+            let _v = Value::ExternHandle(ManagedRc::new(ExternHandleData {
+                id: 77,
+                drop_fn: cleanup,
+            }));
+        }
+        CLEANED.with(|c| assert_eq!(c.get(), 77));
+    }
+
+    #[test]
+    fn extern_handle_data_shared_drop_once() {
+        use std::cell::Cell;
+        thread_local! { static COUNT: Cell<u32> = Cell::new(0); }
+        fn cleanup(_id: u64) { COUNT.with(|c| c.set(c.get() + 1)); }
+        COUNT.with(|c| c.set(0));
+        {
+            let v = Value::ExternHandle(ManagedRc::new(ExternHandleData {
+                id: 1,
+                drop_fn: cleanup,
+            }));
+            let _v2 = v.clone();
+            let _v3 = v.clone();
+        }
+        COUNT.with(|c| assert_eq!(c.get(), 1));
+    }
+
+    #[test]
+    fn extern_handle_in_list_cleanup_on_drop() {
+        use std::cell::Cell;
+        thread_local! { static CLEANED: Cell<u32> = Cell::new(0); }
+        fn cleanup(_id: u64) { CLEANED.with(|c| c.set(c.get() + 1)); }
+        CLEANED.with(|c| c.set(0));
+        {
+            let handle = Value::ExternHandle(ManagedRc::new(ExternHandleData {
+                id: 42,
+                drop_fn: cleanup,
+            }));
+            let list = Value::List(ManagedRc::new(vec![handle]));
+            CLEANED.with(|c| assert_eq!(c.get(), 0));
+            drop(list);
+        }
+        CLEANED.with(|c| assert_eq!(c.get(), 1));
     }
 }

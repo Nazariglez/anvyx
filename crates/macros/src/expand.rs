@@ -69,6 +69,7 @@ struct BorrowParam {
     param_name: syn::Ident,
     store_ident: syn::Ident,
     handle_ident: syn::Ident,
+    guard_ident: syn::Ident,
     is_mut: bool,
 }
 
@@ -163,51 +164,58 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 let type_decl_ident = &info.decl_ident;
 
                 extractions.push(quote! {
-                    let anvyx_lang::Value::ExternHandle(#handle_ident) = args[#i].clone() else {
+                    let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#i] else {
                         return Err(anvyx_lang::RuntimeError::new(format!(
                             "expected extern handle for parameter '{}' in extern fn '{}'",
                             #param_name_str, #export_name
                         )));
                     };
+                    let #handle_ident = __ehd.id;
                     let #param_name = #store_ident.with(|__s| __s.borrow_mut().remove(#handle_ident))?;
                 });
                 param_tuples.push(quote! { (#param_name_str, #type_decl_ident.name) });
             }
             ParamMode::ExternRef(info) => {
-                let ExternTypeInfo { store_ident, decl_ident } = info;
+                let ExternTypeInfo { store_ident, decl_ident, .. } = info;
 
                 extractions.push(quote! {
-                    let anvyx_lang::Value::ExternHandle(#handle_ident) = args[#i].clone() else {
+                    let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#i] else {
                         return Err(anvyx_lang::RuntimeError::new(format!(
                             "expected extern handle for parameter '{}' in extern fn '{}'",
                             #param_name_str, #export_name
                         )));
                     };
+                    let #handle_ident = __ehd.id;
                 });
                 param_tuples.push(quote! { (#param_name_str, #decl_ident.name) });
+                let guard_ident = format_ident!("__guard_{}", i);
                 borrow_params.push(BorrowParam {
                     param_name: param_name.clone(),
                     store_ident,
                     handle_ident,
+                    guard_ident,
                     is_mut: false,
                 });
             }
             ParamMode::ExternMutRef(info) => {
-                let ExternTypeInfo { store_ident, decl_ident } = info;
+                let ExternTypeInfo { store_ident, decl_ident, .. } = info;
 
                 extractions.push(quote! {
-                    let anvyx_lang::Value::ExternHandle(#handle_ident) = args[#i].clone() else {
+                    let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#i] else {
                         return Err(anvyx_lang::RuntimeError::new(format!(
                             "expected extern handle for parameter '{}' in extern fn '{}'",
                             #param_name_str, #export_name
                         )));
                     };
+                    let #handle_ident = __ehd.id;
                 });
                 param_tuples.push(quote! { (#param_name_str, #decl_ident.name) });
+                let guard_ident = format_ident!("__guard_{}", i);
                 borrow_params.push(BorrowParam {
                     param_name: param_name.clone(),
                     store_ident,
                     handle_ident,
+                    guard_ident,
                     is_mut: true,
                 });
             }
@@ -306,39 +314,61 @@ fn build_call_body(
         quote! { Ok(#call) }
     };
 
-    let mut current = innermost;
-    for bp in borrow_params.iter().rev() {
-        let param_name = &bp.param_name;
-        let store_ident = &bp.store_ident;
-        let handle_ident = &bp.handle_ident;
-        let param_name_str = param_name.to_string();
+    struct StoreGroup<'a> {
+        store_ident: &'a syn::Ident,
+        params: Vec<&'a BorrowParam>,
+    }
 
-        current = if bp.is_mut {
-            quote! {
-                #store_ident.with(|__store| {
-                    let mut __borrow = __store.borrow_mut();
-                    let #param_name = __borrow.get_mut(#handle_ident).map_err(|e| {
+    let mut groups: Vec<StoreGroup> = vec![];
+    for bp in borrow_params {
+        match groups.iter_mut().find(|g| g.store_ident == &bp.store_ident) {
+            Some(group) => group.params.push(bp),
+            None => groups.push(StoreGroup {
+                store_ident: &bp.store_ident,
+                params: vec![bp],
+            }),
+        }
+    }
+
+    let mut current = innermost;
+    for group in groups.iter().rev() {
+        let store_ident = group.store_ident;
+
+        let borrow_stmts: Vec<TokenStream> = group.params.iter().map(|bp| {
+            let param_name = &bp.param_name;
+            let handle_ident = &bp.handle_ident;
+            let guard_ident = &bp.guard_ident;
+            let param_name_str = param_name.to_string();
+
+            if bp.is_mut {
+                quote! {
+                    let mut #guard_ident = __borrow.borrow_mut(#handle_ident).map_err(|e| {
                         anvyx_lang::RuntimeError::new(format!(
                             "invalid handle for parameter '{}' in extern fn '{}': {}",
                             #param_name_str, #export_name, e.message
                         ))
                     })?;
-                    #current
-                })
-            }
-        } else {
-            quote! {
-                #store_ident.with(|__store| {
-                    let __borrow = __store.borrow();
-                    let #param_name = __borrow.get(#handle_ident).map_err(|e| {
+                    let #param_name = &mut *#guard_ident;
+                }
+            } else {
+                quote! {
+                    let #guard_ident = __borrow.borrow(#handle_ident).map_err(|e| {
                         anvyx_lang::RuntimeError::new(format!(
                             "invalid handle for parameter '{}' in extern fn '{}': {}",
                             #param_name_str, #export_name, e.message
                         ))
                     })?;
-                    #current
-                })
+                    let #param_name = &*#guard_ident;
+                }
             }
+        }).collect();
+
+        current = quote! {
+            #store_ident.with(|__store| {
+                let __borrow = __store.borrow();
+                #(#borrow_stmts)*
+                #current
+            })
         };
     }
 
@@ -360,10 +390,13 @@ fn build_call_body(
         }),
         ReturnMode::ExternOwned(info) => {
             let ret_store = &info.store_ident;
+            let cleanup_fn = &info.cleanup_fn_ident;
             Ok(quote! {
                 let result = #current?;
                 let id = #ret_store.with(|__s| __s.borrow_mut().insert(result));
-                Ok(anvyx_lang::Value::ExternHandle(id))
+                Ok(anvyx_lang::Value::ExternHandle(anvyx_lang::ManagedRc::new(
+                    anvyx_lang::ExternHandleData { id, drop_fn: #cleanup_fn }
+                )))
             })
         }
     }
@@ -388,10 +421,13 @@ fn build_flat_call(call: &TokenStream, mode: &ReturnMode) -> syn::Result<TokenSt
         }),
         ReturnMode::ExternOwned(info) => {
             let store_ident = &info.store_ident;
+            let cleanup_fn = &info.cleanup_fn_ident;
             Ok(quote! {
                 let result = #call;
                 let id = #store_ident.with(|__s| __s.borrow_mut().insert(result));
-                Ok(anvyx_lang::Value::ExternHandle(id))
+                Ok(anvyx_lang::Value::ExternHandle(anvyx_lang::ManagedRc::new(
+                    anvyx_lang::ExternHandleData { id, drop_fn: #cleanup_fn }
+                )))
             })
         }
     }
