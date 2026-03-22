@@ -51,6 +51,7 @@ pub(crate) fn resolve_imports(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_imports(
     stmts: &[StmtNode],
     project_root: &Path,

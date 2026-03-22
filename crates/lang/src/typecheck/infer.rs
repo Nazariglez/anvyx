@@ -141,6 +141,7 @@ pub(super) fn build_param_ref(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn infer_type_args_from_call(
     call_span: Span,
     type_params: &[TypeParam],

@@ -200,6 +200,7 @@ fn check_pattern_inner(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn check_enum_pattern(
     pattern: &PatternNode,
     qualifier: Ident,
@@ -309,6 +310,7 @@ fn check_enum_pattern(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn check_enum_struct_pattern(
     pattern: &PatternNode,
     qualifier: Ident,

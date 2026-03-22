@@ -99,6 +99,7 @@ pub(super) fn check_postfix_chain(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn continue_postfix_chain(
     expr_node: &ExprNode,
     base: &ExprNode,
@@ -726,7 +727,7 @@ fn apply_postfix_op(
                 // for plain ident calls use base_ty and check var-params separately
                 let result = type_call_on_base(base_ty, call_node, type_checker, errors);
                 if let Some(param_info) = type_checker.func_param_info.get(name).cloned() {
-                    check_var_param_args(&param_info, &call_node.node.args, type_checker, errors);
+                    check_var_param_args(param_info, &call_node.node.args, type_checker, errors);
                 }
                 return result;
             }
