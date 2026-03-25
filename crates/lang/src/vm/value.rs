@@ -113,6 +113,26 @@ pub struct EnumData {
 pub struct ExternHandleData {
     pub id: u64,
     pub drop_fn: fn(u64),
+    pub type_name: &'static str,
+    pub to_string_fn: fn(u64) -> String,
+}
+
+pub struct DisplayDetect<'a, T>(pub &'a T);
+
+pub trait DisplayDetectFallback {
+    fn anvyx_display(&self, name: &str) -> String;
+}
+
+impl<T> DisplayDetectFallback for DisplayDetect<'_, T> {
+    fn anvyx_display(&self, name: &str) -> String {
+        format!("<{name}>")
+    }
+}
+
+impl<T: fmt::Display> DisplayDetect<'_, T> {
+    pub fn anvyx_display(&self, _name: &str) -> String {
+        self.0.to_string()
+    }
 }
 
 impl Drop for ExternHandleData {
@@ -185,7 +205,13 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Int(v) => write!(f, "{v}"),
-            Value::Float(v) => write!(f, "{v}"),
+            Value::Float(v) => {
+                if v.fract() == 0.0 && v.is_finite() {
+                    write!(f, "{v:.1}")
+                } else {
+                    write!(f, "{v}")
+                }
+            }
             Value::Bool(v) => write!(f, "{v}"),
             Value::String(s) => write!(f, "{s}"),
             Value::Nil => write!(f, "nil"),
@@ -490,7 +516,7 @@ mod tests {
     #[test]
     fn display_float() {
         assert_eq!(Value::Float(3.14).to_string(), "3.14");
-        assert_eq!(Value::Float(42.0).to_string(), "42");
+        assert_eq!(Value::Float(42.0).to_string(), "42.0");
     }
 
     #[test]
@@ -956,7 +982,12 @@ mod tests {
     fn noop_drop(_id: u64) {}
 
     fn extern_handle(id: u64) -> Value {
-        Value::ExternHandle(ManagedRc::new(ExternHandleData { id, drop_fn: noop_drop }))
+        Value::ExternHandle(ManagedRc::new(ExternHandleData {
+            id,
+            drop_fn: noop_drop,
+            type_name: "Extern",
+            to_string_fn: |_| "<Extern>".to_string(),
+        }))
     }
 
     #[test]
@@ -989,6 +1020,8 @@ mod tests {
             let _v = Value::ExternHandle(ManagedRc::new(ExternHandleData {
                 id: 77,
                 drop_fn: cleanup,
+                type_name: "Test",
+                to_string_fn: |_| "<Test>".to_string(),
             }));
         }
         CLEANED.with(|c| assert_eq!(c.get(), 77));
@@ -1004,6 +1037,8 @@ mod tests {
             let v = Value::ExternHandle(ManagedRc::new(ExternHandleData {
                 id: 1,
                 drop_fn: cleanup,
+                type_name: "Test",
+                to_string_fn: |_| "<Test>".to_string(),
             }));
             let _v2 = v.clone();
             let _v3 = v.clone();
@@ -1021,6 +1056,8 @@ mod tests {
             let handle = Value::ExternHandle(ManagedRc::new(ExternHandleData {
                 id: 42,
                 drop_fn: cleanup,
+                type_name: "Test",
+                to_string_fn: |_| "<Test>".to_string(),
             }));
             let list = Value::List(ManagedRc::new(vec![handle]));
             CLEANED.with(|c| assert_eq!(c.get(), 0));

@@ -366,6 +366,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
                 "'self' is readonly in this method of '{struct_name}'; use 'var self' for mutating methods"
             ),
         ),
+        TypeErrKind::InvalidToStringSignature { struct_name, reason } => (
+            format!("Invalid 'to_string' method on struct '{struct_name}'"),
+            reason.clone(),
+        ),
         TypeErrKind::ForIterableNotSupported { found } => (
             "type is not iterable".to_string(),
             format!("found '{found}'; expected a range, array, list, view, or map"),

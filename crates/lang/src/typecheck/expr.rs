@@ -125,19 +125,7 @@ fn check_string_interp(
         let StringPart::Expr(expr_node) = part else {
             continue;
         };
-        let expr_ty = check_expr(expr_node, type_checker, errors, None);
-        let is_valid = expr_ty.is_str()
-            || expr_ty.is_stringable_primitive()
-            || expr_ty.is_infer();
-        if !is_valid {
-            errors.push(TypeErr::new(
-                expr_node.span,
-                TypeErrKind::MismatchedTypes {
-                    expected: Type::String,
-                    found: expr_ty,
-                },
-            ));
-        }
+        check_expr(expr_node, type_checker, errors, None);
     }
     Type::String
 }

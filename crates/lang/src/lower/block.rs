@@ -337,7 +337,18 @@ pub(super) fn lower_string_interp(
                 span,
                 kind: hir::ExprKind::String(s.clone()),
             },
-            StringPart::Expr(e) => lower_expr(e, ctx, fc, out)?,
+            StringPart::Expr(e) => {
+                let lowered = lower_expr(e, ctx, fc, out)?;
+                if lowered.ty == Type::String {
+                    lowered
+                } else {
+                    hir::Expr {
+                        ty: Type::String,
+                        span,
+                        kind: hir::ExprKind::ToString(Box::new(lowered)),
+                    }
+                }
+            }
         };
         hir_parts.push(expr);
     }

@@ -1,0 +1,21 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// Point(x: 1, y: 2)
+// rgb(0.5, 0.5, 0.5)
+// @match-end
+
+struct Point { x: int, y: int }
+
+struct Color {
+    r: float, g: float, b: float,
+
+    fn to_string(self) -> string {
+        "rgb(" + self.r + ", " + self.g + ", " + self.b + ")"
+    },
+}
+
+fn main() {
+    println(Point { x: 1, y: 2 });
+    println(Color { r: 0.5, g: 0.5, b: 0.5 });
+}

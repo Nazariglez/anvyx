@@ -1,8 +1,6 @@
 // @mode: run
 // @expect: success
-// @match-begin
-// none
-// @match-end
+// @match: none
 
 fn main() {
     let x: int? = nil;

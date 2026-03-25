@@ -242,6 +242,11 @@ pub(super) fn check_struct(
         return;
     };
 
+    let to_string_ident = Ident(Intern::new("to_string".to_string()));
+    if let Some(method_def) = struct_def.methods.get(&to_string_ident) {
+        validate_to_string_signature(struct_name, method_def, struct_node.span, errors);
+    }
+
     for method in &decl.methods {
         if let Some(method_def) = struct_def.methods.get(&method.name) {
             check_method_body(
@@ -254,5 +259,66 @@ pub(super) fn check_struct(
                 errors,
             );
         }
+    }
+}
+
+fn validate_to_string_signature(
+    struct_name: Ident,
+    method: &MethodDef,
+    span: Span,
+    errors: &mut Vec<TypeErr>,
+) {
+    match method.receiver {
+        None => {
+            errors.push(TypeErr::new(
+                span,
+                TypeErrKind::InvalidToStringSignature {
+                    struct_name,
+                    reason: "must have a 'self' receiver".to_string(),
+                },
+            ));
+            return;
+        }
+        Some(MethodReceiver::Var) => {
+            errors.push(TypeErr::new(
+                span,
+                TypeErrKind::InvalidToStringSignature {
+                    struct_name,
+                    reason: "receiver must be 'self', not 'var self'".to_string(),
+                },
+            ));
+        }
+        Some(MethodReceiver::Value) => {}
+    }
+
+    if method.ret != Type::String {
+        let found = method.ret.clone();
+        errors.push(TypeErr::new(
+            span,
+            TypeErrKind::InvalidToStringSignature {
+                struct_name,
+                reason: format!("must return 'string', found '{found}'"),
+            },
+        ));
+    }
+
+    if !method.params.is_empty() {
+        errors.push(TypeErr::new(
+            span,
+            TypeErrKind::InvalidToStringSignature {
+                struct_name,
+                reason: "must take no parameters besides 'self'".to_string(),
+            },
+        ));
+    }
+
+    if !method.type_params.is_empty() {
+        errors.push(TypeErr::new(
+            span,
+            TypeErrKind::InvalidToStringSignature {
+                struct_name,
+                reason: "must not be generic".to_string(),
+            },
+        ));
     }
 }

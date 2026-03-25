@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 
-use crate::ast::{self, Ident, Type, TypeVarId};
+use internment::Intern;
+
+use crate::ast::{self, Ident, Type, TypeVarId, VariantKind};
 use crate::hir;
 use crate::typecheck::{TypeChecker, subst_type};
+use crate::vm::meta::{EnumMeta, StructMeta, VariantMeta, VariantMetaKind};
 
 use super::{
-    FuncLower, LowerCtx, LowerError, SharedCtx,
-    collect_declarations, lower_block, mangle_generic_name, register_named_local,
+    FuncLower, LowerCtx, LowerError, SharedCtx, collect_declarations, lower_block,
+    mangle_generic_name, register_named_local,
 };
 
 pub fn lower_program(
@@ -54,6 +57,54 @@ pub fn lower_program(
             }
         }
     }
+
+    let struct_count = struct_type_ids.len();
+
+    let mut struct_meta_slots = vec![None; struct_count];
+    for (name, &type_id) in &struct_type_ids {
+        let field_names = tcx
+            .struct_field_names(*name)
+            .unwrap_or_default()
+            .iter()
+            .map(|f| f.to_string())
+            .collect();
+        struct_meta_slots[type_id as usize] = Some(StructMeta {
+            name: name.to_string(),
+            field_names,
+            to_string_fn: None,
+        });
+    }
+    let mut struct_meta: Vec<StructMeta> =
+        struct_meta_slots.into_iter().map(|m| m.unwrap()).collect();
+
+    let enum_count = enum_type_ids.len();
+    let mut enum_meta_slots = vec![None; enum_count];
+    for (name, &type_id) in &enum_type_ids {
+        let variants = tcx
+            .enum_variant_kinds(*name)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(vname, vkind)| {
+                let kind = match vkind {
+                    VariantKind::Unit => VariantMetaKind::Unit,
+                    VariantKind::Tuple(types) => VariantMetaKind::Tuple(types.len()),
+                    VariantKind::Struct(fields) => {
+                        VariantMetaKind::Struct(fields.iter().map(|f| f.name.to_string()).collect())
+                    }
+                };
+                VariantMeta {
+                    name: vname.to_string(),
+                    kind,
+                }
+            })
+            .collect();
+        let idx = type_id as usize - struct_count;
+        enum_meta_slots[idx] = Some(EnumMeta {
+            name: name.to_string(),
+            variants,
+        });
+    }
+    let enum_meta: Vec<EnumMeta> = enum_meta_slots.into_iter().map(|m| m.unwrap()).collect();
 
     let mut shared = SharedCtx {
         tcx,
@@ -109,9 +160,63 @@ pub fn lower_program(
         spec_registrations.push((mangled, spec_key.clone()));
     }
 
+    let mut to_string_methods: Vec<(Ident, u32, &ast::Method)> = vec![];
+    let to_string_name = Ident(Intern::new("to_string".to_string()));
+    for stmt_node in ast.stmts.iter() {
+        if let ast::Stmt::Struct(s) = &stmt_node.node {
+            let struct_name = s.node.name;
+            let Some(&type_id) = shared.struct_type_ids.get(&struct_name) else {
+                continue;
+            };
+            if !s.node.type_params.is_empty() {
+                continue;
+            }
+            if shared.tcx.struct_to_string_body(struct_name).is_none() {
+                continue;
+            }
+            if let Some(method) = s.node.methods.iter().find(|m| m.name == to_string_name) {
+                let mangled = Ident(Intern::new(format!("{struct_name}::to_string")));
+                if !shared.funcs.contains_key(&mangled) {
+                    let id = hir::FuncId(next_func_id);
+                    next_func_id += 1;
+                    shared.funcs.insert(mangled, id);
+                    to_string_methods.push((struct_name, type_id, method));
+                }
+            }
+        }
+    }
+    for (_path, stmts) in module_list {
+        for stmt_node in stmts {
+            if let ast::Stmt::Struct(s) = &stmt_node.node {
+                let struct_name = s.node.name;
+                let Some(&type_id) = shared.struct_type_ids.get(&struct_name) else {
+                    continue;
+                };
+                if !s.node.type_params.is_empty() {
+                    continue;
+                }
+                if shared.tcx.struct_to_string_body(struct_name).is_none() {
+                    continue;
+                }
+                if let Some(method) = s.node.methods.iter().find(|m| m.name == to_string_name) {
+                    let mangled = Ident(Intern::new(format!("{struct_name}::to_string")));
+                    if !shared.funcs.contains_key(&mangled) {
+                        let id = hir::FuncId(next_func_id);
+                        next_func_id += 1;
+                        shared.funcs.insert(mangled, id);
+                        to_string_methods.push((struct_name, type_id, method));
+                    }
+                }
+            }
+        }
+    }
+
     let shared = shared;
 
-    let ctx = LowerCtx { shared: &shared, type_overrides: None };
+    let ctx = LowerCtx {
+        shared: &shared,
+        type_overrides: None,
+    };
     let mut funcs = vec![];
     for func_node in func_nodes {
         funcs.push(lower_func(func_node, &ctx)?);
@@ -179,9 +284,47 @@ pub fn lower_program(
         });
     }
 
+    for (struct_name, type_id, method) in &to_string_methods {
+        let mangled = Ident(Intern::new(format!("{struct_name}::to_string")));
+        let &id = shared
+            .funcs
+            .get(&mangled)
+            .expect("to_string func id must exist");
+
+        let mut fc = FuncLower {
+            locals: vec![],
+            local_map: HashMap::new(),
+            scope_log: vec![],
+        };
+
+        let self_type = Type::Struct {
+            name: *struct_name,
+            type_args: vec![],
+        };
+        let self_ident = Ident(Intern::new("self".to_string()));
+        register_named_local(&mut fc, self_ident, self_type);
+        let params_len = fc.locals.len() as u32;
+
+        let body = lower_block(&method.body, &ctx, &mut fc, true, &method.ret)?;
+
+        funcs.push(hir::Func {
+            id,
+            name: mangled,
+            locals: fc.locals,
+            params_len,
+            ret: method.ret.clone(),
+            body,
+            span: method.body.span,
+        });
+
+        struct_meta[*type_id as usize].to_string_fn = Some(id.0 as usize);
+    }
+
     Ok(hir::Program {
         funcs,
         externs: extern_decls,
+        struct_meta,
+        enum_meta,
     })
 }
 

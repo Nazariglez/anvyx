@@ -1,9 +1,16 @@
-use anvyx_lang::{ExternDecl, ExternHandleData, ExternTypeDeclConst, ManagedRc, Value, export_fn, export_type};
+use anvyx_lang::{
+    ExternDecl, ExternHandleData, ExternTypeDeclConst, ManagedRc, Value, export_fn, export_type,
+};
 
 fn noop_drop(_id: u64) {}
 
 fn extern_handle(id: u64) -> Value {
-    Value::ExternHandle(ManagedRc::new(ExternHandleData { id, drop_fn: noop_drop }))
+    Value::ExternHandle(ManagedRc::new(ExternHandleData {
+        id,
+        drop_fn: noop_drop,
+        type_name: "Extern",
+        to_string_fn: |_| "<Extern>".to_string(),
+    }))
 }
 
 #[export_fn]
@@ -428,6 +435,40 @@ fn export_type_tuple_struct() {
         let mut store = s.borrow_mut();
         let id = store.insert(Color(255, 0, 128));
         assert_eq!(store.borrow(id).unwrap().0, 255);
+    });
+}
+
+// -- to_string_fn display tests --
+
+#[export_type(name = "FmtVec2")]
+pub struct TestVec2 {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl std::fmt::Display for TestVec2 {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Vec2({}, {})", self.x as i64, self.y as i64)
+    }
+}
+
+#[test]
+fn export_type_with_display_to_string() {
+    let id = __ANVYX_STORE_TESTVEC2.with(|s| s.borrow_mut().insert(TestVec2 { x: 1.0, y: 2.0 }));
+    let result = __anvyx_to_string_TestVec2(id);
+    assert_eq!(result, "Vec2(1, 2)");
+    __ANVYX_STORE_TESTVEC2.with(|s| {
+        let _ = s.borrow_mut().remove(id);
+    });
+}
+
+#[test]
+fn export_type_without_display_to_string() {
+    let id = __ANVYX_STORE_OPAQUEHANDLE.with(|s| s.borrow_mut().insert(OpaqueHandle));
+    let result = __anvyx_to_string_OpaqueHandle(id);
+    assert_eq!(result, "<Handle>");
+    __ANVYX_STORE_OPAQUEHANDLE.with(|s| {
+        let _ = s.borrow_mut().remove(id);
     });
 }
 
@@ -933,7 +974,9 @@ fn cleanup_explicit_destroy_then_drop_no_panic() {
     let (_, destroy) = __anvyx_export_destroy_sprite();
 
     let result = create(vec![Value::Float(1.0), Value::Float(2.0)]).unwrap();
-    let Value::ExternHandle(handle) = result else { panic!("expected ExternHandle") };
+    let Value::ExternHandle(handle) = result else {
+        panic!("expected ExternHandle")
+    };
     let lingering = handle.clone();
 
     destroy(vec![Value::ExternHandle(handle)]).unwrap();
@@ -947,10 +990,10 @@ fn cleanup_explicit_destroy_then_drop_no_panic() {
 // -- #[export_methods] tests --
 
 mod method_tests {
+    use super::extern_handle;
     use anvyx_lang::{
         ExternMethodDecl, ExternStaticMethodDecl, Value, export_methods, export_type,
     };
-    use super::extern_handle;
 
     #[export_type(name = "Vec2")]
     pub struct Vec2 {
@@ -1247,7 +1290,8 @@ mod method_tests {
         let x = handler_map["Vec2::get_x"](vec![Value::ExternHandle(id.clone())]).unwrap();
         assert_eq!(x, Value::Float(1.0));
 
-        handler_map["Vec2::set_x"](vec![Value::ExternHandle(id.clone()), Value::Float(99.0)]).unwrap();
+        handler_map["Vec2::set_x"](vec![Value::ExternHandle(id.clone()), Value::Float(99.0)])
+            .unwrap();
 
         let x = handler_map["Vec2::get_x"](vec![Value::ExternHandle(id.clone())]).unwrap();
         assert_eq!(x, Value::Float(99.0));
@@ -1552,15 +1596,21 @@ mod field_provider {
 
     #[export_type(name = "Pos")]
     pub struct Pos {
-        #[field] pub x: f64,
-        #[field] pub y: f64,
+        #[field]
+        pub x: f64,
+        #[field]
+        pub y: f64,
         pub internal: f64, // not exported — no #[field]
     }
 
     #[export_methods]
     impl Pos {
         pub fn new(x: f64, y: f64) -> Pos {
-            Pos { x, y, internal: 0.0 }
+            Pos {
+                x,
+                y,
+                internal: 0.0,
+            }
         }
     }
 
@@ -1589,7 +1639,9 @@ mod field_provider {
     fn field_getter_returns_correct_value() {
         let externs = anvyx_externs();
         let result = externs["Pos::new"](vec![Value::Float(3.5), Value::Float(7.0)]).unwrap();
-        let Value::ExternHandle(id) = result else { panic!("expected ExternHandle") };
+        let Value::ExternHandle(id) = result else {
+            panic!("expected ExternHandle")
+        };
         let x = externs["Pos::__get_x"](vec![Value::ExternHandle(id.clone())]).unwrap();
         assert_eq!(x, Value::Float(3.5));
         let y = externs["Pos::__get_y"](vec![Value::ExternHandle(id)]).unwrap();
@@ -1600,7 +1652,9 @@ mod field_provider {
     fn field_setter_modifies_value() {
         let externs = anvyx_externs();
         let result = externs["Pos::new"](vec![Value::Float(1.0), Value::Float(2.0)]).unwrap();
-        let Value::ExternHandle(id) = result else { panic!("expected ExternHandle") };
+        let Value::ExternHandle(id) = result else {
+            panic!("expected ExternHandle")
+        };
 
         externs["Pos::__set_x"](vec![Value::ExternHandle(id.clone()), Value::Float(99.0)]).unwrap();
         let x = externs["Pos::__get_x"](vec![Value::ExternHandle(id)]).unwrap();
@@ -1637,16 +1691,28 @@ mod getter_setter_tests {
 
     #[export_methods(name = "Vec2")]
     impl GsVec2 {
-        pub fn new(x: f64, y: f64) -> GsVec2 { GsVec2(x, y) }
+        pub fn new(x: f64, y: f64) -> GsVec2 {
+            GsVec2(x, y)
+        }
         #[getter]
-        pub fn x(&self) -> f64 { self.0 }
+        pub fn x(&self) -> f64 {
+            self.0
+        }
         #[setter]
-        pub fn set_x(&mut self, v: f64) { self.0 = v; }
+        pub fn set_x(&mut self, v: f64) {
+            self.0 = v;
+        }
         #[getter]
-        pub fn y(&self) -> f64 { self.1 }
+        pub fn y(&self) -> f64 {
+            self.1
+        }
         #[setter]
-        pub fn set_y(&mut self, v: f64) { self.1 = v; }
-        pub fn length(&self) -> f64 { (self.0 * self.0 + self.1 * self.1).sqrt() }
+        pub fn set_y(&mut self, v: f64) {
+            self.1 = v;
+        }
+        pub fn length(&self) -> f64 {
+            (self.0 * self.0 + self.1 * self.1).sqrt()
+        }
     }
 
     anvyx_lang::provider!(types: [GsVec2]);
@@ -1687,7 +1753,9 @@ mod getter_setter_tests {
     fn getter_returns_correct_value() {
         let externs = anvyx_externs();
         let handle = externs["Vec2::new"](vec![Value::Float(3.0), Value::Float(4.0)]).unwrap();
-        let Value::ExternHandle(ref ehd) = handle else { panic!("expected ExternHandle") };
+        let Value::ExternHandle(ref ehd) = handle else {
+            panic!("expected ExternHandle")
+        };
         let x = externs["Vec2::__get_x"](vec![Value::ExternHandle(ehd.clone())]).unwrap();
         assert_eq!(x, Value::Float(3.0));
         let y = externs["Vec2::__get_y"](vec![Value::ExternHandle(ehd.clone())]).unwrap();
@@ -1698,8 +1766,11 @@ mod getter_setter_tests {
     fn setter_modifies_value() {
         let externs = anvyx_externs();
         let handle = externs["Vec2::new"](vec![Value::Float(1.0), Value::Float(2.0)]).unwrap();
-        let Value::ExternHandle(ref ehd) = handle else { panic!("expected ExternHandle") };
-        externs["Vec2::__set_x"](vec![Value::ExternHandle(ehd.clone()), Value::Float(99.0)]).unwrap();
+        let Value::ExternHandle(ref ehd) = handle else {
+            panic!("expected ExternHandle")
+        };
+        externs["Vec2::__set_x"](vec![Value::ExternHandle(ehd.clone()), Value::Float(99.0)])
+            .unwrap();
         let x = externs["Vec2::__get_x"](vec![Value::ExternHandle(ehd.clone())]).unwrap();
         assert_eq!(x, Value::Float(99.0));
     }
@@ -1710,18 +1781,26 @@ mod getter_setter_with_field_tests {
 
     #[export_type(name = "Sprite")]
     pub struct GsSprite {
-        #[field] pub x: f64,
-        #[field] pub y: f64,
+        #[field]
+        pub x: f64,
+        #[field]
+        pub y: f64,
         scale: f32,
     }
 
     #[export_methods(name = "Sprite")]
     impl GsSprite {
-        pub fn new(x: f64, y: f64) -> GsSprite { GsSprite { x, y, scale: 1.0 } }
+        pub fn new(x: f64, y: f64) -> GsSprite {
+            GsSprite { x, y, scale: 1.0 }
+        }
         #[getter]
-        pub fn scale(&self) -> f64 { self.scale as f64 }
+        pub fn scale(&self) -> f64 {
+            self.scale as f64
+        }
         #[setter]
-        pub fn set_scale(&mut self, v: f64) { self.scale = v as f32; }
+        pub fn set_scale(&mut self, v: f64) {
+            self.scale = v as f32;
+        }
     }
 
     anvyx_lang::provider!(types: [GsSprite]);
@@ -1743,11 +1822,15 @@ mod getter_setter_with_field_tests {
     fn getter_setter_scale_works() {
         let externs = anvyx_externs();
         let handle = externs["Sprite::new"](vec![Value::Float(0.0), Value::Float(0.0)]).unwrap();
-        let Value::ExternHandle(ref ehd) = handle else { panic!("expected ExternHandle") };
+        let Value::ExternHandle(ref ehd) = handle else {
+            panic!("expected ExternHandle")
+        };
         let scale = externs["Sprite::__get_scale"](vec![Value::ExternHandle(ehd.clone())]).unwrap();
         assert_eq!(scale, Value::Float(1.0));
-        externs["Sprite::__set_scale"](vec![Value::ExternHandle(ehd.clone()), Value::Float(2.5)]).unwrap();
-        let scale2 = externs["Sprite::__get_scale"](vec![Value::ExternHandle(ehd.clone())]).unwrap();
+        externs["Sprite::__set_scale"](vec![Value::ExternHandle(ehd.clone()), Value::Float(2.5)])
+            .unwrap();
+        let scale2 =
+            externs["Sprite::__get_scale"](vec![Value::ExternHandle(ehd.clone())]).unwrap();
         assert_eq!(scale2, Value::Float(2.5));
     }
 }
@@ -1757,16 +1840,23 @@ mod getter_setter_name_override_tests {
 
     #[export_type(name = "Pt")]
     pub struct SomePoint {
-        #[field] pub x: f64,
+        #[field]
+        pub x: f64,
     }
 
     #[export_methods(name = "Pt")]
     impl SomePoint {
-        pub fn new(x: f64) -> SomePoint { SomePoint { x } }
+        pub fn new(x: f64) -> SomePoint {
+            SomePoint { x }
+        }
         #[getter]
-        pub fn mag(&self) -> f64 { self.x.abs() }
+        pub fn mag(&self) -> f64 {
+            self.x.abs()
+        }
         #[setter]
-        pub fn set_mag(&mut self, v: f64) { self.x = v; }
+        pub fn set_mag(&mut self, v: f64) {
+            self.x = v;
+        }
     }
 
     anvyx_lang::provider!(types: [SomePoint]);
@@ -1786,7 +1876,9 @@ mod getter_setter_name_override_tests {
     fn name_override_getter_works() {
         let externs = anvyx_externs();
         let handle = externs["Pt::new"](vec![Value::Float(-5.0)]).unwrap();
-        let Value::ExternHandle(ref ehd) = handle else { panic!("expected ExternHandle") };
+        let Value::ExternHandle(ref ehd) = handle else {
+            panic!("expected ExternHandle")
+        };
         let mag = externs["Pt::__get_mag"](vec![Value::ExternHandle(ehd.clone())]).unwrap();
         assert_eq!(mag, Value::Float(5.0));
     }
@@ -1801,16 +1893,28 @@ mod init_explicit_tests {
     #[export_methods(name = "Vec2")]
     impl InitVec2 {
         #[init]
-        pub fn create(x: f64, y: f64) -> InitVec2 { InitVec2(x, y) }
+        pub fn create(x: f64, y: f64) -> InitVec2 {
+            InitVec2(x, y)
+        }
         #[getter]
-        pub fn x(&self) -> f64 { self.0 }
+        pub fn x(&self) -> f64 {
+            self.0
+        }
         #[setter]
-        pub fn set_x(&mut self, v: f64) { self.0 = v; }
+        pub fn set_x(&mut self, v: f64) {
+            self.0 = v;
+        }
         #[getter]
-        pub fn y(&self) -> f64 { self.1 }
+        pub fn y(&self) -> f64 {
+            self.1
+        }
         #[setter]
-        pub fn set_y(&mut self, v: f64) { self.1 = v; }
-        pub fn length(&self) -> f64 { (self.0 * self.0 + self.1 * self.1).sqrt() }
+        pub fn set_y(&mut self, v: f64) {
+            self.1 = v;
+        }
+        pub fn length(&self) -> f64 {
+            (self.0 * self.0 + self.1 * self.1).sqrt()
+        }
     }
 
     anvyx_lang::provider!(types: [InitVec2]);
@@ -1837,7 +1941,9 @@ mod init_explicit_tests {
     fn init_handler_creates_handle() {
         let externs = anvyx_externs();
         let handle = externs["Vec2::__init__"](vec![Value::Float(3.0), Value::Float(4.0)]).unwrap();
-        let Value::ExternHandle(ref ehd) = handle else { panic!("expected ExternHandle") };
+        let Value::ExternHandle(ref ehd) = handle else {
+            panic!("expected ExternHandle")
+        };
         let x = externs["Vec2::__get_x"](vec![Value::ExternHandle(ehd.clone())]).unwrap();
         assert_eq!(x, Value::Float(3.0));
         let y = externs["Vec2::__get_y"](vec![Value::ExternHandle(ehd.clone())]).unwrap();
@@ -1856,13 +1962,17 @@ mod init_auto_tests {
 
     #[export_type(name = "AutoPos")]
     pub struct AutoPos {
-        #[field] pub x: f64,
-        #[field] pub y: f64,
+        #[field]
+        pub x: f64,
+        #[field]
+        pub y: f64,
     }
 
     #[export_methods(name = "AutoPos")]
     impl AutoPos {
-        pub fn new(x: f64, y: f64) -> AutoPos { AutoPos { x, y } }
+        pub fn new(x: f64, y: f64) -> AutoPos {
+            AutoPos { x, y }
+        }
     }
 
     anvyx_lang::provider!(types: [AutoPos]);
@@ -1888,8 +1998,11 @@ mod init_auto_tests {
     #[test]
     fn auto_init_handler_works() {
         let externs = anvyx_externs();
-        let handle = externs["AutoPos::__init__"](vec![Value::Float(1.5), Value::Float(2.5)]).unwrap();
-        let Value::ExternHandle(ref ehd) = handle else { panic!("expected ExternHandle") };
+        let handle =
+            externs["AutoPos::__init__"](vec![Value::Float(1.5), Value::Float(2.5)]).unwrap();
+        let Value::ExternHandle(ref ehd) = handle else {
+            panic!("expected ExternHandle")
+        };
         let x = externs["AutoPos::__get_x"](vec![Value::ExternHandle(ehd.clone())]).unwrap();
         assert_eq!(x, Value::Float(1.5));
         let y = externs["AutoPos::__get_y"](vec![Value::ExternHandle(ehd.clone())]).unwrap();
@@ -1902,13 +2015,16 @@ mod init_no_auto_tests {
 
     #[export_type(name = "Obj")]
     pub struct NoAutoObj {
-        #[field] pub x: f64,
+        #[field]
+        pub x: f64,
         internal: f64,
     }
 
     #[export_methods(name = "Obj")]
     impl NoAutoObj {
-        pub fn new(x: f64) -> NoAutoObj { NoAutoObj { x, internal: 0.0 } }
+        pub fn new(x: f64) -> NoAutoObj {
+            NoAutoObj { x, internal: 0.0 }
+        }
     }
 
     anvyx_lang::provider!(types: [NoAutoObj]);
@@ -1929,7 +2045,9 @@ mod init_no_auto_tests {
     fn no_auto_new_still_works() {
         let externs = anvyx_externs();
         let handle = externs["Obj::new"](vec![Value::Float(7.0)]).unwrap();
-        let Value::ExternHandle(ref ehd) = handle else { panic!("expected ExternHandle") };
+        let Value::ExternHandle(ref ehd) = handle else {
+            panic!("expected ExternHandle")
+        };
         let x = externs["Obj::__get_x"](vec![Value::ExternHandle(ehd.clone())]).unwrap();
         assert_eq!(x, Value::Float(7.0));
     }

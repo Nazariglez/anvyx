@@ -168,6 +168,10 @@ pub enum TypeErrKind {
         struct_name: Ident,
         field: Ident,
     },
+    InvalidToStringSignature {
+        struct_name: Ident,
+        reason: String,
+    },
 
     UnknownEnum {
         name: Ident,

@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+struct Color {
+    r: float,
+    g: float,
+    b: float,
+
+    fn to_string(self) -> string {
+        "rgb(" + self.r + ", " + self.g + ", " + self.b + ")"
+    },
+}
+
+fn main() {
+    let c = Color { r: 1.0, g: 0.0, b: 0.0 };
+}

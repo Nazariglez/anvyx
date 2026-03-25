@@ -53,6 +53,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
     let decl_ident = format_ident!("__ANVYX_TYPE_DECL_{}", name_upper);
     let store_ident = format_ident!("__ANVYX_STORE_{}", name_upper);
     let cleanup_fn_ident = format_ident!("__anvyx_cleanup_{}", struct_ident);
+    let to_string_fn_ident = format_ident!("__anvyx_to_string_{}", struct_ident);
 
     let mut cleaned_struct = item_struct.clone();
     if let syn::Fields::Named(ref mut fields) = cleaned_struct.fields {
@@ -194,7 +195,12 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
                     let instance = #struct_ident { #(#init_field_assigns),* };
                     let id = #store_ident.with(|__s| __s.borrow_mut().insert(instance));
                     Ok(anvyx_lang::Value::ExternHandle(anvyx_lang::ManagedRc::new(
-                        anvyx_lang::ExternHandleData { id, drop_fn: #cleanup_fn_ident }
+                        anvyx_lang::ExternHandleData {
+                            id,
+                            drop_fn: #cleanup_fn_ident,
+                            type_name: #anvyx_name,
+                            to_string_fn: #to_string_fn_ident,
+                        }
                     )))
                 }))
             }
@@ -226,6 +232,20 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
                     let _ = store.remove(id);
                 }
             });
+        }
+
+        #[allow(non_snake_case)]
+        fn #to_string_fn_ident(id: u64) -> String {
+            use anvyx_lang::DisplayDetectFallback as _;
+            #store_ident.with(|__store| {
+                let Ok(__borrow) = __store.try_borrow() else {
+                    return format!("<{}>", #anvyx_name);
+                };
+                match __borrow.borrow(id) {
+                    Ok(__guard) => anvyx_lang::DisplayDetect(&*__guard).anvyx_display(#anvyx_name),
+                    Err(_) => format!("<{}>", #anvyx_name),
+                }
+            })
         }
 
         #(#getter_setter_fns)*

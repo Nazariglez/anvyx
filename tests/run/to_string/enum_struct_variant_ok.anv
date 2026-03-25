@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// Event.Click(x: 10, y: 20)
+// Event.Resize(width: 800, height: 600)
+// @match-end
+
+enum Event {
+    Click { x: int, y: int },
+    Resize { width: int, height: int },
+}
+
+fn main() {
+    println(Event.Click { x: 10, y: 20 });
+    println(Event.Resize { width: 800, height: 600 });
+}

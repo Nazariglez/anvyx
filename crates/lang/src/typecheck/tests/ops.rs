@@ -731,9 +731,10 @@ fn test_string_interp_with_bool_ok() {
 }
 
 #[test]
-fn test_string_interp_with_struct_err() {
+fn test_string_interp_with_struct_ok() {
     reset_expr_ids();
     let interp = string_interp_expr(vec![expr_part(ident_expr("p"))]);
+    let interp_id = get_expr_id(&interp);
     let prog = program(vec![
         struct_decl("Point", vec![("x", Type::Int), ("y", Type::Int)], vec![]),
         let_binding(
@@ -744,12 +745,8 @@ fn test_string_interp_with_struct_err() {
         expr_stmt(interp),
     ]);
 
-    let errors = run_err(prog);
-    assert!(errors.iter().any(|e| matches!(
-        &e.kind,
-        TypeErrKind::MismatchedTypes { expected, .. }
-        if *expected == Type::String
-    )));
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, interp_id, Type::String);
 }
 
 // ---- cast expression tests ----

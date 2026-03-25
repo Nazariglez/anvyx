@@ -3,6 +3,7 @@ mod bytecode;
 mod compiler;
 pub mod handle_store;
 pub mod managed_rc;
+pub mod meta;
 mod runtime;
 mod value;
 
@@ -13,7 +14,7 @@ pub use handle_store::HandleStore;
 pub use managed_rc::ManagedRc;
 pub use runtime::ExternHandler;
 pub use value::RuntimeError;
-pub use value::{EnumData, ExternHandleData, MapStorage, StructData, Value};
+pub use value::{DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData, MapStorage, StructData, Value};
 
 pub fn run_with_externs(
     hir_prog: &hir::Program,
@@ -49,7 +50,12 @@ mod tests {
     fn noop_drop(_id: u64) {}
 
     fn extern_handle(id: u64) -> Value {
-        Value::ExternHandle(ManagedRc::new(ExternHandleData { id, drop_fn: noop_drop }))
+        Value::ExternHandle(ManagedRc::new(ExternHandleData {
+            id,
+            drop_fn: noop_drop,
+            type_name: "Extern",
+            to_string_fn: |_| "<Extern>".to_string(),
+        }))
     }
 
     fn vm_ok(source: &str) -> String {
@@ -981,5 +987,89 @@ fn main() {
 "#;
         let out = vm_ok_with_externs(src, externs);
         assert_eq!(out, "ok\n");
+    }
+
+    #[test]
+    fn extern_handle_to_string_custom() {
+        fn custom_fmt(_id: u64) -> String {
+            "MyWidget".to_string()
+        }
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "make_widget".to_string(),
+            Box::new(|_args| {
+                Ok(Value::ExternHandle(ManagedRc::new(ExternHandleData {
+                    id: 1,
+                    drop_fn: noop_drop,
+                    type_name: "Widget",
+                    to_string_fn: custom_fmt,
+                })))
+            }),
+        );
+        let src = r#"
+extern type Widget;
+extern fn make_widget() -> Widget;
+fn main() {
+    let w = make_widget();
+    println(w);
+}"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "MyWidget\n");
+    }
+
+    #[test]
+    fn extern_handle_to_string_fallback() {
+        fn fallback_fmt(_id: u64) -> String {
+            "<Window>".to_string()
+        }
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "make_window".to_string(),
+            Box::new(|_args| {
+                Ok(Value::ExternHandle(ManagedRc::new(ExternHandleData {
+                    id: 1,
+                    drop_fn: noop_drop,
+                    type_name: "Window",
+                    to_string_fn: fallback_fmt,
+                })))
+            }),
+        );
+        let src = r#"
+extern type Window;
+extern fn make_window() -> Window;
+fn main() {
+    let w = make_window();
+    println(w);
+}"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "<Window>\n");
+    }
+
+    #[test]
+    fn extern_handle_to_string_in_list() {
+        fn item_fmt(_id: u64) -> String {
+            "Item".to_string()
+        }
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "make_item".to_string(),
+            Box::new(|_args| {
+                Ok(Value::ExternHandle(ManagedRc::new(ExternHandleData {
+                    id: 1,
+                    drop_fn: noop_drop,
+                    type_name: "Item",
+                    to_string_fn: item_fmt,
+                })))
+            }),
+        );
+        let src = r#"
+extern type Item;
+extern fn make_item() -> Item;
+fn main() {
+    let items = [make_item(), make_item()];
+    println(items);
+}"#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "[Item, Item]\n");
     }
 }

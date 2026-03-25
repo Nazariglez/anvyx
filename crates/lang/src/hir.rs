@@ -1,11 +1,14 @@
 use crate::ast::{BinaryOp, Ident, Type, UnaryOp};
 use crate::builtin::Builtin;
 use crate::span::Span;
+use crate::vm::meta::{EnumMeta, StructMeta};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub funcs: Vec<Func>,
     pub externs: Vec<ExternDecl>,
+    pub struct_meta: Vec<StructMeta>,
+    pub enum_meta: Vec<EnumMeta>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -145,6 +148,8 @@ pub enum ExprKind {
     Bool(bool),
     String(String),
     Nil,
+
+    ToString(Box<Expr>),
 
     Unary {
         op: UnaryOp,
@@ -307,6 +312,8 @@ mod tests {
         let prog = Program {
             funcs: vec![],
             externs: vec![],
+            struct_meta: vec![],
+            enum_meta: vec![],
         };
         assert!(prog.funcs.is_empty());
     }
@@ -325,6 +332,8 @@ mod tests {
         let prog = Program {
             funcs: vec![func],
             externs: vec![],
+            struct_meta: vec![],
+            enum_meta: vec![],
         };
         assert_eq!(prog.funcs.len(), 1);
         assert_eq!(prog.funcs[0].name.to_string(), "main");

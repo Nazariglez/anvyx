@@ -1,0 +1,22 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// Direction.North
+// Direction.South
+// Direction.East
+// Direction.West
+// @match-end
+
+enum Direction {
+    North,
+    South,
+    East,
+    West,
+}
+
+fn main() {
+    println(Direction.North);
+    println(Direction.South);
+    println(Direction.East);
+    println(Direction.West);
+}

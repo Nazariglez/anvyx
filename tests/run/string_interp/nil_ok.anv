@@ -1,0 +1,8 @@
+// @mode: run
+// @expect: success
+// @match: value: nil
+
+fn main() {
+    let v: int? = nil;
+    println("value: {v}");
+}

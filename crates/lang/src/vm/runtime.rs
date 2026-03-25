@@ -1,8 +1,11 @@
+use std::fmt::Write;
+
 use crate::builtin::Builtin;
 
 use super::builtins;
 use super::bytecode::Op;
 use super::compiler::CompiledProgram;
+use super::meta::VariantMetaKind;
 use super::managed_rc::ManagedRc;
 use super::value::{
     EnumData, MapStorage, RuntimeError, StructData, Value, value_add, value_and, value_div,
@@ -18,6 +21,7 @@ fn as_usize_index(val: &Value) -> Result<usize, RuntimeError> {
         other => Err(RuntimeError::new(format!("index must be int, got {other}"))),
     }
 }
+
 
 struct CallFrame {
     chunk_idx: usize,
@@ -73,6 +77,10 @@ impl<'a> VM<'a> {
             self.stack.push(Value::Nil);
         }
 
+        self.run_until_depth(0).map(|_| ())
+    }
+
+    fn run_until_depth(&mut self, stop_depth: usize) -> Result<Value, RuntimeError> {
         loop {
             // fetch current instruction and advance IP atomically
             let (chunk_idx, ip, stack_base) = {
@@ -240,7 +248,13 @@ impl<'a> VM<'a> {
                     let n = arg_count as usize;
                     let args: Vec<Value> = self.stack.drain(self.stack.len() - n..).collect();
                     let builtin = Builtin::all()[builtin_idx as usize];
-                    let result = builtins::call_builtin(builtin, args, &mut self.stdout)?;
+                    let result = if builtin == Builtin::Println {
+                        let s = self.format_value(&args[0])?;
+                        writeln!(self.stdout, "{s}").unwrap();
+                        Value::Nil
+                    } else {
+                        builtins::call_builtin(builtin, args, &mut self.stdout)?
+                    };
                     self.push(result);
                 }
 
@@ -272,8 +286,8 @@ impl<'a> VM<'a> {
                     // discard all callee locals and temporaries
                     self.stack.truncate(frame.stack_base);
 
-                    if self.frames.is_empty() {
-                        return Ok(());
+                    if self.frames.len() == stop_depth {
+                        return Ok(return_val);
                     }
 
                     // push return value for the caller
@@ -581,7 +595,162 @@ impl<'a> VM<'a> {
                         }
                     }
                 }
+
+                Op::ToString => {
+                    let val = self.pop();
+                    let s = self.format_value(&val)?;
+                    self.push(Value::String(ManagedRc::new(s)));
+                }
             }
+        }
+    }
+
+    fn call_function(&mut self, chunk_idx: usize, args: Vec<Value>) -> Result<Value, RuntimeError> {
+        let return_depth = self.frames.len();
+
+        let stack_base = self.stack.len();
+        for arg in args {
+            self.stack.push(arg);
+        }
+
+        let extra_locals = {
+            let chunk = &self.program.chunks[chunk_idx];
+            chunk.local_count as usize - chunk.params_count as usize
+        };
+        self.frames.push(CallFrame { chunk_idx, ip: 0, stack_base });
+        for _ in 0..extra_locals {
+            self.stack.push(Value::Nil);
+        }
+
+        self.run_until_depth(return_depth)
+    }
+
+    fn format_value(&mut self, value: &Value) -> Result<String, RuntimeError> {
+        match value {
+            Value::Struct(s) => {
+                let program = self.program;
+                let meta = &program.struct_meta[s.type_id as usize];
+                if let Some(chunk_idx) = meta.to_string_fn {
+                    let result = self.call_function(chunk_idx, vec![value.clone()])?;
+                    match result {
+                        Value::String(s) => Ok((*s).clone()),
+                        _ => Err(RuntimeError::new("to_string must return a string")),
+                    }
+                } else {
+                    let name = meta.name.clone();
+                    let field_names: Vec<String> = meta.field_names.clone();
+                    let fields: Vec<Value> = s.fields.clone();
+                    let mut out = format!("{name}(");
+                    for (i, (fname, val)) in field_names.iter().zip(fields.iter()).enumerate() {
+                        if i > 0 {
+                            out.push_str(", ");
+                        }
+                        let formatted = self.format_value(val)?;
+                        write!(out, "{fname}: {formatted}").unwrap();
+                    }
+                    out.push(')');
+                    Ok(out)
+                }
+            }
+            Value::List(l) => {
+                let elems: Vec<Value> = l.iter().cloned().collect();
+                let mut out = String::from("[");
+                for (i, v) in elems.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    let formatted = self.format_value(v)?;
+                    out.push_str(&formatted);
+                }
+                out.push(']');
+                Ok(out)
+            }
+            Value::Array(a) => {
+                let elems: Vec<Value> = a.iter().cloned().collect();
+                let mut out = String::from("[");
+                for (i, v) in elems.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    let formatted = self.format_value(v)?;
+                    out.push_str(&formatted);
+                }
+                out.push(']');
+                Ok(out)
+            }
+            Value::Map(m) => {
+                let mut out = String::from("[");
+                if m.is_ordered() {
+                    let entries: Vec<(Value, Value)> =
+                        m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    for (i, (k, v)) in entries.iter().enumerate() {
+                        if i > 0 {
+                            out.push_str(", ");
+                        }
+                        let fk = self.format_value(k)?;
+                        let fv = self.format_value(v)?;
+                        write!(out, "{fk}: {fv}").unwrap();
+                    }
+                } else {
+                    let mut entries: Vec<(Value, Value)> =
+                        m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    entries.sort_by(|(a, _), (b, _)| a.to_string().cmp(&b.to_string()));
+                    for (i, (k, v)) in entries.iter().enumerate() {
+                        if i > 0 {
+                            out.push_str(", ");
+                        }
+                        let fk = self.format_value(k)?;
+                        let fv = self.format_value(v)?;
+                        write!(out, "{fk}: {fv}").unwrap();
+                    }
+                }
+                out.push(']');
+                Ok(out)
+            }
+            Value::Tuple(t) => {
+                let elems: Vec<Value> = t.iter().cloned().collect();
+                let mut out = String::from("(");
+                for (i, v) in elems.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    let formatted = self.format_value(v)?;
+                    out.push_str(&formatted);
+                }
+                out.push(')');
+                Ok(out)
+            }
+            Value::Enum(e) => {
+                let program = self.program;
+                let type_id = e.type_id as usize;
+                let struct_count = program.struct_meta.len();
+                let meta = &program.enum_meta[type_id - struct_count];
+                let variant_idx = e.variant as usize;
+                let variant_name = meta.variants[variant_idx].name.clone();
+                let enum_name = meta.name.clone();
+                let kind = meta.variants[variant_idx].kind.clone();
+                let fields: Vec<Value> = e.fields.clone();
+                match kind {
+                    VariantMetaKind::Unit => Ok(format!("{enum_name}.{variant_name}")),
+                    VariantMetaKind::Tuple(_) => {
+                        let mut vals = vec![];
+                        for v in fields.iter() {
+                            vals.push(self.format_value(v)?);
+                        }
+                        Ok(format!("{enum_name}.{variant_name}({})", vals.join(", ")))
+                    }
+                    VariantMetaKind::Struct(field_names) => {
+                        let mut pairs = vec![];
+                        for (name, val) in field_names.iter().zip(fields.iter()) {
+                            let formatted = self.format_value(val)?;
+                            pairs.push(format!("{name}: {formatted}"));
+                        }
+                        Ok(format!("{enum_name}.{variant_name}({})", pairs.join(", ")))
+                    }
+                }
+            }
+            Value::ExternHandle(data) => Ok((data.to_string_fn)(data.id)),
+            _ => Ok(format!("{value}")),
         }
     }
 }
@@ -597,6 +766,8 @@ mod tests {
             chunks,
             main_idx,
             extern_names: vec![],
+            struct_meta: vec![],
+            enum_meta: vec![],
         }
     }
 

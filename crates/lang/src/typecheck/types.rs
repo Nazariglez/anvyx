@@ -311,6 +311,29 @@ impl TypeChecker {
             .map(|f| f.ty.clone())
     }
 
+    pub fn struct_to_string_body(&self, name: Ident) -> Option<(&BlockNode, &Type)> {
+        use internment::Intern;
+        let def = self.struct_defs.get(&name)?;
+        if !def.type_params.is_empty() {
+            return None;
+        }
+        let to_string = Ident(Intern::new("to_string".to_string()));
+        let method = def.methods.get(&to_string)?;
+        if method.receiver != Some(MethodReceiver::Value) {
+            return None;
+        }
+        if method.ret != Type::String {
+            return None;
+        }
+        if !method.params.is_empty() {
+            return None;
+        }
+        if !method.type_params.is_empty() {
+            return None;
+        }
+        Some((&method.body, &method.ret))
+    }
+
     pub fn enum_names(&self) -> impl Iterator<Item = Ident> + '_ {
         self.enum_defs.keys().copied()
     }
@@ -352,6 +375,12 @@ impl TypeChecker {
             }
             VariantKind::Unit => Some(vec![]),
         }
+    }
+
+    pub fn enum_variant_kinds(&self, name: Ident) -> Option<Vec<(Ident, &VariantKind)>> {
+        self.enum_defs
+            .get(&name)
+            .map(|def| def.variants.iter().map(|v| (v.name, &v.kind)).collect())
     }
 
     pub(super) fn get_module(&self, name: Ident) -> Option<&ModuleDef> {

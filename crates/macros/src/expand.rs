@@ -391,11 +391,18 @@ fn build_call_body(
         ReturnMode::ExternOwned(info) => {
             let ret_store = &info.store_ident;
             let cleanup_fn = &info.cleanup_fn_ident;
+            let decl = &info.decl_ident;
+            let to_string_fn = &info.to_string_fn_ident;
             Ok(quote! {
                 let result = #current?;
                 let id = #ret_store.with(|__s| __s.borrow_mut().insert(result));
                 Ok(anvyx_lang::Value::ExternHandle(anvyx_lang::ManagedRc::new(
-                    anvyx_lang::ExternHandleData { id, drop_fn: #cleanup_fn }
+                    anvyx_lang::ExternHandleData {
+                        id,
+                        drop_fn: #cleanup_fn,
+                        type_name: #decl.name,
+                        to_string_fn: #to_string_fn,
+                    }
                 )))
             })
         }
@@ -422,11 +429,18 @@ fn build_flat_call(call: &TokenStream, mode: &ReturnMode) -> syn::Result<TokenSt
         ReturnMode::ExternOwned(info) => {
             let store_ident = &info.store_ident;
             let cleanup_fn = &info.cleanup_fn_ident;
+            let decl = &info.decl_ident;
+            let to_string_fn = &info.to_string_fn_ident;
             Ok(quote! {
                 let result = #call;
                 let id = #store_ident.with(|__s| __s.borrow_mut().insert(result));
                 Ok(anvyx_lang::Value::ExternHandle(anvyx_lang::ManagedRc::new(
-                    anvyx_lang::ExternHandleData { id, drop_fn: #cleanup_fn }
+                    anvyx_lang::ExternHandleData {
+                        id,
+                        drop_fn: #cleanup_fn,
+                        type_name: #decl.name,
+                        to_string_fn: #to_string_fn,
+                    }
                 )))
             })
         }

@@ -1,0 +1,22 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// [Shape.Circle(3.14), Shape.Point]
+// Container(label: hello, shape: Shape.Point)
+// @match-end
+
+enum Shape {
+    Point,
+    Circle(float),
+}
+
+struct Container {
+    label: string,
+    shape: Shape,
+}
+
+fn main() {
+    let shapes = [Shape.Circle(3.14), Shape.Point];
+    println(shapes);
+    println(Container { label: "hello", shape: Shape.Point });
+}

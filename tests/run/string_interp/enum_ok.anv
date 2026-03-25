@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// Shape.Point
+// Shape.Circle(3.14)
+// @match-end
+
+enum Shape { Point, Circle(float) }
+
+fn main() {
+    println("{Shape.Point}");
+    println("{Shape.Circle(3.14)}");
+}

@@ -18,7 +18,7 @@ pub use metadata::{
     ExternTypeDecl, ExternTypeDeclConst, ExternFuncMeta, ExternProviderMeta, exports_to_json,
     parse_provider_json,
 };
-pub use vm::{EnumData, ExternHandleData, ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData, Value};
+pub use vm::{DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData, ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData, Value};
 
 pub struct StdModuleSource {
     pub anv_source: String,

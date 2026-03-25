@@ -1,8 +1,6 @@
 // @mode: run
 // @expect: success
-// @match-begin
-// 10
-// @match-end
+// @match: 10
 
 struct Point { x: int, y: int }
 

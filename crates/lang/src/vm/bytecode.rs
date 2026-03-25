@@ -74,6 +74,8 @@ pub enum Op {
     ListPop,   // pops list -> pushes popped or Nil, modified list
     MapInsert, // pops value, key, map -> pushes Nil, modified map
     MapRemove, // pops key, map -> pushes removed or Nil, modified map
+
+    ToString,
 }
 
 pub struct Chunk {

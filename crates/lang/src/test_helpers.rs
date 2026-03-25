@@ -118,5 +118,5 @@ pub(crate) fn hir_main_func(stmts: Vec<Stmt>) -> Func {
 }
 
 pub(crate) fn hir_program(func: Func) -> Program {
-    Program { funcs: vec![func], externs: vec![] }
+    Program { funcs: vec![func], externs: vec![], struct_meta: vec![], enum_meta: vec![] }
 }

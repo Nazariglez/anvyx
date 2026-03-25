@@ -6,6 +6,7 @@ use crate::hir;
 
 use super::bytecode::{Chunk, Op};
 use super::managed_rc::ManagedRc;
+use super::meta::{EnumMeta, StructMeta};
 use super::value::Value;
 
 #[derive(Debug)]
@@ -33,6 +34,8 @@ pub struct CompiledProgram {
     pub chunks: Vec<Chunk>,
     pub main_idx: usize,
     pub extern_names: Vec<String>,
+    pub struct_meta: Vec<StructMeta>,
+    pub enum_meta: Vec<EnumMeta>,
 }
 
 struct LoopState {
@@ -95,6 +98,8 @@ pub fn compile(hir: &hir::Program) -> Result<CompiledProgram, CompileError> {
         chunks,
         main_idx,
         extern_names,
+        struct_meta: hir.struct_meta.clone(),
+        enum_meta: hir.enum_meta.clone(),
     })
 }
 
@@ -484,6 +489,11 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             fc.emit(Op::MapEntryAt);
         }
 
+        hir::ExprKind::ToString(inner) => {
+            compile_expr(fc, inner)?;
+            fc.emit(Op::ToString);
+        }
+
         hir::ExprKind::CollectionMut { object, method, args } => {
             fc.emit(Op::GetLocal(object.0 as u16));
             for arg in args {
@@ -729,6 +739,8 @@ mod tests {
         let program = Program {
             funcs: vec![helper, main],
             externs: vec![],
+            struct_meta: vec![],
+            enum_meta: vec![],
         };
         let compiled = compile(&program).unwrap();
         assert_eq!(compiled.main_idx, 1);
@@ -742,6 +754,8 @@ mod tests {
         let program = Program {
             funcs: vec![simple_func("notmain", vec![], vec![], 0, Type::Void)],
             externs: vec![],
+            struct_meta: vec![],
+            enum_meta: vec![],
         };
         assert!(matches!(
             compile(&program),

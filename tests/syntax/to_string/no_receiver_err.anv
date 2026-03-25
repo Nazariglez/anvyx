@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: error
+// @contains: must have a 'self' receiver
+
+struct Foo {
+    x: int,
+
+    fn to_string() -> string {
+        "foo"
+    },
+}
+
+fn main() {
+    let f = Foo { x: 1 };
+}

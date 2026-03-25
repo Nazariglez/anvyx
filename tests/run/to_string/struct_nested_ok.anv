@@ -1,0 +1,15 @@
+// @mode: run
+// @expect: success
+// @match: Rect(origin: Point(x: 1, y: 2), size: Size(w: 10, h: 20))
+
+struct Point { x: int, y: int }
+struct Size { w: int, h: int }
+struct Rect { origin: Point, size: Size }
+
+fn main() {
+    let r = Rect {
+        origin: Point { x: 1, y: 2 },
+        size: Size { w: 10, h: 20 },
+    };
+    println(r);
+}

@@ -1,8 +1,6 @@
 // @mode: run
 // @expect: success
-// @match-begin
-// 42
-// @match-end
+// @match: 42
 
 fn main() {
     let x: int? = 42;

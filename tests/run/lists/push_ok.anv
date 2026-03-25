@@ -1,8 +1,6 @@
 // @mode: run
 // @expect: success
-// @match-begin
-// 4
-// @match-end
+// @match: 4
 
 fn main() {
     var list: [int] = [1, 2, 3];

@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: error
+// @contains: must take no parameters
+
+struct Foo {
+    x: int,
+
+    fn to_string(self, fmt: string) -> string {
+        fmt
+    },
+}
+
+fn main() {
+    let f = Foo { x: 1 };
+}
