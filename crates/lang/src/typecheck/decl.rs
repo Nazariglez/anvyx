@@ -43,7 +43,7 @@ pub(super) fn check_body_common(
         }
     } else if let Some(last_id) = last_expr_id {
         let expr_ref = TypeRef::Expr(last_id);
-        let ret_ref = TypeRef::Concrete(ret_ty.clone());
+        let ret_ref = TypeRef::concrete(ret_ty);
         type_checker.constrain_assignable(error_span, expr_ref, ret_ref, errors);
     } else if !had_explicit_return {
         errors.push(TypeErr::new(

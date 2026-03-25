@@ -165,8 +165,8 @@ fn check_coalesce(
     if right_ty.is_option() {
         let right_inner_ty = right_ty.option_inner().cloned().unwrap_or(Type::Infer);
         // constrain the inner types if both are optional
-        let left_inner_ref = TypeRef::Concrete(left_inner_ty.clone());
-        let right_inner_ref = TypeRef::Concrete(right_inner_ty);
+        let left_inner_ref = TypeRef::concrete(&left_inner_ty);
+        let right_inner_ref = TypeRef::concrete(&right_inner_ty);
         type_checker.constrain_equal(bin.span, left_inner_ref, right_inner_ref, errors);
 
         // get the unified inner type
@@ -183,7 +183,7 @@ fn check_coalesce(
     }
 
     // if right side is not optional then we're unwrapping or returning the right side
-    let left_inner_ref = TypeRef::Concrete(left_inner_ty.clone());
+    let left_inner_ref = TypeRef::concrete(&left_inner_ty);
     type_checker.constrain_equal(bin.span, left_inner_ref, right_ref.clone(), errors);
 
     // get the unified inner type

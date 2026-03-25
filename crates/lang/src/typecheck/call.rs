@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         CallNode, ExprKind, ExprNode, FieldAccessNode, FuncNode, Ident, MethodReceiver, Mutability,
-        Type, TypeParam, TypeVarId, VariantKind,
+        Type, TypeParam, VariantKind,
     },
     span::Span,
 };
@@ -14,7 +14,7 @@ use super::{
     error::{TypeErr, TypeErrKind},
     expr::{check_expr, root_ident},
     infer::{
-        build_param_ref, constrain_slots_from_type, create_inference_slots,
+        build_param_ref, build_subst, constrain_slots_from_type, create_inference_slots,
         infer_type_args_from_call, instantiate_func_type, subst_type,
     },
     types::{
@@ -248,11 +248,7 @@ fn check_generic_call(
             return Type::Infer;
         }
 
-        let subst: HashMap<TypeVarId, _> = type_params
-            .iter()
-            .zip(node.type_args.iter())
-            .map(|(param, arg)| (param.id, arg.clone()))
-            .collect();
+        let subst = build_subst(type_params, &node.type_args);
 
         for (arg_expr, param_ty) in node.args.iter().zip(params.iter()) {
             let instantiated = subst_type(param_ty, &subst);
@@ -379,7 +375,7 @@ fn check_and_constrain_arg(
 ) {
     check_expr(arg_expr, type_checker, errors, None);
     let arg_ref = TypeRef::Expr(arg_expr.node.id);
-    let param_ref = TypeRef::Concrete(param_ty.clone());
+    let param_ref = TypeRef::concrete(param_ty);
     type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
 }
 
@@ -410,7 +406,7 @@ fn check_call_signature(
     for (arg_expr, param_ty) in args.iter().zip(param_types.iter()) {
         check_expr(arg_expr, type_checker, errors, None);
         let arg_ref = TypeRef::Expr(arg_expr.node.id);
-        let param_ref = TypeRef::Concrete(param_ty.clone());
+        let param_ref = TypeRef::concrete(param_ty);
         type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
     }
 
@@ -753,7 +749,7 @@ fn check_enum_tuple_variant(
             build_param_ref(expected_ty, &slots, type_checker)
         } else {
             let resolved = type_checker.resolve_type(expected_ty);
-            TypeRef::Concrete(resolved)
+            TypeRef::concrete(&resolved)
         };
         type_checker.constrain_assignable(arg_expr.span, arg_ref, expected_ref, errors);
     }
@@ -957,12 +953,7 @@ pub(super) fn check_static_method_call(
             return Type::Infer;
         };
 
-        let subst: HashMap<TypeVarId, Type> = struct_def
-            .type_params
-            .iter()
-            .zip(inferred_type_args.iter())
-            .map(|(param, arg)| (param.id, arg.clone()))
-            .collect();
+        let subst = build_subst(&struct_def.type_params, &inferred_type_args);
 
         let ret_ty = subst_type(&method.ret, &subst);
 
@@ -1015,12 +1006,7 @@ fn check_generic_instance_method(
     let node = &call.node;
 
     // apply struct substitution first, leaving method type vars in place
-    let struct_subst: HashMap<TypeVarId, Type> = struct_def
-        .type_params
-        .iter()
-        .zip(type_args.iter())
-        .map(|(param, arg)| (param.id, arg.clone()))
-        .collect();
+    let struct_subst = build_subst(&struct_def.type_params, type_args);
 
     let partially_subst_params: Vec<Type> = method
         .params
@@ -1043,13 +1029,8 @@ fn check_generic_instance_method(
             return Type::Infer;
         }
 
-        let combined_subst: HashMap<TypeVarId, Type> = struct_def
-            .type_params
-            .iter()
-            .zip(type_args.iter())
-            .chain(method.type_params.iter().zip(node.type_args.iter()))
-            .map(|(param, arg)| (param.id, arg.clone()))
-            .collect();
+        let mut combined_subst = build_subst(&struct_def.type_params, type_args);
+        combined_subst.extend(build_subst(&method.type_params, &node.type_args));
 
         for (arg_expr, param_ty) in node.args.iter().zip(partially_subst_params.iter()) {
             let instantiated = subst_type(param_ty, &combined_subst);
@@ -1157,12 +1138,7 @@ pub(super) fn check_instance_method_call(
         );
     }
 
-    let subst: HashMap<TypeVarId, Type> = struct_def
-        .type_params
-        .iter()
-        .zip(type_args.iter())
-        .map(|(param, arg)| (param.id, arg.clone()))
-        .collect();
+    let subst = build_subst(&struct_def.type_params, type_args);
 
     let param_types: Vec<Type> = method
         .params
@@ -1388,11 +1364,7 @@ fn instantiate_and_check_fn(
     }
 
     // build substitution map to convert TypeVarId -> concrete Type
-    let subst: HashMap<TypeVarId, Type> = type_params
-        .iter()
-        .zip(type_args.iter())
-        .map(|(param, arg)| (param.id, arg.clone()))
-        .collect();
+    let subst = build_subst(&type_params, type_args);
 
     let func = &fn_template.node;
 
@@ -1507,13 +1479,8 @@ fn instantiate_method_body(
         return cached.ret_ty.clone();
     }
 
-    let subst: HashMap<TypeVarId, Type> = struct_def
-        .type_params
-        .iter()
-        .zip(struct_type_args.iter())
-        .chain(method.type_params.iter().zip(method_type_args.iter()))
-        .map(|(param, arg)| (param.id, arg.clone()))
-        .collect();
+    let mut subst = build_subst(&struct_def.type_params, struct_type_args);
+    subst.extend(build_subst(&method.type_params, method_type_args));
 
     let specialized_param_types: Vec<Type> = method
         .params
@@ -1626,7 +1593,7 @@ pub(super) fn type_call_on_base(
     // constrain argument types
     for (arg_expr, param_ty) in call_node.node.args.iter().zip(params.iter()) {
         let arg_ref = TypeRef::Expr(arg_expr.node.id);
-        let param_ref = TypeRef::Concrete(param_ty.clone());
+        let param_ref = TypeRef::concrete(param_ty);
         type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
     }
 

@@ -64,6 +64,17 @@ pub fn subst_type(ty: &Type, subst: &HashMap<TypeVarId, Type>) -> Type {
     }
 }
 
+pub(super) fn build_subst(
+    type_params: &[TypeParam],
+    type_args: &[Type],
+) -> HashMap<TypeVarId, Type> {
+    type_params
+        .iter()
+        .zip(type_args.iter())
+        .map(|(param, arg)| (param.id, arg.clone()))
+        .collect()
+}
+
 /// Instantiates a generic function type with explicit type arguments
 pub(super) fn instantiate_func_type(
     type_params: &[TypeParam],
@@ -84,11 +95,7 @@ pub(super) fn instantiate_func_type(
         return None;
     }
 
-    let subst = type_params
-        .iter()
-        .zip(type_args.iter())
-        .map(|(param, arg)| (param.id, arg.clone()))
-        .collect();
+    let subst = build_subst(type_params, type_args);
 
     Some(subst_type(template, &subst))
 }
@@ -127,7 +134,7 @@ pub(super) fn build_param_ref(
             .get(id)
             .cloned()
             .map(TypeRef::Var)
-            .unwrap_or_else(|| TypeRef::Concrete(ty.clone())),
+            .unwrap_or_else(|| TypeRef::concrete(ty)),
         _ => {
             let subst: HashMap<TypeVarId, Type> = slots
                 .iter()
@@ -136,7 +143,8 @@ pub(super) fn build_param_ref(
                     Some((*var_id, slot_ty))
                 })
                 .collect();
-            TypeRef::Concrete(subst_type(ty, &subst))
+            let resolved = subst_type(ty, &subst);
+            TypeRef::concrete(&resolved)
         }
     }
 }
@@ -243,7 +251,7 @@ pub(super) fn constrain_slots_from_type(
         (Type::Var(id), _) => {
             if let Some(slot_name) = slots.get(id) {
                 let slot_ref = TypeRef::Var(*slot_name);
-                let expected_ref = TypeRef::Concrete(expected.clone());
+                let expected_ref = TypeRef::concrete(expected);
                 type_checker.constrain_equal(span, slot_ref, expected_ref, errors);
             }
         }

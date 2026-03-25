@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         ArrayFillNode, ArrayLen, ArrayLiteralNode, ExprKind, ExprNode, Ident, Lit, MapLiteralNode,
-        RangeNode, StructField, StructLiteralNode, TupleIndexNode, Type, VariantKind,
+        RangeNode, StructField, StructLiteralNode, TupleIndexNode, Type, TypeParam, VariantKind,
     },
     span::Span,
 };
@@ -13,7 +13,7 @@ use super::{
     expr::check_expr,
     infer::{build_param_ref, constrain_slots_from_type, create_inference_slots},
     range::{range_inclusive_type, range_type},
-    types::{ExternTypeDef, TypeChecker, validate_map_key_type},
+    types::{ExternTypeDef, InferenceSlots, TypeChecker, validate_map_key_type},
 };
 
 pub(super) fn check_tuple(
@@ -95,6 +95,51 @@ pub(super) fn validate_field_names<'a>(
     results
 }
 
+fn constrain_fields_and_extract_type_args(
+    fields: &[(Ident, ExprNode)],
+    matched: &[Option<&StructField>],
+    type_params: &[TypeParam],
+    slots: &InferenceSlots,
+    is_generic: bool,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Vec<Type> {
+    for ((_, field_expr), matched_def) in fields.iter().zip(matched.iter()) {
+        let Some(expected) = matched_def else {
+            continue;
+        };
+        let field_ref = TypeRef::Expr(field_expr.node.id);
+        let expected_ref = if is_generic {
+            if let Some((_, field_ty)) = type_checker.get_type(field_expr.node.id) {
+                let field_ty = field_ty.clone();
+                constrain_slots_from_type(
+                    &expected.ty, &field_ty, slots, field_expr.span, type_checker, errors,
+                );
+            }
+            build_param_ref(&expected.ty, slots, type_checker)
+        } else {
+            let resolved = type_checker.resolve_type(&expected.ty);
+            TypeRef::concrete(&resolved)
+        };
+        type_checker.constrain_assignable(field_expr.span, field_ref, expected_ref, errors);
+    }
+
+    if is_generic {
+        type_params
+            .iter()
+            .map(|param| {
+                let slot_name = slots.get(&param.id).expect("slot exists");
+                type_checker
+                    .get_var(*slot_name)
+                    .map(|info| info.ty.clone())
+                    .unwrap_or(Type::Infer)
+            })
+            .collect()
+    } else {
+        vec![]
+    }
+}
+
 pub(super) fn check_struct_lit(
     lit_node: &StructLiteralNode,
     type_checker: &mut TypeChecker,
@@ -121,12 +166,12 @@ pub(super) fn check_struct_lit(
     };
 
     let is_generic = !struct_def.type_params.is_empty();
-    let slots = is_generic
-        .then(|| {
-            let call_id = type_checker.next_call_id();
-            create_inference_slots(&struct_def.type_params, type_checker, call_id)
-        })
-        .unwrap_or_default();
+    let slots = if is_generic {
+        let call_id = type_checker.next_call_id();
+        create_inference_slots(&struct_def.type_params, type_checker, call_id)
+    } else {
+        Default::default()
+    };
 
     // typecheck all field expressions before name validation
     for (_, field_expr) in &lit.fields {
@@ -144,40 +189,15 @@ pub(super) fn check_struct_lit(
         errors,
     );
 
-    for ((_, field_expr), matched_def) in lit.fields.iter().zip(matched.iter()) {
-        let Some(expected) = matched_def else {
-            continue;
-        };
-        let field_ref = TypeRef::Expr(field_expr.node.id);
-        let expected_ref = if is_generic {
-            if let Some((_, field_ty)) = type_checker.get_type(field_expr.node.id) {
-                let field_ty = field_ty.clone();
-                constrain_slots_from_type(
-                    &expected.ty, &field_ty, &slots, field_expr.span, type_checker, errors,
-                );
-            }
-            build_param_ref(&expected.ty, &slots, type_checker)
-        } else {
-            TypeRef::Concrete(type_checker.resolve_type(&expected.ty))
-        };
-        type_checker.constrain_assignable(field_expr.span, field_ref, expected_ref, errors);
-    }
-
-    let type_args = is_generic
-        .then(|| {
-            struct_def
-                .type_params
-                .iter()
-                .map(|param| {
-                    let slot_name = slots.get(&param.id).expect("slot exists");
-                    type_checker
-                        .get_var(*slot_name)
-                        .map(|info| info.ty.clone())
-                        .unwrap_or(Type::Infer)
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let type_args = constrain_fields_and_extract_type_args(
+        &lit.fields,
+        &matched,
+        &struct_def.type_params,
+        &slots,
+        is_generic,
+        type_checker,
+        errors,
+    );
 
     Type::Struct {
         name: struct_name,
@@ -229,7 +249,8 @@ fn check_extern_init_lit(
     for ((_, field_expr), matched_def) in lit.fields.iter().zip(matched.iter()) {
         let Some(expected) = matched_def else { continue };
         let field_ref = TypeRef::Expr(field_expr.node.id);
-        let expected_ref = TypeRef::Concrete(type_checker.resolve_type(&expected.ty));
+        let resolved = type_checker.resolve_type(&expected.ty);
+        let expected_ref = TypeRef::concrete(&resolved);
         type_checker.constrain_assignable(field_expr.span, field_ref, expected_ref, errors);
     }
 
@@ -411,7 +432,7 @@ pub(super) fn check_map_literal(
     for (key_expr, value_expr) in entries {
         // check for duplicate literal keys
         if let ExprKind::Lit(lit_key) = &key_expr.node.kind {
-            let is_duplicate = seen_literal_keys.iter().any(|k| *k == lit_key);
+            let is_duplicate = seen_literal_keys.contains(&lit_key);
             if is_duplicate {
                 errors.push(TypeErr::new(key_expr.span, TypeErrKind::MapDuplicateKey));
             } else {
@@ -498,12 +519,12 @@ fn check_enum_struct_variant(
     };
 
     let is_generic = !enum_def.type_params.is_empty();
-    let slots = is_generic
-        .then(|| {
-            let call_id = type_checker.next_call_id();
-            create_inference_slots(&enum_def.type_params, type_checker, call_id)
-        })
-        .unwrap_or_default();
+    let slots = if is_generic {
+        let call_id = type_checker.next_call_id();
+        create_inference_slots(&enum_def.type_params, type_checker, call_id)
+    } else {
+        Default::default()
+    };
 
     // typecheck all field expressions before name validation
     for (_, field_expr) in &lit.fields {
@@ -533,40 +554,15 @@ fn check_enum_struct_variant(
         errors,
     );
 
-    for ((_, field_expr), matched_def) in lit.fields.iter().zip(matched.iter()) {
-        let Some(expected) = matched_def else {
-            continue;
-        };
-        let field_ref = TypeRef::Expr(field_expr.node.id);
-        let expected_ref = if is_generic {
-            if let Some((_, field_ty)) = type_checker.get_type(field_expr.node.id) {
-                let field_ty = field_ty.clone();
-                constrain_slots_from_type(
-                    &expected.ty, &field_ty, &slots, field_expr.span, type_checker, errors,
-                );
-            }
-            build_param_ref(&expected.ty, &slots, type_checker)
-        } else {
-            TypeRef::Concrete(type_checker.resolve_type(&expected.ty))
-        };
-        type_checker.constrain_assignable(field_expr.span, field_ref, expected_ref, errors);
-    }
-
-    let type_args = is_generic
-        .then(|| {
-            enum_def
-                .type_params
-                .iter()
-                .map(|param| {
-                    let slot_name = slots.get(&param.id).expect("slot exists");
-                    type_checker
-                        .get_var(*slot_name)
-                        .map(|info| info.ty.clone())
-                        .unwrap_or(Type::Infer)
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let type_args = constrain_fields_and_extract_type_args(
+        &lit.fields,
+        &matched,
+        &enum_def.type_params,
+        &slots,
+        is_generic,
+        type_checker,
+        errors,
+    );
 
     Type::Enum {
         name: enum_name,

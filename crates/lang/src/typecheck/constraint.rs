@@ -16,6 +16,12 @@ pub(super) enum TypeRef {
     Concrete(Type),
 }
 
+impl TypeRef {
+    pub(super) fn concrete(ty: &Type) -> Self {
+        TypeRef::Concrete(ty.clone())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct Constraint {
     pub span: Span,

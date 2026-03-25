@@ -1,11 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use crate::ast::{Ident, Pattern, PatternNode, Type, TypeParam, TypeVarId, VariantKind};
+use crate::ast::{Ident, Pattern, PatternNode, Type, VariantKind};
 
 use super::{
     composite::validate_field_names,
     error::{TypeErr, TypeErrKind},
-    infer::subst_type,
+    infer::{build_subst, subst_type},
     types::{EnumDef, TypeChecker},
 };
 
@@ -291,7 +291,7 @@ fn check_enum_pattern(
                 return;
             }
 
-            let subst = build_type_subst(&enum_def.type_params, type_args);
+            let subst = build_subst(&enum_def.type_params, type_args);
 
             for (subpat, expected_ty) in fields.iter().zip(expected_types.iter()) {
                 let resolved_ty = subst_type(expected_ty, &subst);
@@ -386,7 +386,7 @@ fn check_enum_struct_pattern(
         return;
     };
 
-    let subst = build_type_subst(&enum_def.type_params, type_args);
+    let subst = build_subst(&enum_def.type_params, type_args);
 
     let provided: Vec<(Ident, _)> = fields.iter().map(|(n, _)| (*n, pattern.span)).collect();
     let matched = validate_field_names(
@@ -469,7 +469,7 @@ fn check_struct_destructure_pattern(
                 continue;
             };
             let resolved_ty = if let Type::Struct { type_args, .. } = value_ty {
-                let subst = build_type_subst(&struct_def.type_params, type_args);
+                let subst = build_subst(&struct_def.type_params, type_args);
                 subst_type(&field_def.ty, &subst)
             } else {
                 field_def.ty.clone()
@@ -526,10 +526,3 @@ fn check_struct_destructure_pattern(
     ));
 }
 
-fn build_type_subst(type_params: &[TypeParam], type_args: &[Type]) -> HashMap<TypeVarId, Type> {
-    type_params
-        .iter()
-        .zip(type_args.iter())
-        .map(|(param, arg)| (param.id, arg.clone()))
-        .collect()
-}

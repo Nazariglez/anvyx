@@ -662,7 +662,7 @@ pub(super) fn check_binding(
                 update_array_literal_typ(&node.value, &resolved_annot, type_checker);
             }
 
-            let annot_ref = TypeRef::Concrete(resolved_annot.clone());
+            let annot_ref = TypeRef::concrete(&resolved_annot);
             type_checker.constrain_assignable(binding.span, val_ref, annot_ref, errors);
 
             resolved_annot
@@ -821,7 +821,7 @@ pub(super) fn check_ret(
         (Some(value_expr), expected_ty) => {
             check_expr(value_expr, type_checker, errors, Some(expected_ty));
             let expr_ref = TypeRef::Expr(value_expr.node.id);
-            let ret_ref = TypeRef::Concrete(expected_ty.clone());
+            let ret_ref = TypeRef::concrete(expected_ty);
             type_checker.constrain_assignable(ret.span, expr_ref, ret_ref, errors);
         }
 
