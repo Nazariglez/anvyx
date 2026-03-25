@@ -14,9 +14,9 @@ pub mod metadata;
 
 pub use anvyx_macros::{export_fn, export_methods, export_type, provider};
 pub use metadata::{
-    ExternDecl, ExternFieldDecl, ExternMethodDecl, ExternStaticMethodDecl,
-    ExternTypeDecl, ExternTypeDeclConst, ExternFuncMeta, ExternProviderMeta, exports_to_json,
-    parse_provider_json,
+    ExternDecl, ExternFieldDecl, ExternMethodDecl, ExternOpDecl, ExternOpMeta,
+    ExternStaticMethodDecl, ExternTypeDecl, ExternTypeDeclConst, ExternFuncMeta,
+    ExternProviderMeta, exports_to_json, parse_provider_json,
 };
 pub use vm::{DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData, ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData, Value};
 

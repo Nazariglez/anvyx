@@ -17,7 +17,8 @@ impl StdModule {
             let has_members = ty.has_init
                 || !ty.fields.is_empty()
                 || !ty.methods.is_empty()
-                || !ty.statics.is_empty();
+                || !ty.statics.is_empty()
+                || !ty.operators.is_empty();
             if !has_members {
                 out.push_str("extern type ");
                 out.push_str(ty.name);
@@ -77,6 +78,53 @@ impl StdModule {
                     }
                     out.push_str(";\n");
                 }
+                for op in &ty.operators {
+                    let sym = match op.op {
+                        "Add" => "+",
+                        "Sub" => "-",
+                        "Mul" => "*",
+                        "Div" => "/",
+                        "Rem" => "%",
+                        "Eq" => "==",
+                        "Neg" => "-",
+                        other => panic!("unknown operator: {other}"),
+                    };
+                    let as_self = |s: &'static str| -> &'static str {
+                        if s == ty.name { "Self" } else { s }
+                    };
+                    let ret_str = as_self(op.ret);
+                    match (op.rhs, op.lhs) {
+                        (None, None) => {
+                            // unary
+                            out.push_str("    op -Self -> ");
+                            out.push_str(ret_str);
+                            out.push_str(";\n");
+                        }
+                        (Some(rhs), None) => {
+                            // Self op rhs -> ret
+                            out.push_str("    op Self ");
+                            out.push_str(sym);
+                            out.push(' ');
+                            out.push_str(as_self(rhs));
+                            out.push_str(" -> ");
+                            out.push_str(ret_str);
+                            out.push_str(";\n");
+                        }
+                        (None, Some(lhs)) => {
+                            // lhs op Self -> ret
+                            out.push_str("    op ");
+                            out.push_str(as_self(lhs));
+                            out.push(' ');
+                            out.push_str(sym);
+                            out.push_str(" Self -> ");
+                            out.push_str(ret_str);
+                            out.push_str(";\n");
+                        }
+                        (Some(_), Some(_)) => {
+                            panic!("ExternOpDecl cannot have both rhs and lhs set");
+                        }
+                    }
+                }
                 out.push_str("}\n");
             }
         }
@@ -108,8 +156,9 @@ impl StdModule {
 }
 
 pub fn std_modules() -> Vec<StdModule> {
-    vec![math::module(), maps::module()]
+    vec![math::module(), maps::module(), linalg::module()]
 }
 
+mod linalg;
 mod maps;
 mod math;

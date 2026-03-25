@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ast::{self, BinaryOp, Ident, Stmt, Type};
+use crate::ast::{self, BinaryOp, Ident, Stmt, Type, UnaryOp};
 use crate::hir;
 use crate::span::Span;
 use crate::typecheck::ExternTypeDef;
@@ -37,6 +37,45 @@ pub(super) fn register_extern_decl(
         params,
         ret,
     });
+}
+
+fn binary_op_key_str(op: BinaryOp) -> &'static str {
+    match op {
+        BinaryOp::Add => "add",
+        BinaryOp::Sub => "sub",
+        BinaryOp::Mul => "mul",
+        BinaryOp::Div => "div",
+        BinaryOp::Rem => "rem",
+        BinaryOp::Eq => "eq",
+        _ => unreachable!("unsupported extern binary op: {op}"),
+    }
+}
+
+fn unary_op_key_str(op: UnaryOp) -> &'static str {
+    match op {
+        UnaryOp::Neg => "neg",
+        _ => unreachable!("unsupported extern unary op: {op}"),
+    }
+}
+
+pub(super) fn extern_binary_op_key(
+    type_name: Ident,
+    op: BinaryOp,
+    other_ty: &Type,
+    self_on_right: bool,
+) -> Ident {
+    let op_str = binary_op_key_str(op);
+    let other = other_ty.to_string();
+    if self_on_right {
+        Ident(Intern::new(format!("{type_name}::__op_r{op_str}__{other}")))
+    } else {
+        Ident(Intern::new(format!("{type_name}::__op_{op_str}__{other}")))
+    }
+}
+
+pub(super) fn extern_unary_op_key(type_name: Ident, op: UnaryOp) -> Ident {
+    let op_str = unary_op_key_str(op);
+    Ident(Intern::new(format!("{type_name}::__op_{op_str}")))
 }
 
 pub(super) fn register_extern_type_members(
@@ -106,6 +145,35 @@ pub(super) fn register_extern_type_members(
             init_name,
             params,
             Type::Extern { name: type_name },
+            next_extern_id,
+            externs,
+            extern_decls,
+        );
+    }
+
+    for op_def in &extern_def.operators {
+        let key = extern_binary_op_key(type_name, op_def.op, &op_def.other_ty, op_def.self_on_right);
+        let params = if op_def.self_on_right {
+            vec![op_def.other_ty.clone(), Type::Extern { name: type_name }]
+        } else {
+            vec![Type::Extern { name: type_name }, op_def.other_ty.clone()]
+        };
+        register_extern_decl(
+            key,
+            params,
+            op_def.ret.clone(),
+            next_extern_id,
+            externs,
+            extern_decls,
+        );
+    }
+
+    for op_def in &extern_def.unary_operators {
+        let key = extern_unary_op_key(type_name, op_def.op);
+        register_extern_decl(
+            key,
+            vec![Type::Extern { name: type_name }],
+            op_def.ret.clone(),
             next_extern_id,
             externs,
             extern_decls,

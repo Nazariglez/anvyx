@@ -49,6 +49,109 @@ struct BorrowParam {
     is_mut: bool,
 }
 
+enum OpKind {
+    Binary {
+        op: &'static str,
+        lhs: String,
+        rhs: String,
+    },
+    Unary {
+        op: &'static str,
+    },
+}
+
+struct OpAnnotation {
+    kind: OpKind,
+    self_on_right: bool,
+}
+
+fn parse_op_annotation(tokens: TokenStream) -> syn::Result<OpAnnotation> {
+    use proc_macro2::TokenTree;
+
+    let tts: Vec<TokenTree> = tokens.into_iter().collect();
+    let err = |msg: &str| syn::Error::new(proc_macro2::Span::call_site(), msg);
+
+    match tts.len() {
+        2 => {
+            let is_neg = matches!(&tts[0], TokenTree::Punct(p) if p.as_char() == '-');
+            let is_self = matches!(&tts[1], TokenTree::Ident(i) if i == "Self");
+            if is_neg && is_self {
+                return Ok(OpAnnotation {
+                    kind: OpKind::Unary { op: "neg" },
+                    self_on_right: false,
+                });
+            }
+            Err(err("invalid unary #[op(...)] syntax; expected `-Self`"))
+        }
+        3 => {
+            let lhs = match &tts[0] {
+                TokenTree::Ident(i) => i.to_string(),
+                _ => return Err(err("expected identifier for left operand")),
+            };
+            let op = match &tts[1] {
+                TokenTree::Punct(p) => match p.as_char() {
+                    '+' => "add",
+                    '-' => "sub",
+                    '*' => "mul",
+                    '/' => "div",
+                    '%' => "rem",
+                    c => return Err(err(&format!("unsupported operator '{c}'"))),
+                },
+                _ => return Err(err("expected operator")),
+            };
+            let rhs = match &tts[2] {
+                TokenTree::Ident(i) => i.to_string(),
+                _ => return Err(err("expected identifier for right operand")),
+            };
+            let lhs_is_self = lhs == "Self";
+            let rhs_is_self = rhs == "Self";
+            if !lhs_is_self && !rhs_is_self {
+                return Err(err("at least one operand must be `Self`"));
+            }
+            Ok(OpAnnotation {
+                kind: OpKind::Binary { op, lhs, rhs },
+                self_on_right: !lhs_is_self && rhs_is_self,
+            })
+        }
+        4 => {
+            let lhs = match &tts[0] {
+                TokenTree::Ident(i) => i.to_string(),
+                _ => return Err(err("expected identifier for left operand")),
+            };
+            let c1 = match &tts[1] {
+                TokenTree::Punct(p) => p.as_char(),
+                _ => return Err(err("expected two-char operator")),
+            };
+            let c2 = match &tts[2] {
+                TokenTree::Punct(p) => p.as_char(),
+                _ => return Err(err("expected two-char operator")),
+            };
+            let rhs = match &tts[3] {
+                TokenTree::Ident(i) => i.to_string(),
+                _ => return Err(err("expected identifier for right operand")),
+            };
+            match (c1, c2) {
+                ('=', '=') => {
+                    let lhs_is_self = lhs == "Self";
+                    let rhs_is_self = rhs == "Self";
+                    if !lhs_is_self && !rhs_is_self {
+                        return Err(err("at least one operand must be `Self`"));
+                    }
+                    Ok(OpAnnotation {
+                        kind: OpKind::Binary { op: "eq", lhs, rhs },
+                        self_on_right: !lhs_is_self && rhs_is_self,
+                    })
+                }
+                ('!', '=') => Err(err(
+                    "`!=` is auto-derived from `==` and cannot be declared separately",
+                )),
+                _ => Err(err("unsupported two-char operator; expected `==`")),
+            }
+        }
+        _ => Err(err("invalid #[op(...)] syntax")),
+    }
+}
+
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     match do_expand(attr, item.clone()) {
         Ok(ts) => ts,
@@ -88,6 +191,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let store_ident = format_ident!("__ANVYX_STORE_{}", type_upper);
     let methods_decl_ident = format_ident!("__ANVYX_METHODS_DECL_{}", type_upper);
     let statics_decl_ident = format_ident!("__ANVYX_STATICS_DECL_{}", type_upper);
+    let ops_decl_ident = format_ident!("__ANVYX_OPS_DECL_{}", type_upper);
     let type_decl_ident = format_ident!("__ANVYX_TYPE_DECL_{}", type_upper);
     let companion_fn_ident = format_ident!("__anvyx_methods_{}", rust_type_ident);
 
@@ -107,10 +211,19 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         convert_extracted: TokenStream,
     }
 
+    struct OpInfo {
+        op_cap: &'static str,
+        other_type: String,
+        is_unary: bool,
+        op_sym: &'static str,
+    }
+
     let mut method_handler_fns = vec![];
     let mut method_handler_calls = vec![];
     let mut method_decls = vec![];
     let mut static_decls = vec![];
+    let mut op_decls: Vec<TokenStream> = vec![];
+    let mut seen_ops: Vec<(&'static str, String, bool)> = vec![];
     let mut getters: Vec<GetterInfo> = vec![];
     let mut found_init = false;
     let mut init_field_decls: Vec<TokenStream> = vec![];
@@ -124,6 +237,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         let has_getter = method.attrs.iter().any(|a| a.path().is_ident("getter"));
         let has_setter = method.attrs.iter().any(|a| a.path().is_ident("setter"));
         let has_init_attr = method.attrs.iter().any(|a| a.path().is_ident("init"));
+        let has_op = method.attrs.iter().any(|a| a.path().is_ident("op"));
 
         if has_init_attr {
             if found_init {
@@ -142,15 +256,11 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             let method_ident = &method.sig.ident;
             let method_name_str = method_ident.to_string();
             let handler_key = format!("{}::__init__", anvyx_name_str);
-            let handler_fn_ident =
-                format_ident!("__anvyx_method_{}___init__", rust_type_str);
+            let handler_fn_ident = format_ident!("__anvyx_method_{}___init__", rust_type_str);
 
             let resolved_output = resolve_self_in_return(&method.sig.output, &rust_type_ident);
             let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
-                syn::Error::new_spanned(
-                    &method.sig.output,
-                    "#[init] method must return Self",
-                )
+                syn::Error::new_spanned(&method.sig.output, "#[init] method must return Self")
             })?;
             let self_store_str = store_ident.to_string();
             let returns_self = matches!(&ret_mode, ReturnMode::ExternOwned(info) if info.store_ident.to_string() == self_store_str);
@@ -172,7 +282,9 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             let mut param_names = vec![];
 
             for (i, arg) in non_self_params.iter().enumerate() {
-                let FnArg::Typed(pat_type) = arg else { unreachable!() };
+                let FnArg::Typed(pat_type) = arg else {
+                    unreachable!()
+                };
                 let param_name = match &*pat_type.pat {
                     Pat::Ident(pi) => pi.ident.clone(),
                     other => {
@@ -343,6 +455,321 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 extract_variant,
                 convert_extracted,
             });
+            continue;
+        }
+
+        if has_op {
+            let op_attr = method
+                .attrs
+                .iter()
+                .find(|a| a.path().is_ident("op"))
+                .unwrap();
+            let op_tokens = match &op_attr.meta {
+                syn::Meta::List(list) => list.tokens.clone(),
+                _ => {
+                    return Err(syn::Error::new_spanned(op_attr, "expected #[op(...)]"));
+                }
+            };
+            let op_ann = parse_op_annotation(op_tokens)?;
+
+            let kind = classify_method_kind(&method.sig)?;
+            if !matches!(kind, MethodKind::Borrowing) {
+                return Err(syn::Error::new_spanned(
+                    &method.sig,
+                    "#[op] method must take `&self`",
+                ));
+            }
+
+            let method_ident = &method.sig.ident;
+
+            let non_self_params: Vec<_> = method
+                .sig
+                .inputs
+                .iter()
+                .filter(|arg| matches!(arg, FnArg::Typed(_)))
+                .collect();
+
+            let self_on_right = op_ann.self_on_right;
+            let (handler_key, ident_component, op_info) = match op_ann.kind {
+                OpKind::Binary { op, lhs, rhs } => {
+                    if non_self_params.len() != 1 {
+                        return Err(syn::Error::new_spanned(
+                            &method.sig,
+                            "#[op] binary operator method must have exactly one non-self parameter",
+                        ));
+                    }
+                    let op_cap = op_to_capitalized(op);
+                    let op_sym = op_to_symbol(op);
+                    if self_on_right {
+                        let lhs_r = if lhs == "Self" {
+                            anvyx_name_str.clone()
+                        } else {
+                            lhs
+                        };
+                        (
+                            format!("{}::__op_r{}__{}", anvyx_name_str, op, lhs_r),
+                            format!("__op_r{}__{}", op, lhs_r),
+                            OpInfo {
+                                op_cap,
+                                other_type: lhs_r,
+                                is_unary: false,
+                                op_sym,
+                            },
+                        )
+                    } else {
+                        let rhs_r = if rhs == "Self" {
+                            anvyx_name_str.clone()
+                        } else {
+                            rhs
+                        };
+                        (
+                            format!("{}::__op_{}__{}", anvyx_name_str, op, rhs_r),
+                            format!("__op_{}__{}", op, rhs_r),
+                            OpInfo {
+                                op_cap,
+                                other_type: rhs_r,
+                                is_unary: false,
+                                op_sym,
+                            },
+                        )
+                    }
+                }
+                OpKind::Unary { op } => {
+                    if !non_self_params.is_empty() {
+                        return Err(syn::Error::new_spanned(
+                            &method.sig,
+                            "#[op] unary operator method must have no non-self parameters",
+                        ));
+                    }
+                    let op_cap = op_to_capitalized(op);
+                    let op_sym = op_to_symbol(op);
+                    (
+                        format!("{}::__op_{}", anvyx_name_str, op),
+                        format!("__op_{}", op),
+                        OpInfo {
+                            op_cap,
+                            other_type: String::new(),
+                            is_unary: true,
+                            op_sym,
+                        },
+                    )
+                }
+            };
+
+            // duplicate op detection
+            let dup_key = (op_info.op_cap, op_info.other_type.clone(), self_on_right);
+            if seen_ops.contains(&dup_key) {
+                let sym = op_info.op_sym;
+                let msg = if op_info.is_unary {
+                    format!("duplicate operator `{sym}Self`")
+                } else {
+                    let lhs_display = if self_on_right {
+                        op_info.other_type.as_str()
+                    } else {
+                        anvyx_name_str.as_str()
+                    };
+                    let rhs_display = if self_on_right {
+                        anvyx_name_str.as_str()
+                    } else {
+                        op_info.other_type.as_str()
+                    };
+                    format!("duplicate operator `{sym}` for `({lhs_display}, {rhs_display})`")
+                };
+                return Err(syn::Error::new_spanned(op_attr, msg));
+            }
+            seen_ops.push(dup_key);
+
+            let handler_fn_ident =
+                format_ident!("__anvyx_method_{}_{}", rust_type_str, ident_component);
+
+            let resolved_output = resolve_self_in_return(&method.sig.output, &rust_type_ident);
+            let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
+                syn::Error::new_spanned(&method.sig.output, "unsupported return type in #[op]")
+            })?;
+
+            // == must return bool
+            if op_info.op_cap == "Eq" {
+                let is_bool =
+                    matches!(&ret_mode, ReturnMode::Primitive(m) if m.anvyx_type == "bool");
+                if !is_bool {
+                    return Err(syn::Error::new_spanned(
+                        &method.sig.output,
+                        "#[op(Self == T)] must return bool",
+                    ));
+                }
+            }
+
+            // collect op metadata for __ANVYX_OPS_DECL_ const
+            let returns_self = matches!(&ret_mode, ReturnMode::ExternOwned(info) if info.store_ident == store_ident);
+            let ret_anvyx = build_ret_anvyx_str(&ret_mode, returns_self, &type_decl_ident);
+            let op_cap_str = op_info.op_cap;
+            let other_type_str = &op_info.other_type;
+            if op_info.is_unary {
+                op_decls.push(quote! {
+                    anvyx_lang::ExternOpDecl { op: #op_cap_str, rhs: None, lhs: None, ret: #ret_anvyx }
+                });
+            } else if self_on_right {
+                op_decls.push(quote! {
+                    anvyx_lang::ExternOpDecl { op: #op_cap_str, rhs: None, lhs: Some(#other_type_str), ret: #ret_anvyx }
+                });
+            } else {
+                op_decls.push(quote! {
+                    anvyx_lang::ExternOpDecl { op: #op_cap_str, rhs: Some(#other_type_str), lhs: None, ret: #ret_anvyx }
+                });
+            }
+
+            let self_arg_idx: usize = if self_on_right { 1 } else { 0 };
+            let other_arg_idx: usize = if self_on_right { 0 } else { 1 };
+
+            let self_extract = quote! {
+                let anvyx_lang::Value::ExternHandle(ref __ehd_self) = args[#self_arg_idx] else {
+                    return Err(anvyx_lang::RuntimeError::new(format!(
+                        "expected extern handle for self in extern method '{}'",
+                        #handler_key
+                    )));
+                };
+                let __handle_self = __ehd_self.id;
+            };
+
+            let self_bp = BorrowParam {
+                param_name: None,
+                store_ident: store_ident.clone(),
+                handle_ident: format_ident!("__handle_self"),
+                guard_ident: format_ident!("__guard_self"),
+                is_mut: false,
+            };
+
+            let mut param_extractions = vec![];
+            let mut param_names = vec![];
+            let mut borrow_params: Vec<BorrowParam> = vec![];
+
+            for (i, arg) in non_self_params.iter().enumerate() {
+                let FnArg::Typed(pat_type) = arg else {
+                    unreachable!()
+                };
+                let param_name = match &*pat_type.pat {
+                    Pat::Ident(pi) => pi.ident.clone(),
+                    other => {
+                        return Err(syn::Error::new_spanned(
+                            other,
+                            "only simple parameter names are supported in #[op]",
+                        ));
+                    }
+                };
+                let param_name_str = param_name.to_string();
+                let arg_idx = other_arg_idx + i;
+
+                let resolved_ty = resolve_self_in_type(&pat_type.ty, &rust_type_ident);
+                let mode = classify_param(&resolved_ty).ok_or_else(|| {
+                    syn::Error::new_spanned(&pat_type.ty, "unsupported type in #[op]")
+                })?;
+
+                match mode {
+                    ParamMode::Primitive(mapping) => {
+                        let extract_variant = &mapping.extract_variant;
+                        let convert_extracted = &mapping.convert_extracted;
+                        param_extractions.push(quote! {
+                            let #extract_variant = args[#arg_idx].clone() else {
+                                return Err(anvyx_lang::RuntimeError::new(format!(
+                                    "expected correct type for parameter '{}' in extern method '{}'",
+                                    #param_name_str, #handler_key
+                                )));
+                            };
+                            let #param_name = #convert_extracted;
+                        });
+                    }
+                    ParamMode::ValuePassthrough => {
+                        param_extractions.push(quote! {
+                            let #param_name = args[#arg_idx].clone();
+                        });
+                    }
+                    ParamMode::ExternOwned(info) => {
+                        let store = &info.store_ident;
+                        let handle_ident = format_ident!("__handle_{}", i);
+                        param_extractions.push(quote! {
+                            let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
+                                return Err(anvyx_lang::RuntimeError::new(format!(
+                                    "expected extern handle for parameter '{}' in extern method '{}'",
+                                    #param_name_str, #handler_key
+                                )));
+                            };
+                            let #handle_ident = __ehd.id;
+                            let #param_name = #store.with(|__s| __s.borrow_mut().remove(#handle_ident))?;
+                        });
+                    }
+                    ParamMode::ExternRef(info) => {
+                        let ExternTypeInfo {
+                            store_ident: ref_store,
+                            ..
+                        } = info;
+                        let handle_ident = format_ident!("__handle_{}", i);
+                        param_extractions.push(quote! {
+                            let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
+                                return Err(anvyx_lang::RuntimeError::new(format!(
+                                    "expected extern handle for parameter '{}' in extern method '{}'",
+                                    #param_name_str, #handler_key
+                                )));
+                            };
+                            let #handle_ident = __ehd.id;
+                        });
+                        let guard_ident = format_ident!("__guard_{}", i);
+                        borrow_params.push(BorrowParam {
+                            param_name: Some(param_name.clone()),
+                            store_ident: ref_store,
+                            handle_ident,
+                            guard_ident,
+                            is_mut: false,
+                        });
+                    }
+                    ParamMode::ExternMutRef(info) => {
+                        let ExternTypeInfo {
+                            store_ident: ref_store,
+                            ..
+                        } = info;
+                        let handle_ident = format_ident!("__handle_{}", i);
+                        param_extractions.push(quote! {
+                            let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
+                                return Err(anvyx_lang::RuntimeError::new(format!(
+                                    "expected extern handle for parameter '{}' in extern method '{}'",
+                                    #param_name_str, #handler_key
+                                )));
+                            };
+                            let #handle_ident = __ehd.id;
+                        });
+                        let guard_ident = format_ident!("__guard_{}", i);
+                        borrow_params.push(BorrowParam {
+                            param_name: Some(param_name.clone()),
+                            store_ident: ref_store,
+                            handle_ident,
+                            guard_ident,
+                            is_mut: true,
+                        });
+                    }
+                }
+
+                param_names.push(param_name);
+            }
+
+            let mut all_borrows = vec![self_bp];
+            all_borrows.extend(borrow_params);
+            let call = quote! { __guard_self.#method_ident(#(#param_names),*) };
+            let call_body = build_handler_body(&call, &ret_mode, &handler_key, &all_borrows);
+
+            let handler_body = quote! {
+                #self_extract
+                #(#param_extractions)*
+                #call_body
+            };
+
+            method_handler_fns.push(quote! {
+                pub fn #handler_fn_ident() -> (&'static str, anvyx_lang::ExternHandler) {
+                    (#handler_key, Box::new(|args: Vec<anvyx_lang::Value>| {
+                        #handler_body
+                    }))
+                }
+            });
+            method_handler_calls.push(quote! { #handler_fn_ident() });
+
             continue;
         }
 
@@ -742,6 +1169,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 !a.path().is_ident("getter")
                     && !a.path().is_ident("setter")
                     && !a.path().is_ident("init")
+                    && !a.path().is_ident("op")
             });
         }
     }
@@ -775,6 +1203,10 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         }
 
         pub const #has_init_ident: bool = #found_init;
+
+        pub const #ops_decl_ident: &[anvyx_lang::ExternOpDecl] = &[
+            #(#op_decls),*
+        ];
     })
 }
 
@@ -1025,5 +1457,31 @@ fn build_handler_body(
                 )))
             }
         }
+    }
+}
+
+fn op_to_capitalized(op: &str) -> &'static str {
+    match op {
+        "add" => "Add",
+        "sub" => "Sub",
+        "mul" => "Mul",
+        "div" => "Div",
+        "rem" => "Rem",
+        "eq" => "Eq",
+        "neg" => "Neg",
+        _ => unreachable!("unknown op: {op}"),
+    }
+}
+
+fn op_to_symbol(op: &str) -> &'static str {
+    match op {
+        "add" => "+",
+        "sub" => "-",
+        "mul" => "*",
+        "div" => "/",
+        "rem" => "%",
+        "eq" => "==",
+        "neg" => "-",
+        _ => unreachable!("unknown op: {op}"),
     }
 }

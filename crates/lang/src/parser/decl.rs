@@ -212,6 +212,20 @@ fn resolve_extern_members(
                     ret: resolve_type_params_with_self(&ret, type_param_map, Some(self_type)),
                 }
             }
+            ast::ExternTypeMember::Operator { op, other_ty, ret, self_on_right } => {
+                ast::ExternTypeMember::Operator {
+                    op,
+                    other_ty: resolve_type_params_with_self(&other_ty, type_param_map, Some(self_type)),
+                    ret: resolve_type_params_with_self(&ret, type_param_map, Some(self_type)),
+                    self_on_right,
+                }
+            }
+            ast::ExternTypeMember::UnaryOperator { op, ret } => {
+                ast::ExternTypeMember::UnaryOperator {
+                    op,
+                    ret: resolve_type_params_with_self(&ret, type_param_map, Some(self_type)),
+                }
+            }
         })
         .collect()
 }
@@ -254,10 +268,57 @@ fn extern_type_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> {
     let semicolon = select! { (Token::Semicolon, _) => () };
 
     choice((
+        extern_type_op_member().then_ignore(semicolon.clone()),
         extern_type_method_member().then_ignore(semicolon.clone()),
         extern_type_field_member().then_ignore(semicolon),
     ))
     .boxed()
+}
+
+fn is_self_type(ty: &ast::Type) -> bool {
+    matches!(ty, ast::Type::UnresolvedName(ident) if ident.0.as_ref() == "Self")
+}
+
+fn extern_type_op_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> {
+    let op_kw = select! { (Token::Ident(ident), _) if ident.0.as_ref() == "op" => () };
+    let arrow = select! { (Token::Op(Op::ThinArrow), _) => () };
+
+    let binary_op_tok = select! {
+        (Token::Op(Op::Add), _) => ast::BinaryOp::Add,
+        (Token::Op(Op::Sub), _) => ast::BinaryOp::Sub,
+        (Token::Op(Op::Mul), _) => ast::BinaryOp::Mul,
+        (Token::Op(Op::Div), _) => ast::BinaryOp::Div,
+        (Token::Op(Op::Rem), _) => ast::BinaryOp::Rem,
+        (Token::Op(Op::Eq), _) => ast::BinaryOp::Eq,
+    };
+
+    let unary = select! { (Token::Op(Op::Sub), _) => () }
+        .then_ignore(type_ident())
+        .then_ignore(arrow.clone())
+        .then(type_ident())
+        .map(|((), ret)| ast::ExternTypeMember::UnaryOperator {
+            op: ast::UnaryOp::Neg,
+            ret,
+        });
+
+    let binary = type_ident()
+        .then(binary_op_tok)
+        .then(type_ident())
+        .then_ignore(arrow)
+        .then(type_ident())
+        .validate(|(((lhs, op), rhs), ret), extra, emitter| {
+            let (other_ty, self_on_right) = if is_self_type(&lhs) {
+                (rhs, false)
+            } else if is_self_type(&rhs) {
+                (lhs, true)
+            } else {
+                emitter.emit(Rich::custom(extra.span(), "one operand must be 'Self'"));
+                (lhs, false)
+            };
+            ast::ExternTypeMember::Operator { op, other_ty, ret, self_on_right }
+        });
+
+    op_kw.ignore_then(choice((unary, binary))).boxed()
 }
 
 fn extern_type_field_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> {

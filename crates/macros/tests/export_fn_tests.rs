@@ -2052,3 +2052,307 @@ mod init_no_auto_tests {
         assert_eq!(x, Value::Float(7.0));
     }
 }
+
+// -- #[op(...)] annotation tests --
+
+mod op_tests {
+    use super::extern_handle;
+    use anvyx_lang::{ExternOpDecl, Value, export_methods, export_type};
+
+    #[export_type(name = "Vec2")]
+    pub struct OpVec2 {
+        pub x: f64,
+        pub y: f64,
+    }
+
+    #[export_methods(name = "Vec2")]
+    impl OpVec2 {
+        #[init]
+        pub fn create(x: f64, y: f64) -> OpVec2 {
+            OpVec2 { x, y }
+        }
+
+        #[getter]
+        pub fn x(&self) -> f64 {
+            self.x
+        }
+        #[setter]
+        pub fn set_x(&mut self, v: f64) {
+            self.x = v;
+        }
+        #[getter]
+        pub fn y(&self) -> f64 {
+            self.y
+        }
+        #[setter]
+        pub fn set_y(&mut self, v: f64) {
+            self.y = v;
+        }
+
+        #[op(Self + Self)]
+        pub fn add(&self, other: &OpVec2) -> OpVec2 {
+            OpVec2 {
+                x: self.x + other.x,
+                y: self.y + other.y,
+            }
+        }
+
+        #[op(Self - Self)]
+        pub fn sub(&self, other: &OpVec2) -> OpVec2 {
+            OpVec2 {
+                x: self.x - other.x,
+                y: self.y - other.y,
+            }
+        }
+
+        #[op(Self * float)]
+        pub fn mul_scalar(&self, s: f64) -> OpVec2 {
+            OpVec2 {
+                x: self.x * s,
+                y: self.y * s,
+            }
+        }
+
+        #[op(float * Self)]
+        pub fn scalar_mul(&self, s: f64) -> OpVec2 {
+            OpVec2 {
+                x: self.x * s,
+                y: self.y * s,
+            }
+        }
+
+        #[op(-Self)]
+        pub fn neg(&self) -> OpVec2 {
+            OpVec2 {
+                x: -self.x,
+                y: -self.y,
+            }
+        }
+
+        #[op(Self == Self)]
+        pub fn eq(&self, other: &OpVec2) -> bool {
+            self.x == other.x && self.y == other.y
+        }
+    }
+
+    #[test]
+    fn op_add_generates_correct_key() {
+        let (key, _) = __anvyx_method_OpVec2___op_add__Vec2();
+        assert_eq!(key, "Vec2::__op_add__Vec2");
+    }
+
+    #[test]
+    fn op_add_handler_works() {
+        let id_a =
+            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 1.0, y: 2.0 }));
+        let id_b =
+            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 3.0, y: 4.0 }));
+        let (_, handler) = __anvyx_method_OpVec2___op_add__Vec2();
+        let result = handler(vec![extern_handle(id_a), extern_handle(id_b)]).unwrap();
+        let Value::ExternHandle(new_handle) = result else {
+            panic!("expected ExternHandle")
+        };
+        __ANVYX_STORE_OPVEC2.with(|s| {
+            let store = s.borrow();
+            let v = store.borrow(new_handle.id).unwrap();
+            assert_eq!(v.x, 4.0);
+            assert_eq!(v.y, 6.0);
+        });
+        __ANVYX_STORE_OPVEC2.with(|s| {
+            s.borrow_mut().remove(id_a).unwrap();
+            s.borrow_mut().remove(id_b).unwrap();
+        });
+    }
+
+    #[test]
+    fn op_sub_handler_works() {
+        let id_a =
+            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 5.0, y: 7.0 }));
+        let id_b =
+            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 2.0, y: 3.0 }));
+        let (_, handler) = __anvyx_method_OpVec2___op_sub__Vec2();
+        let result = handler(vec![extern_handle(id_a), extern_handle(id_b)]).unwrap();
+        let Value::ExternHandle(new_handle) = result else {
+            panic!("expected ExternHandle")
+        };
+        __ANVYX_STORE_OPVEC2.with(|s| {
+            let store = s.borrow();
+            let v = store.borrow(new_handle.id).unwrap();
+            assert_eq!(v.x, 3.0);
+            assert_eq!(v.y, 4.0);
+        });
+        __ANVYX_STORE_OPVEC2.with(|s| {
+            s.borrow_mut().remove(id_a).unwrap();
+            s.borrow_mut().remove(id_b).unwrap();
+        });
+    }
+
+    #[test]
+    fn op_mul_scalar_generates_correct_key() {
+        let (key, _) = __anvyx_method_OpVec2___op_mul__float();
+        assert_eq!(key, "Vec2::__op_mul__float");
+    }
+
+    #[test]
+    fn op_mul_scalar_handler_works() {
+        let id =
+            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 2.0, y: 3.0 }));
+        let (_, handler) = __anvyx_method_OpVec2___op_mul__float();
+        let result = handler(vec![extern_handle(id), Value::Float(2.0)]).unwrap();
+        let Value::ExternHandle(new_handle) = result else {
+            panic!("expected ExternHandle")
+        };
+        __ANVYX_STORE_OPVEC2.with(|s| {
+            let store = s.borrow();
+            let v = store.borrow(new_handle.id).unwrap();
+            assert_eq!(v.x, 4.0);
+            assert_eq!(v.y, 6.0);
+        });
+        __ANVYX_STORE_OPVEC2.with(|s| {
+            s.borrow_mut().remove(id).unwrap();
+        });
+    }
+
+    #[test]
+    fn op_scalar_mul_generates_correct_key() {
+        let (key, _) = __anvyx_method_OpVec2___op_rmul__float();
+        assert_eq!(key, "Vec2::__op_rmul__float");
+    }
+
+    #[test]
+    fn op_scalar_mul_handler_swaps_args() {
+        let id =
+            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 2.0, y: 3.0 }));
+        let (_, handler) = __anvyx_method_OpVec2___op_rmul__float();
+        // right-dispatch: float first, Vec2 handle second
+        let result = handler(vec![Value::Float(2.0), extern_handle(id)]).unwrap();
+        let Value::ExternHandle(new_handle) = result else {
+            panic!("expected ExternHandle")
+        };
+        __ANVYX_STORE_OPVEC2.with(|s| {
+            let store = s.borrow();
+            let v = store.borrow(new_handle.id).unwrap();
+            assert_eq!(v.x, 4.0);
+            assert_eq!(v.y, 6.0);
+        });
+        __ANVYX_STORE_OPVEC2.with(|s| {
+            s.borrow_mut().remove(id).unwrap();
+        });
+    }
+
+    #[test]
+    fn op_neg_generates_correct_key() {
+        let (key, _) = __anvyx_method_OpVec2___op_neg();
+        assert_eq!(key, "Vec2::__op_neg");
+    }
+
+    #[test]
+    fn op_neg_handler_works() {
+        let id =
+            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 1.0, y: -2.0 }));
+        let (_, handler) = __anvyx_method_OpVec2___op_neg();
+        let result = handler(vec![extern_handle(id)]).unwrap();
+        let Value::ExternHandle(new_handle) = result else {
+            panic!("expected ExternHandle")
+        };
+        __ANVYX_STORE_OPVEC2.with(|s| {
+            let store = s.borrow();
+            let v = store.borrow(new_handle.id).unwrap();
+            assert_eq!(v.x, -1.0);
+            assert_eq!(v.y, 2.0);
+        });
+        __ANVYX_STORE_OPVEC2.with(|s| {
+            s.borrow_mut().remove(id).unwrap();
+        });
+    }
+
+    #[test]
+    fn op_eq_generates_correct_key() {
+        let (key, _) = __anvyx_method_OpVec2___op_eq__Vec2();
+        assert_eq!(key, "Vec2::__op_eq__Vec2");
+    }
+
+    #[test]
+    fn op_eq_handler_returns_bool() {
+        let id_a =
+            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 1.0, y: 2.0 }));
+        let id_b =
+            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 1.0, y: 2.0 }));
+        let id_c =
+            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 9.0, y: 9.0 }));
+        let (_, handler) = __anvyx_method_OpVec2___op_eq__Vec2();
+        let result_eq = handler(vec![extern_handle(id_a), extern_handle(id_b)]).unwrap();
+        assert_eq!(result_eq, Value::Bool(true));
+        let result_ne = handler(vec![extern_handle(id_a), extern_handle(id_c)]).unwrap();
+        assert_eq!(result_ne, Value::Bool(false));
+        __ANVYX_STORE_OPVEC2.with(|s| {
+            s.borrow_mut().remove(id_a).unwrap();
+            s.borrow_mut().remove(id_b).unwrap();
+            s.borrow_mut().remove(id_c).unwrap();
+        });
+    }
+
+    #[test]
+    fn op_handlers_registered_in_companion() {
+        let handlers = __anvyx_methods_OpVec2();
+        let keys: Vec<&str> = handlers.iter().map(|(k, _)| *k).collect();
+        assert!(keys.contains(&"Vec2::__op_add__Vec2"));
+        assert!(keys.contains(&"Vec2::__op_sub__Vec2"));
+        assert!(keys.contains(&"Vec2::__op_mul__float"));
+        assert!(keys.contains(&"Vec2::__op_rmul__float"));
+        assert!(keys.contains(&"Vec2::__op_neg"));
+        assert!(keys.contains(&"Vec2::__op_eq__Vec2"));
+    }
+
+    #[test]
+    fn op_metadata_const_has_all_entries() {
+        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
+        assert_eq!(ops.len(), 6);
+    }
+
+    #[test]
+    fn op_metadata_binary_left_dispatch() {
+        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
+        let add = ops.iter().find(|o| o.op == "Add").unwrap();
+        assert_eq!(add.rhs, Some("Vec2"));
+        assert!(add.lhs.is_none());
+        assert_eq!(add.ret, "Vec2");
+    }
+
+    #[test]
+    fn op_metadata_binary_right_dispatch() {
+        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
+        // float * Self
+        let rmul = ops.iter().find(|o| o.op == "Mul" && o.lhs.is_some()).unwrap();
+        assert!(rmul.rhs.is_none());
+        assert_eq!(rmul.lhs, Some("float"));
+        assert_eq!(rmul.ret, "Vec2");
+    }
+
+    #[test]
+    fn op_metadata_binary_left_float() {
+        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
+        // Self * float
+        let mul = ops.iter().find(|o| o.op == "Mul" && o.rhs.is_some()).unwrap();
+        assert_eq!(mul.rhs, Some("float"));
+        assert!(mul.lhs.is_none());
+    }
+
+    #[test]
+    fn op_metadata_unary() {
+        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
+        let neg = ops.iter().find(|o| o.op == "Neg").unwrap();
+        assert!(neg.rhs.is_none());
+        assert!(neg.lhs.is_none());
+        assert_eq!(neg.ret, "Vec2");
+    }
+
+    #[test]
+    fn op_metadata_eq_returns_bool() {
+        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
+        let eq = ops.iter().find(|o| o.op == "Eq").unwrap();
+        assert_eq!(eq.rhs, Some("Vec2"));
+        assert!(eq.lhs.is_none());
+        assert_eq!(eq.ret, "bool");
+    }
+}

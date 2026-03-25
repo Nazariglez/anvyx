@@ -1,8 +1,8 @@
 use crate::{
     ast::{
-        BlockNode, CallNode, EnumDecl, ExprId, FieldAccessNode, FuncNode, Ident, IndexNode, Method,
-        MethodReceiver, Mutability, Param, StmtNode, StructDecl, StructField, Type, TypeParam,
-        TypeVarId, VariantKind,
+        BinaryOp, BlockNode, CallNode, EnumDecl, ExprId, FieldAccessNode, FuncNode, Ident,
+        IndexNode, Method, MethodReceiver, Mutability, Param, StmtNode, StructDecl, StructField,
+        Type, TypeParam, TypeVarId, UnaryOp, VariantKind,
     },
     span::Span,
 };
@@ -99,12 +99,28 @@ pub struct ExternMethodDef {
 }
 
 #[derive(Debug, Clone)]
+pub struct ExternOpDef {
+    pub op: BinaryOp,
+    pub other_ty: Type,
+    pub ret: Type,
+    pub self_on_right: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternUnaryOpDef {
+    pub op: UnaryOp,
+    pub ret: Type,
+}
+
+#[derive(Debug, Clone)]
 pub struct ExternTypeDef {
     pub has_init: bool,
     pub field_order: Vec<Ident>,
     pub fields: HashMap<Ident, ExternFieldDef>,
     pub methods: HashMap<Ident, ExternMethodDef>,
     pub statics: HashMap<Ident, ExternMethodDef>,
+    pub operators: Vec<ExternOpDef>,
+    pub unary_operators: Vec<ExternUnaryOpDef>,
 }
 
 pub(super) type InferenceSlots = HashMap<TypeVarId, Ident>;

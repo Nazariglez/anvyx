@@ -1,13 +1,13 @@
-use crate::ast::{self, ArrayLen, BinaryOp, Ident, Lit, Type};
+use crate::ast::{self, ArrayLen, BinaryOp, Ident, Lit, Type, UnaryOp};
 use crate::builtin::Builtin;
 use crate::hir;
 use crate::span::Span;
 use internment::Intern;
 
 use super::{
-    FuncLower, LowerCtx, LowerError,
-    lower_string_interp,
-    mangle_generic_name, resolve_enum_type_id, resolve_struct_type_id, resolve_variant_index,
+    FuncLower, LowerCtx, LowerError, extern_binary_op_key, extern_unary_op_key,
+    lower_string_interp, mangle_generic_name, resolve_enum_type_id, resolve_struct_type_id,
+    resolve_variant_index,
 };
 
 fn lower_args(
@@ -49,9 +49,13 @@ pub(super) fn lower_expr(
 
         ast::ExprKind::Unary(u) => {
             let inner = lower_expr(&u.node.expr, ctx, fc, out)?;
-            hir::ExprKind::Unary {
-                op: u.node.op,
-                expr: Box::new(inner),
+            if let Some(kind) = try_lower_extern_unary_op(u.node.op, &inner, span, ctx)? {
+                kind
+            } else {
+                hir::ExprKind::Unary {
+                    op: u.node.op,
+                    expr: Box::new(inner),
+                }
             }
         }
 
@@ -61,10 +65,14 @@ pub(super) fn lower_expr(
             }
             let lhs = lower_expr(&b.node.left, ctx, fc, out)?;
             let rhs = lower_expr(&b.node.right, ctx, fc, out)?;
-            hir::ExprKind::Binary {
-                op: b.node.op,
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
+            if let Some(kind) = try_lower_extern_binary_op(b.node.op, &lhs, &rhs, span, ctx)? {
+                kind
+            } else {
+                hir::ExprKind::Binary {
+                    op: b.node.op,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                }
             }
         }
 
@@ -183,6 +191,123 @@ pub(super) fn lower_expr(
     };
 
     Ok(hir::Expr { ty, span, kind })
+}
+
+fn try_lower_extern_binary_op(
+    op: BinaryOp,
+    lhs: &hir::Expr,
+    rhs: &hir::Expr,
+    span: Span,
+    ctx: &LowerCtx,
+) -> Result<Option<hir::ExprKind>, LowerError> {
+    let (actual_op, wrap_not) = if op == BinaryOp::NotEq {
+        (BinaryOp::Eq, true)
+    } else {
+        (op, false)
+    };
+
+    // try left dispatch, lhs is extern
+    let result = if let Type::Extern { name } = &lhs.ty {
+        let extern_def = ctx.shared.tcx.get_extern_type(*name);
+        extern_def.and_then(|def| {
+            def.operators
+                .iter()
+                .find(|o| o.op == actual_op && !o.self_on_right && o.other_ty == rhs.ty)
+                .map(|o| {
+                    (
+                        extern_binary_op_key(*name, actual_op, &o.other_ty, false),
+                        o.ret.clone(),
+                    )
+                })
+        })
+    } else {
+        None
+    };
+
+    // if left dispatch didn't match, try right dispatch, rhs is extern
+    let result = result.or_else(|| {
+        if let Type::Extern { name } = &rhs.ty {
+            let extern_def = ctx.shared.tcx.get_extern_type(*name);
+            extern_def.and_then(|def| {
+                def.operators
+                    .iter()
+                    .find(|o| o.op == actual_op && o.self_on_right && o.other_ty == lhs.ty)
+                    .map(|o| {
+                        (
+                            extern_binary_op_key(*name, actual_op, &o.other_ty, true),
+                            o.ret.clone(),
+                        )
+                    })
+            })
+        } else {
+            None
+        }
+    });
+
+    let Some((key, eq_ret_ty)) = result else {
+        return Ok(None);
+    };
+
+    let extern_id =
+        *ctx.shared
+            .externs
+            .get(&key)
+            .ok_or_else(|| LowerError::UnsupportedExprKind {
+                span,
+                kind: format!("missing extern ID for operator key '{key}'"),
+            })?;
+
+    let call_expr = hir::ExprKind::CallExtern {
+        extern_id,
+        args: vec![lhs.clone(), rhs.clone()],
+    };
+
+    if wrap_not {
+        Ok(Some(hir::ExprKind::Unary {
+            op: UnaryOp::Not,
+            expr: Box::new(hir::Expr {
+                ty: eq_ret_ty,
+                span,
+                kind: call_expr,
+            }),
+        }))
+    } else {
+        Ok(Some(call_expr))
+    }
+}
+
+fn try_lower_extern_unary_op(
+    op: UnaryOp,
+    inner: &hir::Expr,
+    span: Span,
+    ctx: &LowerCtx,
+) -> Result<Option<hir::ExprKind>, LowerError> {
+    let Type::Extern { name } = &inner.ty else {
+        return Ok(None);
+    };
+
+    let Some(def) = ctx.shared.tcx.get_extern_type(*name) else {
+        return Ok(None);
+    };
+
+    let Some(_op_def) = def.unary_operators.iter().find(|o| o.op == op) else {
+        return Ok(None);
+    };
+
+    let key = extern_unary_op_key(*name, op);
+    let extern_id =
+        *ctx.shared
+            .externs
+            .get(&key)
+            .ok_or_else(|| LowerError::UnsupportedExprKind {
+                span,
+                kind: format!("missing extern ID for unary operator key '{key}'"),
+            })?;
+
+    Ok(Some(hir::ExprKind::CallExtern {
+        extern_id,
+        args: vec![inner.clone()],
+    }))
 }
 
 fn lower_coalesce_expr(
@@ -449,12 +574,17 @@ fn lower_direct_call(
         })
     } else if let Some(&extern_id) = ctx.shared.externs.get(&callee_name) {
         Ok(hir::ExprKind::CallExtern { extern_id, args })
-    } else if let Some((func_name, type_args)) = ctx.shared.tcx.call_type_args(c.node.func.node.id) {
+    } else if let Some((func_name, type_args)) = ctx.shared.tcx.call_type_args(c.node.func.node.id)
+    {
         let mangled = mangle_generic_name(*func_name, type_args);
-        let &func_id = ctx.shared.funcs.get(&mangled).ok_or(LowerError::UnknownFunc {
-            name: callee_name,
-            span,
-        })?;
+        let &func_id = ctx
+            .shared
+            .funcs
+            .get(&mangled)
+            .ok_or(LowerError::UnknownFunc {
+                name: callee_name,
+                span,
+            })?;
         Ok(hir::ExprKind::Call {
             func: func_id,
             args,
@@ -521,12 +651,14 @@ fn lower_struct_literal_expr(
                     span,
                     kind: format!("extern type '{name}' has no __init__ handler"),
                 })?;
-        let field_order = ctx.shared.tcx.extern_type_field_order(*name).ok_or_else(|| {
-            LowerError::UnsupportedExprKind {
+        let field_order = ctx
+            .shared
+            .tcx
+            .extern_type_field_order(*name)
+            .ok_or_else(|| LowerError::UnsupportedExprKind {
                 span,
                 kind: format!("unknown extern type '{name}'"),
-            }
-        })?;
+            })?;
         let mut args = vec![];
         for field_name in field_order {
             let (_, expr) = lit
@@ -546,14 +678,14 @@ fn lower_struct_literal_expr(
 
     let struct_name = lit.node.name;
     let type_id = resolve_struct_type_id(ctx, span, struct_name)?;
-    let field_names =
-        ctx.shared
-            .tcx
-            .struct_field_names(struct_name)
-            .ok_or_else(|| LowerError::UnsupportedExprKind {
-                span,
-                kind: format!("unknown struct '{struct_name}'"),
-            })?;
+    let field_names = ctx
+        .shared
+        .tcx
+        .struct_field_names(struct_name)
+        .ok_or_else(|| LowerError::UnsupportedExprKind {
+            span,
+            kind: format!("unknown struct '{struct_name}'"),
+        })?;
     // lower fields in declaration order
     let mut fields = vec![];
     for decl_name in &field_names {
@@ -605,15 +737,14 @@ fn lower_field_expr(
     let target_ty = ctx.expr_type(target.node.id, span)?;
 
     let index = match &target_ty {
-        Type::Struct { name, .. } => {
-            ctx.shared
-                .tcx
-                .struct_field_index(*name, field_name)
-                .ok_or_else(|| LowerError::UnsupportedExprKind {
-                    span,
-                    kind: format!("unknown field '{field_name}' on struct '{name}'"),
-                })? as u16
-        }
+        Type::Struct { name, .. } => ctx
+            .shared
+            .tcx
+            .struct_field_index(*name, field_name)
+            .ok_or_else(|| LowerError::UnsupportedExprKind {
+                span,
+                kind: format!("unknown field '{field_name}' on struct '{name}'"),
+            })? as u16,
         Type::NamedTuple(fields) => fields
             .iter()
             .position(|(label, _)| *label == field_name)
@@ -623,14 +754,12 @@ fn lower_field_expr(
             })? as u16,
         Type::Extern { name } => {
             let qualified = Ident(Intern::new(format!("{name}::__get_{field_name}")));
-            let extern_id =
-                *ctx.shared
-                    .externs
-                    .get(&qualified)
-                    .ok_or_else(|| LowerError::UnsupportedExprKind {
-                        span,
-                        kind: format!("unknown extern field getter '{qualified}'"),
-                    })?;
+            let extern_id = *ctx.shared.externs.get(&qualified).ok_or_else(|| {
+                LowerError::UnsupportedExprKind {
+                    span,
+                    kind: format!("unknown extern field getter '{qualified}'"),
+                }
+            })?;
             let object = lower_expr(target, ctx, fc, out)?;
             return Ok(hir::Expr {
                 ty,

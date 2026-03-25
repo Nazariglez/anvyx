@@ -573,6 +573,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "'any' type is only allowed in extern function declarations".to_string(),
             "'any' cannot be used in user-written type annotations".to_string(),
         ),
+        TypeErrKind::AmbiguousOperator { op, left, right } => (
+            "ambiguous operator".to_string(),
+            format!("operator '{op}' is declared by both '{left}' and '{right}'"),
+        ),
     }
 }
 

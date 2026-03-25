@@ -307,4 +307,10 @@ pub enum TypeErrKind {
     },
 
     AnyTypeNotAllowed,
+
+    AmbiguousOperator {
+        op: String,
+        left: Type,
+        right: Type,
+    },
 }

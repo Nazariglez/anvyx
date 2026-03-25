@@ -5,3 +5,4 @@ edition.workspace = true
 
 [dependencies]
 anvyx-lang = { path = "../lang" }
+glam = "0.29"

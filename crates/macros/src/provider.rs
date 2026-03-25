@@ -98,6 +98,7 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
         let type_decl_ident = format_ident!("__ANVYX_TYPE_DECL_{}", name_upper);
         let methods_decl_ident = format_ident!("__ANVYX_METHODS_DECL_{}", name_upper);
         let statics_decl_ident = format_ident!("__ANVYX_STATICS_DECL_{}", name_upper);
+        let ops_decl_ident = format_ident!("__ANVYX_OPS_DECL_{}", name_upper);
         let companion_fn_ident = format_ident!("__anvyx_methods_{}", type_name);
         let fields_fn_ident = format_ident!("__anvyx_fields_{}", type_name);
         let getter_fields_fn_ident = format_ident!("__anvyx_getter_fields_{}", type_name);
@@ -136,6 +137,7 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
                     },
                     methods: #methods_decl_ident.to_vec(),
                     statics: #statics_decl_ident.to_vec(),
+                    operators: #ops_decl_ident.to_vec(),
                 }
             });
             method_inserts.push(quote! {
@@ -181,6 +183,7 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
                     },
                     methods: #(#prefix)::*::#methods_decl_ident.to_vec(),
                     statics: #(#prefix)::*::#statics_decl_ident.to_vec(),
+                    operators: #(#prefix)::*::#ops_decl_ident.to_vec(),
                 }
             });
             method_inserts.push(quote! {

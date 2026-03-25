@@ -18,8 +18,8 @@ use super::{
     infer::type_from_fn,
     pattern::check_pattern,
     types::{
-        EnumDef, ExternFieldDef, ExternMethodDef, ExternTypeDef, ModuleDef, StructDef, TypeChecker,
-        build_param_info, unwrap_opt_typ, validate_map_key_type,
+        EnumDef, ExternFieldDef, ExternMethodDef, ExternOpDef, ExternTypeDef, ExternUnaryOpDef,
+        ModuleDef, StructDef, TypeChecker, build_param_info, unwrap_opt_typ, validate_map_key_type,
     },
     unify::contains_infer,
 };
@@ -197,6 +197,8 @@ fn build_extern_type_def(
     let mut fields = HashMap::new();
     let mut methods = HashMap::new();
     let mut statics = HashMap::new();
+    let mut operators = vec![];
+    let mut unary_operators = vec![];
 
     for member in members {
         match member {
@@ -245,6 +247,20 @@ fn build_extern_type_def(
                     },
                 );
             }
+            ExternTypeMember::Operator { op, other_ty, ret, self_on_right } => {
+                operators.push(ExternOpDef {
+                    op: *op,
+                    other_ty: resolve(other_ty),
+                    ret: resolve(ret),
+                    self_on_right: *self_on_right,
+                });
+            }
+            ExternTypeMember::UnaryOperator { op, ret } => {
+                unary_operators.push(ExternUnaryOpDef {
+                    op: *op,
+                    ret: resolve(ret),
+                });
+            }
         }
     }
 
@@ -254,6 +270,8 @@ fn build_extern_type_def(
         fields,
         methods,
         statics,
+        operators,
+        unary_operators,
     }
 }
 
@@ -270,6 +288,8 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                     fields: HashMap::new(),
                     methods: HashMap::new(),
                     statics: HashMap::new(),
+                    operators: vec![],
+                    unary_operators: vec![],
                 },
             );
         }

@@ -1,0 +1,14 @@
+// @mode: check
+// @expect: success
+
+extern type Vec2 {
+    x: float;
+    y: float;
+    init;
+    op -Self -> Self;
+}
+
+fn main() {
+    let a = Vec2 { x: 1.0, y: 2.0 };
+    let b = -a;
+}

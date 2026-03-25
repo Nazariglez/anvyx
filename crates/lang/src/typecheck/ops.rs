@@ -47,6 +47,23 @@ pub(super) fn check_binary(
         Add | Sub | Mul | Div | Rem => {
             if left_ty.is_num() && same_ty {
                 left_ty
+            } else if let Some(result) =
+                resolve_extern_binary_op(node.op, &left_ty, &right_ty, type_checker)
+            {
+                match result {
+                    ExternOpResult::Found(ret) => ret,
+                    ExternOpResult::Ambiguous => {
+                        errors.push(TypeErr::new(
+                            bin.span,
+                            TypeErrKind::AmbiguousOperator {
+                                op: node.op.to_string(),
+                                left: left_ty.clone(),
+                                right: right_ty.clone(),
+                            },
+                        ));
+                        Type::Infer
+                    }
+                }
             } else {
                 errors.push(TypeErr::new(
                     bin.span,
@@ -83,14 +100,20 @@ pub(super) fn check_binary(
                 unified
             };
 
-            if let Some(ty) = eq_ty {
-                if !ty.is_infer() && !is_equatable(&ty, type_checker) {
-                    let mut err =
-                        TypeErr::new(bin.span, TypeErrKind::NotEquatable { ty: ty.clone() });
-                    if let Some(reason) = equatable_reason(&ty, type_checker) {
-                        err.notes.push(reason);
+            if let Some(ref ty) = eq_ty {
+                if !ty.is_infer() {
+                    let has_extern_eq = matches!(ty, Type::Extern { name }
+                        if type_checker
+                            .get_extern_type(*name)
+                            .map_or(false, |def| def.operators.iter().any(|o| o.op == BinaryOp::Eq)));
+                    if !has_extern_eq && !is_equatable(ty, type_checker) {
+                        let mut err =
+                            TypeErr::new(bin.span, TypeErrKind::NotEquatable { ty: ty.clone() });
+                        if let Some(reason) = equatable_reason(ty, type_checker) {
+                            err.notes.push(reason);
+                        }
+                        errors.push(err);
                     }
-                    errors.push(err);
                 }
             }
             Type::Bool
@@ -201,6 +224,51 @@ fn check_coalesce(
     unified_inner
 }
 
+enum ExternOpResult {
+    Found(Type),
+    Ambiguous,
+}
+
+fn resolve_extern_binary_op(
+    op: BinaryOp,
+    left_ty: &Type,
+    right_ty: &Type,
+    type_checker: &TypeChecker,
+) -> Option<ExternOpResult> {
+    let left_match = if let Type::Extern { name } = left_ty {
+        type_checker
+            .get_extern_type(*name)
+            .and_then(|def| {
+                def.operators
+                    .iter()
+                    .find(|o| o.op == op && !o.self_on_right && o.other_ty == *right_ty)
+                    .map(|o| o.ret.clone())
+            })
+    } else {
+        None
+    };
+
+    let right_match = if let Type::Extern { name } = right_ty {
+        type_checker
+            .get_extern_type(*name)
+            .and_then(|def| {
+                def.operators
+                    .iter()
+                    .find(|o| o.op == op && o.self_on_right && o.other_ty == *left_ty)
+                    .map(|o| o.ret.clone())
+            })
+    } else {
+        None
+    };
+
+    match (left_match, right_match) {
+        (Some(_), Some(_)) => Some(ExternOpResult::Ambiguous),
+        (Some(ret), None) => Some(ExternOpResult::Found(ret)),
+        (None, Some(ret)) => Some(ExternOpResult::Found(ret)),
+        (None, None) => None,
+    }
+}
+
 pub(super) fn check_unary(
     unary: &UnaryNode,
     type_checker: &mut TypeChecker,
@@ -212,6 +280,24 @@ pub(super) fn check_unary(
     match node.op {
         UnaryOp::Neg if expr_ty.is_num() => expr_ty,
         UnaryOp::Not if expr_ty.is_bool() => Type::Bool,
+        UnaryOp::Neg => {
+            if let Type::Extern { name } = &expr_ty {
+                if let Some(def) = type_checker.get_extern_type(*name) {
+                    if let Some(op_def) = def.unary_operators.iter().find(|o| o.op == UnaryOp::Neg)
+                    {
+                        return op_def.ret.clone();
+                    }
+                }
+            }
+            errors.push(TypeErr::new(
+                unary.span,
+                TypeErrKind::InvalidOperand {
+                    op: node.op.to_string(),
+                    operand_type: expr_ty.clone(),
+                },
+            ));
+            Type::Infer
+        }
         _ => {
             errors.push(TypeErr::new(
                 unary.span,

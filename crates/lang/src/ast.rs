@@ -520,6 +520,16 @@ pub enum ExternTypeMember {
         params: Vec<Param>,
         ret: Type,
     },
+    Operator {
+        op: BinaryOp,
+        other_ty: Type,
+        ret: Type,
+        self_on_right: bool,
+    },
+    UnaryOperator {
+        op: UnaryOp,
+        ret: Type,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
