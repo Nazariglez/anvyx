@@ -13,7 +13,7 @@ use super::{
     expr::check_expr,
     infer::{build_param_ref, constrain_slots_from_type, create_inference_slots},
     range::{range_inclusive_type, range_type},
-    types::{ExternTypeDef, TypeChecker, is_keyable, keyable_reason},
+    types::{ExternTypeDef, TypeChecker, validate_map_key_type},
 };
 
 pub(super) fn check_tuple(
@@ -450,32 +450,7 @@ pub(super) fn check_map_literal(
         .unwrap_or_else(|| value_types[0].clone());
 
     // validate key type is keyable
-    let is_type_infer = matches!(key_ty, Type::Infer);
-    if !is_type_infer && !is_keyable(&key_ty, type_checker) {
-        let is_optional = key_ty.is_option();
-        let is_float = matches!(key_ty, Type::Float);
-        if is_optional {
-            errors.push(TypeErr::new(
-                lit.span,
-                TypeErrKind::MapOptionalKeyNotAllowed {
-                    found: key_ty.clone(),
-                },
-            ));
-        } else if is_float {
-            errors.push(TypeErr::new(lit.span, TypeErrKind::MapKeyFloat));
-        } else {
-            let mut err = TypeErr::new(
-                lit.span,
-                TypeErrKind::MapKeyNotKeyable {
-                    found: key_ty.clone(),
-                },
-            );
-            if let Some(reason) = keyable_reason(&key_ty, type_checker) {
-                err.notes.push(reason);
-            }
-            errors.push(err);
-        }
-    }
+    validate_map_key_type(lit.span, &key_ty, type_checker, errors);
 
     Type::Map {
         key: key_ty.boxed(),

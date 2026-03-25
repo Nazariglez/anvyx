@@ -1,8 +1,8 @@
 use crate::{
     ast::{
-        ArrayLen, BlockNode, ExprId, ExprKind, ExprNode, ExternTypeMember, Ident, ImportKind,
-        Mutability, Param, ReturnNode, Stmt, StmtNode, Type, VariantKind,
-        Visibility,
+        ArrayLen, BlockNode, ExprId, ExprKind, ExprNode, ExternFunc, ExternTypeMember,
+        Func, FuncNode, Ident, ImportKind, Mutability, Param, ReturnNode, Stmt, StmtNode,
+        Type, TypeParam, VariantKind, Visibility,
     },
     span::Span,
 };
@@ -18,8 +18,8 @@ use super::{
     infer::type_from_fn,
     pattern::check_pattern,
     types::{
-        EnumDef, EnumVariantDef, ExternFieldDef, ExternMethodDef, ExternTypeDef, MethodDef,
-        ModuleDef, StructDef, TypeChecker, is_keyable, keyable_reason, unwrap_opt_typ,
+        EnumDef, ExternFieldDef, ExternMethodDef, ExternTypeDef, ModuleDef, StructDef, TypeChecker,
+        build_param_info, unwrap_opt_typ, validate_map_key_type,
     },
     unify::contains_infer,
 };
@@ -73,423 +73,56 @@ pub(super) fn check_block_expr(
     (ty, Some(id))
 }
 
-pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChecker) {
-    // register extern type names before anything else, so they can be
-    // resolved when building function signatures that reference them
-    for stmt in stmts {
-        if let Stmt::ExternType(node) = &stmt.node {
-            type_checker.extern_type_defs.insert(
-                node.node.name,
-                ExternTypeDef {
-                    has_init: false,
-                    field_order: vec![],
-                    fields: HashMap::new(),
-                    methods: HashMap::new(),
-                    statics: HashMap::new(),
-                },
-            );
-        }
-    }
-
-    for stmt in stmts {
-        match &stmt.node {
-            Stmt::ExternType(node) => {
-                let def = build_extern_type_def(node.node.has_init, &node.node.members, |ty| {
-                    type_checker.resolve_type(ty)
-                });
-                type_checker.extern_type_defs.insert(node.node.name, def);
-            }
-
-            Stmt::ExternFunc(node) => {
-                let extern_func = &node.node;
-                let func_ty = Type::Func {
-                    params: extern_func
-                        .params
-                        .iter()
-                        .map(|p| type_checker.resolve_type(&p.ty))
-                        .collect(),
-                    ret: Box::new(type_checker.resolve_type(&extern_func.ret)),
-                };
-                type_checker.set_var(extern_func.name, func_ty, false);
-                let param_info: Vec<_> = extern_func
-                    .params
-                    .iter()
-                    .map(|p| (p.name, p.mutability))
-                    .collect();
-                type_checker
-                    .func_param_info
-                    .insert(extern_func.name, param_info);
-            }
-
-            Stmt::Func(node) => {
-                let func = &node.node;
-                let raw_ty = type_from_fn(func);
-                let func_ty = type_checker.resolve_type(&raw_ty);
-                type_checker.set_var(func.name, func_ty, false);
-
-                let param_info: Vec<_> =
-                    func.params.iter().map(|p| (p.name, p.mutability)).collect();
-                type_checker.func_param_info.insert(func.name, param_info);
-
-                // if the function is generic, store the type parameters and template
-                // because they are not fully typechecked at definition time until they are used
-                let is_generic = !func.type_params.is_empty();
-                if is_generic {
-                    type_checker
-                        .func_type_params
-                        .insert(func.name, func.type_params.clone());
-
-                    // store the function ast for later instantiation
-                    type_checker
-                        .generic_func_templates
-                        .insert(func.name, node.clone());
-                }
-            }
-
-            Stmt::Struct(node) => {
-                let decl = &node.node;
-
-                let methods = decl
-                    .methods
-                    .iter()
-                    .map(|method| {
-                        (
-                            method.name,
-                            MethodDef {
-                                type_params: method.type_params.clone(),
-                                receiver: method.receiver,
-                                params: method.params.clone(),
-                                ret: method.ret.clone(),
-                                body: method.body.clone(),
-                            },
-                        )
-                    })
-                    .collect::<HashMap<_, _>>();
-
-                type_checker.struct_defs.insert(
-                    decl.name,
-                    StructDef {
-                        type_params: decl.type_params.clone(),
-                        fields: decl.fields.clone(),
-                        methods,
-                    },
-                );
-            }
-
-            Stmt::Enum(node) => {
-                let decl = &node.node;
-
-                let variants = decl
-                    .variants
-                    .iter()
-                    .map(|v| EnumVariantDef {
-                        name: v.name,
-                        kind: v.kind.clone(),
-                    })
-                    .collect();
-
-                type_checker.enum_defs.insert(
-                    decl.name,
-                    EnumDef {
-                        type_params: decl.type_params.clone(),
-                        variants,
-                    },
-                );
-            }
-
-            Stmt::Import(node) => {
-                let import = &node.node;
-                let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
-
-                let Some(module_def) = type_checker.resolved_module_defs.get(&path_key).cloned()
-                else {
-                    // module wasn't resolved (std.*, unresolved error, etc.)
-                    continue;
-                };
-
-                match &import.kind {
-                    ImportKind::Module => {
-                        let binding = *import.path.last().expect("import path cannot be empty");
-                        type_checker.module_defs.insert(binding, module_def);
-                    }
-                    ImportKind::ModuleAs(alias) => {
-                        type_checker.module_defs.insert(*alias, module_def);
-                    }
-                    ImportKind::Selective(items) => {
-                        for item in items {
-                            let bind_as = item.alias.unwrap_or(item.name);
-                            inject_module_item(
-                                item.name,
-                                bind_as,
-                                &module_def,
-                                &path_key,
-                                type_checker,
-                            );
-                        }
-                    }
-                    ImportKind::Wildcard => {
-                        let names: Vec<Ident> = module_def.all_public_names().collect();
-                        for name in names {
-                            inject_module_item(name, name, &module_def, &path_key, type_checker);
-                        }
-                        let sub_module_names: Vec<Ident> =
-                            module_def.re_exported_modules.keys().copied().collect();
-                        for name in sub_module_names {
-                            inject_module_item(name, name, &module_def, &path_key, type_checker);
-                        }
-                    }
-                }
-            }
-
-            _ => {}
-        }
-    }
+struct FuncRegistration {
+    func_ty: Type,
+    param_info: Vec<(Ident, Mutability)>,
+    type_params: Option<Vec<TypeParam>>,
+    template: Option<FuncNode>,
 }
 
-pub(super) fn build_module_def_with_reexports(
-    stmts: &[StmtNode],
-    type_checker: &TypeChecker,
-) -> (ModuleDef, Vec<TypeErr>) {
-    let mut module_def = ModuleDef::default();
-    let mut errors: Vec<TypeErr> = vec![];
+fn build_func_registration(
+    func: &Func,
+    node: &FuncNode,
+    resolve: impl Fn(&Type) -> Type,
+) -> FuncRegistration {
+    let func_ty = resolve(&type_from_fn(func));
+    let param_info = build_param_info(&func.params);
+    let type_params = (!func.type_params.is_empty()).then(|| func.type_params.clone());
+    let template = type_params.is_some().then(|| node.clone());
+    FuncRegistration { func_ty, param_info, type_params, template }
+}
 
-    let mut local_extern_types = HashSet::new();
-    for stmt in stmts {
-        if let Stmt::ExternType(node) = &stmt.node {
-            local_extern_types.insert(node.node.name);
-        }
-    }
-
-    let resolve = |ty: &Type| -> Type {
-        fn pre_resolve(ty: &Type, local: &HashSet<Ident>) -> Type {
-            match ty {
-                Type::UnresolvedName(name) if local.contains(name) => Type::Extern { name: *name },
-                Type::Func { params, ret } => Type::Func {
-                    params: params.iter().map(|t| pre_resolve(t, local)).collect(),
-                    ret: Box::new(pre_resolve(ret, local)),
-                },
-                _ => ty.clone(),
-            }
-        }
-        let pre = pre_resolve(ty, &local_extern_types);
-        type_checker.resolve_type(&pre)
+fn build_extern_func_registration(
+    extern_func: &ExternFunc,
+    resolve: impl Fn(&Type) -> Type,
+) -> (Type, Vec<(Ident, Mutability)>) {
+    let func_ty = Type::Func {
+        params: extern_func.params.iter().map(|p| resolve(&p.ty)).collect(),
+        ret: Box::new(resolve(&extern_func.ret)),
     };
+    let param_info = build_param_info(&extern_func.params);
+    (func_ty, param_info)
+}
 
-    let mut reexported_from: HashMap<Ident, String> = HashMap::new();
-
-    for stmt in stmts {
-        match &stmt.node {
-            Stmt::Func(node) => {
-                let func = &node.node;
-                module_def.all_names.insert(func.name);
-                if func.visibility != Visibility::Public {
-                    continue;
-                }
-                let raw_ty = type_from_fn(func);
-                let func_ty = resolve(&raw_ty);
-                module_def.funcs.insert(func.name, func_ty);
-
-                let param_info: Vec<_> =
-                    func.params.iter().map(|p| (p.name, p.mutability)).collect();
-                module_def.func_param_info.insert(func.name, param_info);
-
-                if !func.type_params.is_empty() {
-                    module_def
-                        .func_type_params
-                        .insert(func.name, func.type_params.clone());
-                    module_def
-                        .generic_func_templates
-                        .insert(func.name, node.clone());
-                }
-
-                reexported_from.insert(func.name, "<local>".to_string());
-            }
-            Stmt::Struct(node) => {
-                let decl = &node.node;
-                module_def.all_names.insert(decl.name);
-                if decl.visibility != Visibility::Public {
-                    continue;
-                }
-                let methods = decl
-                    .methods
-                    .iter()
-                    .map(|m| {
-                        (
-                            m.name,
-                            MethodDef {
-                                type_params: m.type_params.clone(),
-                                receiver: m.receiver,
-                                params: m.params.clone(),
-                                ret: m.ret.clone(),
-                                body: m.body.clone(),
-                            },
-                        )
-                    })
-                    .collect();
-                module_def.struct_defs.insert(
-                    decl.name,
-                    StructDef {
-                        type_params: decl.type_params.clone(),
-                        fields: decl.fields.clone(),
-                        methods,
-                    },
-                );
-
-                reexported_from.insert(decl.name, "<local>".to_string());
-            }
-            Stmt::Enum(node) => {
-                let decl = &node.node;
-                module_def.all_names.insert(decl.name);
-                if decl.visibility != Visibility::Public {
-                    continue;
-                }
-                let variants = decl
-                    .variants
-                    .iter()
-                    .map(|v| EnumVariantDef {
-                        name: v.name,
-                        kind: v.kind.clone(),
-                    })
-                    .collect();
-                module_def.enum_defs.insert(
-                    decl.name,
-                    EnumDef {
-                        type_params: decl.type_params.clone(),
-                        variants,
-                    },
-                );
-
-                reexported_from.insert(decl.name, "<local>".to_string());
-            }
-            Stmt::Import(node) => {
-                let import = &node.node;
-                if import.visibility != Visibility::Public {
-                    continue;
-                }
-
-                let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
-                let source_label = path_key.last().cloned().unwrap_or_default();
-
-                let Some(source_def) = type_checker.resolved_module_defs.get(&path_key).cloned()
-                else {
-                    continue;
-                };
-
-                match &import.kind {
-                    ImportKind::Selective(items) => {
-                        for item in items {
-                            let bind_as = item.alias.unwrap_or(item.name);
-                            if let Some(existing) = reexported_from.get(&bind_as) {
-                                errors.push(
-                                    TypeErr::new(
-                                        node.span,
-                                        TypeErrKind::ReExportCollision {
-                                            name: bind_as,
-                                            first_source: existing.clone(),
-                                            second_source: source_label.clone(),
-                                        },
-                                    )
-                                    .with_help(
-                                        "use selective re-exports or aliasing to resolve the conflict",
-                                    ),
-                                );
-                            } else {
-                                merge_symbol(item.name, bind_as, &source_def, &mut module_def);
-                                reexported_from.insert(bind_as, source_label.clone());
-                            }
-                        }
-                    }
-                    ImportKind::Wildcard => {
-                        for name in source_def.all_public_names().collect::<Vec<_>>() {
-                            if let Some(existing) = reexported_from.get(&name) {
-                                errors.push(
-                                    TypeErr::new(
-                                        node.span,
-                                        TypeErrKind::ReExportCollision {
-                                            name,
-                                            first_source: existing.clone(),
-                                            second_source: source_label.clone(),
-                                        },
-                                    )
-                                    .with_help(
-                                        "use selective re-exports or aliasing to resolve the conflict",
-                                    ),
-                                );
-                            } else {
-                                merge_symbol(name, name, &source_def, &mut module_def);
-                                reexported_from.insert(name, source_label.clone());
-                            }
-                        }
-                    }
-                    ImportKind::Module => {
-                        let binding = *import.path.last().expect("import path cannot be empty");
-                        if let Some(existing) = reexported_from.get(&binding) {
-                            errors.push(
-                                TypeErr::new(
-                                    node.span,
-                                    TypeErrKind::ReExportCollision {
-                                        name: binding,
-                                        first_source: existing.clone(),
-                                        second_source: source_label.clone(),
-                                    },
-                                )
-                                .with_help(
-                                    "use `pub import X as alias;` to rename the re-exported module",
-                                ),
-                            );
-                        } else {
-                            module_def.re_exported_modules.insert(binding, source_def);
-                            reexported_from.insert(binding, source_label.clone());
-                        }
-                    }
-                    ImportKind::ModuleAs(alias) => {
-                        if let Some(existing) = reexported_from.get(alias) {
-                            errors.push(
-                                TypeErr::new(
-                                    node.span,
-                                    TypeErrKind::ReExportCollision {
-                                        name: *alias,
-                                        first_source: existing.clone(),
-                                        second_source: source_label.clone(),
-                                    },
-                                )
-                                .with_help("use a different alias to resolve the conflict"),
-                            );
-                        } else {
-                            module_def.re_exported_modules.insert(*alias, source_def);
-                            reexported_from.insert(*alias, source_label.clone());
-                        }
-                    }
-                }
-            }
-            Stmt::ExternFunc(node) => {
-                let extern_func = &node.node;
-                module_def.all_names.insert(extern_func.name);
-                let func_ty = Type::Func {
-                    params: extern_func.params.iter().map(|p| resolve(&p.ty)).collect(),
-                    ret: Box::new(resolve(&extern_func.ret)),
-                };
-                module_def.funcs.insert(extern_func.name, func_ty);
-                let param_info: Vec<_> = extern_func
-                    .params
-                    .iter()
-                    .map(|p| (p.name, p.mutability))
-                    .collect();
-                module_def
-                    .func_param_info
-                    .insert(extern_func.name, param_info);
-            }
-            Stmt::ExternType(node) => {
-                let name = node.node.name;
-                module_def.all_names.insert(name);
-                let def = build_extern_type_def(node.node.has_init, &node.node.members, &resolve);
-                module_def.extern_types.insert(name, def);
-            }
-            _ => {}
-        }
-    }
-
-    (module_def, errors)
+fn push_reexport_collision(
+    errors: &mut Vec<TypeErr>,
+    span: Span,
+    name: Ident,
+    existing: &str,
+    source: &str,
+    help: &str,
+) {
+    errors.push(
+        TypeErr::new(
+            span,
+            TypeErrKind::ReExportCollision {
+                name,
+                first_source: existing.to_string(),
+                second_source: source.to_string(),
+            },
+        )
+        .with_help(help),
+    );
 }
 
 fn merge_symbol(name: Ident, bind_as: Ident, source: &ModuleDef, target: &mut ModuleDef) {
@@ -624,6 +257,295 @@ fn build_extern_type_def(
     }
 }
 
+pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChecker) {
+    // register extern type names before anything else, so they can be
+    // resolved when building function signatures that reference them
+    for stmt in stmts {
+        if let Stmt::ExternType(node) = &stmt.node {
+            type_checker.extern_type_defs.insert(
+                node.node.name,
+                ExternTypeDef {
+                    has_init: false,
+                    field_order: vec![],
+                    fields: HashMap::new(),
+                    methods: HashMap::new(),
+                    statics: HashMap::new(),
+                },
+            );
+        }
+    }
+
+    for stmt in stmts {
+        match &stmt.node {
+            Stmt::ExternType(node) => {
+                let def = build_extern_type_def(node.node.has_init, &node.node.members, |ty| {
+                    type_checker.resolve_type(ty)
+                });
+                type_checker.extern_type_defs.insert(node.node.name, def);
+            }
+
+            Stmt::ExternFunc(node) => {
+                let extern_func = &node.node;
+                let (func_ty, param_info) =
+                    build_extern_func_registration(extern_func, |ty| type_checker.resolve_type(ty));
+                type_checker.set_var(extern_func.name, func_ty, false);
+                type_checker.func_param_info.insert(extern_func.name, param_info);
+            }
+
+            Stmt::Func(node) => {
+                let func = &node.node;
+                let FuncRegistration { func_ty, param_info, type_params, template } =
+                    build_func_registration(func, node, |ty| type_checker.resolve_type(ty));
+                type_checker.set_var(func.name, func_ty, false);
+                type_checker.func_param_info.insert(func.name, param_info);
+                if let Some(tp) = type_params {
+                    type_checker.func_type_params.insert(func.name, tp);
+                }
+                if let Some(tmpl) = template {
+                    type_checker.generic_func_templates.insert(func.name, tmpl);
+                }
+            }
+
+            Stmt::Struct(node) => {
+                type_checker
+                    .struct_defs
+                    .insert(node.node.name, StructDef::from_ast(&node.node));
+            }
+
+            Stmt::Enum(node) => {
+                type_checker
+                    .enum_defs
+                    .insert(node.node.name, EnumDef::from_ast(&node.node));
+            }
+
+            Stmt::Import(node) => {
+                let import = &node.node;
+                let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
+
+                let Some(module_def) = type_checker.resolved_module_defs.get(&path_key).cloned()
+                else {
+                    // module wasn't resolved (std.*, unresolved error, etc.)
+                    continue;
+                };
+
+                match &import.kind {
+                    ImportKind::Module => {
+                        let binding = *import.path.last().expect("import path cannot be empty");
+                        type_checker.module_defs.insert(binding, module_def);
+                    }
+                    ImportKind::ModuleAs(alias) => {
+                        type_checker.module_defs.insert(*alias, module_def);
+                    }
+                    ImportKind::Selective(items) => {
+                        for item in items {
+                            let bind_as = item.alias.unwrap_or(item.name);
+                            inject_module_item(
+                                item.name,
+                                bind_as,
+                                &module_def,
+                                &path_key,
+                                type_checker,
+                            );
+                        }
+                    }
+                    ImportKind::Wildcard => {
+                        let names: Vec<Ident> = module_def.all_public_names().collect();
+                        for name in names {
+                            inject_module_item(name, name, &module_def, &path_key, type_checker);
+                        }
+                        let sub_module_names: Vec<Ident> =
+                            module_def.re_exported_modules.keys().copied().collect();
+                        for name in sub_module_names {
+                            inject_module_item(name, name, &module_def, &path_key, type_checker);
+                        }
+                    }
+                }
+            }
+
+            _ => {}
+        }
+    }
+}
+
+pub(super) fn build_module_def_with_reexports(
+    stmts: &[StmtNode],
+    type_checker: &TypeChecker,
+) -> (ModuleDef, Vec<TypeErr>) {
+    let mut module_def = ModuleDef::default();
+    let mut errors: Vec<TypeErr> = vec![];
+
+    let mut local_extern_types = HashSet::new();
+    for stmt in stmts {
+        if let Stmt::ExternType(node) = &stmt.node {
+            local_extern_types.insert(node.node.name);
+        }
+    }
+
+    let resolve = |ty: &Type| -> Type {
+        fn pre_resolve(ty: &Type, local: &HashSet<Ident>) -> Type {
+            match ty {
+                Type::UnresolvedName(name) if local.contains(name) => Type::Extern { name: *name },
+                Type::Func { params, ret } => Type::Func {
+                    params: params.iter().map(|t| pre_resolve(t, local)).collect(),
+                    ret: Box::new(pre_resolve(ret, local)),
+                },
+                _ => ty.clone(),
+            }
+        }
+        let pre = pre_resolve(ty, &local_extern_types);
+        type_checker.resolve_type(&pre)
+    };
+
+    let mut reexported_from: HashMap<Ident, String> = HashMap::new();
+
+    for stmt in stmts {
+        match &stmt.node {
+            Stmt::Func(node) => {
+                let func = &node.node;
+                module_def.all_names.insert(func.name);
+                if func.visibility != Visibility::Public {
+                    continue;
+                }
+                let FuncRegistration { func_ty, param_info, type_params, template } =
+                    build_func_registration(func, node, resolve);
+                module_def.funcs.insert(func.name, func_ty);
+                module_def.func_param_info.insert(func.name, param_info);
+                if let Some(tp) = type_params {
+                    module_def.func_type_params.insert(func.name, tp);
+                }
+                if let Some(tmpl) = template {
+                    module_def.generic_func_templates.insert(func.name, tmpl);
+                }
+                reexported_from.insert(func.name, "<local>".to_string());
+            }
+            Stmt::Struct(node) => {
+                let decl = &node.node;
+                module_def.all_names.insert(decl.name);
+                if decl.visibility != Visibility::Public {
+                    continue;
+                }
+                module_def
+                    .struct_defs
+                    .insert(decl.name, StructDef::from_ast(decl));
+
+                reexported_from.insert(decl.name, "<local>".to_string());
+            }
+            Stmt::Enum(node) => {
+                let decl = &node.node;
+                module_def.all_names.insert(decl.name);
+                if decl.visibility != Visibility::Public {
+                    continue;
+                }
+                module_def
+                    .enum_defs
+                    .insert(decl.name, EnumDef::from_ast(decl));
+
+                reexported_from.insert(decl.name, "<local>".to_string());
+            }
+            Stmt::Import(node) => {
+                let import = &node.node;
+                if import.visibility != Visibility::Public {
+                    continue;
+                }
+
+                let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
+                let source_label = path_key.last().cloned().unwrap_or_default();
+
+                let Some(source_def) = type_checker.resolved_module_defs.get(&path_key).cloned()
+                else {
+                    continue;
+                };
+
+                match &import.kind {
+                    ImportKind::Selective(items) => {
+                        for item in items {
+                            let bind_as = item.alias.unwrap_or(item.name);
+                            if let Some(existing) = reexported_from.get(&bind_as) {
+                                push_reexport_collision(
+                                    &mut errors,
+                                    node.span,
+                                    bind_as,
+                                    existing,
+                                    &source_label,
+                                    "use selective re-exports or aliasing to resolve the conflict",
+                                );
+                            } else {
+                                merge_symbol(item.name, bind_as, &source_def, &mut module_def);
+                                reexported_from.insert(bind_as, source_label.clone());
+                            }
+                        }
+                    }
+                    ImportKind::Wildcard => {
+                        for name in source_def.all_public_names().collect::<Vec<_>>() {
+                            if let Some(existing) = reexported_from.get(&name) {
+                                push_reexport_collision(
+                                    &mut errors,
+                                    node.span,
+                                    name,
+                                    existing,
+                                    &source_label,
+                                    "use selective re-exports or aliasing to resolve the conflict",
+                                );
+                            } else {
+                                merge_symbol(name, name, &source_def, &mut module_def);
+                                reexported_from.insert(name, source_label.clone());
+                            }
+                        }
+                    }
+                    ImportKind::Module => {
+                        let binding = *import.path.last().expect("import path cannot be empty");
+                        if let Some(existing) = reexported_from.get(&binding) {
+                            push_reexport_collision(
+                                &mut errors,
+                                node.span,
+                                binding,
+                                existing,
+                                &source_label,
+                                "use `pub import X as alias;` to rename the re-exported module",
+                            );
+                        } else {
+                            module_def.re_exported_modules.insert(binding, source_def);
+                            reexported_from.insert(binding, source_label.clone());
+                        }
+                    }
+                    ImportKind::ModuleAs(alias) => {
+                        if let Some(existing) = reexported_from.get(alias) {
+                            push_reexport_collision(
+                                &mut errors,
+                                node.span,
+                                *alias,
+                                existing,
+                                &source_label,
+                                "use a different alias to resolve the conflict",
+                            );
+                        } else {
+                            module_def.re_exported_modules.insert(*alias, source_def);
+                            reexported_from.insert(*alias, source_label.clone());
+                        }
+                    }
+                }
+            }
+            Stmt::ExternFunc(node) => {
+                let extern_func = &node.node;
+                module_def.all_names.insert(extern_func.name);
+                let (func_ty, param_info) =
+                    build_extern_func_registration(extern_func, resolve);
+                module_def.funcs.insert(extern_func.name, func_ty);
+                module_def.func_param_info.insert(extern_func.name, param_info);
+            }
+            Stmt::ExternType(node) => {
+                let name = node.node.name;
+                module_def.all_names.insert(name);
+                let def = build_extern_type_def(node.node.has_init, &node.node.members, resolve);
+                module_def.extern_types.insert(name, def);
+            }
+            _ => {}
+        }
+    }
+
+    (module_def, errors)
+}
+
 pub(super) fn check_stmt(
     stmt: &StmtNode,
     type_checker: &mut TypeChecker,
@@ -699,10 +621,8 @@ pub(super) fn check_binding(
     errors: &mut Vec<TypeErr>,
 ) {
     let node = &binding.node;
-    if let Some(annot_ty) = &node.ty {
-        if annot_ty.contains_any() {
-            errors.push(TypeErr::new(binding.span, TypeErrKind::AnyTypeNotAllowed));
-        }
+    if let Some(annot_ty) = &node.ty && annot_ty.contains_any() {
+        errors.push(TypeErr::new(binding.span, TypeErrKind::AnyTypeNotAllowed));
     }
     let expected = node
         .ty
@@ -732,30 +652,7 @@ pub(super) fn check_binding(
 
             // validate map type annotation are keyable
             if let Type::Map { key, .. } = &resolved_annot {
-                let is_optional_key = key.is_option();
-                let is_infer = matches!(key.as_ref(), Type::Infer);
-                let is_float_key = matches!(key.as_ref(), Type::Float);
-                if is_optional_key {
-                    errors.push(TypeErr::new(
-                        binding.span,
-                        TypeErrKind::MapOptionalKeyNotAllowed {
-                            found: (**key).clone(),
-                        },
-                    ));
-                } else if is_float_key {
-                    errors.push(TypeErr::new(binding.span, TypeErrKind::MapKeyFloat));
-                } else if !is_keyable(key, type_checker) && !is_infer {
-                    let mut err = TypeErr::new(
-                        binding.span,
-                        TypeErrKind::MapKeyNotKeyable {
-                            found: (**key).clone(),
-                        },
-                    );
-                    if let Some(reason) = keyable_reason(key, type_checker) {
-                        err.notes.push(reason);
-                    }
-                    errors.push(err);
-                }
+                validate_map_key_type(binding.span, key, type_checker, errors);
             }
 
             let should_retag_literal = is_array_literal_with_infer_elem(&node.value, &value_ty)

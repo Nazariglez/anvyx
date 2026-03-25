@@ -1,7 +1,8 @@
 use crate::{
     ast::{
-        BlockNode, CallNode, ExprId, FieldAccessNode, FuncNode, Ident, IndexNode, MethodReceiver,
-        Mutability, Param, StmtNode, StructField, Type, TypeParam, TypeVarId, VariantKind,
+        BlockNode, CallNode, EnumDecl, ExprId, FieldAccessNode, FuncNode, Ident, IndexNode,
+        Method, MethodReceiver, Mutability, Param, StmtNode, StructDecl, StructField, Type,
+        TypeParam, TypeVarId, VariantKind,
     },
     span::Span,
 };
@@ -26,6 +27,23 @@ pub(super) struct EnumDef {
     pub variants: Vec<EnumVariantDef>,
 }
 
+impl EnumDef {
+    pub(super) fn from_ast(decl: &EnumDecl) -> Self {
+        let variants = decl
+            .variants
+            .iter()
+            .map(|v| EnumVariantDef {
+                name: v.name,
+                kind: v.kind.clone(),
+            })
+            .collect();
+        Self {
+            type_params: decl.type_params.clone(),
+            variants,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct MethodDef {
     pub type_params: Vec<TypeParam>,
@@ -35,11 +53,41 @@ pub(super) struct MethodDef {
     pub body: BlockNode,
 }
 
+impl MethodDef {
+    pub(super) fn from_ast(method: &Method) -> (Ident, Self) {
+        (
+            method.name,
+            Self {
+                type_params: method.type_params.clone(),
+                receiver: method.receiver,
+                params: method.params.clone(),
+                ret: method.ret.clone(),
+                body: method.body.clone(),
+            },
+        )
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct StructDef {
     pub type_params: Vec<TypeParam>,
     pub fields: Vec<StructField>,
     pub methods: HashMap<Ident, MethodDef>,
+}
+
+impl StructDef {
+    pub(super) fn from_ast(decl: &StructDecl) -> Self {
+        let methods = decl
+            .methods
+            .iter()
+            .map(|m| MethodDef::from_ast(m))
+            .collect();
+        Self {
+            type_params: decl.type_params.clone(),
+            fields: decl.fields.clone(),
+            methods,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1200,4 +1248,43 @@ pub(super) fn keyable_reason(ty: &Type, tc: &TypeChecker) -> Option<String> {
         }
         other => Some(format!("type '{other}' is not keyable")),
     }
+}
+
+pub(super) fn validate_map_key_type(
+    span: Span,
+    key_ty: &Type,
+    type_checker: &TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    if matches!(key_ty, Type::Infer) {
+        return;
+    }
+    if is_keyable(key_ty, type_checker) {
+        return;
+    }
+    if key_ty.is_option() {
+        errors.push(TypeErr::new(
+            span,
+            TypeErrKind::MapOptionalKeyNotAllowed {
+                found: key_ty.clone(),
+            },
+        ));
+    } else if matches!(key_ty, Type::Float) {
+        errors.push(TypeErr::new(span, TypeErrKind::MapKeyFloat));
+    } else {
+        let mut err = TypeErr::new(
+            span,
+            TypeErrKind::MapKeyNotKeyable {
+                found: key_ty.clone(),
+            },
+        );
+        if let Some(reason) = keyable_reason(key_ty, type_checker) {
+            err.notes.push(reason);
+        }
+        errors.push(err);
+    }
+}
+
+pub(super) fn build_param_info(params: &[Param]) -> Vec<(Ident, Mutability)> {
+    params.iter().map(|p| (p.name, p.mutability)).collect()
 }
