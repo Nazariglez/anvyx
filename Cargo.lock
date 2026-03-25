@@ -88,6 +88,7 @@ dependencies = [
  "chumsky",
  "indexmap",
  "internment",
+ "serde",
  "serde_json",
 ]
 

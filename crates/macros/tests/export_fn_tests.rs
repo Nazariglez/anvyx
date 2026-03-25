@@ -1625,7 +1625,7 @@ mod field_provider {
         let json = exports_to_json(ANVYX_EXPORTS, &anvyx_type_exports());
         assert!(json.contains("\"fields\":["));
         assert!(json.contains("\"name\":\"x\""));
-        assert!(json.contains("\"type\":\"float\""));
+        assert!(json.contains("\"ty\":\"float\""));
     }
 }
 

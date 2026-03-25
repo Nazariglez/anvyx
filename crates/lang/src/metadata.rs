@@ -1,11 +1,13 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ExternDecl {
     pub name: &'static str,
     pub params: &'static [(&'static str, &'static str)],
     pub ret: &'static str,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ExternTypeDecl {
     pub name: &'static str,
     pub has_init: bool,
@@ -21,14 +23,14 @@ pub struct ExternTypeDeclConst {
     pub fields: &'static [ExternFieldDecl],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ExternFieldDecl {
     pub name: &'static str,
     pub ty: &'static str,
     pub computed: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ExternMethodDecl {
     pub name: &'static str,
     pub receiver: &'static str,
@@ -36,136 +38,54 @@ pub struct ExternMethodDecl {
     pub ret: &'static str,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ExternStaticMethodDecl {
     pub name: &'static str,
     pub params: &'static [(&'static str, &'static str)],
     pub ret: &'static str,
 }
 
+#[derive(Serialize)]
+struct ExportsJson<'a> {
+    types: &'a [ExternTypeDecl],
+    functions: &'a [ExternDecl],
+}
+
 pub fn exports_to_json(decls: &[ExternDecl], type_decls: &[ExternTypeDecl]) -> String {
-    let mut out = String::from("{\"types\":[");
-    for (i, ty) in type_decls.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push_str("{\"name\":\"");
-        push_escaped(&mut out, ty.name);
-        out.push('"');
-        if ty.has_init {
-            out.push_str(",\"init\":true");
-        }
-        out.push_str(",\"fields\":[");
-        for (j, field) in ty.fields.iter().enumerate() {
-            if j > 0 {
-                out.push(',');
-            }
-            out.push_str("{\"name\":\"");
-            push_escaped(&mut out, field.name);
-            out.push_str("\",\"type\":\"");
-            push_escaped(&mut out, field.ty);
-            out.push('"');
-            if field.computed {
-                out.push_str(",\"computed\":true");
-            }
-            out.push('}');
-        }
-        out.push_str("],\"methods\":[");
-        for (j, method) in ty.methods.iter().enumerate() {
-            if j > 0 {
-                out.push(',');
-            }
-            out.push_str("{\"name\":\"");
-            push_escaped(&mut out, method.name);
-            out.push_str("\",\"receiver\":\"");
-            push_escaped(&mut out, method.receiver);
-            out.push_str("\",\"params\":");
-            push_params(&mut out, method.params);
-            out.push_str(",\"ret\":\"");
-            push_escaped(&mut out, method.ret);
-            out.push_str("\"}");
-        }
-        out.push_str("],\"statics\":[");
-        for (j, s) in ty.statics.iter().enumerate() {
-            if j > 0 {
-                out.push(',');
-            }
-            out.push_str("{\"name\":\"");
-            push_escaped(&mut out, s.name);
-            out.push_str("\",\"params\":");
-            push_params(&mut out, s.params);
-            out.push_str(",\"ret\":\"");
-            push_escaped(&mut out, s.ret);
-            out.push_str("\"}");
-        }
-        out.push_str("]}");
-    }
-    out.push_str("],\"functions\":[");
-    for (i, decl) in decls.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        out.push_str("{\"name\":\"");
-        push_escaped(&mut out, decl.name);
-        out.push_str("\",\"params\":");
-        push_params(&mut out, decl.params);
-        out.push_str(",\"ret\":\"");
-        push_escaped(&mut out, decl.ret);
-        out.push_str("\"}");
-    }
-    out.push_str("]}");
-    out
+    let wrapper = ExportsJson { types: type_decls, functions: decls };
+    serde_json::to_string(&wrapper).expect("metadata serialization cannot fail")
 }
 
-fn push_params(out: &mut String, params: &[(&str, &str)]) {
-    out.push('[');
-    for (j, (pname, pty)) in params.iter().enumerate() {
-        if j > 0 {
-            out.push(',');
-        }
-        out.push_str("[\"");
-        push_escaped(out, pname);
-        out.push_str("\",\"");
-        push_escaped(out, pty);
-        out.push_str("\"]");
-    }
-    out.push(']');
-}
 
-fn push_escaped(out: &mut String, s: &str) {
-    for ch in s.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            ch => out.push(ch),
-        }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct ExternFuncMeta {
     pub name: String,
     pub params: Vec<(String, String)>,
     pub ret: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct ExternTypeMeta {
     pub name: String,
+    #[serde(default)]
     pub has_init: bool,
+    #[serde(default)]
     pub fields: Vec<ExternFieldMeta>,
+    #[serde(default)]
     pub methods: Vec<ExternMethodMeta>,
+    #[serde(default)]
     pub statics: Vec<ExternStaticMethodMeta>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct ExternFieldMeta {
     pub name: String,
     pub ty: String,
+    #[serde(default)]
     pub computed: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct ExternMethodMeta {
     pub name: String,
     pub receiver: String,
@@ -173,121 +93,22 @@ pub struct ExternMethodMeta {
     pub ret: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct ExternStaticMethodMeta {
     pub name: String,
     pub params: Vec<(String, String)>,
     pub ret: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct ExternProviderMeta {
+    #[serde(default)]
     pub types: Vec<ExternTypeMeta>,
     pub functions: Vec<ExternFuncMeta>,
 }
 
 pub fn parse_provider_json(json: &str) -> Result<ExternProviderMeta, String> {
-    let v: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("Invalid metadata JSON: {e}"))?;
-
-    let empty_arr = vec![];
-    let types = match v["types"].as_array() {
-        Some(arr) => {
-            let mut type_metas = vec![];
-            for ty in arr {
-                let name = ty["name"]
-                    .as_str()
-                    .ok_or("Type entry missing 'name'")?
-                    .to_string();
-                let has_init = ty["init"].as_bool().unwrap_or(false);
-
-                let fields = ty["fields"]
-                    .as_array()
-                    .unwrap_or(&empty_arr)
-                    .iter()
-                    .map(|f| {
-                        Ok(ExternFieldMeta {
-                            name: f["name"].as_str().ok_or("Field missing 'name'")?.to_string(),
-                            ty: f["type"].as_str().ok_or("Field missing 'type'")?.to_string(),
-                            computed: f["computed"].as_bool().unwrap_or(false),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
-
-                let methods = ty["methods"]
-                    .as_array()
-                    .unwrap_or(&empty_arr)
-                    .iter()
-                    .map(|m| {
-                        Ok(ExternMethodMeta {
-                            name: m["name"].as_str().ok_or("Method missing 'name'")?.to_string(),
-                            receiver: m["receiver"].as_str().ok_or("Method missing 'receiver'")?.to_string(),
-                            params: parse_params(m["params"].as_array().unwrap_or(&empty_arr))?,
-                            ret: m["ret"].as_str().ok_or("Method missing 'ret'")?.to_string(),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
-
-                let statics = ty["statics"]
-                    .as_array()
-                    .unwrap_or(&empty_arr)
-                    .iter()
-                    .map(|s| {
-                        Ok(ExternStaticMethodMeta {
-                            name: s["name"].as_str().ok_or("Static method missing 'name'")?.to_string(),
-                            params: parse_params(s["params"].as_array().unwrap_or(&empty_arr))?,
-                            ret: s["ret"].as_str().ok_or("Static method missing 'ret'")?.to_string(),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, String>>()?;
-
-                type_metas.push(ExternTypeMeta { name, has_init, fields, methods, statics });
-            }
-            type_metas
-        }
-        None => vec![],
-    };
-
-    let functions = v["functions"]
-        .as_array()
-        .ok_or("Metadata JSON missing 'functions' array")?;
-
-    let mut funcs = vec![];
-    for func in functions {
-        let name = func["name"]
-            .as_str()
-            .ok_or("Function entry missing 'name'")?
-            .to_string();
-
-        let params = parse_params(
-            func["params"]
-                .as_array()
-                .ok_or("Function entry missing 'params'")?,
-        )?;
-
-        let ret = func["ret"]
-            .as_str()
-            .ok_or("Function entry missing 'ret'")?
-            .to_string();
-
-        funcs.push(ExternFuncMeta { name, params, ret });
-    }
-
-    Ok(ExternProviderMeta { types, functions: funcs })
-}
-
-fn parse_params(arr: &[serde_json::Value]) -> Result<Vec<(String, String)>, String> {
-    arr.iter()
-        .map(|param| {
-            let pair = param.as_array().ok_or("Param entry is not an array")?;
-            if pair.len() != 2 {
-                return Err(format!("Param entry has {} elements, expected 2", pair.len()));
-            }
-            let pname = pair[0].as_str().ok_or("Param name is not a string")?.to_string();
-            let pty = pair[1].as_str().ok_or("Param type is not a string")?.to_string();
-            Ok((pname, pty))
-        })
-        .collect()
+    serde_json::from_str(json).map_err(|e| format!("Invalid metadata JSON: {e}"))
 }
 
 pub(crate) fn anvyx_type_from_str(s: &str) -> Result<crate::ast::Type, String> {
@@ -471,7 +292,7 @@ mod tests {
         let json = r#"{"types":[],"functions":[{"params":[],"ret":"int"}]}"#;
         let result = parse_provider_json(json);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("missing 'name'"));
+        assert!(result.unwrap_err().contains("missing field `name`"));
     }
 
     #[test]
@@ -712,8 +533,8 @@ mod tests {
     fn exports_to_json_rich_type() {
         let json = exports_to_json(&[], &[rich_type()]);
         assert!(json.contains("\"name\":\"Point\""));
-        assert!(json.contains("\"name\":\"x\",\"type\":\"float\""));
-        assert!(json.contains("\"name\":\"y\",\"type\":\"float\""));
+        assert!(json.contains("\"name\":\"x\",\"ty\":\"float\""));
+        assert!(json.contains("\"name\":\"y\",\"ty\":\"float\""));
         assert!(json.contains("\"name\":\"move_by\",\"receiver\":\"var\""));
         assert!(json.contains("\"name\":\"new\""));
         assert!(json.contains("\"ret\":\"Point\""));
@@ -721,7 +542,7 @@ mod tests {
 
     #[test]
     fn parse_provider_json_rich_type() {
-        let json = r#"{"types":[{"name":"Point","fields":[{"name":"x","type":"float"},{"name":"y","type":"float"}],"methods":[{"name":"move_by","receiver":"var","params":[["dx","float"],["dy","float"]],"ret":"void"}],"statics":[{"name":"new","params":[["x","float"],["y","float"]],"ret":"Point"}]}],"functions":[]}"#;
+        let json = r#"{"types":[{"name":"Point","fields":[{"name":"x","ty":"float"},{"name":"y","ty":"float"}],"methods":[{"name":"move_by","receiver":"var","params":[["dx","float"],["dy","float"]],"ret":"void"}],"statics":[{"name":"new","params":[["x","float"],["y","float"]],"ret":"Point"}]}],"functions":[]}"#;
         let meta = parse_provider_json(json).unwrap();
         assert_eq!(meta.types.len(), 1);
         let ty = &meta.types[0];
@@ -858,7 +679,7 @@ mod tests {
             statics: vec![],
         }];
         let json = exports_to_json(&[], &type_decls);
-        assert!(json.contains("\"init\":true"));
+        assert!(json.contains("\"has_init\":true"));
     }
 
     #[test]
@@ -871,12 +692,12 @@ mod tests {
             statics: vec![],
         }];
         let json = exports_to_json(&[], &type_decls);
-        assert!(!json.contains("\"init\""));
+        assert!(json.contains("\"has_init\":false"));
     }
 
     #[test]
     fn parse_provider_json_has_init() {
-        let json = r#"{"types":[{"name":"Pt","init":true}],"functions":[]}"#;
+        let json = r#"{"types":[{"name":"Pt","has_init":true}],"functions":[]}"#;
         let meta = parse_provider_json(json).unwrap();
         assert_eq!(meta.types.len(), 1);
         assert!(meta.types[0].has_init);
