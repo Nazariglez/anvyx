@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let s = "hello";
+    match s {
+        "hello" => {},
+        "world" => {},
+        _ => {},
+    }
+}

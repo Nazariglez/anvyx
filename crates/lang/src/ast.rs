@@ -463,7 +463,11 @@ pub enum Pattern {
         qualifier: Ident,
         variant: Ident,
         fields: Vec<(Ident, PatternNode)>,
+        has_rest: bool,
     },
+    Lit(Lit),
+    VarIdent(Ident),
+    Rest,
 }
 
 impl Pattern {
@@ -477,6 +481,9 @@ impl Pattern {
             Self::EnumUnit { .. } => "EnumUnit",
             Self::EnumTuple { .. } => "EnumTuple",
             Self::EnumStruct { .. } => "EnumStruct",
+            Self::Lit(_) => "literal",
+            Self::VarIdent(_) => "var binding",
+            Self::Rest => "..",
         }
     }
 }

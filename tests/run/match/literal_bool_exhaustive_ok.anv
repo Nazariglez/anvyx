@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// yes
+// no
+// @match-end
+
+fn main() {
+    match true {
+        true => { println("yes"); },
+        false => { println("no"); },
+    }
+    match false {
+        true => { println("yes"); },
+        false => { println("no"); },
+    }
+}

@@ -235,9 +235,14 @@ pub enum TypeErrKind {
         found: Type,
     },
 
-    MatchScrutineeNotEnum {
+    UnsupportedMatchScrutinee {
         found: Type,
     },
+    InvalidLiteralPattern {
+        expected: Type,
+        found: Type,
+    },
+    NonExhaustiveMatchNoCatchAll,
     NonExhaustiveMatch {
         missing: Vec<Ident>,
     },

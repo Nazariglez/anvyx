@@ -116,11 +116,12 @@ pub struct MatchArm {
 pub struct MatchBinding {
     pub field_index: u16,
     pub local: LocalId,
+    pub mutable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchElse {
-    pub binding: Option<LocalId>, // some for pattern::Ident, none for wildcard
+    pub binding: Option<(LocalId, bool)>, // some for pattern::Ident/VarIdent, none for wildcard
     pub body: Block,
 }
 
@@ -790,6 +791,7 @@ mod tests {
         let binding = MatchBinding {
             field_index: 0,
             local: LocalId(1),
+            mutable: false,
         };
         let arm = MatchArm {
             variant: 2,
@@ -804,7 +806,7 @@ mod tests {
     #[test]
     fn match_else_with_binding() {
         let else_b = MatchElse {
-            binding: Some(LocalId(3)),
+            binding: Some((LocalId(3), false)),
             body: Block { stmts: vec![] },
         };
         assert!(else_b.binding.is_some());

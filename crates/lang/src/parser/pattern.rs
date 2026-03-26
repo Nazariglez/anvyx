@@ -1,11 +1,11 @@
 use crate::{
     ast,
-    lexer::{Delimiter, Token},
+    lexer::{Delimiter, Keyword, Token},
     span::{Span, Spanned},
 };
 use chumsky::{error::Rich, prelude::*};
 
-use super::common::{identifier, validate_tuple_shape_raw, TupleShapeResult};
+use super::common::{TupleShapeResult, identifier, literal, validate_tuple_shape_raw};
 use super::{AnvParser, BoxedParser};
 
 pub(super) fn pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
@@ -20,11 +20,39 @@ pub(super) fn pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
             }
         });
 
+        let rest_pat = select! {
+            (Token::Range, s) => Spanned::new(ast::Pattern::Rest, s)
+        };
+
+        let var_pat = select! {
+            (Token::Keyword(Keyword::Var), _) => ()
+        }
+        .ignore_then(identifier())
+        .map_with(|name, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            Spanned::new(ast::Pattern::VarIdent(name), span)
+        });
+
+        let lit_pat = literal().map_with(|lit, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            Spanned::new(ast::Pattern::Lit(lit), span)
+        });
+
         let tuple_pat = tuple_pattern(pat.clone());
         let enum_pat = enum_pattern(pat.clone());
         let struct_pat = struct_pattern(pat);
 
-        choice((enum_pat, struct_pat, tuple_pat, ident_or_wildcard))
+        choice((
+            rest_pat,
+            var_pat,
+            lit_pat,
+            enum_pat,
+            struct_pat,
+            tuple_pat,
+            ident_or_wildcard,
+        ))
     })
     .labelled("pattern")
     .as_context()
@@ -77,7 +105,7 @@ fn struct_pattern<'src>(
 enum EnumPatternKind {
     Unit,
     Tuple(Vec<ast::PatternNode>),
-    Struct(Vec<(ast::Ident, ast::PatternNode)>),
+    Struct(Vec<(ast::Ident, ast::PatternNode)>, bool),
 }
 
 fn enum_pattern<'src>(
@@ -85,9 +113,7 @@ fn enum_pattern<'src>(
 ) -> BoxedParser<'src, ast::PatternNode> {
     let dot = select! { (Token::Dot, _) => () };
 
-    let qualified_name = identifier()
-        .then_ignore(dot)
-        .then(identifier());
+    let qualified_name = identifier().then_ignore(dot).then(identifier());
 
     qualified_name
         .then(choice((
@@ -100,12 +126,17 @@ fn enum_pattern<'src>(
             let span = Span::new(s.start, s.end);
             let pattern = match kind {
                 EnumPatternKind::Unit => ast::Pattern::EnumUnit { qualifier, variant },
-                EnumPatternKind::Tuple(fields) => {
-                    ast::Pattern::EnumTuple { qualifier, variant, fields }
-                }
-                EnumPatternKind::Struct(fields) => {
-                    ast::Pattern::EnumStruct { qualifier, variant, fields }
-                }
+                EnumPatternKind::Tuple(fields) => ast::Pattern::EnumTuple {
+                    qualifier,
+                    variant,
+                    fields,
+                },
+                EnumPatternKind::Struct(fields, has_rest) => ast::Pattern::EnumStruct {
+                    qualifier,
+                    variant,
+                    fields,
+                    has_rest,
+                },
             };
             Spanned::new(pattern, span)
         })
@@ -122,11 +153,7 @@ fn enum_tuple_payload<'src>(
     let close_paren = select! { (Token::Close(Delimiter::Parent), _) => () };
 
     open_paren
-        .ignore_then(
-            pat.separated_by(comma)
-                .allow_trailing()
-                .collect::<Vec<_>>(),
-        )
+        .ignore_then(pat.separated_by(comma).allow_trailing().collect::<Vec<_>>())
         .then_ignore(close_paren)
         .map(EnumPatternKind::Tuple)
         .boxed()
@@ -139,6 +166,7 @@ fn enum_struct_payload<'src>(
     let colon = select! { (Token::Colon, _) => () };
     let open_brace = select! { (Token::Open(Delimiter::Brace), _) => () };
     let close_brace = select! { (Token::Close(Delimiter::Brace), _) => () };
+    let rest = select! { (Token::Range, _) => () };
 
     let field_with_pattern = identifier()
         .then_ignore(colon)
@@ -160,8 +188,9 @@ fn enum_struct_payload<'src>(
                 .allow_trailing()
                 .collect::<Vec<_>>(),
         )
+        .then(rest.or_not())
         .then_ignore(close_brace)
-        .map(EnumPatternKind::Struct)
+        .map(|(fields, rest_tok)| EnumPatternKind::Struct(fields, rest_tok.is_some()))
         .boxed()
 }
 

@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let n = 42;
+    match n {
+        0 => {},
+        var x => {},
+    }
+}

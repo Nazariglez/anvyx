@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+enum Event {
+    Quit,
+    Move { dx: int, dy: int },
+}
+
+fn main() {
+    let e = Event.Move { dx: 10, dy: 20 };
+    match e {
+        Event.Quit => {},
+        Event.Move { dx, .. } => {},
+    }
+}

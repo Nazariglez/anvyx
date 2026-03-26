@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: non-exhaustive match
+
+fn main() {
+    let n = 42;
+    match n {
+        0 => {},
+        1 => {},
+    }
+}

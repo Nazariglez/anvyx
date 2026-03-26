@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    self, ExprKind, ExprNode, ForNode, Ident, IfNode, MatchNode, Pattern, Type, WhileNode,
+    self, ExprKind, ExprNode, ForNode, Ident, IfNode, Lit, MatchNode, Pattern, Type, WhileNode,
 };
+use internment::Intern;
 use crate::span::Span;
 
 use super::{
@@ -283,23 +284,43 @@ pub(super) fn check_match(
     let scrutinee = &match_node.node.scrutinee;
     let scrutinee_ty = check_expr(scrutinee, type_checker, errors, None);
 
-    let Type::Enum {
-        name: enum_name, ..
-    } = &scrutinee_ty
-    else {
-        errors.push(TypeErr::new(
-            scrutinee.span,
-            TypeErrKind::MatchScrutineeNotEnum {
-                found: scrutinee_ty.clone(),
-            },
-        ));
-        return Type::Infer;
-    };
+    match &scrutinee_ty {
+        Type::Enum { name: enum_name, .. } => {
+            check_match_enum(match_node, &scrutinee_ty, *enum_name, type_checker, errors)
+        }
+        Type::Bool => check_match_bool(match_node, &scrutinee_ty, type_checker, errors),
+        Type::Int | Type::String => {
+            check_match_scalar(match_node, &scrutinee_ty, type_checker, errors)
+        }
+        Type::Tuple(_) | Type::NamedTuple(_) => {
+            check_match_tuple(match_node, &scrutinee_ty, type_checker, errors)
+        }
+        Type::Infer => Type::Infer,
+        _ => {
+            errors.push(TypeErr::new(
+                scrutinee.span,
+                TypeErrKind::UnsupportedMatchScrutinee {
+                    found: scrutinee_ty.clone(),
+                },
+            ));
+            Type::Infer
+        }
+    }
+}
 
-    let Some(enum_def) = type_checker.get_enum(*enum_name) else {
+fn check_match_enum(
+    match_node: &MatchNode,
+    scrutinee_ty: &Type,
+    enum_name: Ident,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let scrutinee = &match_node.node.scrutinee;
+
+    let Some(enum_def) = type_checker.get_enum(enum_name) else {
         errors.push(TypeErr::new(
             scrutinee.span,
-            TypeErrKind::UnknownEnum { name: *enum_name },
+            TypeErrKind::UnknownEnum { name: enum_name },
         ));
         return Type::Infer;
     };
@@ -314,7 +335,7 @@ pub(super) fn check_match(
 
         check_match_pattern(
             &arm.node.pattern,
-            &scrutinee_ty,
+            scrutinee_ty,
             &enum_def,
             &mut covered_variants,
             &mut has_wildcard,
@@ -335,6 +356,123 @@ pub(super) fn check_match(
         match_node.span,
         errors,
     );
+    unify_arm_types(&arm_types, match_node.span, errors)
+}
+
+fn check_match_bool(
+    match_node: &MatchNode,
+    scrutinee_ty: &Type,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let mut has_true = false;
+    let mut has_false = false;
+    let mut has_wildcard = false;
+    let mut arm_types: Vec<Type> = vec![];
+
+    for arm in &match_node.node.arms {
+        type_checker.push_scope();
+
+        match &arm.node.pattern.node {
+            Pattern::Lit(Lit::Bool(true)) => has_true = true,
+            Pattern::Lit(Lit::Bool(false)) => has_false = true,
+            Pattern::Wildcard | Pattern::Ident(_) | Pattern::VarIdent(_) => has_wildcard = true,
+            _ => {}
+        }
+
+        check_pattern(&arm.node.pattern, scrutinee_ty, false, type_checker, errors);
+
+        let arm_ty = check_expr(&arm.node.body, type_checker, errors, None);
+        arm_types.push(arm_ty);
+
+        type_checker.pop_scope();
+    }
+
+    let exhaustive = (has_true && has_false) || has_wildcard;
+    if !exhaustive {
+        let mut missing = vec![];
+        if !has_true {
+            missing.push(Ident(Intern::new("true".to_string())));
+        }
+        if !has_false {
+            missing.push(Ident(Intern::new("false".to_string())));
+        }
+        errors.push(TypeErr::new(
+            match_node.span,
+            TypeErrKind::NonExhaustiveMatch { missing },
+        ));
+    }
+
+    unify_arm_types(&arm_types, match_node.span, errors)
+}
+
+fn check_match_scalar(
+    match_node: &MatchNode,
+    scrutinee_ty: &Type,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let mut has_wildcard = false;
+    let mut arm_types: Vec<Type> = vec![];
+
+    for arm in &match_node.node.arms {
+        type_checker.push_scope();
+
+        match &arm.node.pattern.node {
+            Pattern::Wildcard | Pattern::Ident(_) | Pattern::VarIdent(_) => has_wildcard = true,
+            _ => {}
+        }
+
+        check_pattern(&arm.node.pattern, scrutinee_ty, false, type_checker, errors);
+
+        let arm_ty = check_expr(&arm.node.body, type_checker, errors, None);
+        arm_types.push(arm_ty);
+
+        type_checker.pop_scope();
+    }
+
+    if !has_wildcard {
+        errors.push(TypeErr::new(
+            match_node.span,
+            TypeErrKind::NonExhaustiveMatchNoCatchAll,
+        ));
+    }
+
+    unify_arm_types(&arm_types, match_node.span, errors)
+}
+
+fn check_match_tuple(
+    match_node: &MatchNode,
+    scrutinee_ty: &Type,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let mut has_wildcard = false;
+    let mut arm_types: Vec<Type> = vec![];
+
+    for arm in &match_node.node.arms {
+        type_checker.push_scope();
+
+        match &arm.node.pattern.node {
+            Pattern::Wildcard | Pattern::Ident(_) | Pattern::VarIdent(_) => has_wildcard = true,
+            _ => {}
+        }
+
+        check_pattern(&arm.node.pattern, scrutinee_ty, false, type_checker, errors);
+
+        let arm_ty = check_expr(&arm.node.body, type_checker, errors, None);
+        arm_types.push(arm_ty);
+
+        type_checker.pop_scope();
+    }
+
+    if !has_wildcard {
+        errors.push(TypeErr::new(
+            match_node.span,
+            TypeErrKind::NonExhaustiveMatchNoCatchAll,
+        ));
+    }
+
     unify_arm_types(&arm_types, match_node.span, errors)
 }
 

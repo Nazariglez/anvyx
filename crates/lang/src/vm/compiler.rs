@@ -286,7 +286,7 @@ fn compile_stmt(fc: &mut FuncCompiler, stmt: &hir::Stmt) -> Result<(), CompileEr
 
             // else_body (wildcard / Ident catch-all)
             if let Some(else_b) = else_body {
-                if let Some(binding_local) = else_b.binding {
+                if let Some((binding_local, _)) = else_b.binding {
                     fc.emit(Op::GetLocal(scrutinee.0 as u16));
                     fc.emit(Op::SetLocal(binding_local.0 as u16));
                 }

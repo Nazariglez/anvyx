@@ -1,0 +1,10 @@
+// @mode: run
+// @expect: success
+// @match: other
+
+fn main() {
+    match false {
+        true => { println("yes"); },
+        _ => { println("other"); },
+    }
+}

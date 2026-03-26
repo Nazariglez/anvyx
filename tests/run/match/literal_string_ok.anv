@@ -1,0 +1,25 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// greeting
+// farewell
+// unknown
+// @match-end
+
+fn main() {
+    match "hello" {
+        "hello" => { println("greeting"); },
+        "bye" => { println("farewell"); },
+        _ => { println("unknown"); },
+    }
+    match "bye" {
+        "hello" => { println("greeting"); },
+        "bye" => { println("farewell"); },
+        _ => { println("unknown"); },
+    }
+    match "other" {
+        "hello" => { println("greeting"); },
+        "bye" => { println("farewell"); },
+        _ => { println("unknown"); },
+    }
+}

@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: invalid literal pattern
+
+fn main() {
+    let n = 42;
+    match n {
+        true => {},
+        _ => {},
+    }
+}

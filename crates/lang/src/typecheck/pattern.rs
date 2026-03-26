@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 
-use crate::ast::{Ident, Pattern, PatternNode, Type, VariantKind};
+use crate::ast::{Ident, Lit, Pattern, PatternNode, Type, VariantKind};
 
 use super::{
     composite::validate_field_names,
     error::{TypeErr, TypeErrKind},
+    expr::type_from_lit,
     infer::{build_subst, subst_type},
     types::{EnumDef, TypeChecker},
 };
@@ -184,18 +185,42 @@ fn check_pattern_inner(
             qualifier,
             variant,
             fields,
+            has_rest,
         } => {
             check_enum_struct_pattern(
                 pattern,
                 *qualifier,
                 *variant,
                 fields,
+                *has_rest,
                 value_ty,
                 mutable,
                 match_ctx,
                 type_checker,
                 errors,
             );
+        }
+        Pattern::Lit(lit) => {
+            let lit_ty = type_from_lit(lit);
+            let is_valid_pattern_lit = matches!(lit, Lit::Int(_) | Lit::Bool(_) | Lit::String(_));
+            if !is_valid_pattern_lit || (lit_ty != *value_ty && !value_ty.is_infer()) {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::InvalidLiteralPattern {
+                        expected: value_ty.clone(),
+                        found: lit_ty,
+                    },
+                ));
+            }
+        }
+        Pattern::VarIdent(name) => {
+            type_checker.set_var(*name, value_ty.clone(), true);
+            if let Some((_, _, has_wildcard)) = match_ctx {
+                *has_wildcard = true;
+            }
+        }
+        Pattern::Rest => {
+            // no-op, parent checks placement
         }
     }
 }
@@ -316,6 +341,7 @@ fn check_enum_struct_pattern(
     qualifier: Ident,
     variant_name: Ident,
     fields: &[(Ident, PatternNode)],
+    has_rest: bool,
     value_ty: &Type,
     mutable: bool,
     match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
@@ -393,6 +419,7 @@ fn check_enum_struct_pattern(
         &provided,
         pattern.span,
         expected_fields,
+        has_rest,
         |field| TypeErrKind::EnumVariantDuplicateField {
             enum_name: qualifier,
             variant_name,
@@ -525,4 +552,3 @@ fn check_struct_destructure_pattern(
         TypeErrKind::UnknownStruct { name: type_name },
     ));
 }
-

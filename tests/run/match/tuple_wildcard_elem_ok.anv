@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: got one
+
+fn main() {
+    let t = (1, "anything");
+    match t {
+        (1, _) => { println("got one"); },
+        _ => { println("other"); },
+    }
+}

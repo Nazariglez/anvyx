@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let t = (1, true);
+    match t {
+        (0, true) => {},
+        (0, false) => {},
+        _ => {},
+    }
+}

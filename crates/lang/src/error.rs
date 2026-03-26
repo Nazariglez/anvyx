@@ -475,9 +475,18 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("field '{field}' is specified more than once"),
         ),
 
-        TypeErrKind::MatchScrutineeNotEnum { found } => (
-            "match scrutinee must be an enum type".to_string(),
-            format!("found '{found}'"),
+        TypeErrKind::UnsupportedMatchScrutinee { found } => (
+            "unsupported match scrutinee type".to_string(),
+            format!("type '{found}' cannot be used as a match scrutinee"),
+        ),
+        TypeErrKind::InvalidLiteralPattern { expected, found } => (
+            "invalid literal pattern".to_string(),
+            format!("expected '{expected}', found '{found}'"),
+        ),
+        TypeErrKind::NonExhaustiveMatchNoCatchAll => (
+            "non-exhaustive match".to_string(),
+            "match on this type requires a catch-all (`_` or variable binding) pattern"
+                .to_string(),
         ),
         TypeErrKind::NonExhaustiveMatch { missing } => {
             let missing_str = missing

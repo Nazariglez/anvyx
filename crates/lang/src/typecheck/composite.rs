@@ -58,6 +58,7 @@ pub(super) fn validate_field_names<'a>(
     provided: &[(Ident, Span)],
     container_span: Span,
     expected: &'a [StructField],
+    allow_partial: bool,
     on_duplicate: impl Fn(Ident) -> TypeErrKind,
     on_unknown: impl Fn(Ident) -> TypeErrKind,
     on_missing: impl Fn(Ident) -> TypeErrKind,
@@ -86,9 +87,11 @@ pub(super) fn validate_field_names<'a>(
         })
         .collect();
 
-    for field in expected {
-        if !matched_names.contains(&field.name) {
-            errors.push(TypeErr::new(container_span, on_missing(field.name)));
+    if !allow_partial {
+        for field in expected {
+            if !matched_names.contains(&field.name) {
+                errors.push(TypeErr::new(container_span, on_missing(field.name)));
+            }
         }
     }
 
@@ -183,6 +186,7 @@ pub(super) fn check_struct_lit(
         &provided,
         lit_node.span,
         &struct_def.fields,
+        false,
         |field| TypeErrKind::StructDuplicateField { struct_name, field },
         |field| TypeErrKind::StructUnknownField { struct_name, field },
         |field| TypeErrKind::StructMissingField { struct_name, field },
@@ -240,6 +244,7 @@ fn check_extern_init_lit(
         &provided,
         lit_node.span,
         &expected_fields,
+        false,
         |field| TypeErrKind::ExternInitDuplicateField { type_name, field },
         |field| TypeErrKind::ExternInitUnknownField { type_name, field },
         |field| TypeErrKind::ExternInitMissingField { type_name, field },
@@ -536,6 +541,7 @@ fn check_enum_struct_variant(
         &provided,
         lit_node.span,
         expected_fields,
+        false,
         |field| TypeErrKind::EnumVariantDuplicateField {
             enum_name,
             variant_name,

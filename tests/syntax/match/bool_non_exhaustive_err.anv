@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: non-exhaustive match
+
+fn main() {
+    let b = true;
+    match b {
+        true => {},
+    }
+}

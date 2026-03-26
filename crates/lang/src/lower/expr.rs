@@ -373,6 +373,7 @@ fn lower_coalesce_expr(
         bindings: vec![hir::MatchBinding {
             field_index: 0,
             local: inner_local,
+            mutable: false,
         }],
         body: hir::Block {
             stmts: vec![hir::Stmt {
