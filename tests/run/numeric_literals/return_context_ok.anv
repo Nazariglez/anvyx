@@ -1,0 +1,19 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 1.5
+// 2.5
+// @match-end
+
+fn tail() -> double {
+    1.5
+}
+
+fn explicit_return() -> double {
+    return 2.5;
+}
+
+fn main() {
+    println(tail());
+    println(explicit_return());
+}

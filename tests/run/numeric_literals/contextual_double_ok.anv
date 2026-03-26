@@ -1,0 +1,22 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 1.5
+// 2.5
+// 3.14
+// @match-end
+
+fn takes_double(x: double) -> double {
+    x
+}
+
+fn returns_double() -> double {
+    3.14
+}
+
+fn main() {
+    let x: double = 1.5;
+    println(x);
+    println(takes_double(2.5));
+    println(returns_double());
+}

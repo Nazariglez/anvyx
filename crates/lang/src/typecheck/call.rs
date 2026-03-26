@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        CallNode, ExprKind, ExprNode, FieldAccessNode, FuncNode, Ident, MethodReceiver, Mutability,
-        Type, TypeParam, VariantKind,
+        CallNode, ExprKind, ExprNode, FieldAccessNode, FuncNode, Ident, Lit, MethodReceiver,
+        Mutability, Type, TypeParam, VariantKind,
     },
     span::Span,
 };
@@ -373,7 +373,7 @@ fn check_and_constrain_arg(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) {
-    check_expr(arg_expr, type_checker, errors, None);
+    check_expr(arg_expr, type_checker, errors, Some(param_ty));
     let arg_ref = TypeRef::Expr(arg_expr.node.id);
     let param_ref = TypeRef::concrete(param_ty);
     type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
@@ -404,7 +404,7 @@ fn check_call_signature(
     }
 
     for (arg_expr, param_ty) in args.iter().zip(param_types.iter()) {
-        check_expr(arg_expr, type_checker, errors, None);
+        check_expr(arg_expr, type_checker, errors, Some(param_ty));
         let arg_ref = TypeRef::Expr(arg_expr.node.id);
         let param_ref = TypeRef::concrete(param_ty);
         type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
@@ -1590,8 +1590,10 @@ pub(super) fn type_call_on_base(
         return Type::Infer;
     }
 
-    // constrain argument types
     for (arg_expr, param_ty) in call_node.node.args.iter().zip(params.iter()) {
+        if matches!(arg_expr.node.kind, ExprKind::Lit(Lit::Float { .. })) {
+            check_expr(arg_expr, type_checker, errors, Some(param_ty));
+        }
         let arg_ref = TypeRef::Expr(arg_expr.node.id);
         let param_ref = TypeRef::concrete(param_ty);
         type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);

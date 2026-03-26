@@ -3,6 +3,5 @@
 // @contains: Mismatched types
 
 fn main() {
-    let f = 1.5;
-    let x: double = f;
+    let x: float = 1.0d;
 }

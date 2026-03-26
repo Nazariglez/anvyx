@@ -588,10 +588,16 @@ pub struct Block {
     pub tail: Option<Box<ExprNode>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FloatSuffix {
+    F,
+    D,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Lit {
     Int(i64),
-    Float(f64),
+    Float { value: f64, suffix: Option<FloatSuffix> },
     Bool(bool),
     String(String),
     Nil,

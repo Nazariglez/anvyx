@@ -1,6 +1,6 @@
 use crate::{
     ast,
-    lexer::{Delimiter, Keyword, LitToken, Op, Token},
+    lexer::{Delimiter, FloatSuffix, Keyword, LitToken, Op, Token},
     span::{Span, Spanned},
 };
 use chumsky::prelude::*;
@@ -21,10 +21,13 @@ pub(super) fn literal<'src>() -> BoxedParser<'src, ast::Lit> {
     select! {
         (Token::Literal(lit), _) => match lit {
             LitToken::Number(n) => ast::Lit::Int(n),
-            LitToken::Float(s) => {
-                s.as_ref().parse::<f64>()
-                    .map(ast::Lit::Float)
-                    .unwrap_or(ast::Lit::Float(0.0))
+            LitToken::Float(s, suffix) => {
+                let ast_suffix = suffix.map(|s| match s {
+                    FloatSuffix::F => ast::FloatSuffix::F,
+                    FloatSuffix::D => ast::FloatSuffix::D,
+                });
+                let value = s.as_ref().parse::<f64>().unwrap_or(0.0);
+                ast::Lit::Float { value, suffix: ast_suffix }
             }
             LitToken::String(s) => ast::Lit::String(s.to_string()),
         },

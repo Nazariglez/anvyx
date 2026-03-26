@@ -1,0 +1,6 @@
+// @mode: check
+// @expect: error
+
+fn main() {
+    let x = 1.5_f;
+}

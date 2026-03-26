@@ -1,4 +1,4 @@
-use crate::ast::{CastNode, ExprKind, ExprNode, Ident, Lit, StringPart, Type};
+use crate::ast::{CastNode, ExprKind, ExprNode, FloatSuffix, Ident, Lit, StringPart, Type};
 
 use super::{
     composite::{
@@ -44,7 +44,10 @@ pub(super) fn check_expr(
             let (block_ty, _) = check_block_expr(spanned, type_checker, errors, None);
             block_ty
         }
-        ExprKind::Lit(lit) => type_from_lit(lit),
+        ExprKind::Lit(lit) => match lit {
+            Lit::Float { suffix, .. } => resolve_float_type(*suffix, expected),
+            _ => type_from_lit(lit),
+        },
         ExprKind::Binary(bin) => check_binary(bin, type_checker, errors),
         ExprKind::Unary(unary) => check_unary(unary, type_checker, errors),
         ExprKind::Assign(assign) => check_assign(assign, type_checker, errors),
@@ -84,10 +87,22 @@ pub(super) fn root_ident(expr: &ExprNode) -> Option<Ident> {
 pub(super) fn type_from_lit(lit: &Lit) -> Type {
     match lit {
         Lit::Int(_) => Type::Int,
-        Lit::Float(_) => Type::Float,
+        Lit::Float { .. } => unreachable!("float literals handled in check_expr"),
         Lit::Bool(_) => Type::Bool,
         Lit::String(_) => Type::String,
         Lit::Nil => Type::option_of(Type::Infer),
+    }
+}
+
+fn resolve_float_type(suffix: Option<FloatSuffix>, expected: Option<&Type>) -> Type {
+    match suffix {
+        Some(FloatSuffix::F) => Type::Float,
+        Some(FloatSuffix::D) => Type::Double,
+        None => match expected {
+            Some(Type::Float) => Type::Float,
+            Some(Type::Double) => Type::Double,
+            _ => Type::Float,
+        },
     }
 }
 

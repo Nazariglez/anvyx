@@ -50,10 +50,16 @@ impl Display for Token {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FloatSuffix {
+    F,
+    D,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum LitToken {
     Number(i64),
-    Float(Intern<String>),
+    Float(Intern<String>, Option<FloatSuffix>),
     String(Intern<String>),
 }
 
@@ -61,7 +67,7 @@ impl Display for LitToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LitToken::Number(n) => write!(f, "{}", n),
-            LitToken::Float(s) => write!(f, "{}", s),
+            LitToken::Float(s, _) => write!(f, "{}", s),
             LitToken::String(s) => write!(f, "{}", s),
         }
     }
@@ -422,23 +428,144 @@ fn close_delimiter<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
     .map(Token::Close)
 }
 
+fn validate_numeric_underscores(s: &str) -> bool {
+    !s.contains("__") && !s.contains("_.") && !s.contains("._") && !s.ends_with('_')
+}
+
+fn strip_underscores(s: &str) -> String {
+    s.chars().filter(|c| *c != '_').collect()
+}
+
+fn float_suffix<'src>() -> impl Parser<'src, &'src str, FloatSuffix, Extra<'src>> {
+    one_of("fd")
+        .then_ignore(
+            any::<&'src str, Extra<'src>>()
+                .filter(|c: &char| c.is_alphanumeric() || *c == '_')
+                .rewind()
+                .not(),
+        )
+        .map(|c: char| if c == 'f' { FloatSuffix::F } else { FloatSuffix::D })
+}
+
 fn literal<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
-    choice((lit_float(), lit_integer())).map(Token::Literal)
+    choice((lit_float(), lit_int_suffixed(), lit_integer())).map(Token::Literal)
 }
 
 fn lit_integer<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
-    text::int(10)
-        .map(|s: &str| s.parse().unwrap())
-        .map(LitToken::Number)
+    custom(|input: &mut InputRef<'src, '_, &'src str, Extra<'src>>| {
+        let start = input.cursor();
+        let mut buf = String::new();
+
+        match input.next() {
+            Some(c) if c.is_ascii_digit() => buf.push(c),
+            _ => return Err(Rich::custom(input.span_since(&start), "expected integer literal")),
+        }
+        loop {
+            match input.peek() {
+                Some(c) if c.is_ascii_digit() || c == '_' => {
+                    buf.push(c);
+                    input.skip();
+                }
+                _ => break,
+            }
+        }
+
+        if !validate_numeric_underscores(&buf) {
+            return Err(Rich::custom(
+                input.span_since(&start),
+                "invalid underscore placement in numeric literal",
+            ));
+        }
+
+        let cleaned = strip_underscores(&buf);
+        cleaned
+            .parse::<i64>()
+            .map(LitToken::Number)
+            .map_err(|_| Rich::custom(input.span_since(&start), "integer literal overflow"))
+    })
 }
 
 fn lit_float<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
-    text::int(10)
-        .then(just('.'))
-        .then(text::digits(10))
-        .to_slice()
-        .map(|s: &str| Intern::new(s.to_string()))
-        .map(LitToken::Float)
+    custom(|input: &mut InputRef<'src, '_, &'src str, Extra<'src>>| {
+        let start = input.cursor();
+        let mut buf = String::new();
+
+        match input.next() {
+            Some(c) if c.is_ascii_digit() => buf.push(c),
+            _ => return Err(Rich::custom(input.span_since(&start), "expected float literal")),
+        }
+        loop {
+            match input.peek() {
+                Some(c) if c.is_ascii_digit() || c == '_' => {
+                    buf.push(c);
+                    input.skip();
+                }
+                _ => break,
+            }
+        }
+
+        match input.next() {
+            Some('.') => buf.push('.'),
+            _ => return Err(Rich::custom(input.span_since(&start), "expected '.' in float literal")),
+        }
+
+        match input.next() {
+            Some(c) if c.is_ascii_digit() || c == '_' => buf.push(c),
+            _ => return Err(Rich::custom(input.span_since(&start), "expected digits after '.' in float literal")),
+        }
+        loop {
+            match input.peek() {
+                Some(c) if c.is_ascii_digit() || c == '_' => {
+                    buf.push(c);
+                    input.skip();
+                }
+                _ => break,
+            }
+        }
+
+        if !validate_numeric_underscores(&buf) {
+            return Err(Rich::custom(
+                input.span_since(&start),
+                "invalid underscore placement in numeric literal",
+            ));
+        }
+
+        Ok(strip_underscores(&buf))
+    })
+    .then(float_suffix().or_not())
+    .map(|(s, suffix)| LitToken::Float(Intern::new(s), suffix))
+}
+
+fn lit_int_suffixed<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
+    custom(|input: &mut InputRef<'src, '_, &'src str, Extra<'src>>| {
+        let start = input.cursor();
+        let mut buf = String::new();
+
+        match input.next() {
+            Some(c) if c.is_ascii_digit() => buf.push(c),
+            _ => return Err(Rich::custom(input.span_since(&start), "expected integer")),
+        }
+        loop {
+            match input.peek() {
+                Some(c) if c.is_ascii_digit() || c == '_' => {
+                    buf.push(c);
+                    input.skip();
+                }
+                _ => break,
+            }
+        }
+
+        if !validate_numeric_underscores(&buf) {
+            return Err(Rich::custom(
+                input.span_since(&start),
+                "invalid underscore placement in numeric literal",
+            ));
+        }
+
+        Ok(strip_underscores(&buf))
+    })
+    .then(float_suffix())
+    .map(|(s, suffix)| LitToken::Float(Intern::new(s), Some(suffix)))
 }
 
 fn ident<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
@@ -695,5 +822,164 @@ mod tests {
     #[test]
     fn test_interp_string_unterminated_expr_err() {
         assert!(tokenize(r#""hello {oops""#).is_err());
+    }
+
+    fn tokenize_lit(src: &str) -> Result<LitToken, ()> {
+        let tokens = tokenize(src).map_err(|_| ())?;
+        match tokens.into_iter().next() {
+            Some((Token::Literal(lit), _)) => Ok(lit),
+            _ => Err(()),
+        }
+    }
+
+    fn all_tokens(src: &str) -> Result<Vec<Token>, ()> {
+        tokenize(src).map_err(|_| ()).map(|ts| ts.into_iter().map(|(t, _)| t).collect())
+    }
+
+    #[test]
+    fn test_integer_with_underscores() {
+        assert_eq!(tokenize_lit("1_000").unwrap(), LitToken::Number(1000));
+    }
+
+    #[test]
+    fn test_integer_with_many_underscores() {
+        assert_eq!(tokenize_lit("1_000_000").unwrap(), LitToken::Number(1_000_000));
+    }
+
+    #[test]
+    fn test_float_basic() {
+        assert_eq!(
+            tokenize_lit("3.14").unwrap(),
+            LitToken::Float(Intern::new("3.14".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn test_float_with_underscores_frac() {
+        assert_eq!(
+            tokenize_lit("3.141_592").unwrap(),
+            LitToken::Float(Intern::new("3.141592".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn test_float_with_underscores_int() {
+        assert_eq!(
+            tokenize_lit("1_000.5").unwrap(),
+            LitToken::Float(Intern::new("1000.5".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn test_float_suffix_f() {
+        assert_eq!(
+            tokenize_lit("1.5f").unwrap(),
+            LitToken::Float(Intern::new("1.5".to_string()), Some(FloatSuffix::F))
+        );
+    }
+
+    #[test]
+    fn test_float_suffix_d() {
+        assert_eq!(
+            tokenize_lit("1.5d").unwrap(),
+            LitToken::Float(Intern::new("1.5".to_string()), Some(FloatSuffix::D))
+        );
+    }
+
+    #[test]
+    fn test_int_suffixed_f() {
+        assert_eq!(
+            tokenize_lit("42f").unwrap(),
+            LitToken::Float(Intern::new("42".to_string()), Some(FloatSuffix::F))
+        );
+    }
+
+    #[test]
+    fn test_int_suffixed_d() {
+        assert_eq!(
+            tokenize_lit("42d").unwrap(),
+            LitToken::Float(Intern::new("42".to_string()), Some(FloatSuffix::D))
+        );
+    }
+
+    #[test]
+    fn test_int_suffixed_with_underscores() {
+        assert_eq!(
+            tokenize_lit("1_000f").unwrap(),
+            LitToken::Float(Intern::new("1000".to_string()), Some(FloatSuffix::F))
+        );
+    }
+
+    #[test]
+    fn test_float_underscores_and_suffix() {
+        assert_eq!(
+            tokenize_lit("1_000.5d").unwrap(),
+            LitToken::Float(Intern::new("1000.5".to_string()), Some(FloatSuffix::D))
+        );
+    }
+
+    #[test]
+    fn test_consecutive_underscores_err() {
+        assert!(tokenize("1__000").is_err());
+    }
+
+    #[test]
+    fn test_trailing_underscore_err() {
+        assert!(tokenize("1_").is_err());
+    }
+
+    #[test]
+    fn test_underscore_before_dot_err() {
+        assert!(tokenize("1_.5").is_err());
+    }
+
+    #[test]
+    fn test_underscore_after_dot_no_float() {
+        // 1._5 lexes as int `1` + dot + ident `_5` — not a float literal
+        let tokens = all_tokens("1._5").unwrap();
+        assert_eq!(tokens[0], Token::Literal(LitToken::Number(1)));
+        assert_eq!(tokens[1], Token::Dot);
+    }
+
+    #[test]
+    fn test_underscore_before_suffix_float_err() {
+        assert!(tokenize("1.5_f").is_err());
+    }
+
+    #[test]
+    fn test_underscore_before_suffix_int_err() {
+        assert!(tokenize("42_d").is_err());
+    }
+
+    #[test]
+    fn test_uppercase_suffix_f_no_suffix() {
+        // 1.5F lexes as float `1.5` + ident `F` — no suffix captured
+        let tokens = all_tokens("1.5F").unwrap();
+        assert_eq!(tokens[0], Token::Literal(LitToken::Float(Intern::new("1.5".to_string()), None)));
+        assert_eq!(tokens.len(), 2);
+    }
+
+    #[test]
+    fn test_uppercase_suffix_d_no_suffix() {
+        // 1.5D lexes as float `1.5` + ident `D` — no suffix captured
+        let tokens = all_tokens("1.5D").unwrap();
+        assert_eq!(tokens[0], Token::Literal(LitToken::Float(Intern::new("1.5".to_string()), None)));
+        assert_eq!(tokens.len(), 2);
+    }
+
+    #[test]
+    fn test_suffix_not_captured_when_followed_by_ident() {
+        // 42floor: integer 42 + ident floor, suffix NOT captured
+        let tokens = all_tokens("42floor").unwrap();
+        assert_eq!(tokens[0], Token::Literal(LitToken::Number(42)));
+        assert_eq!(tokens.len(), 2);
+    }
+
+    #[test]
+    fn test_float_suffix_not_captured_when_followed_by_ident() {
+        // 1.5floor: float 1.5 (no suffix) + ident floor
+        let tokens = all_tokens("1.5floor").unwrap();
+        assert_eq!(tokens[0], Token::Literal(LitToken::Float(Intern::new("1.5".to_string()), None)));
+        assert_eq!(tokens.len(), 2);
     }
 }

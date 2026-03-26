@@ -41,7 +41,7 @@ pub(super) fn lower_expr(
 
         ast::ExprKind::Lit(lit) => match lit {
             Lit::Int(v) => hir::ExprKind::Int(*v),
-            Lit::Float(v) => match &ty {
+            Lit::Float { value: v, .. } => match &ty {
                 Type::Float => hir::ExprKind::Float(*v as f32),
                 Type::Double => hir::ExprKind::Double(*v),
                 _ => unreachable!("float literal resolved to non-float type"),

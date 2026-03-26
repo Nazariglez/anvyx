@@ -118,7 +118,7 @@ pub(super) fn expect_int(expr: &ast::ExprNode, value: i64) {
 
 pub(super) fn expect_float(expr: &ast::ExprNode, value: f64) {
     match &expr.node.kind {
-        ast::ExprKind::Lit(ast::Lit::Float(v)) => {
+        ast::ExprKind::Lit(ast::Lit::Float { value: v, .. }) => {
             assert_eq!(*v, value, "expected float literal {value}");
         }
         other => panic!("expected float literal {value}, found {other:?}"),

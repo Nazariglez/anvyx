@@ -494,7 +494,7 @@ fn build_rhs_from_lit(lit: &Lit, span: Span) -> Result<hir::Expr, LowerError> {
             span,
             kind: hir::ExprKind::String(s.clone()),
         },
-        Lit::Float(_) | Lit::Nil => {
+        Lit::Float { .. } | Lit::Nil => {
             return Err(LowerError::UnsupportedExprKind {
                 span,
                 kind: "float and nil literal patterns not supported in match".into(),

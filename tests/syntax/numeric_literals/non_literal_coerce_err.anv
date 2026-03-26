@@ -4,5 +4,5 @@
 
 fn main() {
     let f = 1.5;
-    let x: double = f;
+    let d: double = f;
 }

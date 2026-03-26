@@ -51,7 +51,7 @@ pub(super) fn lit_int(val: i64) -> ExprNode {
 
 pub(super) fn lit_float(val: f64) -> ExprNode {
     ExprNode {
-        node: Expr::new(ExprKind::Lit(Lit::Float(val)), next_expr_id()),
+        node: Expr::new(ExprKind::Lit(Lit::Float { value: val, suffix: None }), next_expr_id()),
         span: dummy_span(),
     }
 }
