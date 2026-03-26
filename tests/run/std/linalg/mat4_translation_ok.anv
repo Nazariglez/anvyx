@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: Vec3(11.0, 22.0, 33.0)
+
+import std.linalg { Mat4, Vec3 };
+
+fn main() {
+    let t = Mat4.from_translation(Vec3 { x: 10.0, y: 20.0, z: 30.0 });
+    let p = Vec3 { x: 1.0, y: 2.0, z: 3.0 };
+    println(t.transform_point3(p));
+}

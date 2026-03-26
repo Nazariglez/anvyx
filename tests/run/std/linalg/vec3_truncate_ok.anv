@@ -1,0 +1,10 @@
+// @mode: run
+// @expect: success
+// @match: Vec2(1.0, 2.0)
+
+import std.linalg { Vec2, Vec3 };
+
+fn main() {
+    let v = Vec3 { x: 1.0, y: 2.0, z: 3.0 };
+    println(v.truncate());
+}

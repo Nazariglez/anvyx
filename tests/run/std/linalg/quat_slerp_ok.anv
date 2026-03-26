@@ -1,0 +1,29 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 1.0
+// 0.0
+// 0.0
+// 0.0
+// 1.0
+// 0.0
+// @match-end
+
+import std.linalg { Quat, Vec3 };
+import std.math { round, deg_to_rad };
+
+fn main() {
+    let a = Quat.identity();
+    let b = Quat.from_rotation_z(deg_to_rad(90.0));
+    let v = Vec3 { x: 1.0, y: 0.0, z: 0.0 };
+
+    let r0 = a.slerp(b, 0.0) * v;
+    println(round(r0.x));
+    println(round(r0.y));
+    println(round(r0.z));
+
+    let r1 = a.slerp(b, 1.0) * v;
+    println(round(r1.x));
+    println(round(r1.y));
+    println(round(r1.z));
+}
