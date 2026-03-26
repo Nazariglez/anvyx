@@ -6,11 +6,11 @@ struct Wrapper<T> {
 
     fn create(value: T) -> Self {
         Wrapper { value: value }
-    },
+    }
 
     fn with_extra<U>(value: T, extra: U) -> U {
         extra
-    },
+    }
 }
 
 fn main() {

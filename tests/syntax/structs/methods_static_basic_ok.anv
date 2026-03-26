@@ -6,7 +6,7 @@ struct Counter {
 
     fn new(start: int) -> Self {
         Counter { value: start }
-    },
+    }
 }
 
 fn main() {

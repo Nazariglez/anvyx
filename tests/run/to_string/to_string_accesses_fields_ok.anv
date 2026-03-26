@@ -11,7 +11,7 @@ struct Player {
 
     fn to_string(self) -> string {
         "Player '" + self.name + "' (hp: " + self.hp + ")"
-    },
+    }
 }
 
 fn main() {

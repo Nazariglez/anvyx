@@ -7,7 +7,7 @@ struct Foo {
 
     fn to_string(var self) -> string {
         "foo"
-    },
+    }
 }
 
 fn main() {

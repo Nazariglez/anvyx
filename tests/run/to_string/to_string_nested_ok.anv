@@ -7,7 +7,7 @@ struct Inner {
 
     fn to_string(self) -> string {
         "custom!"
-    },
+    }
 }
 
 struct Wrapper { inner: Inner, x: int }

@@ -12,7 +12,7 @@ struct Color {
 
     fn to_string(self) -> string {
         "rgb(" + self.r + ", " + self.g + ", " + self.b + ")"
-    },
+    }
 }
 
 fn main() {

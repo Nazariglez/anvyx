@@ -5,7 +5,7 @@
 struct Counter {
     value: int,
 
-    fn get(self) -> int { self.value },
+    fn get(self) -> int { self.value }
 }
 
 extend Counter {

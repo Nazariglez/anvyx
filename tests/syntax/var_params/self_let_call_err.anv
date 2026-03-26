@@ -7,7 +7,7 @@ struct Counter {
 
     fn increment(var self) {
         self.value = self.value + 1;
-    },
+    }
 }
 
 fn main() {

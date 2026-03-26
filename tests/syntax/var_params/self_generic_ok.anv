@@ -6,15 +6,15 @@ struct Wrapper<T> {
 
     fn new(value: T) -> Self {
         Wrapper { value: value }
-    },
+    }
 
     fn get(self) -> T {
         self.value
-    },
+    }
 
     fn replace(var self, new_value: T) {
         self.value = new_value;
-    },
+    }
 }
 
 fn main() {

@@ -6,11 +6,11 @@ struct Wrapper<T> {
 
     fn new(value: T) -> Self {
         Wrapper { value: value }
-    },
+    }
 
     fn get(self) -> T {
         self.value
-    },
+    }
 }
 
 fn main() {

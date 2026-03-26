@@ -6,15 +6,15 @@ struct Counter {
 
     fn get(self) -> int {
         self.value
-    },
+    }
 
     fn increment(var self) {
         self.value = self.value + 1;
-    },
+    }
 
     fn reset(var self) {
         self.value = 0;
-    },
+    }
 }
 
 fn main() {

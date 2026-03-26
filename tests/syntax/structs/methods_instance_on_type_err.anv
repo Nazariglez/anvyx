@@ -7,7 +7,7 @@ struct Counter {
 
     fn get(self) -> int {
         self.value
-    },
+    }
 }
 
 fn main() {

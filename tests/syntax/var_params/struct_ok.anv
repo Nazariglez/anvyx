@@ -6,11 +6,11 @@ struct Player {
 
     fn reset(var self) {
         self.hp = 0;
-    },
+    }
 
     fn apply_damage(var self, amount: int) {
         self.hp = self.hp - amount;
-    },
+    }
 }
 
 fn swap(var a: int, var b: int) {

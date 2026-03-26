@@ -4,7 +4,7 @@
 struct Foo {
     fn pair<A, B>(self, a: A, b: B) -> B {
         b
-    },
+    }
 }
 
 fn main() {

@@ -422,11 +422,6 @@ fn struct_field<'src>() -> BoxedParser<'src, ast::StructField> {
         .boxed()
 }
 
-enum StructMember {
-    Field(ast::StructField),
-    Method(ast::Method),
-}
-
 fn struct_method<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::Method> {
@@ -541,16 +536,6 @@ fn method_param_list<'src>() -> BoxedParser<'src, (Option<ast::MethodReceiver>, 
     .boxed()
 }
 
-fn struct_member<'src>(
-    stmt: impl AnvParser<'src, ast::StmtNode>,
-) -> BoxedParser<'src, StructMember> {
-    choice((
-        struct_method(stmt).map(StructMember::Method),
-        struct_field().map(StructMember::Field),
-    ))
-    .boxed()
-}
-
 pub(super) fn struct_declaration<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::StructDeclNode> {
@@ -565,16 +550,21 @@ pub(super) fn struct_declaration<'src>(
                 (Token::Open(Delimiter::Brace), _) => (),
             }
             .ignore_then(
-                struct_member(stmt)
+                struct_field()
                     .separated_by(select! { (Token::Comma, _) => () })
                     .allow_trailing()
+                    .collect::<Vec<_>>(),
+            )
+            .then(
+                struct_method(stmt)
+                    .repeated()
                     .collect::<Vec<_>>(),
             )
             .then_ignore(select! {
                 (Token::Close(Delimiter::Brace), _) => (),
             }),
         )
-        .map_with(|(((vis, name), type_params), members), e| {
+        .map_with(|(((vis, name), type_params), (raw_fields, raw_methods)), e| {
             let s = e.span();
 
             let struct_type_param_map: HashMap<ast::Ident, ast::TypeVarId> =
@@ -585,56 +575,57 @@ pub(super) fn struct_declaration<'src>(
                 type_args: type_params.iter().map(|tp| ast::Type::Var(tp.id)).collect(),
             };
 
-            let mut fields = vec![];
-            let mut methods = vec![];
+            let fields = raw_fields
+                .into_iter()
+                .map(|f| {
+                    let ty = resolve_type_params_with_self(
+                        &f.ty,
+                        &struct_type_param_map,
+                        Some(&self_type),
+                    );
+                    ast::StructField { name: f.name, ty }
+                })
+                .collect();
 
-            for member in members {
-                match member {
-                    StructMember::Field(f) => {
-                        let ty = resolve_type_params_with_self(
-                            &f.ty,
-                            &struct_type_param_map,
-                            Some(&self_type),
-                        );
-                        fields.push(ast::StructField { name: f.name, ty });
+            let methods = raw_methods
+                .into_iter()
+                .map(|m| {
+                    let mut combined_type_param_map = struct_type_param_map.clone();
+                    for tp in &m.type_params {
+                        combined_type_param_map.insert(tp.name, tp.id);
                     }
-                    StructMember::Method(m) => {
-                        let mut combined_type_param_map = struct_type_param_map.clone();
-                        for tp in &m.type_params {
-                            combined_type_param_map.insert(tp.name, tp.id);
-                        }
 
-                        let resolved_params = m
-                            .params
-                            .iter()
-                            .map(|p| ast::Param {
-                                mutability: p.mutability,
-                                name: p.name,
-                                ty: resolve_type_params_with_self(
-                                    &p.ty,
-                                    &combined_type_param_map,
-                                    Some(&self_type),
-                                ),
-                            })
-                            .collect();
+                    let resolved_params = m
+                        .params
+                        .iter()
+                        .map(|p| ast::Param {
+                            mutability: p.mutability,
+                            name: p.name,
+                            ty: resolve_type_params_with_self(
+                                &p.ty,
+                                &combined_type_param_map,
+                                Some(&self_type),
+                            ),
+                        })
+                        .collect();
 
-                        let resolved_ret = resolve_type_params_with_self(
-                            &m.ret,
-                            &combined_type_param_map,
-                            Some(&self_type),
-                        );
-                        methods.push(ast::Method {
-                            name: m.name,
-                            visibility: m.visibility,
-                            type_params: m.type_params,
-                            receiver: m.receiver,
-                            params: resolved_params,
-                            ret: resolved_ret,
-                            body: m.body,
-                        });
+                    let resolved_ret = resolve_type_params_with_self(
+                        &m.ret,
+                        &combined_type_param_map,
+                        Some(&self_type),
+                    );
+
+                    ast::Method {
+                        name: m.name,
+                        visibility: m.visibility,
+                        type_params: m.type_params,
+                        receiver: m.receiver,
+                        params: resolved_params,
+                        ret: resolved_ret,
+                        body: m.body,
                     }
-                }
-            }
+                })
+                .collect();
 
             Spanned::new(
                 ast::StructDecl {

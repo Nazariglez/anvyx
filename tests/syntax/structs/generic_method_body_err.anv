@@ -5,7 +5,7 @@
 struct Foo {
     fn bad<T>(self, x: T) -> T {
         x - x
-    },
+    }
 }
 
 fn main() {
