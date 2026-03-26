@@ -166,6 +166,32 @@ pub enum TypeErrKind {
         struct_name: Ident,
         field: Ident,
     },
+    RequiredParamAfterOptional {
+        func: Ident,
+        param: Ident,
+    },
+    ParamDefaultNotConst {
+        func: Ident,
+        param: Ident,
+    },
+    ParamDefaultTypeMismatch {
+        func: Ident,
+        param: Ident,
+        expected: Type,
+        found: Type,
+    },
+    ParamDefaultOnGenericType {
+        func: Ident,
+        param: Ident,
+    },
+    TooFewArguments {
+        expected: usize,
+        found: usize,
+    },
+    TooManyArguments {
+        expected: usize,
+        found: usize,
+    },
     UnknownMethod {
         struct_name: Ident,
         method: Ident,

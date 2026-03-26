@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// Hello Alice
+// Hi Bob
+// Hey Carol
+// @match-end
+
+fn greet(name: string, greeting: string = "Hello", punct: string = " ") -> string {
+    "{greeting}{punct}{name}"
+}
+
+fn main() {
+    println(greet("Alice"));
+    println(greet("Bob", "Hi"));
+    println(greet("Carol", "Hey"));
+}

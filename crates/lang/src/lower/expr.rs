@@ -24,6 +24,18 @@ fn lower_args(
         .collect()
 }
 
+fn const_value_to_hir_expr(val: &ConstValue, span: Span) -> hir::Expr {
+    let (ty, kind) = match val {
+        ConstValue::Int(n) => (Type::Int, hir::ExprKind::Int(*n)),
+        ConstValue::Float(f) => (Type::Float, hir::ExprKind::Float(*f)),
+        ConstValue::Double(d) => (Type::Double, hir::ExprKind::Double(*d)),
+        ConstValue::Bool(b) => (Type::Bool, hir::ExprKind::Bool(*b)),
+        ConstValue::String(s) => (Type::String, hir::ExprKind::String(s.clone())),
+        ConstValue::Nil => (Type::Infer, hir::ExprKind::Nil),
+    };
+    hir::Expr { ty, span, kind }
+}
+
 pub(super) fn lower_expr(
     ast_expr: &ast::ExprNode,
     ctx: &LowerCtx,
@@ -861,6 +873,12 @@ fn lower_safe_call_expr(
             let receiver = hir::Expr::local(inner_ty.clone(), span, inner_local);
             let mut args = vec![receiver];
             args.extend(pre_args);
+            let defaults = ctx.shared.tcx.method_param_defaults(*struct_name, method_name);
+            for default in defaults.iter().skip(c.node.args.len()) {
+                if let Some(val) = default {
+                    args.push(const_value_to_hir_expr(val, span));
+                }
+            }
             hir::Expr {
                 ty: inner_result_ty,
                 span,
@@ -1211,6 +1229,12 @@ fn try_lower_method_call(
             let receiver = lower_expr(&field.node.target, ctx, fc, out)?;
             let mut args = vec![receiver];
             args.extend(lower_args(&c.node.args, ctx, fc, out)?);
+            let defaults = ctx.shared.tcx.method_param_defaults(*struct_name, method_name);
+            for default in defaults.iter().skip(c.node.args.len()) {
+                if let Some(val) = default {
+                    args.push(const_value_to_hir_expr(val, span));
+                }
+            }
             return Ok(Some(hir::Expr {
                 ty: ty.clone(),
                 span,
@@ -1269,16 +1293,16 @@ fn lower_direct_call(
     fc: &mut FuncLower,
     out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::ExprKind, LowerError> {
-    let callee_name = match &c.node.func.node.kind {
-        ast::ExprKind::Ident(name) => *name,
+    let (callee_name, module_name) = match &c.node.func.node.kind {
+        ast::ExprKind::Ident(name) => (*name, None),
         ast::ExprKind::Field(field) => {
             // module qualified call module.func(args), resolve to the function name
-            if let ast::ExprKind::Ident(module_name) = &field.node.target.node.kind {
-                if ctx.shared.tcx.is_module_name(*module_name) {
-                    field.node.field
-                } else if ctx.shared.tcx.get_extern_type(*module_name).is_some() {
+            if let ast::ExprKind::Ident(mod_name) = &field.node.target.node.kind {
+                if ctx.shared.tcx.is_module_name(*mod_name) {
+                    (field.node.field, Some(*mod_name))
+                } else if ctx.shared.tcx.get_extern_type(*mod_name).is_some() {
                     let method_name = field.node.field;
-                    Ident(Intern::new(format!("{module_name}::{method_name}")))
+                    (Ident(Intern::new(format!("{mod_name}::{method_name}"))), None)
                 } else {
                     return Err(LowerError::NonDirectCall { span });
                 }
@@ -1286,7 +1310,7 @@ fn lower_direct_call(
                 // nested facade.submodule.func(args), two levels of field access
                 if let ast::ExprKind::Ident(outer_module) = &inner_field.node.target.node.kind {
                     if ctx.shared.tcx.is_module_name(*outer_module) {
-                        field.node.field
+                        (field.node.field, None)
                     } else {
                         return Err(LowerError::NonDirectCall { span });
                     }
@@ -1299,12 +1323,25 @@ fn lower_direct_call(
         }
         _ => return Err(LowerError::NonDirectCall { span }),
     };
-    let args = lower_args(&c.node.args, ctx, fc, out)?;
+    let mut args = lower_args(&c.node.args, ctx, fc, out)?;
+
+    let inject_defaults = |args: &mut Vec<hir::Expr>, defaults: &[Option<ConstValue>]| {
+        for default in defaults.iter().skip(c.node.args.len()) {
+            if let Some(val) = default {
+                args.push(const_value_to_hir_expr(val, span));
+            }
+        }
+    };
 
     // builtins take precedence over user functions and externs of the same name
     if let Some(builtin) = Builtin::from_name(callee_name.0.as_ref()) {
         Ok(hir::ExprKind::CallBuiltin { builtin, args })
     } else if let Some(&func_id) = ctx.shared.funcs.get(&callee_name) {
+        let defaults = match module_name {
+            Some(m) => ctx.shared.tcx.module_func_param_defaults(m, callee_name),
+            None => ctx.shared.tcx.func_param_defaults(callee_name),
+        };
+        inject_defaults(&mut args, defaults);
         Ok(hir::ExprKind::Call {
             func: func_id,
             args,
@@ -1313,6 +1350,8 @@ fn lower_direct_call(
         Ok(hir::ExprKind::CallExtern { extern_id, args })
     } else if let Some((func_name, type_args)) = ctx.shared.tcx.call_type_args(c.node.func.node.id)
     {
+        let defaults = ctx.shared.tcx.func_param_defaults(*func_name);
+        inject_defaults(&mut args, defaults);
         let mangled = mangle_generic_name(*func_name, type_args);
         let &func_id = ctx
             .shared

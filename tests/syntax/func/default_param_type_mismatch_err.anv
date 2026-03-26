@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: mismatch
+
+fn foo(x: int, y: float = 1) {}
+
+fn main() {}

@@ -275,6 +275,7 @@ fn params_to_ast(
                 mutability: Mutability::Immutable,
                 name: Ident(Intern::new(pname.clone())),
                 ty: anvyx_type_from_str(pty)?,
+                default: None,
             })
         })
         .collect()

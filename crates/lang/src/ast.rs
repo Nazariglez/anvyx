@@ -595,6 +595,7 @@ pub struct Param {
     pub mutability: Mutability,
     pub name: Ident,
     pub ty: Type,
+    pub default: Option<ExprNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: few
+
+fn foo(x: int, y: int = 0) {}
+
+fn main() {
+    foo()
+}

@@ -246,6 +246,9 @@ fn merge_symbol(name: Ident, bind_as: Ident, source: &ModuleDef, target: &mut Mo
         if let Some(tmpl) = source.generic_func_templates.get(&name) {
             target.generic_func_templates.insert(bind_as, tmpl.clone());
         }
+        if let Some(defaults) = source.func_param_defaults.get(&name) {
+            target.func_param_defaults.insert(bind_as, defaults.clone());
+        }
     } else if let Some(struct_def) = source.struct_defs.get(&name) {
         target.struct_defs.insert(bind_as, struct_def.clone());
         target.all_names.insert(bind_as);
@@ -285,6 +288,11 @@ fn inject_module_item(
             type_checker
                 .generic_func_source_module
                 .insert(bind_as, module_path.to_vec());
+        }
+        if let Some(defaults) = module_def.func_param_defaults.get(&name) {
+            type_checker
+                .func_param_defaults
+                .insert(bind_as, defaults.clone());
         }
     } else if let Some(struct_def) = module_def.struct_defs.get(&name) {
         type_checker.struct_defs.insert(bind_as, struct_def.clone());
@@ -339,6 +347,7 @@ fn build_extern_type_def(
                                 mutability: p.mutability,
                                 name: p.name,
                                 ty: resolve(&p.ty),
+                                default: p.default.clone(),
                             })
                             .collect(),
                         ret: resolve(ret),
@@ -356,6 +365,7 @@ fn build_extern_type_def(
                                 mutability: p.mutability,
                                 name: p.name,
                                 ty: resolve(&p.ty),
+                                default: p.default.clone(),
                             })
                             .collect(),
                         ret: resolve(ret),

@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: 100
+
+const MAX_HP: float = 100.0;
+
+fn make_unit(hp: float = MAX_HP) -> float { hp }
+
+fn main() {
+    println(make_unit() as int);
+}

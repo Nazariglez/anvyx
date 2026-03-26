@@ -9,13 +9,14 @@ use internment::Intern;
 use std::collections::HashMap;
 
 use super::{
+    const_eval::ConstValue,
     constraint::{TypeRef, resolve_constraints},
     decl::{check_body_common, check_fn_body},
     error::{TypeErr, TypeErrKind},
     expr::{check_expr, root_ident},
     infer::{
         build_param_ref, build_subst, constrain_slots_from_type, create_inference_slots,
-        infer_type_args_from_call, instantiate_func_type, subst_type,
+        infer_type_args_from_call, subst_type,
     },
     types::{
         EnumDef, ExternMethodDef, ExternTypeDef, MethodContext, MethodDef, MethodSpecKey,
@@ -116,9 +117,11 @@ pub(super) fn check_list_method(
     match method_name.0.as_ref().as_str() {
         "push" => {
             check_receiver_mutability(target, label, method_name, type_checker, errors);
+            let param_types = std::slice::from_ref(elem);
             check_call_signature(
                 call.span,
-                std::slice::from_ref(elem),
+                param_types,
+                param_types.len(),
                 &Type::Void,
                 &node.args,
                 type_checker,
@@ -130,6 +133,7 @@ pub(super) fn check_list_method(
             check_call_signature(
                 call.span,
                 &[],
+                0,
                 &Type::option_of(elem.clone()),
                 &node.args,
                 type_checker,
@@ -163,9 +167,11 @@ pub(super) fn check_map_method(
     match method_name.0.as_ref().as_str() {
         "insert" => {
             check_receiver_mutability(target, label, method_name, type_checker, errors);
+            let param_types = [key.clone(), value.clone()];
             check_call_signature(
                 call.span,
-                &[key.clone(), value.clone()],
+                &param_types,
+                param_types.len(),
                 &Type::Void,
                 &node.args,
                 type_checker,
@@ -174,9 +180,11 @@ pub(super) fn check_map_method(
         }
         "remove" => {
             check_receiver_mutability(target, label, method_name, type_checker, errors);
+            let param_types = std::slice::from_ref(key);
             check_call_signature(
                 call.span,
-                std::slice::from_ref(key),
+                param_types,
+                param_types.len(),
                 &Type::option_of(value.clone()),
                 &node.args,
                 type_checker,
@@ -231,18 +239,24 @@ fn check_generic_call(
             return Type::Infer;
         };
 
-        let params_count = params.len() == node.args.len();
-        if !params_count {
-            let instantiated_ty =
-                instantiate_func_type(type_params, func_ty, &node.type_args, call.span, errors);
+        let defaults = type_checker.func_param_defaults(func_name);
+        let required_count = required_param_count(defaults, params.len());
+        if node.args.len() < required_count {
             errors.push(TypeErr::new(
                 call.span,
-                TypeErrKind::MismatchedTypes {
-                    expected: instantiated_ty.unwrap_or_else(|| func_ty.clone()),
-                    found: Type::Func {
-                        params: vec![Type::Infer; node.args.len()],
-                        ret: Box::new(Type::Infer),
-                    },
+                TypeErrKind::TooFewArguments {
+                    expected: required_count,
+                    found: node.args.len(),
+                },
+            ));
+            return Type::Infer;
+        }
+        if node.args.len() > params.len() {
+            errors.push(TypeErr::new(
+                call.span,
+                TypeErrKind::TooManyArguments {
+                    expected: params.len(),
+                    found: node.args.len(),
                 },
             ));
             return Type::Infer;
@@ -356,7 +370,20 @@ pub(super) fn check_call(
     }
 
     // fallback to normal call
-    let result = check_call_with_type(call, func_ty, type_checker, errors);
+    let required_count = if let Some(name) = func_name {
+        let defaults = type_checker.func_param_defaults(name);
+        match &func_ty {
+            Type::Func { params, .. } => required_param_count(defaults, params.len()),
+            _ => 0,
+        }
+    } else {
+        // fn pointer — all params are required
+        match &func_ty {
+            Type::Func { params, .. } => params.len(),
+            _ => 0,
+        }
+    };
+    let result = check_call_with_type(call, func_ty, required_count, type_checker, errors);
 
     if let Some(name) = func_name
         && let Some(param_info) = type_checker.func_param_info.get(&name).cloned()
@@ -379,26 +406,42 @@ fn check_and_constrain_arg(
     type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
 }
 
+pub(super) fn required_param_count(defaults: &[Option<ConstValue>], total: usize) -> usize {
+    if defaults.is_empty() {
+        total
+    } else {
+        defaults.iter().take_while(|d| d.is_none()).count()
+    }
+}
+
 pub(super) fn check_call_signature(
     call_span: Span,
     param_types: &[Type],
+    required_count: usize,
     ret_type: &Type,
     args: &[ExprNode],
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
-    if args.len() != param_types.len() {
-        let expected = Type::Func {
-            params: param_types.to_vec(),
-            ret: Box::new(ret_type.clone()),
-        };
-        let found = Type::Func {
-            params: vec![Type::Infer; args.len()],
-            ret: Box::new(Type::Infer),
-        };
+    let total_count = param_types.len();
+
+    if args.len() < required_count {
         errors.push(TypeErr::new(
             call_span,
-            TypeErrKind::MismatchedTypes { expected, found },
+            TypeErrKind::TooFewArguments {
+                expected: required_count,
+                found: args.len(),
+            },
+        ));
+        return Type::Infer;
+    }
+    if args.len() > total_count {
+        errors.push(TypeErr::new(
+            call_span,
+            TypeErrKind::TooManyArguments {
+                expected: total_count,
+                found: args.len(),
+            },
         ));
         return Type::Infer;
     }
@@ -416,15 +459,22 @@ pub(super) fn check_call_signature(
 fn check_call_with_type(
     call: &CallNode,
     func_ty: Type,
+    required_count: usize,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
     let node = &call.node;
 
     match &func_ty {
-        Type::Func { params, ret } => {
-            check_call_signature(call.span, params, ret, &node.args, type_checker, errors)
-        }
+        Type::Func { params, ret } => check_call_signature(
+            call.span,
+            params,
+            required_count,
+            ret,
+            &node.args,
+            type_checker,
+            errors,
+        ),
         _ => {
             errors.push(TypeErr::new(
                 call.span,
@@ -546,7 +596,16 @@ pub(super) fn check_module_func_call(
         return result;
     }
 
-    let result = check_call_with_type(call, func_ty, type_checker, errors);
+    let defaults = module_def
+        .func_param_defaults
+        .get(&func_name)
+        .map(|v| v.as_slice())
+        .unwrap_or(&[]);
+    let required_count = match &func_ty {
+        Type::Func { params, .. } => required_param_count(defaults, params.len()),
+        _ => 0,
+    };
+    let result = check_call_with_type(call, func_ty, required_count, type_checker, errors);
 
     if let Some(param_info) = module_def.func_param_info.get(&func_name).cloned() {
         check_var_param_args(param_info, &call.node.args, type_checker, errors);
@@ -973,9 +1032,11 @@ pub(super) fn check_static_method_call(
         .map(|p| p.ty.clone())
         .collect::<Vec<_>>();
     let ret_type = method.ret.clone();
+    let required = required_param_count(&method.param_defaults, param_types.len());
     let result = check_call_signature(
         call.span,
         &param_types,
+        required,
         &ret_type,
         &node.args,
         type_checker,
@@ -1146,10 +1207,12 @@ pub(super) fn check_instance_method_call(
         .map(|p| subst_type(&p.ty, &subst))
         .collect();
     let ret_type = subst_type(&method.ret, &subst);
+    let required = required_param_count(&method.param_defaults, param_types.len());
 
     let result = check_call_signature(
         call.span,
         &param_types,
+        required,
         &ret_type,
         &node.args,
         type_checker,
@@ -1186,6 +1249,7 @@ pub(super) fn check_extern_instance_method_call(
     let result = check_call_signature(
         call.span,
         &param_types,
+        param_types.len(),
         &method.ret,
         &call.node.args,
         type_checker,
@@ -1236,6 +1300,7 @@ pub(super) fn check_extern_static_method_call(
     let result = check_call_signature(
         call.span,
         &param_types,
+        param_types.len(),
         &method.ret,
         &call.node.args,
         type_checker,
@@ -1554,6 +1619,7 @@ fn instantiate_method_body(
 pub(super) fn type_call_on_base(
     base_ty: &Type,
     call_node: &CallNode,
+    required_count: usize,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
@@ -1575,14 +1641,14 @@ pub(super) fn type_call_on_base(
         return Type::Infer;
     };
 
-    // check argument count
-    if call_node.node.args.len() != params.len() {
+    let args_len = call_node.node.args.len();
+    if args_len < required_count || args_len > params.len() {
         errors.push(TypeErr::new(
             call_node.span,
             TypeErrKind::MismatchedTypes {
                 expected: base_ty.clone(),
                 found: Type::Func {
-                    params: vec![Type::Infer; call_node.node.args.len()],
+                    params: vec![Type::Infer; args_len],
                     ret: Box::new(Type::Infer),
                 },
             },

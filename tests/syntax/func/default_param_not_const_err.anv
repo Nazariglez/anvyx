@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: constant expression
+
+fn get_val() -> int { 42 }
+
+fn foo(x: int, y: int = get_val()) {}
+
+fn main() {}

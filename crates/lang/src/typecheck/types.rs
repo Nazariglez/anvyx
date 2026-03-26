@@ -51,6 +51,7 @@ pub(super) struct MethodDef {
     pub type_params: Vec<TypeParam>,
     pub receiver: Option<MethodReceiver>,
     pub params: Vec<Param>,
+    pub param_defaults: Vec<Option<ConstValue>>,
     pub ret: Type,
     pub body: BlockNode,
 }
@@ -63,6 +64,7 @@ impl MethodDef {
                 type_params: method.type_params.clone(),
                 receiver: method.receiver,
                 params: method.params.clone(),
+                param_defaults: vec![],
                 ret: method.ret.clone(),
                 body: method.body.clone(),
             },
@@ -242,6 +244,9 @@ pub(super) struct ModuleDef {
 
     /// extend methods exported by this module
     pub extend_methods: Vec<ModuleExtendEntry>,
+
+    /// evaluated parameter defaults for exported functions, parallel to params (None = required)
+    pub func_param_defaults: HashMap<Ident, Vec<Option<ConstValue>>>,
 }
 
 impl ModuleDef {
@@ -302,6 +307,9 @@ pub struct TypeChecker {
     /// Stores param info for free functions
     pub(super) func_param_info: HashMap<Ident, Vec<(Ident, Mutability)>>,
 
+    /// Stores evaluated parameter defaults for free functions, parallel to params (None = required)
+    pub(super) func_param_defaults: HashMap<Ident, Vec<Option<ConstValue>>>,
+
     /// Tracks depth of nested loops to validate break/continue usage
     pub(super) loop_depth: usize,
 
@@ -359,6 +367,29 @@ impl TypeChecker {
 
     pub(super) fn current_method(&self) -> Option<&MethodContext> {
         self.method_contexts.last()
+    }
+
+    pub fn func_param_defaults(&self, name: Ident) -> &[Option<ConstValue>] {
+        self.func_param_defaults
+            .get(&name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn method_param_defaults(&self, struct_name: Ident, method_name: Ident) -> &[Option<ConstValue>] {
+        self.struct_defs
+            .get(&struct_name)
+            .and_then(|sd| sd.methods.get(&method_name))
+            .map(|m| m.param_defaults.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn module_func_param_defaults(&self, module_name: Ident, func_name: Ident) -> &[Option<ConstValue>] {
+        self.module_defs
+            .get(&module_name)
+            .and_then(|m| m.func_param_defaults.get(&func_name))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
     }
 
     pub(super) fn get_struct(&self, name: Ident) -> Option<&StructDef> {

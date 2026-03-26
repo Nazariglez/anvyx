@@ -823,6 +823,7 @@ fn test_view_indexing_ok() {
                 mutability: Mutability::Immutable,
                 name: ident("xs"),
                 ty: view_param,
+                default: None,
             }],
             ret: Type::Int,
             body: BlockNode {

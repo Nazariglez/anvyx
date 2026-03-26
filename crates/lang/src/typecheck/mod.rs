@@ -23,7 +23,7 @@ pub use error::{TypeErr, TypeErrKind};
 pub use infer::subst_type;
 pub use types::{ExternTypeDef, FieldDefault, SpecializationKey, TypeChecker};
 
-use crate::ast::{Program, StmtNode, Visibility};
+use crate::ast::{Program, Stmt, StmtNode, Visibility};
 use crate::builtin::Builtin;
 use const_eval::evaluate_and_export_consts;
 use constraint::resolve_constraints;
@@ -58,11 +58,33 @@ pub fn check_program_with_modules(
             build_module_def_with_reexports(stmts, &type_checker, path);
         errors.extend(reexport_errors);
 
-        // Evaluate this module's consts; dependencies are already in resolved_module_defs
-        // because module_list is in DFS post-order.
         let (const_defs, const_errors) =
             evaluate_and_export_consts(stmts, &type_checker.resolved_module_defs);
         errors.extend(const_errors);
+
+        for stmt in stmts {
+            let Stmt::Func(node) = &stmt.node else {
+                continue;
+            };
+            let func = &node.node;
+            if func.visibility != Visibility::Public {
+                continue;
+            }
+            if !func.params.iter().any(|p| p.default.is_some()) {
+                continue;
+            }
+            let defaults: Vec<Option<ConstValue>> = func
+                .params
+                .iter()
+                .map(|p| {
+                    p.default
+                        .as_ref()
+                        .and_then(|expr| const_eval::eval_const_expr(expr, &const_defs).ok())
+                })
+                .collect();
+            module_def.func_param_defaults.insert(func.name, defaults);
+        }
+
         for (name, def) in const_defs {
             if def.visibility == Visibility::Public {
                 module_def.const_defs.insert(name, def);

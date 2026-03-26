@@ -6,6 +6,7 @@ use crate::{
 use chumsky::prelude::*;
 use internment::Intern;
 
+use super::expr::expression;
 use super::types::{param_type_ident, type_ident};
 use super::{AnvParser, BoxedParser};
 
@@ -53,12 +54,14 @@ pub(super) fn literal<'src>() -> BoxedParser<'src, ast::Lit> {
     .boxed()
 }
 
-pub(super) fn params<'src>() -> BoxedParser<'src, Vec<ast::Param>> {
+pub(super) fn params<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, Vec<ast::Param>> {
     select! {
         (Token::Open(Delimiter::Parent), _) => (),
     }
     .ignore_then(
-        param()
+        param(stmt)
             .separated_by(select! {
                 (Token::Comma, _) => (),
             })
@@ -72,7 +75,9 @@ pub(super) fn params<'src>() -> BoxedParser<'src, Vec<ast::Param>> {
     .boxed()
 }
 
-pub(super) fn param<'src>() -> BoxedParser<'src, ast::Param> {
+pub(super) fn param<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::Param> {
     let var_kw = select! {
         (Token::Keyword(Keyword::Var), _) => (),
     }
@@ -88,10 +93,16 @@ pub(super) fn param<'src>() -> BoxedParser<'src, ast::Param> {
             (Token::Colon, _) => (),
         })
         .then(param_type_ident())
-        .map(|((mutability, name), ty)| ast::Param {
+        .then(
+            select! { (Token::Op(Op::Assign), _) => () }
+                .ignore_then(expression(stmt))
+                .or_not(),
+        )
+        .map(|(((mutability, name), ty), default)| ast::Param {
             mutability,
             name,
             ty,
+            default,
         })
         .labelled("parameter")
         .as_context()

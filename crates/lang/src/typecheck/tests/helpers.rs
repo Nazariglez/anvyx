@@ -356,6 +356,7 @@ pub(super) fn fn_decl(
                         mutability: Mutability::Immutable,
                         name: dummy_ident(n),
                         ty: t,
+                        default: None,
                     })
                     .collect(),
                 ret,
@@ -390,6 +391,7 @@ pub(super) fn generic_fn_decl(
                         mutability: Mutability::Immutable,
                         name: dummy_ident(n),
                         ty: t,
+                        default: None,
                     })
                     .collect(),
                 ret,
@@ -429,6 +431,7 @@ pub(super) fn func_decl(
                         mutability: Mutability::Immutable,
                         name: dummy_ident(n),
                         ty: t,
+                        default: None,
                     })
                     .collect(),
                 ret,
@@ -532,6 +535,7 @@ pub(super) fn method(
             name: dummy_ident(n),
             ty,
             mutability: Mutability::Immutable,
+            default: None,
         })
         .collect();
     let (stmts, tail) = split_body(body);
@@ -563,6 +567,7 @@ pub(super) fn generic_method(
             name: dummy_ident(n),
             ty,
             mutability: Mutability::Immutable,
+            default: None,
         })
         .collect();
     let (stmts, tail) = split_body(body);
@@ -651,6 +656,7 @@ pub(super) fn fn_decl_var_params(
             } else {
                 Mutability::Immutable
             },
+            default: None,
         })
         .collect();
     let (stmts, tail) = split_body(body);

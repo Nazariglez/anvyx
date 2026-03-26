@@ -95,9 +95,10 @@ fn parser<'src>() -> BoxedParser<'src, ast::Program> {
         let span = extend_node.span;
         Spanned::new(ast::Stmt::Extend(extend_node), span)
     });
+    let extern_decl = extern_declaration(stmt.clone());
     let const_decl = const_decl(stmt);
 
-    choice((import_declaration(), extern_declaration(), func_decl, struct_decl, enum_decl, extend_decl, const_decl))
+    choice((import_declaration(), extern_decl, func_decl, struct_decl, enum_decl, extend_decl, const_decl))
         .repeated()
         .collect::<Vec<_>>()
         .map(|stmts| ast::Program { stmts })

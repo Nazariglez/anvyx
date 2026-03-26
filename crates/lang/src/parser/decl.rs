@@ -102,7 +102,9 @@ pub(super) fn import_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
         .boxed()
 }
 
-pub(super) fn extern_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
+pub(super) fn extern_declaration<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::StmtNode> {
     let semicolon = select! { (Token::Semicolon, _) => () };
 
     select! { (Token::Keyword(Keyword::Extern), _) => () }
@@ -110,7 +112,7 @@ pub(super) fn extern_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
             // extern fn ... ;
             select! { (Token::Keyword(Keyword::Fn), _) => () }
                 .ignore_then(identifier())
-                .then(params())
+                .then(params(stmt.clone()))
                 .then(return_type())
                 .then_ignore(semicolon)
                 .map_with(|((name, params), ret), e| {
@@ -127,20 +129,22 @@ pub(super) fn extern_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
                     let span = node.span;
                     Spanned::new(ast::Stmt::ExternFunc(node), span)
                 }),
-            extern_type_declaration(),
+            extern_type_declaration(stmt),
         )))
         .labelled("extern declaration")
         .as_context()
         .boxed()
 }
 
-fn extern_type_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
+fn extern_type_declaration<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::StmtNode> {
     let semicolon = select! { (Token::Semicolon, _) => () };
 
     select! { (Token::Keyword(Keyword::Type), _) => () }
         .ignore_then(identifier())
         .then(choice((
-            extern_type_body().map(Some),
+            extern_type_body(stmt).map(Some),
             semicolon.map(|_| None),
         )))
         .map_with(|(name, body), e| {
@@ -190,6 +194,7 @@ fn resolve_extern_members(
                         mutability: p.mutability,
                         name: p.name,
                         ty: resolve_type_params_with_self(&p.ty, type_param_map, Some(self_type)),
+                        default: p.default.clone(),
                     })
                     .collect(),
                 ret: resolve_type_params_with_self(&ret, type_param_map, Some(self_type)),
@@ -207,6 +212,7 @@ fn resolve_extern_members(
                                 type_param_map,
                                 Some(self_type),
                             ),
+                            default: p.default.clone(),
                         })
                         .collect(),
                     ret: resolve_type_params_with_self(&ret, type_param_map, Some(self_type)),
@@ -230,7 +236,9 @@ fn resolve_extern_members(
         .collect()
 }
 
-fn extern_type_body<'src>() -> BoxedParser<'src, (Vec<ast::ExternTypeMember>, bool)> {
+fn extern_type_body<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, (Vec<ast::ExternTypeMember>, bool)> {
     enum BodyItem {
         Member(ast::ExternTypeMember),
         Init,
@@ -240,7 +248,7 @@ fn extern_type_body<'src>() -> BoxedParser<'src, (Vec<ast::ExternTypeMember>, bo
     let init_item = select! { (Token::Ident(ident), _) if ident.0.as_ref() == "init" => () }
         .then_ignore(semicolon.clone())
         .map(|_| BodyItem::Init);
-    let member_item = extern_type_member().map(BodyItem::Member);
+    let member_item = extern_type_member(stmt).map(BodyItem::Member);
 
     select! { (Token::Open(Delimiter::Brace), _) => () }
         .ignore_then(choice((init_item, member_item)).repeated().collect::<Vec<_>>())
@@ -264,12 +272,14 @@ fn extern_type_body<'src>() -> BoxedParser<'src, (Vec<ast::ExternTypeMember>, bo
         .boxed()
 }
 
-fn extern_type_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> {
+fn extern_type_member<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::ExternTypeMember> {
     let semicolon = select! { (Token::Semicolon, _) => () };
 
     choice((
         extern_type_op_member().then_ignore(semicolon.clone()),
-        extern_type_method_member().then_ignore(semicolon.clone()),
+        extern_type_method_member(stmt).then_ignore(semicolon.clone()),
         extern_type_field_member().then_ignore(semicolon),
     ))
     .boxed()
@@ -329,10 +339,12 @@ fn extern_type_field_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> 
         .boxed()
 }
 
-fn extern_type_method_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> {
+fn extern_type_method_member<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::ExternTypeMember> {
     select! { (Token::Keyword(Keyword::Fn), _) => () }
         .ignore_then(field_name_ident())
-        .then(method_params())
+        .then(method_params(stmt))
         .then(return_type())
         .map(|((name, (receiver, params)), ret)| {
             let ret = ret.unwrap_or(ast::Type::Void);
@@ -368,7 +380,7 @@ pub(super) fn function<'src>(
         })
         .then(identifier())
         .then(type_params())
-        .then(params())
+        .then(params(stmt.clone()))
         .then(return_type())
         .then(block_stmt(stmt, tail_expr))
         .map_with(|(((((vis, name), type_params), params), ret), body), e| {
@@ -384,6 +396,7 @@ pub(super) fn function<'src>(
                         mutability: p.mutability,
                         name: p.name,
                         ty,
+                        default: p.default,
                     }
                 })
                 .collect();
@@ -438,7 +451,7 @@ fn struct_method<'src>(
     }
     .ignore_then(identifier())
     .then(type_params())
-    .then(method_params())
+    .then(method_params(stmt.clone()))
     .then(return_type())
     .then(block_stmt(stmt, tail_expr))
     .map_with(
@@ -458,6 +471,7 @@ fn struct_method<'src>(
                         mutability: p.mutability,
                         name: p.name,
                         ty,
+                        default: p.default,
                     }
                 })
                 .collect();
@@ -483,12 +497,14 @@ fn struct_method<'src>(
     .boxed()
 }
 
-fn method_params<'src>() -> BoxedParser<'src, (Option<ast::MethodReceiver>, Vec<ast::Param>)> {
+fn method_params<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, (Option<ast::MethodReceiver>, Vec<ast::Param>)> {
     select! {
         (Token::Open(Delimiter::Parent), _) => (),
     }
     .ignore_then(
-        method_param_list()
+        method_param_list(stmt)
             .or_not()
             .map(|opt| opt.unwrap_or_default()),
     )
@@ -524,8 +540,10 @@ fn self_param<'src>() -> BoxedParser<'src, ast::MethodReceiver> {
         .boxed()
 }
 
-fn method_param_list<'src>() -> BoxedParser<'src, (Option<ast::MethodReceiver>, Vec<ast::Param>)> {
-    let regular_params = param()
+fn method_param_list<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, (Option<ast::MethodReceiver>, Vec<ast::Param>)> {
+    let regular_params = param(stmt)
         .separated_by(select! { (Token::Comma, _) => () })
         .collect::<Vec<_>>();
 
@@ -613,6 +631,7 @@ pub(super) fn struct_declaration<'src>(
                                 &combined_type_param_map,
                                 Some(&self_type),
                             ),
+                            default: p.default.clone(),
                         })
                         .collect();
 
@@ -770,7 +789,7 @@ fn extend_method<'src>(
         (Token::Keyword(Keyword::Fn), _) => (),
     }
     .ignore_then(field_name_ident())
-    .then(method_params())
+    .then(method_params(stmt.clone()))
     .then(return_type())
     .then(block_stmt(stmt, tail_expr))
     .map_with(|(((name, (receiver, params)), ret), body), e| {
@@ -782,6 +801,7 @@ fn extend_method<'src>(
             },
             name: ast::Ident(internment::Intern::new("self".to_string())),
             ty: ast::Type::Infer,
+            default: None,
         });
         let all_params: Vec<ast::Param> = self_param.into_iter().chain(params).collect();
         let ret_ty = ret.unwrap_or(ast::Type::Void);

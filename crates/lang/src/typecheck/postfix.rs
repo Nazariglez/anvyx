@@ -1,11 +1,15 @@
-use crate::{ast::{CallNode, ExprId, ExprKind, ExprNode, Ident, Type}, span::Span};
+use crate::{
+    ast::{CallNode, ExprId, ExprKind, ExprNode, Ident, Type},
+    span::Span,
+};
 use internment::Intern;
 
 use super::{
     call::{
         check_call, check_call_signature, check_extern_instance_method_call,
         check_extern_static_method_call, check_instance_method_call, check_list_method,
-        check_map_method, check_module_func_call, check_var_param_args, type_call_on_base,
+        check_map_method, check_module_func_call, check_var_param_args, required_param_count,
+        type_call_on_base,
     },
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
@@ -224,6 +228,7 @@ fn check_extend_call(
     check_call_signature(
         call_node.span,
         &param_types,
+        param_types.len(),
         &def.ret,
         &call_node.node.args,
         type_checker,
@@ -246,6 +251,7 @@ fn check_extend_qualified_call(
     check_call_signature(
         call_node.span,
         &param_types,
+        param_types.len(),
         &def.ret,
         &call_node.node.args,
         type_checker,
@@ -263,7 +269,9 @@ fn resolve_extend_method(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Option<Type> {
-    let entries = type_checker.get_extend_methods(receiver_ty, method_name).to_vec();
+    let entries = type_checker
+        .get_extend_methods(receiver_ty, method_name)
+        .to_vec();
 
     // Dedup by source_module — multiple entries from the same module count as one candidate
     let mut unique: Vec<&ExtendEntry> = vec![];
@@ -277,7 +285,12 @@ fn resolve_extend_method(
 
     match unique.as_slice() {
         [] => None,
-        [entry] => Some(check_extend_call(&entry.def, call_node, type_checker, errors)),
+        [entry] => Some(check_extend_call(
+            &entry.def,
+            call_node,
+            type_checker,
+            errors,
+        )),
         _ => {
             let candidates = unique.iter().map(|e| e.binding).collect();
             errors.push(TypeErr::new(
@@ -534,12 +547,7 @@ fn handle_method_call_if_applicable(
             type_checker,
             errors,
         ),
-        Type::Float
-        | Type::Double
-        | Type::Int
-        | Type::Bool
-        | Type::String
-        | Type::Enum { .. } => {
+        Type::Float | Type::Double | Type::Int | Type::Bool | Type::String | Type::Enum { .. } => {
             if let Some(extend_ret) = resolve_extend_method(
                 &detection_ty,
                 method_name,
@@ -566,7 +574,10 @@ fn handle_method_call_if_applicable(
             let type_ident = Ident(Intern::new(format!("{detection_ty}")));
             errors.push(TypeErr::new(
                 field_node.span,
-                TypeErrKind::UnknownMethod { struct_name: type_ident, method: method_name },
+                TypeErrKind::UnknownMethod {
+                    struct_name: type_ident,
+                    method: method_name,
+                },
             ));
             return Some(MethodCallOutcome::Handled {
                 ty: Type::Infer,
@@ -752,7 +763,9 @@ fn try_type_name_dispatch(
             } else {
                 // module.MemberName without a call — check for const access
                 if let Some(const_def) = module_def.const_defs.get(&member_name) {
-                    type_checker.const_values.insert(*field_expr_id, const_def.value.clone());
+                    type_checker
+                        .const_values
+                        .insert(*field_expr_id, const_def.value.clone());
                     return Some((const_def.ty.clone(), 1, op_safe));
                 }
 
@@ -955,14 +968,23 @@ fn apply_postfix_op(
                     return check_call(call_node, type_checker, errors, expected);
                 }
                 // for plain ident calls use base_ty and check var-params separately
-                let result = type_call_on_base(base_ty, call_node, type_checker, errors);
+                let defaults = type_checker.func_param_defaults(*name);
+                let required_count = match base_ty {
+                    Type::Func { params, .. } => required_param_count(defaults, params.len()),
+                    _ => 0,
+                };
+                let result =
+                    type_call_on_base(base_ty, call_node, required_count, type_checker, errors);
                 if let Some(param_info) = type_checker.func_param_info.get(name).cloned() {
                     check_var_param_args(param_info, &call_node.node.args, type_checker, errors);
                 }
                 return result;
             }
-            // for other callables use base_ty directly
-            type_call_on_base(base_ty, call_node, type_checker, errors)
+            let required_count = match base_ty {
+                Type::Func { params, .. } => params.len(),
+                _ => 0,
+            };
+            type_call_on_base(base_ty, call_node, required_count, type_checker, errors)
         }
     }
 }

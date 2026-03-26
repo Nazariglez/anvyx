@@ -1,5 +1,5 @@
 use crate::{
-    ast::{ArrayLen, BlockNode, ExprKind, Func, FuncNode, Ident, MethodReceiver, Mutability, StructDeclNode, Type},
+    ast::{ArrayLen, BlockNode, ExprKind, Func, FuncNode, Ident, MethodReceiver, Mutability, Param, StructDeclNode, Type, TypeParam},
     span::Span,
 };
 use internment::Intern;
@@ -216,6 +216,19 @@ pub(super) fn check_func(
 
     let ret_ty = type_checker.resolve_type(&func.ret);
 
+    let has_defaults = func.params.iter().any(|p| p.default.is_some());
+    if has_defaults {
+        let defaults = validate_param_defaults(
+            &func.params,
+            &func.type_params,
+            func.name,
+            fn_node.span,
+            type_checker,
+            errors,
+        );
+        type_checker.func_param_defaults.insert(func.name, defaults);
+    }
+
     check_fn_body(
         func,
         &param_types,
@@ -224,6 +237,117 @@ pub(super) fn check_func(
         type_checker,
         errors,
     );
+}
+
+fn validate_param_defaults(
+    params: &[Param],
+    type_params: &[TypeParam],
+    owner_name: Ident,
+    owner_span: Span,
+    type_checker: &TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Vec<Option<ConstValue>> {
+    let known_consts: HashSet<Ident> = type_checker.const_defs.keys().copied().collect();
+    let mut seen_default = false;
+    let mut defaults = Vec::with_capacity(params.len());
+
+    for param in params {
+        match &param.default {
+            None => {
+                if seen_default {
+                    errors.push(TypeErr::new(
+                        owner_span,
+                        TypeErrKind::RequiredParamAfterOptional {
+                            func: owner_name,
+                            param: param.name,
+                        },
+                    ));
+                }
+                defaults.push(None);
+            }
+            Some(expr) => {
+                seen_default = true;
+
+                if type_references_generic(&param.ty, type_params) {
+                    errors.push(TypeErr::new(
+                        expr.span,
+                        TypeErrKind::ParamDefaultOnGenericType {
+                            func: owner_name,
+                            param: param.name,
+                        },
+                    ));
+                    defaults.push(None);
+                    continue;
+                }
+
+                if validate_const_expr(expr, &known_consts).is_err() {
+                    errors.push(TypeErr::new(
+                        expr.span,
+                        TypeErrKind::ParamDefaultNotConst {
+                            func: owner_name,
+                            param: param.name,
+                        },
+                    ));
+                    defaults.push(None);
+                    continue;
+                }
+
+                let value = match eval_const_expr(expr, &type_checker.const_defs) {
+                    Ok(val) => val,
+                    Err(_) => {
+                        errors.push(TypeErr::new(
+                            expr.span,
+                            TypeErrKind::ParamDefaultNotConst {
+                                func: owner_name,
+                                param: param.name,
+                            },
+                        ));
+                        defaults.push(None);
+                        continue;
+                    }
+                };
+
+                let resolved_ty = type_checker.resolve_type(&param.ty);
+                match &value {
+                    ConstValue::Nil => {
+                        if !resolved_ty.is_option() {
+                            errors.push(TypeErr::new(
+                                expr.span,
+                                TypeErrKind::ParamDefaultTypeMismatch {
+                                    func: owner_name,
+                                    param: param.name,
+                                    expected: resolved_ty,
+                                    found: Type::Void,
+                                },
+                            ));
+                            defaults.push(None);
+                            continue;
+                        }
+                    }
+                    _ => {
+                        let value_ty = value.ty();
+                        if value_ty != resolved_ty {
+                            errors.push(TypeErr::new(
+                                expr.span,
+                                TypeErrKind::ParamDefaultTypeMismatch {
+                                    func: owner_name,
+                                    param: param.name,
+                                    expected: resolved_ty,
+                                    found: value_ty,
+                                },
+                            ));
+                            defaults.push(None);
+                            continue;
+                        }
+                    }
+                }
+
+                defaults.push(Some(value));
+            }
+        }
+    }
+
+    defaults
 }
 
 pub(super) fn check_struct(
@@ -355,6 +479,23 @@ pub(super) fn check_struct(
         }
 
         struct_def.field_defaults.insert(field.name, FieldDefault::Const(value));
+    }
+
+    for method in &decl.methods {
+        let has_defaults = method.params.iter().any(|p| p.default.is_some());
+        if has_defaults {
+            if let Some(method_def) = struct_def.methods.get_mut(&method.name) {
+                let defaults = validate_param_defaults(
+                    &method.params,
+                    &method.type_params,
+                    method.name,
+                    method.body.span,
+                    type_checker,
+                    errors,
+                );
+                method_def.param_defaults = defaults;
+            }
+        }
     }
 
     type_checker.struct_defs.insert(struct_name, struct_def.clone());

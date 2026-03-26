@@ -1,0 +1,23 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 10
+// 0
+// 10
+// 5
+// 10
+// 5
+// @match-end
+
+fn add(a: int, b: int = 0) -> int {
+    a + b
+}
+
+fn main() {
+    println(add(10));
+    println(add(0));
+    println(add(10, 0));
+    println(add(0, 5));
+    println(add(5, 5));
+    println(add(3, 2));
+}

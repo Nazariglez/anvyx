@@ -665,6 +665,30 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("cannot extend type '{ty}'"),
             "only named types (int, float, double, bool, string, structs, enums, extern types) can be extended".to_string(),
         ),
+        TypeErrKind::RequiredParamAfterOptional { func, param } => (
+            format!("required parameter '{param}' cannot follow a parameter with a default value"),
+            format!("in function '{func}': reorder so all required parameters come first"),
+        ),
+        TypeErrKind::ParamDefaultNotConst { func, param } => (
+            "default parameter value must be a constant expression".to_string(),
+            format!("parameter '{param}' in function '{func}' has a non-constant default"),
+        ),
+        TypeErrKind::ParamDefaultTypeMismatch { func, param, expected, found } => (
+            format!("default value type mismatch for parameter '{param}'"),
+            format!("in function '{func}': expected '{expected}', found '{found}'"),
+        ),
+        TypeErrKind::ParamDefaultOnGenericType { func, param } => (
+            "default values are not allowed on parameters with generic types".to_string(),
+            format!("parameter '{param}' in function '{func}' has a generic type"),
+        ),
+        TypeErrKind::TooFewArguments { expected, found } => (
+            format!("too few arguments: expected at least {expected}, found {found}"),
+            "add the missing required arguments".to_string(),
+        ),
+        TypeErrKind::TooManyArguments { expected, found } => (
+            format!("too many arguments: expected at most {expected}, found {found}"),
+            "remove the extra arguments".to_string(),
+        ),
     }
 }
 
