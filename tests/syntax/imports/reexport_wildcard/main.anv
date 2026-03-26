@@ -1,10 +1,10 @@
 // @mode: check
 // @expect: success
 
-import facade { double, square };
+import facade { twice, square };
 
 fn main() {
-    assert(double(3) == 6);
+    assert(twice(3) == 6);
     assert(square(4) == 16);
     println("ok");
 }

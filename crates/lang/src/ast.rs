@@ -164,8 +164,10 @@ pub enum Type {
     Any,
     /// Int 64 type
     Int,
-    /// Float 64 type
+    /// Float 32 type
     Float,
+    /// Float 64 type
+    Double,
     /// Boolean type
     Bool,
     /// String type
@@ -200,7 +202,7 @@ pub enum Type {
 
 impl Type {
     pub fn is_num(&self) -> bool {
-        matches!(self, Type::Int | Type::Float)
+        matches!(self, Type::Int | Type::Float | Type::Double)
     }
 
     pub fn is_bool(&self) -> bool {
@@ -216,7 +218,7 @@ impl Type {
     }
 
     pub fn is_stringable_primitive(&self) -> bool {
-        matches!(self, Type::Int | Type::Float | Type::Bool)
+        matches!(self, Type::Int | Type::Float | Type::Double | Type::Bool)
     }
 
     pub fn is_optional(&self) -> bool {
@@ -342,6 +344,7 @@ impl Display for Type {
         match self {
             Type::Int => write!(f, "int"),
             Type::Float => write!(f, "float"),
+            Type::Double => write!(f, "double"),
             Type::Bool => write!(f, "bool"),
             Type::String => write!(f, "string"),
             Type::Void => write!(f, "void"),

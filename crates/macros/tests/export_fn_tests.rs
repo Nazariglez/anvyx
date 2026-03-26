@@ -70,7 +70,7 @@ fn export_fn_wrong_type_returns_error() {
 }
 
 #[export_fn]
-fn scale(x: f64, factor: f64) -> f64 {
+fn scale(x: f32, factor: f32) -> f32 {
     x * factor
 }
 
@@ -395,8 +395,8 @@ fn export_fn_mixed_value_and_primitive_handler() {
 
 #[export_type(name = "Sprite")]
 pub struct SpriteData {
-    x: f64,
-    y: f64,
+    x: f32,
+    y: f32,
 }
 
 #[test]
@@ -442,8 +442,8 @@ fn export_type_tuple_struct() {
 
 #[export_type(name = "FmtVec2")]
 pub struct TestVec2 {
-    pub x: f64,
-    pub y: f64,
+    pub x: f32,
+    pub y: f32,
 }
 
 impl std::fmt::Display for TestVec2 {
@@ -606,17 +606,17 @@ fn provider_no_types_backward_compat() {
 // -- #[export_fn] with extern types --
 
 #[export_fn]
-pub fn create_sprite(x: f64, y: f64) -> SpriteData {
+pub fn create_sprite(x: f32, y: f32) -> SpriteData {
     SpriteData { x, y }
 }
 
 #[export_fn]
-pub fn sprite_x(s: &SpriteData) -> f64 {
+pub fn sprite_x(s: &SpriteData) -> f32 {
     s.x
 }
 
 #[export_fn]
-pub fn set_sprite_x(s: &mut SpriteData, x: f64) {
+pub fn set_sprite_x(s: &mut SpriteData, x: f32) {
     s.x = x;
 }
 
@@ -626,7 +626,7 @@ pub fn destroy_sprite(s: SpriteData) {
 }
 
 #[export_fn]
-pub fn move_sprite(s: &mut SpriteData, dx: f64, dy: f64) {
+pub fn move_sprite(s: &mut SpriteData, dx: f32, dy: f32) {
     s.x += dx;
     s.y += dy;
 }
@@ -900,7 +900,7 @@ fn provider_extern_type_handlers_work() {
 // -- same-store multi-borrow tests --
 
 #[export_fn]
-pub fn distance_sprites(a: &SpriteData, b: &SpriteData) -> f64 {
+pub fn distance_sprites(a: &SpriteData, b: &SpriteData) -> f32 {
     ((a.x - b.x).powi(2) + (a.y - b.y).powi(2)).sqrt()
 }
 
@@ -963,7 +963,7 @@ fn export_fn_same_store_same_handle_mut_fails() {
 fn cleanup_loop_no_leak() {
     let (_, create) = __anvyx_export_create_sprite();
     for i in 0..100 {
-        let _ = create(vec![Value::Float(i as f64), Value::Float(0.0)]).unwrap();
+        let _ = create(vec![Value::Float(i as f32), Value::Float(0.0_f32)]).unwrap();
     }
     __ANVYX_STORE_SPRITEDATA.with(|s| assert_eq!(s.borrow().len(), 0));
 }
@@ -997,42 +997,42 @@ mod method_tests {
 
     #[export_type(name = "Vec2")]
     pub struct Vec2 {
-        pub x: f64,
-        pub y: f64,
+        pub x: f32,
+        pub y: f32,
     }
 
     #[export_type(name = "Color")]
     pub struct Color {
-        pub r: f64,
-        pub g: f64,
-        pub b: f64,
+        pub r: f32,
+        pub g: f32,
+        pub b: f32,
     }
 
     #[export_methods]
     impl Vec2 {
-        pub fn new(x: f64, y: f64) -> Vec2 {
+        pub fn new(x: f32, y: f32) -> Vec2 {
             Vec2 { x, y }
         }
         pub fn zero() -> Vec2 {
             Vec2 { x: 0.0, y: 0.0 }
         }
-        pub fn get_x(&self) -> f64 {
+        pub fn get_x(&self) -> f32 {
             self.x
         }
-        pub fn get_y(&self) -> f64 {
+        pub fn get_y(&self) -> f32 {
             self.y
         }
-        pub fn length(&self) -> f64 {
+        pub fn length(&self) -> f32 {
             (self.x * self.x + self.y * self.y).sqrt()
         }
-        pub fn move_by(&mut self, dx: f64, dy: f64) {
+        pub fn move_by(&mut self, dx: f32, dy: f32) {
             self.x += dx;
             self.y += dy;
         }
-        pub fn set_x(&mut self, x: f64) {
+        pub fn set_x(&mut self, x: f32) {
             self.x = x;
         }
-        pub fn scaled(&self, factor: f64) -> Vec2 {
+        pub fn scaled(&self, factor: f32) -> Vec2 {
             Vec2 {
                 x: self.x * factor,
                 y: self.y * factor,
@@ -1044,14 +1044,14 @@ mod method_tests {
                 y: -self.y,
             }
         }
-        pub fn dot(&self, other: &Vec2) -> f64 {
+        pub fn dot(&self, other: &Vec2) -> f32 {
             self.x * other.x + self.y * other.y
         }
         pub fn add_assign(&mut self, other: &Vec2) {
             self.x += other.x;
             self.y += other.y;
         }
-        pub fn color_brightness(&self, c: &Color) -> f64 {
+        pub fn color_brightness(&self, c: &Color) -> f32 {
             self.length() * (c.r + c.g + c.b) / 3.0
         }
         pub fn tinted_scale(&self, c: &Color) -> Vec2 {
@@ -1061,12 +1061,12 @@ mod method_tests {
                 y: self.y * factor,
             }
         }
-        pub fn apply_color(&self, c: Color) -> f64 {
+        pub fn apply_color(&self, c: Color) -> f32 {
             self.x * c.r + self.y * c.g
         }
         pub fn with_value(&self, v: Value) -> Value {
             match v {
-                Value::Float(f) => Value::Float(f + self.x),
+                Value::Float(f) => Value::Float(f + self.x as f32),
                 other => other,
             }
         }
@@ -1508,25 +1508,25 @@ mod methods_provider {
 
     #[export_type(name = "Vec2")]
     pub struct Vec2 {
-        pub x: f64,
-        pub y: f64,
+        pub x: f32,
+        pub y: f32,
     }
 
     #[export_methods]
     impl Vec2 {
-        pub fn new(x: f64, y: f64) -> Vec2 {
+        pub fn new(x: f32, y: f32) -> Vec2 {
             Vec2 { x, y }
         }
-        pub fn x(&self) -> f64 {
+        pub fn x(&self) -> f32 {
             self.x
         }
-        pub fn set_x(&mut self, x: f64) {
+        pub fn set_x(&mut self, x: f32) {
             self.x = x;
         }
     }
 
     #[export_fn]
-    pub fn add_floats(a: f64, b: f64) -> f64 {
+    pub fn add_floats(a: f32, b: f32) -> f32 {
         a + b
     }
 
@@ -1597,15 +1597,15 @@ mod field_provider {
     #[export_type(name = "Pos")]
     pub struct Pos {
         #[field]
-        pub x: f64,
+        pub x: f32,
         #[field]
-        pub y: f64,
-        pub internal: f64, // not exported — no #[field]
+        pub y: f32,
+        pub internal: f32, // not exported — no #[field]
     }
 
     #[export_methods]
     impl Pos {
-        pub fn new(x: f64, y: f64) -> Pos {
+        pub fn new(x: f32, y: f32) -> Pos {
             Pos {
                 x,
                 y,
@@ -1687,30 +1687,30 @@ mod getter_setter_tests {
     use anvyx_lang::{Value, export_methods, export_type};
 
     #[export_type(name = "Vec2")]
-    pub struct GsVec2(f64, f64);
+    pub struct GsVec2(f32, f32);
 
     #[export_methods(name = "Vec2")]
     impl GsVec2 {
-        pub fn new(x: f64, y: f64) -> GsVec2 {
+        pub fn new(x: f32, y: f32) -> GsVec2 {
             GsVec2(x, y)
         }
         #[getter]
-        pub fn x(&self) -> f64 {
+        pub fn x(&self) -> f32 {
             self.0
         }
         #[setter]
-        pub fn set_x(&mut self, v: f64) {
+        pub fn set_x(&mut self, v: f32) {
             self.0 = v;
         }
         #[getter]
-        pub fn y(&self) -> f64 {
+        pub fn y(&self) -> f32 {
             self.1
         }
         #[setter]
-        pub fn set_y(&mut self, v: f64) {
+        pub fn set_y(&mut self, v: f32) {
             self.1 = v;
         }
-        pub fn length(&self) -> f64 {
+        pub fn length(&self) -> f32 {
             (self.0 * self.0 + self.1 * self.1).sqrt()
         }
     }
@@ -1782,23 +1782,23 @@ mod getter_setter_with_field_tests {
     #[export_type(name = "Sprite")]
     pub struct GsSprite {
         #[field]
-        pub x: f64,
+        pub x: f32,
         #[field]
-        pub y: f64,
+        pub y: f32,
         scale: f32,
     }
 
     #[export_methods(name = "Sprite")]
     impl GsSprite {
-        pub fn new(x: f64, y: f64) -> GsSprite {
+        pub fn new(x: f32, y: f32) -> GsSprite {
             GsSprite { x, y, scale: 1.0 }
         }
         #[getter]
-        pub fn scale(&self) -> f64 {
-            self.scale as f64
+        pub fn scale(&self) -> f32 {
+            self.scale as f32
         }
         #[setter]
-        pub fn set_scale(&mut self, v: f64) {
+        pub fn set_scale(&mut self, v: f32) {
             self.scale = v as f32;
         }
     }
@@ -1841,20 +1841,20 @@ mod getter_setter_name_override_tests {
     #[export_type(name = "Pt")]
     pub struct SomePoint {
         #[field]
-        pub x: f64,
+        pub x: f32,
     }
 
     #[export_methods(name = "Pt")]
     impl SomePoint {
-        pub fn new(x: f64) -> SomePoint {
+        pub fn new(x: f32) -> SomePoint {
             SomePoint { x }
         }
         #[getter]
-        pub fn mag(&self) -> f64 {
+        pub fn mag(&self) -> f32 {
             self.x.abs()
         }
         #[setter]
-        pub fn set_mag(&mut self, v: f64) {
+        pub fn set_mag(&mut self, v: f32) {
             self.x = v;
         }
     }
@@ -1888,31 +1888,31 @@ mod init_explicit_tests {
     use anvyx_lang::{Value, export_methods, export_type};
 
     #[export_type(name = "Vec2")]
-    pub struct InitVec2(f64, f64);
+    pub struct InitVec2(f32, f32);
 
     #[export_methods(name = "Vec2")]
     impl InitVec2 {
         #[init]
-        pub fn create(x: f64, y: f64) -> InitVec2 {
+        pub fn create(x: f32, y: f32) -> InitVec2 {
             InitVec2(x, y)
         }
         #[getter]
-        pub fn x(&self) -> f64 {
+        pub fn x(&self) -> f32 {
             self.0
         }
         #[setter]
-        pub fn set_x(&mut self, v: f64) {
+        pub fn set_x(&mut self, v: f32) {
             self.0 = v;
         }
         #[getter]
-        pub fn y(&self) -> f64 {
+        pub fn y(&self) -> f32 {
             self.1
         }
         #[setter]
-        pub fn set_y(&mut self, v: f64) {
+        pub fn set_y(&mut self, v: f32) {
             self.1 = v;
         }
-        pub fn length(&self) -> f64 {
+        pub fn length(&self) -> f32 {
             (self.0 * self.0 + self.1 * self.1).sqrt()
         }
     }
@@ -1963,14 +1963,14 @@ mod init_auto_tests {
     #[export_type(name = "AutoPos")]
     pub struct AutoPos {
         #[field]
-        pub x: f64,
+        pub x: f32,
         #[field]
-        pub y: f64,
+        pub y: f32,
     }
 
     #[export_methods(name = "AutoPos")]
     impl AutoPos {
-        pub fn new(x: f64, y: f64) -> AutoPos {
+        pub fn new(x: f32, y: f32) -> AutoPos {
             AutoPos { x, y }
         }
     }
@@ -2016,13 +2016,13 @@ mod init_no_auto_tests {
     #[export_type(name = "Obj")]
     pub struct NoAutoObj {
         #[field]
-        pub x: f64,
-        internal: f64,
+        pub x: f32,
+        internal: f32,
     }
 
     #[export_methods(name = "Obj")]
     impl NoAutoObj {
-        pub fn new(x: f64) -> NoAutoObj {
+        pub fn new(x: f32) -> NoAutoObj {
             NoAutoObj { x, internal: 0.0 }
         }
     }
@@ -2061,31 +2061,31 @@ mod op_tests {
 
     #[export_type(name = "Vec2")]
     pub struct OpVec2 {
-        pub x: f64,
-        pub y: f64,
+        pub x: f32,
+        pub y: f32,
     }
 
     #[export_methods(name = "Vec2")]
     impl OpVec2 {
         #[init]
-        pub fn create(x: f64, y: f64) -> OpVec2 {
+        pub fn create(x: f32, y: f32) -> OpVec2 {
             OpVec2 { x, y }
         }
 
         #[getter]
-        pub fn x(&self) -> f64 {
+        pub fn x(&self) -> f32 {
             self.x
         }
         #[setter]
-        pub fn set_x(&mut self, v: f64) {
+        pub fn set_x(&mut self, v: f32) {
             self.x = v;
         }
         #[getter]
-        pub fn y(&self) -> f64 {
+        pub fn y(&self) -> f32 {
             self.y
         }
         #[setter]
-        pub fn set_y(&mut self, v: f64) {
+        pub fn set_y(&mut self, v: f32) {
             self.y = v;
         }
 
@@ -2106,7 +2106,7 @@ mod op_tests {
         }
 
         #[op(Self * float)]
-        pub fn mul_scalar(&self, s: f64) -> OpVec2 {
+        pub fn mul_scalar(&self, s: f32) -> OpVec2 {
             OpVec2 {
                 x: self.x * s,
                 y: self.y * s,
@@ -2114,7 +2114,7 @@ mod op_tests {
         }
 
         #[op(float * Self)]
-        pub fn scalar_mul(&self, s: f64) -> OpVec2 {
+        pub fn scalar_mul(&self, s: f32) -> OpVec2 {
             OpVec2 {
                 x: self.x * s,
                 y: self.y * s,

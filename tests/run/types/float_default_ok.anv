@@ -1,0 +1,15 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 1.5
+// 4.0
+// ok
+// @match-end
+
+fn main() {
+    let x = 1.5;
+    println(x);
+    let y = x + 2.5;
+    println(y);
+    println("ok");
+}

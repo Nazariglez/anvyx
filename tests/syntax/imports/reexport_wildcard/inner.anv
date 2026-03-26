@@ -1,5 +1,5 @@
 // @helper
 
-pub fn double(n: int) -> int { n * 2 }
+pub fn twice(n: int) -> int { n * 2 }
 pub fn square(n: int) -> int { n * n }
 fn hidden() -> int { 0 }

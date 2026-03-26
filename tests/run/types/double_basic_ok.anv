@@ -1,0 +1,8 @@
+// @mode: run
+// @expect: success
+// @match: 1.5
+
+fn main() {
+    let x: double = 1.5 as double;
+    println(x);
+}

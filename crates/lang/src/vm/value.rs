@@ -164,7 +164,8 @@ impl Hash for ExternHandleData {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),
-    Float(f64),
+    Float(f32),
+    Double(f64),
     Bool(bool),
     Nil,
     String(ManagedRc<String>),
@@ -185,6 +186,7 @@ impl Hash for Value {
         match self {
             Value::Int(v) => v.hash(state),
             Value::Float(v) => v.to_bits().hash(state),
+            Value::Double(v) => v.to_bits().hash(state),
             Value::Bool(v) => v.hash(state),
             Value::Nil => {}
             Value::String(s) => s.hash(state),
@@ -206,6 +208,13 @@ impl fmt::Display for Value {
         match self {
             Value::Int(v) => write!(f, "{v}"),
             Value::Float(v) => {
+                if v.fract() == 0.0 && v.is_finite() {
+                    write!(f, "{v:.1}")
+                } else {
+                    write!(f, "{v}")
+                }
+            }
+            Value::Double(v) => {
                 if v.fract() == 0.0 && v.is_finite() {
                     write!(f, "{v:.1}")
                 } else {
@@ -297,6 +306,7 @@ fn type_name(v: &Value) -> &'static str {
     match v {
         Value::Int(_) => "int",
         Value::Float(_) => "float",
+        Value::Double(_) => "double",
         Value::Bool(_) => "bool",
         Value::String(_) => "string",
         Value::Nil => "nil",
@@ -314,6 +324,7 @@ pub fn value_add(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
     match (lhs, rhs) {
         (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
         (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
+        (Value::Double(a), Value::Double(b)) => Ok(Value::Double(a + b)),
         // string concatenation, either side may be a non-string
         (Value::String(a), b) => Ok(Value::String(ManagedRc::new(format!("{a}{b}")))),
         (a, Value::String(b)) => Ok(Value::String(ManagedRc::new(format!("{a}{b}")))),
@@ -329,6 +340,7 @@ pub fn value_sub(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
     match (lhs, rhs) {
         (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
         (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
+        (Value::Double(a), Value::Double(b)) => Ok(Value::Double(a - b)),
         (a, b) => Err(RuntimeError::new(format!(
             "type error: cannot subtract {} from {}",
             type_name(&b),
@@ -341,6 +353,7 @@ pub fn value_mul(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
     match (lhs, rhs) {
         (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
         (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
+        (Value::Double(a), Value::Double(b)) => Ok(Value::Double(a * b)),
         (a, b) => Err(RuntimeError::new(format!(
             "type error: cannot multiply {} and {}",
             type_name(&a),
@@ -359,6 +372,7 @@ pub fn value_div(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
             }
         }
         (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
+        (Value::Double(a), Value::Double(b)) => Ok(Value::Double(a / b)),
         (a, b) => Err(RuntimeError::new(format!(
             "type error: cannot divide {} by {}",
             type_name(&a),
@@ -377,6 +391,7 @@ pub fn value_rem(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
             }
         }
         (Value::Float(a), Value::Float(b)) => Ok(Value::Float(a % b)),
+        (Value::Double(a), Value::Double(b)) => Ok(Value::Double(a % b)),
         (a, b) => Err(RuntimeError::new(format!(
             "type error: cannot compute remainder of {} and {}",
             type_name(&a),
@@ -389,6 +404,7 @@ pub fn value_negate(v: Value) -> Result<Value, RuntimeError> {
     match v {
         Value::Int(n) => Ok(Value::Int(-n)),
         Value::Float(f) => Ok(Value::Float(-f)),
+        Value::Double(f) => Ok(Value::Double(-f)),
         other => Err(RuntimeError::new(format!(
             "type error: cannot negate {}",
             type_name(&other)
@@ -418,6 +434,7 @@ pub fn value_lt(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
     match (lhs, rhs) {
         (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
         (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a < b)),
+        (Value::Double(a), Value::Double(b)) => Ok(Value::Bool(a < b)),
         (Value::String(a), Value::String(b)) => Ok(Value::Bool(a < b)),
         (a, b) => Err(RuntimeError::new(format!(
             "type error: cannot compare {} < {}",
@@ -431,6 +448,7 @@ pub fn value_gt(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
     match (lhs, rhs) {
         (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
         (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
+        (Value::Double(a), Value::Double(b)) => Ok(Value::Bool(a > b)),
         (Value::String(a), Value::String(b)) => Ok(Value::Bool(a > b)),
         (a, b) => Err(RuntimeError::new(format!(
             "type error: cannot compare {} > {}",
@@ -444,6 +462,7 @@ pub fn value_lte(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
     match (lhs, rhs) {
         (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
         (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
+        (Value::Double(a), Value::Double(b)) => Ok(Value::Bool(a <= b)),
         (Value::String(a), Value::String(b)) => Ok(Value::Bool(a <= b)),
         (a, b) => Err(RuntimeError::new(format!(
             "type error: cannot compare {} <= {}",
@@ -457,6 +476,7 @@ pub fn value_gte(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
     match (lhs, rhs) {
         (Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
         (Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
+        (Value::Double(a), Value::Double(b)) => Ok(Value::Bool(a >= b)),
         (Value::String(a), Value::String(b)) => Ok(Value::Bool(a >= b)),
         (a, b) => Err(RuntimeError::new(format!(
             "type error: cannot compare {} >= {}",
@@ -515,8 +535,14 @@ mod tests {
 
     #[test]
     fn display_float() {
-        assert_eq!(Value::Float(3.14).to_string(), "3.14");
-        assert_eq!(Value::Float(42.0).to_string(), "42.0");
+        assert_eq!(Value::Float(3.14_f32).to_string(), "3.14");
+        assert_eq!(Value::Float(42.0_f32).to_string(), "42.0");
+    }
+
+    #[test]
+    fn display_double() {
+        assert_eq!(Value::Double(3.14).to_string(), "3.14");
+        assert_eq!(Value::Double(42.0).to_string(), "42.0");
     }
 
     #[test]
@@ -799,8 +825,16 @@ mod tests {
     #[test]
     fn add_float() {
         assert_eq!(
-            value_add(Value::Float(1.0), Value::Float(2.0)),
-            Ok(Value::Float(3.0))
+            value_add(Value::Float(1.0_f32), Value::Float(2.0_f32)),
+            Ok(Value::Float(3.0_f32))
+        );
+    }
+
+    #[test]
+    fn add_double() {
+        assert_eq!(
+            value_add(Value::Double(1.0), Value::Double(2.0)),
+            Ok(Value::Double(3.0))
         );
     }
 
@@ -821,7 +855,7 @@ mod tests {
 
     #[test]
     fn add_float_string_concat() {
-        assert_eq!(value_add(Value::Float(1.5), s("x")), Ok(s("1.5x")));
+        assert_eq!(value_add(Value::Float(1.5_f32), s("x")), Ok(s("1.5x")));
     }
 
     #[test]
@@ -861,7 +895,12 @@ mod tests {
 
     #[test]
     fn negate_float() {
-        assert_eq!(value_negate(Value::Float(1.5)), Ok(Value::Float(-1.5)));
+        assert_eq!(value_negate(Value::Float(1.5_f32)), Ok(Value::Float(-1.5_f32)));
+    }
+
+    #[test]
+    fn negate_double() {
+        assert_eq!(value_negate(Value::Double(1.5)), Ok(Value::Double(-1.5)));
     }
 
     #[test]
@@ -914,7 +953,15 @@ mod tests {
     #[test]
     fn gt_float() {
         assert_eq!(
-            value_gt(Value::Float(2.0), Value::Float(1.0)),
+            value_gt(Value::Float(2.0_f32), Value::Float(1.0_f32)),
+            Ok(Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn gt_double() {
+        assert_eq!(
+            value_gt(Value::Double(2.0), Value::Double(1.0)),
             Ok(Value::Bool(true))
         );
     }
@@ -935,7 +982,12 @@ mod tests {
 
     #[test]
     fn comparison_type_error() {
-        assert!(value_lt(Value::Int(1), Value::Float(1.0)).is_err());
+        assert!(value_lt(Value::Int(1), Value::Float(1.0_f32)).is_err());
+    }
+
+    #[test]
+    fn type_name_double() {
+        assert_eq!(type_name(&Value::Double(1.0)), "double");
     }
 
     #[test]

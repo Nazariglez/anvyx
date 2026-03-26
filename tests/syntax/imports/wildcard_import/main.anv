@@ -4,7 +4,7 @@
 import utils { * };
 
 fn main() {
-    assert(double(3) == 6);
+    assert(twice(3) == 6);
     assert(square(4) == 16);
     println("ok");
 }

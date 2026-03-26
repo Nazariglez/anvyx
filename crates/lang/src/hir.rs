@@ -144,10 +144,13 @@ pub enum ExprKind {
     Local(LocalId),
 
     Int(i64),
-    Float(f64),
+    Float(f32),
+    Double(f64),
     Bool(bool),
     String(String),
     Nil,
+
+    Cast(Box<Expr>),
 
     ToString(Box<Expr>),
 
@@ -507,9 +510,9 @@ mod tests {
         let expr = Expr {
             ty: Type::Float,
             span: dummy_span(),
-            kind: ExprKind::Float(3.14),
+            kind: ExprKind::Float(3.14_f32),
         };
-        assert!(matches!(expr.kind, ExprKind::Float(v) if (v - 3.14).abs() < f64::EPSILON));
+        assert!(matches!(expr.kind, ExprKind::Float(v) if (v - 3.14_f32).abs() < f32::EPSILON));
     }
 
     #[test]

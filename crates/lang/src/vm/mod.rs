@@ -260,8 +260,8 @@ mod tests {
     fn nested_function_calls() {
         let out = vm_ok(
             r#"
-            fn double(x: int) -> int { x * 2 }
-            fn quadruple(x: int) -> int { double(double(x)) }
+            fn twice(x: int) -> int { x * 2 }
+            fn quadruple(x: int) -> int { twice(twice(x)) }
             fn main() {
                 quadruple(3);
                 println("ok");
@@ -443,7 +443,7 @@ mod tests {
     fn extern_fn_multiple_externs() {
         let mut externs: HashMap<String, ExternHandler> = HashMap::new();
         externs.insert(
-            "double".to_string(),
+            "twice".to_string(),
             Box::new(|args| {
                 let Value::Int(n) = args[0] else {
                     panic!("expected int")
@@ -461,10 +461,10 @@ mod tests {
             }),
         );
         let src = r#"
-            extern fn double(n: int) -> int;
+            extern fn twice(n: int) -> int;
             extern fn negate(n: int) -> int;
             fn main() {
-                let x = double(5);
+                let x = twice(5);
                 let y = negate(x);
                 assert(y == -10);
                 println("ok");
@@ -525,7 +525,7 @@ fn main() {
                 };
                 let id = data.id;
                 assert_eq!(id, 1);
-                Ok(Value::Float(3.5))
+                Ok(Value::Float(3.5_f32))
             }),
         );
         let src = r#"
@@ -565,7 +565,7 @@ fn main() {
                 let Value::Float(val) = args[1] else {
                     panic!("expected Float");
                 };
-                *captured_clone.lock().unwrap() = val;
+                *captured_clone.lock().unwrap() = val as f64;
                 Ok(Value::Nil)
             }),
         );
@@ -608,7 +608,7 @@ fn main() {
                 let Value::Float(dy) = args[2] else {
                     panic!("expected Float dy");
                 };
-                *captured_clone.lock().unwrap() = (id, dx, dy);
+                *captured_clone.lock().unwrap() = (id, dx as f64, dy as f64);
                 Ok(Value::Nil)
             }),
         );
@@ -642,7 +642,7 @@ fn main() {
                 let Value::ExternHandle(_) = args[0] else {
                     panic!("expected ExternHandle");
                 };
-                Ok(Value::Float(5.0))
+                Ok(Value::Float(5.0_f32))
             }),
         );
         let src = r#"
@@ -677,7 +677,7 @@ fn main() {
                 let Value::ExternHandle(_) = args[0] else {
                     panic!("expected ExternHandle");
                 };
-                Ok(Value::Float(10.0))
+                Ok(Value::Float(10.0_f32))
             }),
         );
         externs.insert(
@@ -689,7 +689,7 @@ fn main() {
                 let Value::Float(val) = args[1] else {
                     panic!("expected Float");
                 };
-                *set_val_clone.lock().unwrap() = val;
+                *set_val_clone.lock().unwrap() = val as f64;
                 Ok(Value::Nil)
             }),
         );
@@ -699,7 +699,7 @@ fn main() {
                 let Value::ExternHandle(_) = args[0] else {
                     panic!("expected ExternHandle");
                 };
-                Ok(Value::Float(5.0))
+                Ok(Value::Float(5.0_f32))
             }),
         );
         let src = r#"
@@ -749,8 +749,8 @@ fn main() {
         assert_eq!(out, "ok\n");
         let args = called_args.lock().unwrap();
         assert_eq!(args.len(), 2);
-        assert_eq!(args[0], Value::Float(1.0));
-        assert_eq!(args[1], Value::Float(2.0));
+        assert_eq!(args[0], Value::Float(1.0_f32));
+        assert_eq!(args[1], Value::Float(2.0_f32));
     }
 
     #[test]
@@ -769,7 +769,7 @@ fn main() {
                 let Value::ExternHandle(_) = args[0] else {
                     panic!("expected ExternHandle");
                 };
-                Ok(Value::Float(3.0))
+                Ok(Value::Float(3.0_f32))
             }),
         );
         externs.insert(
@@ -785,7 +785,7 @@ fn main() {
                 let Value::Float(dy) = args[2] else {
                     panic!("expected Float dy");
                 };
-                *move_args_clone.lock().unwrap() = (id, dx, dy);
+                *move_args_clone.lock().unwrap() = (id, dx as f64, dy as f64);
                 Ok(Value::Nil)
             }),
         );
@@ -855,7 +855,7 @@ fn main() {
                 let Value::ExternHandle(_) = args[0] else {
                     panic!("expected ExternHandle")
                 };
-                Ok(Value::Float(1.0))
+                Ok(Value::Float(1.0_f32))
             }),
         );
         externs.insert(
@@ -864,7 +864,7 @@ fn main() {
                 let Value::ExternHandle(_) = args[0] else {
                     panic!("expected ExternHandle")
                 };
-                Ok(Value::Float(2.0))
+                Ok(Value::Float(2.0_f32))
             }),
         );
         let src = r#"
@@ -880,8 +880,8 @@ fn main() {
         assert_eq!(out, "ok\n");
         let args = init_args.lock().unwrap();
         assert_eq!(args.len(), 2);
-        assert_eq!(args[0], Value::Float(1.0));
-        assert_eq!(args[1], Value::Float(2.0));
+        assert_eq!(args[0], Value::Float(1.0_f32));
+        assert_eq!(args[1], Value::Float(2.0_f32));
     }
 
     #[test]
@@ -894,7 +894,7 @@ fn main() {
                 let Value::ExternHandle(_) = args[0] else {
                     panic!("expected ExternHandle")
                 };
-                Ok(Value::Float(7.5))
+                Ok(Value::Float(7.5_f32))
             }),
         );
         externs.insert(
@@ -903,7 +903,7 @@ fn main() {
                 let Value::ExternHandle(_) = args[0] else {
                     panic!("expected ExternHandle")
                 };
-                Ok(Value::Float(3.0))
+                Ok(Value::Float(3.0_f32))
             }),
         );
         let src = r#"
@@ -939,7 +939,7 @@ fn main() {
                 let Value::Float(y) = args[1] else {
                     panic!("expected Float")
                 };
-                *state_init.lock().unwrap() = (x, y);
+                *state_init.lock().unwrap() = (x as f64, y as f64);
                 Ok(extern_handle(1))
             }),
         );
@@ -956,18 +956,18 @@ fn main() {
                     panic!("expected Float")
                 };
                 let mut s = state_move.lock().unwrap();
-                s.0 += dx;
-                s.1 += dy;
+                s.0 += dx as f64;
+                s.1 += dy as f64;
                 Ok(Value::Nil)
             }),
         );
         externs.insert(
             "Point::__get_x".to_string(),
-            Box::new(move |_| Ok(Value::Float(state_get_x.lock().unwrap().0))),
+            Box::new(move |_| Ok(Value::Float(state_get_x.lock().unwrap().0 as f32))),
         );
         externs.insert(
             "Point::__get_y".to_string(),
-            Box::new(move |_| Ok(Value::Float(state_get_y.lock().unwrap().1))),
+            Box::new(move |_| Ok(Value::Float(state_get_y.lock().unwrap().1 as f32))),
         );
         let src = r#"
 extern type Point {

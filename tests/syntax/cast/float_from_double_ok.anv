@@ -1,0 +1,6 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let x: float = (1.5 as double) as float;
+}

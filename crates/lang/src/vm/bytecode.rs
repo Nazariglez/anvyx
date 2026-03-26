@@ -1,5 +1,15 @@
 use super::value::Value;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CastKind {
+    IntToFloat,
+    FloatToInt,
+    IntToDouble,
+    DoubleToInt,
+    FloatToDouble,
+    DoubleToFloat,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
     // constants / literals
@@ -76,6 +86,7 @@ pub enum Op {
     MapRemove, // pops key, map -> pushes removed or Nil, modified map
 
     ToString,
+    Cast(CastKind),
 }
 
 pub struct Chunk {

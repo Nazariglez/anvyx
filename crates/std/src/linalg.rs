@@ -5,11 +5,11 @@ use anvyx_lang::{export_methods, export_type, provider};
 use super::StdModule;
 
 #[export_type]
-pub struct Vec2(pub glam::DVec2);
+pub struct Vec2(pub glam::Vec2);
 
 impl fmt::Display for Vec2 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fn fmt_float(v: f64) -> String {
+        fn fmt_float(v: f32) -> String {
             if v.fract() == 0.0 && v.is_finite() {
                 format!("{v:.1}")
             } else {
@@ -23,39 +23,39 @@ impl fmt::Display for Vec2 {
 #[export_methods]
 impl Vec2 {
     #[init]
-    pub fn new(x: f64, y: f64) -> Self {
-        Self(glam::DVec2::new(x, y))
+    pub fn new(x: f32, y: f32) -> Self {
+        Self(glam::Vec2::new(x, y))
     }
 
     pub fn zero() -> Self {
-        Self(glam::DVec2::ZERO)
+        Self(glam::Vec2::ZERO)
     }
 
     #[getter]
-    pub fn x(&self) -> f64 {
+    pub fn x(&self) -> f32 {
         self.0.x
     }
 
     #[setter]
-    pub fn set_x(&mut self, v: f64) {
+    pub fn set_x(&mut self, v: f32) {
         self.0.x = v;
     }
 
     #[getter]
-    pub fn y(&self) -> f64 {
+    pub fn y(&self) -> f32 {
         self.0.y
     }
 
     #[setter]
-    pub fn set_y(&mut self, v: f64) {
+    pub fn set_y(&mut self, v: f32) {
         self.0.y = v;
     }
 
-    pub fn length(&self) -> f64 {
+    pub fn length(&self) -> f32 {
         self.0.length()
     }
 
-    pub fn dot(&self, other: &Vec2) -> f64 {
+    pub fn dot(&self, other: &Vec2) -> f32 {
         self.0.dot(other.0)
     }
 
@@ -75,12 +75,12 @@ impl Vec2 {
     }
 
     #[op(Self * float)]
-    pub fn mul_scalar(&self, s: f64) -> Vec2 {
+    pub fn mul_scalar(&self, s: f32) -> Vec2 {
         Vec2(self.0 * s)
     }
 
     #[op(float * Self)]
-    pub fn scalar_mul(&self, s: f64) -> Vec2 {
+    pub fn scalar_mul(&self, s: f32) -> Vec2 {
         Vec2(s * self.0)
     }
 
@@ -90,7 +90,7 @@ impl Vec2 {
     }
 
     #[op(Self / float)]
-    pub fn div_scalar(&self, s: f64) -> Vec2 {
+    pub fn div_scalar(&self, s: f32) -> Vec2 {
         Vec2(self.0 / s)
     }
 

@@ -3,42 +3,42 @@ use anvyx_lang::{export_fn, provider};
 use super::StdModule;
 
 #[export_fn]
-pub fn sin(x: f64) -> f64 {
+pub fn sin(x: f32) -> f32 {
     x.sin()
 }
 
 #[export_fn]
-pub fn cos(x: f64) -> f64 {
+pub fn cos(x: f32) -> f32 {
     x.cos()
 }
 
 #[export_fn]
-pub fn sqrt(x: f64) -> f64 {
+pub fn sqrt(x: f32) -> f32 {
     x.sqrt()
 }
 
 #[export_fn]
-pub fn floor(x: f64) -> f64 {
+pub fn floor(x: f32) -> f32 {
     x.floor()
 }
 
 #[export_fn]
-pub fn ceil(x: f64) -> f64 {
+pub fn ceil(x: f32) -> f32 {
     x.ceil()
 }
 
 #[export_fn]
-pub fn round(x: f64) -> f64 {
+pub fn round(x: f32) -> f32 {
     x.round()
 }
 
 #[export_fn]
-pub fn pow(base: f64, exp: f64) -> f64 {
+pub fn pow(base: f32, exp: f32) -> f32 {
     base.powf(exp)
 }
 
 #[export_fn]
-pub fn log(x: f64) -> f64 {
+pub fn log(x: f32) -> f32 {
     x.ln()
 }
 

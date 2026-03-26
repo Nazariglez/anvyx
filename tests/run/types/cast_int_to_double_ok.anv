@@ -1,0 +1,7 @@
+// @mode: run
+// @expect: success
+// @match: 1.0
+
+fn main() {
+    println(1 as double);
+}

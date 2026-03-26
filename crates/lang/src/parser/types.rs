@@ -25,6 +25,7 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
         let builtin_typ = select! {
             (Token::Keyword(Keyword::Int), _) => ast::Type::Int,
             (Token::Keyword(Keyword::Float), _) => ast::Type::Float,
+            (Token::Keyword(Keyword::Double), _) => ast::Type::Double,
             (Token::Keyword(Keyword::Bool), _) => ast::Type::Bool,
             (Token::Keyword(Keyword::String), _) => ast::Type::String,
             (Token::Keyword(Keyword::Void), _) => ast::Type::Void,

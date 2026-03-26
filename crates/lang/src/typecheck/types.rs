@@ -978,7 +978,7 @@ fn check_struct_property(
 fn check_keyable(ty: &Type, tc: &TypeChecker) -> Result<(), String> {
     match ty {
         Type::Int | Type::Bool | Type::String => Ok(()),
-        Type::Float => Err(
+        Type::Float | Type::Double => Err(
             "float is not keyable due to NaN and precision issues; use int or string instead"
                 .to_string(),
         ),
@@ -1016,7 +1016,7 @@ pub(super) fn is_keyable(ty: &Type, tc: &TypeChecker) -> bool {
 
 fn check_equatable(ty: &Type, tc: &TypeChecker) -> Result<(), String> {
     match ty {
-        Type::Infer | Type::Int | Type::Float | Type::Bool | Type::String => Ok(()),
+        Type::Infer | Type::Int | Type::Float | Type::Double | Type::Bool | Type::String => Ok(()),
         Type::Tuple(elems) => {
             for (i, t) in elems.iter().enumerate() {
                 check_equatable(t, tc).map_err(|_| {
@@ -1085,7 +1085,7 @@ pub(super) fn validate_map_key_type(
                 found: key_ty.clone(),
             },
         ));
-    } else if matches!(key_ty, Type::Float) {
+    } else if matches!(key_ty, Type::Float | Type::Double) {
         errors.push(TypeErr::new(span, TypeErrKind::MapKeyFloat));
     } else {
         let mut err = TypeErr::new(

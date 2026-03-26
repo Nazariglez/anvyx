@@ -100,6 +100,8 @@ fn check_cast(
 
     let valid = match (&from_ty, to_ty) {
         (Type::Int, Type::Float) | (Type::Float, Type::Int) => true,
+        (Type::Int, Type::Double) | (Type::Double, Type::Int) => true,
+        (Type::Float, Type::Double) | (Type::Double, Type::Float) => true,
         _ => from_ty == *to_ty,
     };
 

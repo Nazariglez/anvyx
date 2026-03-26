@@ -1,0 +1,18 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 4.0
+// 1.0
+// 3.75
+// 1.6
+// @match-end
+
+fn main() {
+    let a = 1.5 as double;
+    let b = 2.5 as double;
+    println(a + b);
+    println(b - a);
+    println(a * b);
+    let c = 4.0 as double;
+    println(c / b);
+}

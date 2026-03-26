@@ -99,6 +99,7 @@ pub enum Delimiter {
 pub enum Keyword {
     Int,
     Float,
+    Double,
     Bool,
     String,
     Void,
@@ -132,6 +133,7 @@ impl Display for Keyword {
         match self {
             Keyword::Int => write!(f, "int"),
             Keyword::Float => write!(f, "float"),
+            Keyword::Double => write!(f, "double"),
             Keyword::Bool => write!(f, "bool"),
             Keyword::String => write!(f, "string"),
             Keyword::Void => write!(f, "void"),
@@ -459,6 +461,7 @@ fn ident<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
         "return" => Token::Keyword(Keyword::Return),
         "int" => Token::Keyword(Keyword::Int),
         "float" => Token::Keyword(Keyword::Float),
+        "double" => Token::Keyword(Keyword::Double),
         "bool" => Token::Keyword(Keyword::Bool),
         "void" => Token::Keyword(Keyword::Void),
         "any" => Token::Keyword(Keyword::Any),

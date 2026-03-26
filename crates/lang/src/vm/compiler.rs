@@ -1,10 +1,10 @@
 use std::fmt;
 
-use crate::ast::{BinaryOp, UnaryOp};
+use crate::ast::{BinaryOp, Type, UnaryOp};
 use crate::builtin::Builtin;
 use crate::hir;
 
-use super::bytecode::{Chunk, Op};
+use super::bytecode::{CastKind, Chunk, Op};
 use super::managed_rc::ManagedRc;
 use super::meta::{EnumMeta, StructMeta};
 use super::value::Value;
@@ -327,6 +327,11 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             fc.emit(Op::Constant(idx));
         }
 
+        hir::ExprKind::Double(v) => {
+            let idx = fc.add_constant(Value::Double(*v))?;
+            fc.emit(Op::Constant(idx));
+        }
+
         hir::ExprKind::Bool(v) => {
             fc.emit(if *v { Op::True } else { Op::False });
         }
@@ -487,6 +492,20 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             compile_expr(fc, map)?;
             compile_expr(fc, index)?;
             fc.emit(Op::MapEntryAt);
+        }
+
+        hir::ExprKind::Cast(inner) => {
+            compile_expr(fc, inner)?;
+            let cast_kind = match (&inner.ty, &expr.ty) {
+                (Type::Int, Type::Float) => CastKind::IntToFloat,
+                (Type::Float, Type::Int) => CastKind::FloatToInt,
+                (Type::Int, Type::Double) => CastKind::IntToDouble,
+                (Type::Double, Type::Int) => CastKind::DoubleToInt,
+                (Type::Float, Type::Double) => CastKind::FloatToDouble,
+                (Type::Double, Type::Float) => CastKind::DoubleToFloat,
+                _ => unreachable!("invalid cast pair — typechecker should have rejected this"),
+            };
+            fc.emit(Op::Cast(cast_kind));
         }
 
         hir::ExprKind::ToString(inner) => {

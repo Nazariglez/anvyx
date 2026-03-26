@@ -138,6 +138,7 @@ pub(crate) fn anvyx_type_from_str(s: &str) -> Result<crate::ast::Type, String> {
     match s {
         "int" => Ok(crate::ast::Type::Int),
         "float" => Ok(crate::ast::Type::Float),
+        "double" => Ok(crate::ast::Type::Double),
         "bool" => Ok(crate::ast::Type::Bool),
         "string" => Ok(crate::ast::Type::String),
         "void" => Ok(crate::ast::Type::Void),

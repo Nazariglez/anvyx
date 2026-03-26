@@ -529,8 +529,8 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "add a type annotation, e.g. `let m: [string: int] = [:];`".to_string(),
         ),
         TypeErrKind::MapKeyFloat => (
-            "float cannot be used as map key".to_string(),
-            "float keys are unreliable due to NaN and precision; use int or string instead"
+            "floating-point type cannot be used as map key".to_string(),
+            "float/double keys are unreliable due to NaN and precision; use int or string instead"
                 .to_string(),
         ),
         TypeErrKind::MapKeyNotKeyable { found } => (

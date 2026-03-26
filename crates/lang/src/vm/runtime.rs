@@ -3,7 +3,7 @@ use std::fmt::Write;
 use crate::builtin::Builtin;
 
 use super::builtins;
-use super::bytecode::Op;
+use super::bytecode::{CastKind, Op};
 use super::compiler::CompiledProgram;
 use super::meta::VariantMetaKind;
 use super::managed_rc::ManagedRc;
@@ -594,6 +594,37 @@ impl<'a> VM<'a> {
                             )));
                         }
                     }
+                }
+
+                Op::Cast(kind) => {
+                    let val = self.pop();
+                    let result = match kind {
+                        CastKind::IntToFloat => {
+                            let Value::Int(n) = val else { unreachable!() };
+                            Value::Float(n as f32)
+                        }
+                        CastKind::FloatToInt => {
+                            let Value::Float(f) = val else { unreachable!() };
+                            Value::Int(f as i64)
+                        }
+                        CastKind::IntToDouble => {
+                            let Value::Int(n) = val else { unreachable!() };
+                            Value::Double(n as f64)
+                        }
+                        CastKind::DoubleToInt => {
+                            let Value::Double(d) = val else { unreachable!() };
+                            Value::Int(d as i64)
+                        }
+                        CastKind::FloatToDouble => {
+                            let Value::Float(f) = val else { unreachable!() };
+                            Value::Double(f as f64)
+                        }
+                        CastKind::DoubleToFloat => {
+                            let Value::Double(d) = val else { unreachable!() };
+                            Value::Float(d as f32)
+                        }
+                    };
+                    self.push(result);
                 }
 
                 Op::ToString => {

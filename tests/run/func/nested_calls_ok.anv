@@ -2,12 +2,12 @@
 // @expect: success
 // @contains: ok
 
-fn double(x: int) -> int {
+fn twice(x: int) -> int {
     x * 2
 }
 
 fn quadruple(x: int) -> int {
-    double(double(x))
+    twice(twice(x))
 }
 
 fn main() {

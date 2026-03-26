@@ -53,11 +53,17 @@ pub fn map_type(ty: &Type) -> Option<TypeMapping> {
             wrap_result: quote! { anvyx_lang::Value::Int(result) },
             anvyx_type: "int",
         }),
-        "f64" => Some(TypeMapping {
+        "f32" => Some(TypeMapping {
             extract_variant: quote! { anvyx_lang::Value::Float(p) },
             convert_extracted: quote! { p },
             wrap_result: quote! { anvyx_lang::Value::Float(result) },
             anvyx_type: "float",
+        }),
+        "f64" => Some(TypeMapping {
+            extract_variant: quote! { anvyx_lang::Value::Double(p) },
+            convert_extracted: quote! { p },
+            wrap_result: quote! { anvyx_lang::Value::Double(result) },
+            anvyx_type: "double",
         }),
         "bool" => Some(TypeMapping {
             extract_variant: quote! { anvyx_lang::Value::Bool(p) },

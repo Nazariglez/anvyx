@@ -41,7 +41,11 @@ pub(super) fn lower_expr(
 
         ast::ExprKind::Lit(lit) => match lit {
             Lit::Int(v) => hir::ExprKind::Int(*v),
-            Lit::Float(v) => hir::ExprKind::Float(*v),
+            Lit::Float(v) => match &ty {
+                Type::Float => hir::ExprKind::Float(*v as f32),
+                Type::Double => hir::ExprKind::Double(*v),
+                _ => unreachable!("float literal resolved to non-float type"),
+            },
             Lit::Bool(v) => hir::ExprKind::Bool(*v),
             Lit::String(v) => hir::ExprKind::String(v.clone()),
             Lit::Nil => hir::ExprKind::Nil,
@@ -180,6 +184,14 @@ pub(super) fn lower_expr(
             }
 
             hir::ExprKind::MapLiteral { entries }
+        }
+
+        ast::ExprKind::Cast(cast_node) => {
+            let inner = lower_expr(&cast_node.node.expr, ctx, fc, out)?;
+            if inner.ty == ty {
+                return Ok(inner);
+            }
+            hir::ExprKind::Cast(Box::new(inner))
         }
 
         other => {
