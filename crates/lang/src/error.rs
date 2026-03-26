@@ -590,6 +590,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "let-else block must diverge".to_string(),
             "the else block of a let-else must always return, break, or continue".to_string(),
         ),
+        TypeErrKind::LetElseIrrefutable => (
+            "irrefutable pattern in let-else".to_string(),
+            "this pattern always matches; use a plain 'let' binding instead".to_string(),
+        ),
     }
 }
 

@@ -320,4 +320,5 @@ pub enum TypeErrKind {
     },
 
     LetElseMustDiverge,
+    LetElseIrrefutable,
 }

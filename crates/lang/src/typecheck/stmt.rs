@@ -16,7 +16,7 @@ use super::{
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
     infer::type_from_fn,
-    pattern::check_pattern,
+    pattern::{check_pattern, is_refutable},
     types::{
         EnumDef, ExternFieldDef, ExternMethodDef, ExternOpDef, ExternTypeDef, ExternUnaryOpDef,
         ModuleDef, StructDef, TypeChecker, build_param_info, unwrap_opt_typ, validate_map_key_type,
@@ -717,6 +717,15 @@ pub(super) fn check_let_else(
     let node = &let_else_node.node;
 
     let value_ty = check_expr(&node.value, type_checker, errors, None);
+
+    if !is_refutable(&node.pattern.node, &value_ty, type_checker) {
+        errors.push(TypeErr::new(
+            node.pattern.span,
+            TypeErrKind::LetElseIrrefutable,
+        ));
+        check_pattern(&node.pattern, &value_ty, false, type_checker, errors);
+        return;
+    }
 
     type_checker.push_scope();
     check_block_stmts(

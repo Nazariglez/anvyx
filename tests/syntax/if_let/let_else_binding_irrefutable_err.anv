@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: irrefutable pattern in let-else
+
+fn main() {
+    let x = 99 else { return; }
+    println(x);
+}

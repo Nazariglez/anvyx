@@ -20,6 +20,89 @@ pub(super) fn check_pattern(
     check_pattern_inner(pattern, value_ty, mutable, None, type_checker, errors);
 }
 
+pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &TypeChecker) -> bool {
+    match pattern {
+        Pattern::Wildcard => false,
+        Pattern::Ident(_) => false,
+        Pattern::VarIdent(_) => false,
+        Pattern::Lit(_) => true,
+        Pattern::Tuple(subs) => {
+            let Some(elem_types) = value_ty.tuple_element_types() else {
+                return true;
+            };
+            if subs.len() != elem_types.len() {
+                return true;
+            }
+            subs.iter()
+                .zip(elem_types.iter())
+                .any(|(sub, ty)| is_refutable(&sub.node, ty, type_checker))
+        }
+        Pattern::EnumUnit { qualifier, .. } => {
+            let Some(enum_def) = type_checker.get_enum(*qualifier) else {
+                return true;
+            };
+            enum_def.variants.len() > 1
+        }
+        Pattern::EnumTuple {
+            qualifier, fields, ..
+        } => {
+            let Some(enum_def) = type_checker.get_enum(*qualifier) else {
+                return true;
+            };
+            if enum_def.variants.len() > 1 {
+                return true;
+            }
+            let Type::Enum { type_args, .. } = value_ty else {
+                return true;
+            };
+            let enum_def = enum_def.clone();
+            let Some(variant_def) = enum_def.variants.first() else {
+                return true;
+            };
+            let VariantKind::Tuple(expected_types) = &variant_def.kind else {
+                return true;
+            };
+            if fields.len() != expected_types.len() {
+                return true;
+            }
+            let subst = build_subst(&enum_def.type_params, type_args);
+            fields.iter().zip(expected_types.iter()).any(|(subpat, expected_ty)| {
+                let resolved_ty = subst_type(expected_ty, &subst);
+                is_refutable(&subpat.node, &resolved_ty, type_checker)
+            })
+        }
+        Pattern::EnumStruct {
+            qualifier, fields, ..
+        } => {
+            let Some(enum_def) = type_checker.get_enum(*qualifier) else {
+                return true;
+            };
+            if enum_def.variants.len() > 1 {
+                return true;
+            }
+            let Type::Enum { type_args, .. } = value_ty else {
+                return true;
+            };
+            let enum_def = enum_def.clone();
+            let Some(variant_def) = enum_def.variants.first() else {
+                return true;
+            };
+            let VariantKind::Struct(expected_fields) = &variant_def.kind else {
+                return true;
+            };
+            let subst = build_subst(&enum_def.type_params, type_args);
+            fields.iter().any(|(name, subpat)| {
+                let Some(field_def) = expected_fields.iter().find(|f| f.name == *name) else {
+                    return true;
+                };
+                let resolved_ty = subst_type(&field_def.ty, &subst);
+                is_refutable(&subpat.node, &resolved_ty, type_checker)
+            })
+        }
+        _ => true,
+    }
+}
+
 pub(super) fn check_match_pattern(
     pattern: &PatternNode,
     scrutinee_ty: &Type,

@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: irrefutable pattern in let-else
+
+fn main() {
+    let t = (1, 2);
+    let (a, b) = t else { return; }
+    println(a + b);
+}
