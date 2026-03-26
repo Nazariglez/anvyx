@@ -13,7 +13,6 @@ pub fn cmd(file: &Path) -> Result<(), String> {
         &HashMap::new(),
         &std_sources,
     )?;
-    println!("File checked successfully");
     Ok(())
 }
 
@@ -27,6 +26,5 @@ pub fn cmd_with_externs(file: &Path, extern_meta: &HashMap<String, String>) -> R
         extern_meta,
         &std_sources,
     )?;
-    println!("File checked successfully");
     Ok(())
 }

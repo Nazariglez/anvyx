@@ -47,6 +47,6 @@ pub fn cmd(name: Option<&str>) -> Result<(), String> {
     fs::write(src_dir.join("main.anv"), MAIN_ANV)
         .map_err(|e| format!("Failed to write src/main.anv: {e}"))?;
 
-    println!("Created project '{project_name}'");
+    crate::progress::status("Created", &format!("project '{project_name}'"));
     Ok(())
 }
