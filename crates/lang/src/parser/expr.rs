@@ -5,7 +5,9 @@ use crate::{
 };
 use chumsky::{error::Rich, prelude::*};
 
-use super::common::{TupleShapeResult, block_stmt, field_name_ident, identifier, literal, validate_tuple_shape_raw};
+use super::common::{
+    TupleShapeResult, block_stmt, field_name_ident, identifier, literal, validate_tuple_shape_raw,
+};
 use super::ops::{
     add_sub_op, and_op, assign_op, cmp_op, coalesce_op, eq_op, infix_left, mul_div_op, or_op,
 };
@@ -182,10 +184,20 @@ fn match_expr<'src>(
 fn struct_literal<'src>(
     expr: impl AnvParser<'src, ast::ExprNode>,
 ) -> BoxedParser<'src, ast::ExprNode> {
-    let field_init = field_name_ident()
-        .then_ignore(select! { (Token::Colon, _) => () })
-        .then(expr)
-        .map(|(name, value)| (name, value));
+    let field_init = choice((
+        field_name_ident()
+            .then_ignore(select! { (Token::Colon, _) => () })
+            .then(expr)
+            .map(|(name, value)| (name, value)),
+        identifier().map_with(|name, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let expr_id = e.state().new_expr_id();
+            let ident_expr = ast::Expr::new(ast::ExprKind::Ident(name), expr_id);
+            let value = Spanned::new(ident_expr, span);
+            (name, value)
+        }),
+    ));
 
     // parse qualified name like Enum.Variant or Struct
     let qualified_name = identifier()
