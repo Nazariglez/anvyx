@@ -1,3 +1,4 @@
+use super::const_eval::ConstValue;
 use crate::{
     ast::{
         ArrayFillNode, ArrayLen, ArrayLiteralNode, ExprKind, ExprNode, Ident, Lit, MapLiteralNode,
@@ -5,8 +6,7 @@ use crate::{
     },
     span::Span,
 };
-use super::const_eval::ConstValue;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{
     constraint::TypeRef,
@@ -117,7 +117,12 @@ fn constrain_fields_and_extract_type_args(
             if let Some((_, field_ty)) = type_checker.get_type(field_expr.node.id) {
                 let field_ty = field_ty.clone();
                 constrain_slots_from_type(
-                    &expected.ty, &field_ty, slots, field_expr.span, type_checker, errors,
+                    &expected.ty,
+                    &field_ty,
+                    slots,
+                    field_expr.span,
+                    type_checker,
+                    errors,
                 );
             }
             build_param_ref(&expected.ty, slots, type_checker)
@@ -177,9 +182,11 @@ pub(super) fn check_struct_lit(
         Default::default()
     };
 
-    // typecheck all field expressions before name validation
-    for (_, field_expr) in &lit.fields {
-        check_expr(field_expr, type_checker, errors, None);
+    let field_type_map: HashMap<Ident, &Type> =
+        struct_def.fields.iter().map(|f| (f.name, &f.ty)).collect();
+    for (name, field_expr) in &lit.fields {
+        let expected = field_type_map.get(name).copied();
+        check_expr(field_expr, type_checker, errors, expected);
     }
 
     let provided: Vec<(Ident, Span)> = lit.fields.iter().map(|(n, e)| (*n, e.span)).collect();
@@ -227,8 +234,9 @@ fn check_extern_init_lit(
         return Type::Infer;
     }
 
-    for (_, field_expr) in &lit.fields {
-        check_expr(field_expr, type_checker, errors, None);
+    for (name, field_expr) in &lit.fields {
+        let expected = extern_def.fields.get(name).map(|f| &f.ty);
+        check_expr(field_expr, type_checker, errors, expected);
     }
 
     let expected_fields: Vec<StructField> = extern_def
@@ -236,7 +244,10 @@ fn check_extern_init_lit(
         .iter()
         .map(|name| {
             let def = &extern_def.fields[name];
-            StructField { name: *name, ty: def.ty.clone() }
+            StructField {
+                name: *name,
+                ty: def.ty.clone(),
+            }
         })
         .collect();
 
@@ -253,7 +264,9 @@ fn check_extern_init_lit(
     );
 
     for ((_, field_expr), matched_def) in lit.fields.iter().zip(matched.iter()) {
-        let Some(expected) = matched_def else { continue };
+        let Some(expected) = matched_def else {
+            continue;
+        };
         let field_ref = TypeRef::Expr(field_expr.node.id);
         let resolved = type_checker.resolve_type(&expected.ty);
         let expected_ref = TypeRef::concrete(&resolved);
@@ -541,9 +554,11 @@ fn check_enum_struct_variant(
         Default::default()
     };
 
-    // typecheck all field expressions before name validation
-    for (_, field_expr) in &lit.fields {
-        check_expr(field_expr, type_checker, errors, None);
+    let field_type_map: HashMap<Ident, &Type> =
+        expected_fields.iter().map(|f| (f.name, &f.ty)).collect();
+    for (name, field_expr) in &lit.fields {
+        let expected = field_type_map.get(name).copied();
+        check_expr(field_expr, type_checker, errors, expected);
     }
 
     let provided: Vec<(Ident, Span)> = lit.fields.iter().map(|(n, e)| (*n, e.span)).collect();

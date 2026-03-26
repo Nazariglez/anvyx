@@ -3,20 +3,20 @@ use anvyx_lang::{export_fn, export_methods, export_type};
 #[export_type]
 pub struct Color {
     #[field]
-    pub r: f64,
+    pub r: f32,
     #[field]
-    pub g: f64,
+    pub g: f32,
     #[field]
-    pub b: f64,
+    pub b: f32,
     #[field]
-    pub a: f64,
+    pub a: f32,
     label: String,
 }
 
 #[export_methods]
 impl Color {
     #[init]
-    pub fn init(r: f64, g: f64, b: f64, a: f64, label: String) -> Self {
+    pub fn init(r: f32, g: f32, b: f32, a: f32, label: String) -> Self {
         Self { r, g, b, a, label }
     }
 
@@ -41,7 +41,7 @@ impl Color {
         }
     }
 
-    pub fn darken(&mut self, amount: f64) {
+    pub fn darken(&mut self, amount: f32) {
         self.r *= 1.0 - amount;
         self.g *= 1.0 - amount;
         self.b *= 1.0 - amount;
@@ -59,7 +59,7 @@ impl Color {
 }
 
 #[export_fn]
-pub fn mix(a: &Color, b: &Color, t: f64) -> Color {
+pub fn mix(a: &Color, b: &Color, t: f32) -> Color {
     Color {
         r: a.r * (1.0 - t) + b.r * t,
         g: a.g * (1.0 - t) + b.g * t,

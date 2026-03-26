@@ -382,8 +382,9 @@ pub(super) fn check_assign(
     }
 
     let node = &assign.node;
-    check_expr(&node.target, type_checker, errors, None);
-    check_expr(&node.value, type_checker, errors, None);
+    let target_ty = check_expr(&node.target, type_checker, errors, None);
+    let expected = if target_ty != Type::Infer { Some(&target_ty) } else { None };
+    check_expr(&node.value, type_checker, errors, expected);
 
     let target_ref = TypeRef::Expr(node.target.node.id);
     let value_ref = TypeRef::Expr(node.value.node.id);
