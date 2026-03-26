@@ -17,7 +17,16 @@ pub(super) fn check_pattern(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) {
-    check_pattern_inner(pattern, value_ty, mutable, None, type_checker, errors);
+    check_pattern_inner(pattern, value_ty, mutable, false, None, type_checker, errors);
+}
+
+pub(super) fn check_pattern_in_match(
+    pattern: &PatternNode,
+    value_ty: &Type,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    check_pattern_inner(pattern, value_ty, false, true, None, type_checker, errors);
 }
 
 pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &TypeChecker) -> bool {
@@ -116,6 +125,7 @@ pub(super) fn check_match_pattern(
         pattern,
         scrutinee_ty,
         false,
+        true,
         Some((enum_def, covered_variants, has_wildcard)),
         type_checker,
         errors,
@@ -126,12 +136,31 @@ fn check_pattern_inner(
     pattern: &PatternNode,
     value_ty: &Type,
     mutable: bool,
+    in_match: bool,
     match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) {
     match &pattern.node {
         Pattern::Ident(name) => {
+            if in_match {
+                if let Some(const_def) = type_checker.get_const(*name) {
+                    let const_ty = const_def.ty.clone();
+                    let const_val = const_def.value.clone();
+                    if const_ty != *value_ty && !value_ty.is_infer() {
+                        errors.push(TypeErr::new(
+                            pattern.span,
+                            TypeErrKind::InvalidLiteralPattern {
+                                expected: value_ty.clone(),
+                                found: const_ty,
+                            },
+                        ));
+                    }
+                    let span_key = (pattern.span.start, pattern.span.end);
+                    type_checker.const_pattern_values.insert(span_key, const_val);
+                    return;
+                }
+            }
             type_checker.set_var(*name, value_ty.clone(), mutable);
             if let Some((_, _, has_wildcard)) = match_ctx {
                 *has_wildcard = true;
@@ -167,7 +196,7 @@ fn check_pattern_inner(
             }
 
             for (subpat, elem_ty) in subpatterns.iter().zip(elem_types.iter()) {
-                check_pattern_inner(subpat, elem_ty, mutable, None, type_checker, errors);
+                check_pattern_inner(subpat, elem_ty, mutable, in_match, None, type_checker, errors);
             }
         }
         Pattern::NamedTuple(elems) => {
@@ -220,7 +249,7 @@ fn check_pattern_inner(
             }
 
             for ((_, subpat), elem_ty) in elems.iter().zip(elem_types.iter()) {
-                check_pattern_inner(subpat, elem_ty, mutable, None, type_checker, errors);
+                check_pattern_inner(subpat, elem_ty, mutable, in_match, None, type_checker, errors);
             }
         }
         Pattern::Struct { name, fields } => {
@@ -230,6 +259,7 @@ fn check_pattern_inner(
                 fields,
                 value_ty,
                 mutable,
+                in_match,
                 type_checker,
                 errors,
             );
@@ -242,6 +272,7 @@ fn check_pattern_inner(
                 &[],
                 value_ty,
                 mutable,
+                in_match,
                 match_ctx,
                 type_checker,
                 errors,
@@ -259,6 +290,7 @@ fn check_pattern_inner(
                 fields,
                 value_ty,
                 mutable,
+                in_match,
                 match_ctx,
                 type_checker,
                 errors,
@@ -278,6 +310,7 @@ fn check_pattern_inner(
                 *has_rest,
                 value_ty,
                 mutable,
+                in_match,
                 match_ctx,
                 type_checker,
                 errors,
@@ -316,6 +349,7 @@ fn check_enum_pattern(
     fields: &[PatternNode],
     value_ty: &Type,
     mutable: bool,
+    in_match: bool,
     match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
@@ -403,7 +437,7 @@ fn check_enum_pattern(
 
             for (subpat, expected_ty) in fields.iter().zip(expected_types.iter()) {
                 let resolved_ty = subst_type(expected_ty, &subst);
-                check_pattern_inner(subpat, &resolved_ty, mutable, None, type_checker, errors);
+                check_pattern_inner(subpat, &resolved_ty, mutable, in_match, None, type_checker, errors);
             }
         }
         VariantKind::Struct(_) => {
@@ -427,6 +461,7 @@ fn check_enum_struct_pattern(
     has_rest: bool,
     value_ty: &Type,
     mutable: bool,
+    in_match: bool,
     match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
@@ -526,7 +561,7 @@ fn check_enum_struct_pattern(
             continue;
         };
         let resolved_ty = subst_type(&expected_field.ty, &subst);
-        check_pattern_inner(subpat, &resolved_ty, mutable, None, type_checker, errors);
+        check_pattern_inner(subpat, &resolved_ty, mutable, in_match, None, type_checker, errors);
     }
 }
 
@@ -536,6 +571,7 @@ fn check_struct_destructure_pattern(
     fields: &[(Ident, PatternNode)],
     value_ty: &Type,
     mutable: bool,
+    in_match: bool,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) {
@@ -584,7 +620,7 @@ fn check_struct_destructure_pattern(
             } else {
                 field_def.ty.clone()
             };
-            check_pattern_inner(subpat, &resolved_ty, mutable, None, type_checker, errors);
+            check_pattern_inner(subpat, &resolved_ty, mutable, in_match, None, type_checker, errors);
         }
         return;
     }
@@ -625,7 +661,7 @@ fn check_struct_destructure_pattern(
                 ));
                 continue;
             };
-            check_pattern_inner(subpat, &field_def.ty, mutable, None, type_checker, errors);
+            check_pattern_inner(subpat, &field_def.ty, mutable, in_match, None, type_checker, errors);
         }
         return;
     }

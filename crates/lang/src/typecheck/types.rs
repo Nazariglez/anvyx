@@ -1,11 +1,13 @@
 use crate::{
     ast::{
-        BinaryOp, BlockNode, CallNode, EnumDecl, ExprId, FieldAccessNode, FuncNode, Ident,
-        IndexNode, Method, MethodReceiver, Mutability, Param, StmtNode, StructDecl, StructField,
-        Type, TypeParam, TypeVarId, UnaryOp, VariantKind,
+        ArrayLen, BinaryOp, BlockNode, CallNode, EnumDecl, ExprId, FieldAccessNode, FuncNode,
+        Ident, IndexNode, Method, MethodReceiver, Mutability, Param, StmtNode, StructDecl,
+        StructField, Type, TypeParam, TypeVarId, UnaryOp, VariantKind,
     },
     span::Span,
 };
+
+use super::const_eval::{ConstDef, ConstValue};
 use std::collections::{HashMap, HashSet};
 
 use super::{
@@ -182,6 +184,9 @@ pub(super) struct ModuleDef {
 
     /// sub modules re-exported via `pub import X;` or `pub import X as alias;`
     pub re_exported_modules: HashMap<Ident, ModuleDef>,
+
+    /// public const definitions exported by this module
+    pub const_defs: HashMap<Ident, ConstDef>,
 }
 
 impl ModuleDef {
@@ -192,6 +197,7 @@ impl ModuleDef {
             .chain(self.struct_defs.keys())
             .chain(self.enum_defs.keys())
             .chain(self.extern_types.keys())
+            .chain(self.const_defs.keys())
             .copied()
     }
 }
@@ -261,6 +267,18 @@ pub struct TypeChecker {
 
     /// Tracks which module a generic function was imported from
     pub(super) generic_func_source_module: HashMap<Ident, Vec<String>>,
+
+    /// Stores evaluated const definitions keyed by name
+    pub(super) const_defs: HashMap<Ident, ConstDef>,
+
+    /// Maps expression IDs to their const values for inlining by the lowering pass
+    pub const_values: HashMap<ExprId, ConstValue>,
+
+    /// Maps pattern spans (start, end) to resolved const values for match-pattern lowering
+    pub const_pattern_values: HashMap<(usize, usize), ConstValue>,
+
+    /// Tracks const names introduced per block scope inside function bodies
+    pub(super) const_scope_stack: Vec<HashSet<Ident>>,
 }
 
 impl TypeChecker {
@@ -288,6 +306,10 @@ impl TypeChecker {
 
     pub(super) fn get_enum(&self, name: Ident) -> Option<&EnumDef> {
         self.enum_defs.get(&name)
+    }
+
+    pub(super) fn get_const(&self, name: Ident) -> Option<&ConstDef> {
+        self.const_defs.get(&name)
     }
 
     pub fn get_extern_type(&self, name: Ident) -> Option<&ExternTypeDef> {
@@ -444,10 +466,22 @@ impl TypeChecker {
                 params: params.iter().map(|t| self.resolve_type(t)).collect(),
                 ret: Box::new(self.resolve_type(ret)),
             },
-            Type::Array { elem, len } => Type::Array {
-                elem: self.resolve_type(elem).boxed(),
-                len: *len,
-            },
+            Type::Array { elem, len } => {
+                let resolved_len = match len {
+                    ArrayLen::Named(ident) => match self.const_defs.get(ident) {
+                        Some(def) => match &def.value {
+                            ConstValue::Int(n) if *n >= 0 => ArrayLen::Fixed(*n as usize),
+                            _ => ArrayLen::Named(*ident),
+                        },
+                        None => ArrayLen::Named(*ident),
+                    },
+                    other => *other,
+                };
+                Type::Array {
+                    elem: self.resolve_type(elem).boxed(),
+                    len: resolved_len,
+                }
+            }
             Type::ArrayView { elem } => Type::ArrayView {
                 elem: self.resolve_type(elem).boxed(),
             },

@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: already declared
+
+const X = 10;
+const X = 20;
+fn main() {}

@@ -130,6 +130,7 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
             let len_ok = match (len_from, len_to) {
                 (ArrayLen::Fixed(n), ArrayLen::Fixed(m)) => n == m,
                 (ArrayLen::Infer, _) | (_, ArrayLen::Infer) => true,
+                _ => false,
             };
             len_ok && is_assignable(elem_from, elem_to)
         }

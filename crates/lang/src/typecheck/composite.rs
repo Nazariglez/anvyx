@@ -5,6 +5,7 @@ use crate::{
     },
     span::Span,
 };
+use super::const_eval::ConstValue;
 use std::collections::HashSet;
 
 use super::{
@@ -397,15 +398,24 @@ pub(super) fn check_array_fill(
     check_expr(&fill.node.len, type_checker, errors, None);
 
     let len_expr = &fill.node.len;
-    match &len_expr.node.kind {
-        ExprKind::Lit(Lit::Int(n)) if *n >= 0 => Type::Array {
-            elem: value_ty.boxed(),
-            len: ArrayLen::Fixed(*n as usize),
+
+    let compile_time_len = match &len_expr.node.kind {
+        ExprKind::Lit(Lit::Int(n)) if *n >= 0 => Some(*n as usize),
+        _ => match type_checker.const_values.get(&len_expr.node.id) {
+            Some(ConstValue::Int(n)) if *n >= 0 => Some(*n as usize),
+            _ => None,
         },
-        _ => {
+    };
+
+    match compile_time_len {
+        Some(n) => Type::Array {
+            elem: value_ty.boxed(),
+            len: ArrayLen::Fixed(n),
+        },
+        None => {
             errors.push(
                 TypeErr::new(len_expr.span, TypeErrKind::ArrayFillLengthNotLiteral).with_help(
-                    "the length in `[expr; len]` must be a compile-time integer literal",
+                    "the length in `[expr; len]` must be a compile-time integer literal or constant",
                 ),
             );
             Type::Array {

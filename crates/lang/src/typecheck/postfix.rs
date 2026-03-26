@@ -450,7 +450,8 @@ fn try_type_name_dispatch(
     if let Some(module_def) = type_checker.get_module(*type_name).cloned() {
         if let [
             PostfixNodeRef::Field {
-                node: field_node, ..
+                expr_id: field_expr_id,
+                node: field_node,
             },
             rest @ ..,
         ] = chain
@@ -525,7 +526,14 @@ fn try_type_name_dispatch(
                 );
                 return Some((ty, 2, op_safe));
             } else {
-                // module.MemberName without a call
+                // module.MemberName without a call, check for const access
+                if let Some(const_def) = module_def.const_defs.get(&member_name) {
+                    type_checker
+                        .const_values
+                        .insert(*field_expr_id, const_def.value.clone());
+                    return Some((const_def.ty.clone(), 1, op_safe));
+                }
+
                 let err_kind = if module_def.all_names.contains(&member_name) {
                     TypeErrKind::PrivateModuleMember {
                         module: *type_name,

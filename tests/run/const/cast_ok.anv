@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 42.0
+// 3
+// @match-end
+
+const X = 42 as float;
+const Y = 3.9 as int;
+
+fn main() {
+    println(X);
+    println(Y);
+}

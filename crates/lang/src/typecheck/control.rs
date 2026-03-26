@@ -10,7 +10,7 @@ use crate::span::Span;
 use super::{
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
-    pattern::{check_match_pattern, check_pattern},
+    pattern::{check_match_pattern, check_pattern, check_pattern_in_match},
     stmt::{check_block_expr, check_block_stmts},
     types::{EnumDef, TypeChecker},
     unify::{contains_infer, unify_types},
@@ -451,11 +451,16 @@ fn check_match_bool(
         match &arm.node.pattern.node {
             Pattern::Lit(Lit::Bool(true)) => has_true = true,
             Pattern::Lit(Lit::Bool(false)) => has_false = true,
-            Pattern::Wildcard | Pattern::Ident(_) | Pattern::VarIdent(_) => has_wildcard = true,
+            Pattern::Ident(name) => {
+                if type_checker.get_const(*name).is_none() {
+                    has_wildcard = true;
+                }
+            }
+            Pattern::Wildcard | Pattern::VarIdent(_) => has_wildcard = true,
             _ => {}
         }
 
-        check_pattern(&arm.node.pattern, scrutinee_ty, false, type_checker, errors);
+        check_pattern_in_match(&arm.node.pattern, scrutinee_ty, type_checker, errors);
 
         let arm_ty = check_expr(&arm.node.body, type_checker, errors, None);
         arm_types.push(arm_ty);
@@ -494,11 +499,16 @@ fn check_match_scalar(
         type_checker.push_scope();
 
         match &arm.node.pattern.node {
-            Pattern::Wildcard | Pattern::Ident(_) | Pattern::VarIdent(_) => has_wildcard = true,
+            Pattern::Ident(name) => {
+                if type_checker.get_const(*name).is_none() {
+                    has_wildcard = true;
+                }
+            }
+            Pattern::Wildcard | Pattern::VarIdent(_) => has_wildcard = true,
             _ => {}
         }
 
-        check_pattern(&arm.node.pattern, scrutinee_ty, false, type_checker, errors);
+        check_pattern_in_match(&arm.node.pattern, scrutinee_ty, type_checker, errors);
 
         let arm_ty = check_expr(&arm.node.body, type_checker, errors, None);
         arm_types.push(arm_ty);
@@ -529,11 +539,16 @@ fn check_match_tuple(
         type_checker.push_scope();
 
         match &arm.node.pattern.node {
-            Pattern::Wildcard | Pattern::Ident(_) | Pattern::VarIdent(_) => has_wildcard = true,
+            Pattern::Ident(name) => {
+                if type_checker.get_const(*name).is_none() {
+                    has_wildcard = true;
+                }
+            }
+            Pattern::Wildcard | Pattern::VarIdent(_) => has_wildcard = true,
             _ => {}
         }
 
-        check_pattern(&arm.node.pattern, scrutinee_ty, false, type_checker, errors);
+        check_pattern_in_match(&arm.node.pattern, scrutinee_ty, type_checker, errors);
 
         let arm_ty = check_expr(&arm.node.body, type_checker, errors, None);
         arm_types.push(arm_ty);

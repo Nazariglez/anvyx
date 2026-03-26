@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: not a constant expression
+
+fn get_value() -> int { 42 }
+const BAD = get_value();
+fn main() {}

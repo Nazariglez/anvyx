@@ -391,8 +391,8 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "try adding a type annotation, e.g. `var a: [int?; _] = [nil, nil];`".to_string(),
         ),
         TypeErrKind::ArrayFillLengthNotLiteral => (
-            "array fill length must be an integer literal".to_string(),
-            "the length in `[expr; len]` must be a compile-time integer literal".to_string(),
+            "array fill length must be a compile-time constant".to_string(),
+            "the length in `[expr; len]` must be an integer literal or a const with an integer value".to_string(),
         ),
         TypeErrKind::IndexOnNonArray { found } => (
             "cannot index non-array type".to_string(),
@@ -593,6 +593,34 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
         TypeErrKind::LetElseIrrefutable => (
             "irrefutable pattern in let-else".to_string(),
             "this pattern always matches; use a plain 'let' binding instead".to_string(),
+        ),
+        TypeErrKind::NotConstantExpression => (
+            "not a constant expression".to_string(),
+            "only literals, const references, and simple arithmetic are allowed in const expressions".to_string(),
+        ),
+        TypeErrKind::CircularConstDependency { name } => (
+            format!("circular const dependency for '{name}'"),
+            "this constant depends on itself, directly or indirectly".to_string(),
+        ),
+        TypeErrKind::ConstDivisionByZero => (
+            "division by zero in constant expression".to_string(),
+            "integer division by zero is not allowed at compile time".to_string(),
+        ),
+        TypeErrKind::ConstIntegerOverflow => (
+            "integer overflow in constant expression".to_string(),
+            "arithmetic result exceeds the range of 'int'".to_string(),
+        ),
+        TypeErrKind::ConstTypeMismatch { expected, got } => (
+            "constant type mismatch".to_string(),
+            format!("expected '{expected}', found '{got}'"),
+        ),
+        TypeErrKind::ConstAssignment { name } => (
+            format!("cannot assign to constant '{name}'"),
+            format!("'{name}' is declared as 'const' and cannot be reassigned"),
+        ),
+        TypeErrKind::DuplicateConst { name } => (
+            format!("constant '{name}' is already declared"),
+            format!("'{name}' is already declared in this scope"),
         ),
     }
 }

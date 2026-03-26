@@ -321,4 +321,12 @@ pub enum TypeErrKind {
 
     LetElseMustDiverge,
     LetElseIrrefutable,
+
+    NotConstantExpression,
+    CircularConstDependency { name: Ident },
+    ConstDivisionByZero,
+    ConstIntegerOverflow,
+    ConstTypeMismatch { expected: Type, got: Type },
+    ConstAssignment { name: Ident },
+    DuplicateConst { name: Ident },
 }

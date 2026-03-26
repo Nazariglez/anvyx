@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 10
+// 15
+// 150
+// @match-end
+
+const X = 10;
+const Y = X + 5;
+const Z = X * Y;
+
+fn main() {
+    println(X);
+    println(Y);
+    println(Z);
+}

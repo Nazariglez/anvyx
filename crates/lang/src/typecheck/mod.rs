@@ -1,5 +1,6 @@
 mod call;
 mod composite;
+mod const_eval;
 mod constraint;
 mod control;
 mod decl;
@@ -17,12 +18,14 @@ mod unify;
 #[cfg(test)]
 mod tests;
 
+pub use const_eval::ConstValue;
 pub use error::{TypeErr, TypeErrKind};
 pub use infer::subst_type;
 pub use types::{ExternTypeDef, SpecializationKey, TypeChecker};
 
-use crate::ast::{Program, StmtNode};
+use crate::ast::{Program, StmtNode, Visibility};
 use crate::builtin::Builtin;
+use const_eval::evaluate_and_export_consts;
 use constraint::resolve_constraints;
 use stmt::{build_module_def_with_reexports, check_block_stmts};
 use unify::contains_infer;
@@ -51,8 +54,19 @@ pub fn check_program_with_modules(
     }
 
     for (path, stmts) in module_list {
-        let (module_def, reexport_errors) = build_module_def_with_reexports(stmts, &type_checker);
+        let (mut module_def, reexport_errors) =
+            build_module_def_with_reexports(stmts, &type_checker);
         errors.extend(reexport_errors);
+
+        let (const_defs, const_errors) =
+            evaluate_and_export_consts(stmts, &type_checker.resolved_module_defs);
+        errors.extend(const_errors);
+        for (name, def) in const_defs {
+            if def.visibility == Visibility::Public {
+                module_def.const_defs.insert(name, def);
+            }
+        }
+
         type_checker
             .resolved_module_defs
             .insert(path.clone(), module_def);
@@ -73,11 +87,13 @@ pub fn check_program_with_modules(
     let baseline_module_defs = type_checker.module_defs.clone();
     let baseline_struct_defs = type_checker.struct_defs.clone();
     let baseline_enum_defs = type_checker.enum_defs.clone();
+    let baseline_const_defs = type_checker.const_defs.clone();
     for (_path, stmts) in module_list {
         let _ = check_block_stmts(stmts, None, &mut type_checker, &mut errors, None);
         type_checker.module_defs = baseline_module_defs.clone();
         type_checker.struct_defs = baseline_struct_defs.clone();
         type_checker.enum_defs = baseline_enum_defs.clone();
+        type_checker.const_defs = baseline_const_defs.clone();
     }
 
     if !errors.is_empty() {

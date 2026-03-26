@@ -1,0 +1,6 @@
+// @mode: check
+// @expect: error
+// @contains: division by zero
+
+const X = 10 / 0;
+fn main() {}

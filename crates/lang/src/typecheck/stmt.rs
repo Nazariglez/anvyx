@@ -1,8 +1,8 @@
 use crate::{
     ast::{
-        ArrayLen, BlockNode, ExprId, ExprKind, ExprNode, ExternFunc, ExternTypeMember,
-        Func, FuncNode, Ident, ImportKind, Mutability, Param, ReturnNode, Stmt, StmtNode,
-        Type, TypeParam, VariantKind, Visibility,
+        ArrayLen, BlockNode, ConstDeclNode, ExprId, ExprKind, ExprNode, ExternFunc,
+        ExternTypeMember, Func, FuncNode, Ident, ImportKind, Mutability, Param, ReturnNode, Stmt,
+        StmtNode, Type, TypeParam, VariantKind, Visibility,
     },
     span::Span,
 };
@@ -10,6 +10,10 @@ use std::collections::{HashMap, HashSet};
 
 use super::{
     composite::{is_all_nil_array_literal, is_empty_map_literal},
+    const_eval::{
+        ConstDef, build_const_dependency_graph, collect_const_decls, eval_const_expr,
+        validate_const_expr,
+    },
     constraint::TypeRef,
     control::{block_always_diverges, check_for, check_while, is_if_without_else},
     decl::{check_func, check_struct},
@@ -31,8 +35,18 @@ pub(super) fn check_block_stmts(
     errors: &mut Vec<TypeErr>,
     expected_tail: Option<&Type>,
 ) -> Option<ExprId> {
+    let in_function = !type_checker.return_types.is_empty();
+
     type_checker.push_scope();
     collect_scope_types(stmts, type_checker);
+
+    let const_snapshot = if in_function {
+        type_checker.const_scope_stack.push(HashSet::new());
+        Some(type_checker.const_defs.clone())
+    } else {
+        evaluate_module_consts(stmts, type_checker, errors);
+        None
+    };
 
     for stmt in stmts {
         check_stmt(stmt, type_checker, errors);
@@ -43,8 +57,99 @@ pub(super) fn check_block_stmts(
         expr.node.id
     });
 
+    if let Some(snapshot) = const_snapshot {
+        type_checker.const_scope_stack.pop();
+        type_checker.const_defs = snapshot;
+    }
+
     type_checker.pop_scope();
     tail_id
+}
+
+fn evaluate_module_consts(
+    stmts: &[StmtNode],
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    let decls = collect_const_decls(stmts);
+    if decls.is_empty() {
+        return;
+    }
+
+    let order = match build_const_dependency_graph(&decls) {
+        Ok(order) => order,
+        Err(err) => {
+            errors.push(err);
+            return;
+        }
+    };
+
+    for idx in order {
+        let decl = decls[idx];
+        process_const_decl(decl, type_checker, errors);
+    }
+}
+
+fn process_const_decl(
+    decl: &ConstDeclNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    let name = decl.node.name;
+
+    let known_consts: HashSet<Ident> = type_checker.const_defs.keys().copied().collect();
+    if let Err(err) = validate_const_expr(&decl.node.value, &known_consts) {
+        errors.push(err);
+        return;
+    }
+
+    let annotated_ty = decl
+        .node
+        .ty
+        .as_ref()
+        .map(|ty| type_checker.resolve_type(ty));
+
+    let _ = check_expr(
+        &decl.node.value,
+        type_checker,
+        errors,
+        annotated_ty.as_ref(),
+    );
+
+    let const_value = match eval_const_expr(&decl.node.value, &type_checker.const_defs) {
+        Ok(val) => val,
+        Err(err) => {
+            errors.push(err);
+            return;
+        }
+    };
+
+    let value_ty = const_value.ty();
+    if let Some(ref ann_ty) = annotated_ty {
+        if *ann_ty != value_ty {
+            errors.push(TypeErr::new(
+                decl.span,
+                TypeErrKind::ConstTypeMismatch {
+                    expected: ann_ty.clone(),
+                    got: value_ty,
+                },
+            ));
+            return;
+        }
+    }
+
+    let final_ty = annotated_ty.unwrap_or_else(|| const_value.ty());
+
+    type_checker.const_defs.insert(
+        name,
+        ConstDef {
+            name,
+            ty: final_ty,
+            value: const_value,
+            visibility: decl.node.visibility,
+            span: decl.span,
+        },
+    );
 }
 
 pub(super) fn check_block_expr(
@@ -89,7 +194,12 @@ fn build_func_registration(
     let param_info = build_param_info(&func.params);
     let type_params = (!func.type_params.is_empty()).then(|| func.type_params.clone());
     let template = type_params.is_some().then(|| node.clone());
-    FuncRegistration { func_ty, param_info, type_params, template }
+    FuncRegistration {
+        func_ty,
+        param_info,
+        type_params,
+        template,
+    }
 }
 
 fn build_extern_func_registration(
@@ -147,6 +257,9 @@ fn merge_symbol(name: Ident, bind_as: Ident, source: &ModuleDef, target: &mut Mo
     } else if let Some(extern_def) = source.extern_types.get(&name) {
         target.extern_types.insert(bind_as, extern_def.clone());
         target.all_names.insert(bind_as);
+    } else if let Some(const_def) = source.const_defs.get(&name) {
+        target.const_defs.insert(bind_as, const_def.clone());
+        target.all_names.insert(bind_as);
     }
 }
 
@@ -180,9 +293,13 @@ fn inject_module_item(
     } else if let Some(enum_def) = module_def.enum_defs.get(&name) {
         type_checker.enum_defs.insert(bind_as, enum_def.clone());
     } else if let Some(extern_def) = module_def.extern_types.get(&name) {
-        type_checker.extern_type_defs.insert(bind_as, extern_def.clone());
+        type_checker
+            .extern_type_defs
+            .insert(bind_as, extern_def.clone());
     } else if let Some(sub_module) = module_def.re_exported_modules.get(&name) {
         type_checker.module_defs.insert(bind_as, sub_module.clone());
+    } else if let Some(const_def) = module_def.const_defs.get(&name) {
+        type_checker.const_defs.insert(bind_as, const_def.clone());
     }
 
     // symbol not found is silently skipped here, check_stmt will report the error
@@ -247,7 +364,12 @@ fn build_extern_type_def(
                     },
                 );
             }
-            ExternTypeMember::Operator { op, other_ty, ret, self_on_right } => {
+            ExternTypeMember::Operator {
+                op,
+                other_ty,
+                ret,
+                self_on_right,
+            } => {
                 operators.push(ExternOpDef {
                     op: *op,
                     other_ty: resolve(other_ty),
@@ -309,13 +431,19 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                 let (func_ty, param_info) =
                     build_extern_func_registration(extern_func, |ty| type_checker.resolve_type(ty));
                 type_checker.set_var(extern_func.name, func_ty, false);
-                type_checker.func_param_info.insert(extern_func.name, param_info);
+                type_checker
+                    .func_param_info
+                    .insert(extern_func.name, param_info);
             }
 
             Stmt::Func(node) => {
                 let func = &node.node;
-                let FuncRegistration { func_ty, param_info, type_params, template } =
-                    build_func_registration(func, node, |ty| type_checker.resolve_type(ty));
+                let FuncRegistration {
+                    func_ty,
+                    param_info,
+                    type_params,
+                    template,
+                } = build_func_registration(func, node, |ty| type_checker.resolve_type(ty));
                 type_checker.set_var(func.name, func_ty, false);
                 type_checker.func_param_info.insert(func.name, param_info);
                 if let Some(tp) = type_params {
@@ -426,8 +554,12 @@ pub(super) fn build_module_def_with_reexports(
                 if func.visibility != Visibility::Public {
                     continue;
                 }
-                let FuncRegistration { func_ty, param_info, type_params, template } =
-                    build_func_registration(func, node, resolve);
+                let FuncRegistration {
+                    func_ty,
+                    param_info,
+                    type_params,
+                    template,
+                } = build_func_registration(func, node, resolve);
                 module_def.funcs.insert(func.name, func_ty);
                 module_def.func_param_info.insert(func.name, param_info);
                 if let Some(tp) = type_params {
@@ -548,16 +680,20 @@ pub(super) fn build_module_def_with_reexports(
             Stmt::ExternFunc(node) => {
                 let extern_func = &node.node;
                 module_def.all_names.insert(extern_func.name);
-                let (func_ty, param_info) =
-                    build_extern_func_registration(extern_func, resolve);
+                let (func_ty, param_info) = build_extern_func_registration(extern_func, resolve);
                 module_def.funcs.insert(extern_func.name, func_ty);
-                module_def.func_param_info.insert(extern_func.name, param_info);
+                module_def
+                    .func_param_info
+                    .insert(extern_func.name, param_info);
             }
             Stmt::ExternType(node) => {
                 let name = node.node.name;
                 module_def.all_names.insert(name);
                 let def = build_extern_type_def(node.node.has_init, &node.node.members, resolve);
                 module_def.extern_types.insert(name, def);
+            }
+            Stmt::Const(node) => {
+                module_def.all_names.insert(node.node.name);
             }
             _ => {}
         }
@@ -588,7 +724,8 @@ pub(super) fn check_stmt(
                         || module_def.struct_defs.contains_key(&item.name)
                         || module_def.enum_defs.contains_key(&item.name)
                         || module_def.extern_types.contains_key(&item.name)
-                        || module_def.re_exported_modules.contains_key(&item.name);
+                        || module_def.re_exported_modules.contains_key(&item.name)
+                        || module_def.const_defs.contains_key(&item.name);
                     if !is_public {
                         let err_kind = if module_def.all_names.contains(&item.name) {
                             TypeErrKind::PrivateModuleMember {
@@ -633,6 +770,84 @@ pub(super) fn check_stmt(
         Stmt::For(node) => check_for(node, type_checker, errors),
         Stmt::Break => check_break(stmt.span, type_checker, errors),
         Stmt::Continue => check_continue(stmt.span, type_checker, errors),
+        Stmt::Const(decl) => {
+            // module-level consts are already processed by evaluate_module_consts,
+            // only handle the function-body case here
+            if type_checker.return_types.is_empty() {
+                return;
+            }
+
+            let name = decl.node.name;
+
+            let already_in_scope = type_checker
+                .const_scope_stack
+                .last()
+                .is_some_and(|scope| scope.contains(&name));
+            if already_in_scope {
+                errors.push(TypeErr::new(
+                    stmt.span,
+                    TypeErrKind::DuplicateConst { name },
+                ));
+                return;
+            }
+
+            let known_consts: HashSet<Ident> = type_checker.const_defs.keys().copied().collect();
+            if let Err(err) = validate_const_expr(&decl.node.value, &known_consts) {
+                errors.push(err);
+                return;
+            }
+
+            let annotated_ty = decl
+                .node
+                .ty
+                .as_ref()
+                .map(|ty| type_checker.resolve_type(ty));
+
+            let _ = check_expr(
+                &decl.node.value,
+                type_checker,
+                errors,
+                annotated_ty.as_ref(),
+            );
+
+            let const_value = match eval_const_expr(&decl.node.value, &type_checker.const_defs) {
+                Ok(val) => val,
+                Err(err) => {
+                    errors.push(err);
+                    return;
+                }
+            };
+
+            let value_ty = const_value.ty();
+            if let Some(ref ann_ty) = annotated_ty {
+                if *ann_ty != value_ty {
+                    errors.push(TypeErr::new(
+                        decl.span,
+                        TypeErrKind::ConstTypeMismatch {
+                            expected: ann_ty.clone(),
+                            got: value_ty,
+                        },
+                    ));
+                    return;
+                }
+            }
+
+            let final_ty = annotated_ty.unwrap_or_else(|| const_value.ty());
+            type_checker.const_defs.insert(
+                name,
+                ConstDef {
+                    name,
+                    ty: final_ty,
+                    value: const_value,
+                    visibility: decl.node.visibility,
+                    span: decl.span,
+                },
+            );
+
+            if let Some(scope) = type_checker.const_scope_stack.last_mut() {
+                scope.insert(name);
+            }
+        }
     }
 }
 
@@ -642,7 +857,9 @@ pub(super) fn check_binding(
     errors: &mut Vec<TypeErr>,
 ) {
     let node = &binding.node;
-    if let Some(annot_ty) = &node.ty && annot_ty.contains_any() {
+    if let Some(annot_ty) = &node.ty
+        && annot_ty.contains_any()
+    {
         errors.push(TypeErr::new(binding.span, TypeErrKind::AnyTypeNotAllowed));
     }
     let expected = node

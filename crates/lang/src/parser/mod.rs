@@ -23,7 +23,7 @@ use chumsky::{
     prelude::*,
 };
 
-use decl::{enum_declaration, extern_declaration, function, import_declaration, struct_declaration};
+use decl::{const_decl, enum_declaration, extern_declaration, function, import_declaration, struct_declaration};
 use stmt::statement;
 
 static NEXT_EXPR_ID: AtomicU64 = AtomicU64::new(0);
@@ -83,7 +83,7 @@ fn parser<'src>() -> BoxedParser<'src, ast::Program> {
         let span = func_node.span;
         Spanned::new(ast::Stmt::Func(func_node), span)
     });
-    let struct_decl = struct_declaration(stmt).map(|struct_node| {
+    let struct_decl = struct_declaration(stmt.clone()).map(|struct_node| {
         let span = struct_node.span;
         Spanned::new(ast::Stmt::Struct(struct_node), span)
     });
@@ -91,8 +91,9 @@ fn parser<'src>() -> BoxedParser<'src, ast::Program> {
         let span = enum_node.span;
         Spanned::new(ast::Stmt::Enum(enum_node), span)
     });
+    let const_decl = const_decl(stmt);
 
-    choice((import_declaration(), extern_declaration(), func_decl, struct_decl, enum_decl))
+    choice((import_declaration(), extern_declaration(), func_decl, struct_decl, enum_decl, const_decl))
         .repeated()
         .collect::<Vec<_>>()
         .map(|stmts| ast::Program { stmts })

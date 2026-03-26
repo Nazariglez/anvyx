@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: circular
+
+const A = B;
+const B = A;
+fn main() {}

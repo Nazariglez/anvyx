@@ -1,6 +1,6 @@
 // @mode: check
 // @expect: error
-// @contains: array fill length must be an integer literal
+// @contains: array fill length must be a compile-time constant
 
 fn main() {
     let n = 3;

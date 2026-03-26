@@ -1,0 +1,6 @@
+// @mode: check
+// @expect: error
+// @contains: type mismatch
+
+const X: bool = 42;
+fn main() {}

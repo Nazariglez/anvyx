@@ -1,0 +1,10 @@
+// @mode: run
+// @expect: success
+// @match: size: 10
+
+const SIZE = 10;
+const LABEL = "size: {SIZE}";
+
+fn main() {
+    println(LABEL)
+}

@@ -5,7 +5,7 @@ use crate::{
 };
 use chumsky::prelude::*;
 
-use super::common::block_stmt;
+use super::common::{block_stmt, identifier};
 use super::decl::function;
 use super::expr::{cond_expression, expression};
 use super::pattern::pattern;
@@ -17,6 +17,7 @@ pub(super) fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
         let expr = expression(stmt.clone());
         let func = function(stmt.clone());
         let bind = binding(stmt.clone());
+        let const_s = const_stmt(stmt.clone());
         let ret = return_stmt(stmt.clone());
         let while_s = while_stmt(stmt.clone(), expr.clone());
         let for_s = for_stmt(stmt.clone(), expr.clone());
@@ -58,6 +59,7 @@ pub(super) fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
             (Token::Keyword(Keyword::For), _) => (),
             (Token::Keyword(Keyword::Break), _) => (),
             (Token::Keyword(Keyword::Continue), _) => (),
+            (Token::Keyword(Keyword::Const), _) => (),
         }
         .rewind();
 
@@ -93,6 +95,7 @@ pub(super) fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
                 let span = bind_node.span;
                 Spanned::new(ast::Stmt::Binding(bind_node), span)
             }),
+            const_s,
             ret,
             while_s,
             for_s,
@@ -140,6 +143,36 @@ fn binding<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'src,
                 Span::new(s.start, s.end),
             )
         })
+        .boxed()
+}
+
+fn const_stmt<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'src, ast::StmtNode> {
+    select! { (Token::Keyword(Keyword::Const), _) => () }
+        .ignore_then(identifier())
+        .then(
+            select! { (Token::Colon, _) => () }
+                .ignore_then(type_ident())
+                .or_not(),
+        )
+        .then_ignore(select! { (Token::Op(Op::Assign), _) => () })
+        .then(expression(stmt))
+        .then_ignore(select! { (Token::Semicolon, _) => () })
+        .map_with(|((name, ty), value), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let node = Spanned::new(
+                ast::ConstDecl {
+                    name,
+                    ty,
+                    value,
+                    visibility: ast::Visibility::Private,
+                },
+                span,
+            );
+            Spanned::new(ast::Stmt::Const(node), span)
+        })
+        .labelled("const statement")
+        .as_context()
         .boxed()
 }
 

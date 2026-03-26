@@ -757,6 +757,41 @@ pub(super) fn enum_declaration<'src>() -> BoxedParser<'src, ast::EnumDeclNode> {
         .boxed()
 }
 
+pub(super) fn const_decl<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::StmtNode> {
+    visibility()
+        .then_ignore(select! {
+            (Token::Keyword(Keyword::Const), _) => (),
+        })
+        .then(identifier())
+        .then(
+            select! { (Token::Colon, _) => () }
+                .ignore_then(type_ident())
+                .or_not(),
+        )
+        .then_ignore(select! { (Token::Op(Op::Assign), _) => () })
+        .then(expression(stmt))
+        .then_ignore(select! { (Token::Semicolon, _) => () })
+        .map_with(|(((vis, name), ty), value), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let node = Spanned::new(
+                ast::ConstDecl {
+                    name,
+                    ty,
+                    value,
+                    visibility: vis,
+                },
+                span,
+            );
+            Spanned::new(ast::Stmt::Const(node), span)
+        })
+        .labelled("const declaration")
+        .as_context()
+        .boxed()
+}
+
 fn resolve_type_params_with_self(
     ty: &ast::Type,
     type_param_map: &HashMap<ast::Ident, ast::TypeVarId>,

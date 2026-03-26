@@ -30,16 +30,22 @@ pub(super) fn check_expr(
 
     let expr = &expr_node.node;
     let ty = match &expr.kind {
-        ExprKind::Ident(ident) => match type_checker.get_var(*ident) {
-            Some(info) => info.ty.clone(),
-            None => {
+        ExprKind::Ident(ident) => {
+            if let Some(info) = type_checker.get_var(*ident) {
+                info.ty.clone()
+            } else if let Some(const_def) = type_checker.get_const(*ident) {
+                let val = const_def.value.clone();
+                let ty = const_def.ty.clone();
+                type_checker.const_values.insert(expr_node.node.id, val);
+                ty
+            } else {
                 errors.push(TypeErr::new(
                     expr_node.span,
                     TypeErrKind::UnknownVariable { name: *ident },
                 ));
                 Type::Infer
             }
-        },
+        }
         ExprKind::Block(spanned) => {
             let (block_ty, _) = check_block_expr(spanned, type_checker, errors, None);
             block_ty

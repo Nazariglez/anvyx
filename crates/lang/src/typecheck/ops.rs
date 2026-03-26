@@ -366,6 +366,16 @@ pub(super) fn check_assign(
         return Type::Infer;
     }
 
+    if let Some(name) = root_ident(&assign.node.target) {
+        if type_checker.const_defs.contains_key(&name) {
+            errors.push(TypeErr::new(
+                assign.span,
+                TypeErrKind::ConstAssignment { name },
+            ));
+            return Type::Infer;
+        }
+    }
+
     if let Some(error) = immutable_assignment_error(assign, type_checker) {
         errors.push(error);
         return Type::Infer;

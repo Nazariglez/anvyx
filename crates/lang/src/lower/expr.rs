@@ -1,4 +1,5 @@
 use crate::ast::{self, ArrayLen, BinaryOp, Ident, Lit, Type, UnaryOp};
+use crate::typecheck::ConstValue;
 use crate::builtin::Builtin;
 use crate::hir;
 use crate::span::Span;
@@ -32,11 +33,21 @@ pub(super) fn lower_expr(
 
     let kind = match &ast_expr.node.kind {
         ast::ExprKind::Ident(name) => {
-            let local_id = *fc
-                .local_map
-                .get(name)
-                .ok_or(LowerError::UnknownLocal { name: *name, span })?;
-            hir::ExprKind::Local(local_id)
+            if let Some(cv) = ctx.shared.tcx.const_values.get(&ast_expr.node.id) {
+                match cv {
+                    ConstValue::Int(n) => hir::ExprKind::Int(*n),
+                    ConstValue::Float(f) => hir::ExprKind::Float(*f),
+                    ConstValue::Double(d) => hir::ExprKind::Double(*d),
+                    ConstValue::Bool(b) => hir::ExprKind::Bool(*b),
+                    ConstValue::String(s) => hir::ExprKind::String(s.clone()),
+                }
+            } else {
+                let local_id = *fc
+                    .local_map
+                    .get(name)
+                    .ok_or(LowerError::UnknownLocal { name: *name, span })?;
+                hir::ExprKind::Local(local_id)
+            }
         }
 
         ast::ExprKind::Lit(lit) => match lit {
@@ -99,7 +110,17 @@ pub(super) fn lower_expr(
         }
 
         ast::ExprKind::Field(field_access) => {
-            return lower_field_expr(field_access, ty, span, ctx, fc, out);
+            if let Some(cv) = ctx.shared.tcx.const_values.get(&ast_expr.node.id) {
+                match cv {
+                    ConstValue::Int(n) => hir::ExprKind::Int(*n),
+                    ConstValue::Float(f) => hir::ExprKind::Float(*f),
+                    ConstValue::Double(d) => hir::ExprKind::Double(*d),
+                    ConstValue::Bool(b) => hir::ExprKind::Bool(*b),
+                    ConstValue::String(s) => hir::ExprKind::String(s.clone()),
+                }
+            } else {
+                return lower_field_expr(field_access, ty, span, ctx, fc, out);
+            }
         }
 
         ast::ExprKind::TupleIndex(tuple_idx) => {
@@ -138,12 +159,15 @@ pub(super) fn lower_expr(
                 } => *n,
                 Type::List { .. } => match &fill.node.len.node.kind {
                     ast::ExprKind::Lit(Lit::Int(n)) => *n as usize,
-                    _ => {
-                        return Err(LowerError::UnsupportedExprKind {
-                            span,
-                            kind: "list fill with non-literal length".to_string(),
-                        });
-                    }
+                    _ => match ctx.shared.tcx.const_values.get(&fill.node.len.node.id) {
+                        Some(ConstValue::Int(n)) => *n as usize,
+                        _ => {
+                            return Err(LowerError::UnsupportedExprKind {
+                                span,
+                                kind: "list fill with non-literal length".to_string(),
+                            });
+                        }
+                    },
                 },
                 other => {
                     return Err(LowerError::UnsupportedExprKind {

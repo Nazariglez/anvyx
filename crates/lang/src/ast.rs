@@ -49,6 +49,7 @@ pub enum Stmt {
     ExternType(ExternTypeNode),
     Struct(StructDeclNode),
     Enum(EnumDeclNode),
+    Const(ConstDeclNode),
     Expr(ExprNode),
     Binding(BindingNode),
     LetElse(LetElseNode),
@@ -159,6 +160,7 @@ pub struct TypeParam {
 pub enum ArrayLen {
     Fixed(usize),
     Infer,
+    Named(Ident),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -417,6 +419,7 @@ impl Display for Type {
             Type::Array { elem, len } => match len {
                 ArrayLen::Fixed(n) => write!(f, "[{elem}; {n}]"),
                 ArrayLen::Infer => write!(f, "[{elem}; _]"),
+                ArrayLen::Named(ident) => write!(f, "[{elem}; {ident}]"),
             },
             Type::Map { key, value } => write!(f, "[{key}: {value}]"),
             Type::ArrayView { elem } => write!(f, "[{elem}; ..]"),
@@ -444,6 +447,15 @@ pub struct Binding {
     pub mutability: Mutability,
     pub value: ExprNode,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstDecl {
+    pub name: Ident,
+    pub ty: Option<Type>,
+    pub value: ExprNode,
+    pub visibility: Visibility,
+}
+pub type ConstDeclNode = Spanned<ConstDecl>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LetElse {
@@ -597,7 +609,10 @@ pub enum FloatSuffix {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Lit {
     Int(i64),
-    Float { value: f64, suffix: Option<FloatSuffix> },
+    Float {
+        value: f64,
+        suffix: Option<FloatSuffix>,
+    },
     Bool(bool),
     String(String),
     Nil,

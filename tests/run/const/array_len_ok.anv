@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 0
+// 0
+// @match-end
+
+const SIZE = 5;
+
+fn main() {
+    let arr = [0; SIZE];
+    println(arr[0]);
+    println(arr[4]);
+}

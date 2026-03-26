@@ -68,14 +68,14 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
 
         let array_len_fixed =
             select! { (Token::Literal(LitToken::Number(n)), _) => ast::ArrayLen::Fixed(n as usize) };
-        let array_len_infer = identifier().try_map(|ident, span| {
+        let array_len_ident = identifier().map(|ident| {
             if ident.0.as_ref() == "_" {
-                Ok(ast::ArrayLen::Infer)
+                ast::ArrayLen::Infer
             } else {
-                Err(Rich::custom(span, "expected '_' or integer literal"))
+                ast::ArrayLen::Named(ident)
             }
         });
-        let array_len = choice((array_len_fixed, array_len_infer));
+        let array_len = choice((array_len_fixed, array_len_ident));
 
         let map_type = open_bracket
             .ignore_then(type_parser.clone())

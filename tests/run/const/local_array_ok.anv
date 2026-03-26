@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 0
+// 0
+// @match-end
+
+fn main() {
+    const N = 3;
+    let arr = [0; N];
+    println(arr[0]);
+    println(arr[2]);
+}

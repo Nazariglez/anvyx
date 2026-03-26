@@ -1,6 +1,7 @@
 use crate::ast::{self, BinaryOp, Lit, Pattern, Type, UnaryOp};
 use crate::hir;
 use crate::span::Span;
+use crate::typecheck::ConstValue;
 
 use super::{
     FuncLower, LowerCtx, LowerError, lower_block, lower_expr, register_named_local,
@@ -297,17 +298,24 @@ fn lower_match_non_enum(
             }
 
             Pattern::Ident(name) => {
-                let local = register_named_local(fc, *name, scrutinee_ty.clone());
-                let mut body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
-                let binding_stmt = hir::Stmt {
-                    span,
-                    kind: hir::StmtKind::Let {
-                        local,
-                        init: hir::Expr::local(scrutinee_ty.clone(), span, scrutinee_local),
-                    },
-                };
-                body.stmts.insert(0, binding_stmt);
-                else_block = Some(body);
+                let span_key = (arm.node.pattern.span.start, arm.node.pattern.span.end);
+                if let Some(cv) = ctx.shared.tcx.const_pattern_values.get(&span_key) {
+                    let cond = build_const_cond(scrutinee_ty, scrutinee_local, cv, span);
+                    let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                    cond_arms.push((cond, body));
+                } else {
+                    let local = register_named_local(fc, *name, scrutinee_ty.clone());
+                    let mut body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                    let binding_stmt = hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Let {
+                            local,
+                            init: hir::Expr::local(scrutinee_ty.clone(), span, scrutinee_local),
+                        },
+                    };
+                    body.stmts.insert(0, binding_stmt);
+                    else_block = Some(body);
+                }
             }
 
             Pattern::VarIdent(name) => {
@@ -512,6 +520,43 @@ fn build_lit_cond(
     let lhs = hir::Expr::local(scrutinee_ty.clone(), span, scrutinee_local);
     let rhs = build_rhs_from_lit(lit, span)?;
     Ok(hir::Expr::binary(Type::Bool, span, BinaryOp::Eq, lhs, rhs))
+}
+
+fn build_rhs_from_const_value(cv: &ConstValue, span: Span) -> hir::Expr {
+    match cv {
+        ConstValue::Int(n) => hir::Expr::int_lit(span, *n),
+        ConstValue::Float(f) => hir::Expr {
+            ty: Type::Float,
+            span,
+            kind: hir::ExprKind::Float(*f),
+        },
+        ConstValue::Double(d) => hir::Expr {
+            ty: Type::Double,
+            span,
+            kind: hir::ExprKind::Double(*d),
+        },
+        ConstValue::Bool(b) => hir::Expr {
+            ty: Type::Bool,
+            span,
+            kind: hir::ExprKind::Bool(*b),
+        },
+        ConstValue::String(s) => hir::Expr {
+            ty: Type::String,
+            span,
+            kind: hir::ExprKind::String(s.clone()),
+        },
+    }
+}
+
+fn build_const_cond(
+    scrutinee_ty: &Type,
+    scrutinee_local: hir::LocalId,
+    cv: &ConstValue,
+    span: Span,
+) -> hir::Expr {
+    let lhs = hir::Expr::local(scrutinee_ty.clone(), span, scrutinee_local);
+    let rhs = build_rhs_from_const_value(cv, span);
+    hir::Expr::binary(Type::Bool, span, BinaryOp::Eq, lhs, rhs)
 }
 
 fn build_non_enum_cond_preamble(
