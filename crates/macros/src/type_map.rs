@@ -10,10 +10,8 @@ pub struct TypeMapping {
 }
 
 pub struct ExternTypeInfo {
-    pub store_ident: syn::Ident,
+    pub type_ident: syn::Ident,
     pub decl_ident: syn::Ident,
-    pub cleanup_fn_ident: syn::Ident,
-    pub to_string_fn_ident: syn::Ident,
 }
 
 pub enum ParamMode {
@@ -86,10 +84,8 @@ pub fn map_type(ty: &Type) -> Option<TypeMapping> {
 fn extern_type_info(ident: &syn::Ident) -> ExternTypeInfo {
     let name_upper = ident.to_string().to_uppercase();
     ExternTypeInfo {
-        store_ident: format_ident!("__ANVYX_STORE_{}", name_upper),
+        type_ident: ident.clone(),
         decl_ident: format_ident!("__ANVYX_TYPE_DECL_{}", name_upper),
-        cleanup_fn_ident: format_ident!("__anvyx_cleanup_{}", ident),
-        to_string_fn_ident: format_ident!("__anvyx_to_string_{}", ident),
     }
 }
 

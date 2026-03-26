@@ -43,7 +43,7 @@ enum MethodKind {
 
 struct BorrowParam {
     param_name: Option<syn::Ident>,
-    store_ident: syn::Ident,
+    type_ident: syn::Ident,
     handle_ident: syn::Ident,
     guard_ident: syn::Ident,
     is_mut: bool,
@@ -188,7 +188,6 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         .unwrap_or_else(|| rust_type_ident.to_string());
     let rust_type_str = rust_type_ident.to_string();
     let type_upper = rust_type_str.to_uppercase();
-    let store_ident = format_ident!("__ANVYX_STORE_{}", type_upper);
     let methods_decl_ident = format_ident!("__ANVYX_METHODS_DECL_{}", type_upper);
     let statics_decl_ident = format_ident!("__ANVYX_STATICS_DECL_{}", type_upper);
     let ops_decl_ident = format_ident!("__ANVYX_OPS_DECL_{}", type_upper);
@@ -262,8 +261,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
                 syn::Error::new_spanned(&method.sig.output, "#[init] method must return Self")
             })?;
-            let self_store_str = store_ident.to_string();
-            let returns_self = matches!(&ret_mode, ReturnMode::ExternOwned(info) if info.store_ident.to_string() == self_store_str);
+            let returns_self = matches!(&ret_mode, ReturnMode::ExternOwned(info) if info.type_ident == rust_type_ident);
             if !returns_self {
                 return Err(syn::Error::new_spanned(
                     &method.sig.output,
@@ -600,7 +598,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             }
 
             // collect op metadata for __ANVYX_OPS_DECL_ const
-            let returns_self = matches!(&ret_mode, ReturnMode::ExternOwned(info) if info.store_ident == store_ident);
+            let returns_self = matches!(&ret_mode, ReturnMode::ExternOwned(info) if info.type_ident == rust_type_ident);
             let ret_anvyx = build_ret_anvyx_str(&ret_mode, returns_self, &type_decl_ident);
             let op_cap_str = op_info.op_cap;
             let other_type_str = &op_info.other_type;
@@ -633,7 +631,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
 
             let self_bp = BorrowParam {
                 param_name: None,
-                store_ident: store_ident.clone(),
+                type_ident: rust_type_ident.clone(),
                 handle_ident: format_ident!("__handle_self"),
                 guard_ident: format_ident!("__guard_self"),
                 is_mut: false,
@@ -684,7 +682,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                         });
                     }
                     ParamMode::ExternOwned(info) => {
-                        let store = &info.store_ident;
+                        let ty = &info.type_ident;
                         let handle_ident = format_ident!("__handle_{}", i);
                         param_extractions.push(quote! {
                             let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
@@ -694,14 +692,10 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                                 )));
                             };
                             let #handle_ident = __ehd.id;
-                            let #param_name = #store.with(|__s| __s.borrow_mut().remove(#handle_ident))?;
+                            let #param_name = <#ty as anvyx_lang::AnvyxExternType>::with_store(|__s| __s.borrow_mut().remove(#handle_ident))?;
                         });
                     }
                     ParamMode::ExternRef(info) => {
-                        let ExternTypeInfo {
-                            store_ident: ref_store,
-                            ..
-                        } = info;
                         let handle_ident = format_ident!("__handle_{}", i);
                         param_extractions.push(quote! {
                             let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
@@ -715,17 +709,13 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                         let guard_ident = format_ident!("__guard_{}", i);
                         borrow_params.push(BorrowParam {
                             param_name: Some(param_name.clone()),
-                            store_ident: ref_store,
+                            type_ident: info.type_ident,
                             handle_ident,
                             guard_ident,
                             is_mut: false,
                         });
                     }
                     ParamMode::ExternMutRef(info) => {
-                        let ExternTypeInfo {
-                            store_ident: ref_store,
-                            ..
-                        } = info;
                         let handle_ident = format_ident!("__handle_{}", i);
                         param_extractions.push(quote! {
                             let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
@@ -739,7 +729,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                         let guard_ident = format_ident!("__guard_{}", i);
                         borrow_params.push(BorrowParam {
                             param_name: Some(param_name.clone()),
-                            store_ident: ref_store,
+                            type_ident: info.type_ident,
                             handle_ident,
                             guard_ident,
                             is_mut: true,
@@ -790,8 +780,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             )
         })?;
 
-        let self_store_str = store_ident.to_string();
-        let returns_self = matches!(&ret_mode, ReturnMode::ExternOwned(info) if info.store_ident.to_string() == self_store_str);
+        let returns_self = matches!(&ret_mode, ReturnMode::ExternOwned(info) if info.type_ident == rust_type_ident);
 
         let self_offset = match kind {
             MethodKind::Static => 0,
@@ -855,7 +844,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                     param_anvyx_types.push(quote! { (#param_name_str, "any") });
                 }
                 ParamMode::ExternOwned(info) => {
-                    let store = &info.store_ident;
+                    let ty = &info.type_ident;
                     let decl = &info.decl_ident;
                     let handle_ident = format_ident!("__handle_{}", i);
                     param_extractions.push(quote! {
@@ -866,16 +855,12 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                             )));
                         };
                         let #handle_ident = __ehd.id;
-                        let #param_name = #store.with(|__s| __s.borrow_mut().remove(#handle_ident))?;
+                        let #param_name = <#ty as anvyx_lang::AnvyxExternType>::with_store(|__s| __s.borrow_mut().remove(#handle_ident))?;
                     });
                     param_anvyx_types.push(quote! { (#param_name_str, #decl.name) });
                 }
                 ParamMode::ExternRef(info) => {
-                    let ExternTypeInfo {
-                        store_ident: ref_store,
-                        decl_ident: ref_decl,
-                        ..
-                    } = info;
+                    let ExternTypeInfo { type_ident: ref_type, decl_ident: ref_decl } = info;
                     let handle_ident = format_ident!("__handle_{}", i);
                     param_extractions.push(quote! {
                         let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
@@ -890,18 +875,14 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                     let guard_ident = format_ident!("__guard_{}", i);
                     borrow_params.push(BorrowParam {
                         param_name: Some(param_name.clone()),
-                        store_ident: ref_store,
+                        type_ident: ref_type,
                         handle_ident,
                         guard_ident,
                         is_mut: false,
                     });
                 }
                 ParamMode::ExternMutRef(info) => {
-                    let ExternTypeInfo {
-                        store_ident: ref_store,
-                        decl_ident: ref_decl,
-                        ..
-                    } = info;
+                    let ExternTypeInfo { type_ident: ref_type, decl_ident: ref_decl } = info;
                     let handle_ident = format_ident!("__handle_{}", i);
                     param_extractions.push(quote! {
                         let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
@@ -916,7 +897,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                     let guard_ident = format_ident!("__guard_{}", i);
                     borrow_params.push(BorrowParam {
                         param_name: Some(param_name.clone()),
-                        store_ident: ref_store,
+                        type_ident: ref_type,
                         handle_ident,
                         guard_ident,
                         is_mut: true,
@@ -948,7 +929,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 };
                 let self_bp = BorrowParam {
                     param_name: None,
-                    store_ident: store_ident.clone(),
+                    type_ident: rust_type_ident.clone(),
                     handle_ident: format_ident!("__handle_self"),
                     guard_ident: format_ident!("__guard_self"),
                     is_mut: false,
@@ -975,7 +956,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 };
                 let self_bp = BorrowParam {
                     param_name: None,
-                    store_ident: store_ident.clone(),
+                    type_ident: rust_type_ident.clone(),
                     handle_ident: format_ident!("__handle_self"),
                     guard_ident: format_ident!("__guard_self"),
                     is_mut: true,
@@ -1094,7 +1075,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                         )));
                     };
                     let __handle_self = __ehd_self.id;
-                    #store_ident.with(|__store| {
+                    <#rust_type_ident as anvyx_lang::AnvyxExternType>::with_store(|__store| {
                         let __borrow = __store.borrow();
                         let __guard_self = __borrow.borrow(__handle_self).map_err(|e| {
                             anvyx_lang::RuntimeError::new(format!(
@@ -1141,7 +1122,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                         )));
                     };
                     let #param_ident = #convert_extracted;
-                    #store_ident.with(|__store| {
+                    <#rust_type_ident as anvyx_lang::AnvyxExternType>::with_store(|__store| {
                         let __borrow = __store.borrow();
                         let mut __guard_self = __borrow.borrow_mut(__handle_self).map_err(|e| {
                             anvyx_lang::RuntimeError::new(format!(
@@ -1305,21 +1286,10 @@ fn build_flat_call(call: &TokenStream, mode: &ReturnMode) -> TokenStream {
             Ok(result)
         },
         ReturnMode::ExternOwned(info) => {
-            let store = &info.store_ident;
-            let cleanup_fn = &info.cleanup_fn_ident;
-            let decl = &info.decl_ident;
-            let to_string_fn = &info.to_string_fn_ident;
+            let ty = &info.type_ident;
             quote! {
                 let result = #call;
-                let id = #store.with(|__s| __s.borrow_mut().insert(result));
-                Ok(anvyx_lang::Value::ExternHandle(anvyx_lang::ManagedRc::new(
-                    anvyx_lang::ExternHandleData {
-                        id,
-                        drop_fn: #cleanup_fn,
-                        type_name: #decl.name,
-                        to_string_fn: #to_string_fn,
-                    }
-                )))
+                Ok(anvyx_lang::extern_handle::<#ty>(result))
             }
         }
     }
@@ -1343,16 +1313,16 @@ fn build_handler_body(
     };
 
     struct StoreGroup<'a> {
-        store_ident: &'a syn::Ident,
+        type_ident: &'a syn::Ident,
         params: Vec<&'a BorrowParam>,
     }
 
     let mut groups: Vec<StoreGroup> = vec![];
     for bp in borrow_params {
-        match groups.iter_mut().find(|g| g.store_ident == &bp.store_ident) {
+        match groups.iter_mut().find(|g| g.type_ident == &bp.type_ident) {
             Some(group) => group.params.push(bp),
             None => groups.push(StoreGroup {
-                store_ident: &bp.store_ident,
+                type_ident: &bp.type_ident,
                 params: vec![bp],
             }),
         }
@@ -1360,7 +1330,7 @@ fn build_handler_body(
 
     let mut current = innermost;
     for group in groups.iter().rev() {
-        let store_ident = group.store_ident;
+        let type_ident = group.type_ident;
 
         let borrow_stmts: Vec<TokenStream> = group
             .params
@@ -1415,7 +1385,7 @@ fn build_handler_body(
             .collect();
 
         current = quote! {
-            #store_ident.with(|__store| {
+            <#type_ident as anvyx_lang::AnvyxExternType>::with_store(|__store| {
                 let __borrow = __store.borrow();
                 #(#borrow_stmts)*
                 #current
@@ -1440,21 +1410,10 @@ fn build_handler_body(
             Ok(result)
         },
         ReturnMode::ExternOwned(info) => {
-            let ret_store = &info.store_ident;
-            let cleanup_fn = &info.cleanup_fn_ident;
-            let decl = &info.decl_ident;
-            let to_string_fn = &info.to_string_fn_ident;
+            let ty = &info.type_ident;
             quote! {
                 let result = #current?;
-                let id = #ret_store.with(|__s| __s.borrow_mut().insert(result));
-                Ok(anvyx_lang::Value::ExternHandle(anvyx_lang::ManagedRc::new(
-                    anvyx_lang::ExternHandleData {
-                        id,
-                        drop_fn: #cleanup_fn,
-                        type_name: #decl.name,
-                        to_string_fn: #to_string_fn,
-                    }
-                )))
+                Ok(anvyx_lang::extern_handle::<#ty>(result))
             }
         }
     }

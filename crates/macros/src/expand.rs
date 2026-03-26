@@ -67,7 +67,7 @@ impl Parse for ExportFnArgs {
 
 struct BorrowParam {
     param_name: syn::Ident,
-    store_ident: syn::Ident,
+    type_ident: syn::Ident,
     handle_ident: syn::Ident,
     guard_ident: syn::Ident,
     is_mut: bool,
@@ -160,7 +160,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 param_tuples.push(quote! { (#param_name_str, #anvyx_type_str) });
             }
             ParamMode::ExternOwned(info) => {
-                let store_ident = &info.store_ident;
+                let ty = &info.type_ident;
                 let type_decl_ident = &info.decl_ident;
 
                 extractions.push(quote! {
@@ -171,12 +171,12 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                         )));
                     };
                     let #handle_ident = __ehd.id;
-                    let #param_name = #store_ident.with(|__s| __s.borrow_mut().remove(#handle_ident))?;
+                    let #param_name = <#ty as anvyx_lang::AnvyxExternType>::with_store(|__s| __s.borrow_mut().remove(#handle_ident))?;
                 });
                 param_tuples.push(quote! { (#param_name_str, #type_decl_ident.name) });
             }
             ParamMode::ExternRef(info) => {
-                let ExternTypeInfo { store_ident, decl_ident, .. } = info;
+                let ExternTypeInfo { type_ident, decl_ident } = info;
 
                 extractions.push(quote! {
                     let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#i] else {
@@ -191,14 +191,14 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 let guard_ident = format_ident!("__guard_{}", i);
                 borrow_params.push(BorrowParam {
                     param_name: param_name.clone(),
-                    store_ident,
+                    type_ident,
                     handle_ident,
                     guard_ident,
                     is_mut: false,
                 });
             }
             ParamMode::ExternMutRef(info) => {
-                let ExternTypeInfo { store_ident, decl_ident, .. } = info;
+                let ExternTypeInfo { type_ident, decl_ident } = info;
 
                 extractions.push(quote! {
                     let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#i] else {
@@ -213,7 +213,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 let guard_ident = format_ident!("__guard_{}", i);
                 borrow_params.push(BorrowParam {
                     param_name: param_name.clone(),
-                    store_ident,
+                    type_ident,
                     handle_ident,
                     guard_ident,
                     is_mut: true,
@@ -315,16 +315,16 @@ fn build_call_body(
     };
 
     struct StoreGroup<'a> {
-        store_ident: &'a syn::Ident,
+        type_ident: &'a syn::Ident,
         params: Vec<&'a BorrowParam>,
     }
 
     let mut groups: Vec<StoreGroup> = vec![];
     for bp in borrow_params {
-        match groups.iter_mut().find(|g| g.store_ident == &bp.store_ident) {
+        match groups.iter_mut().find(|g| g.type_ident == &bp.type_ident) {
             Some(group) => group.params.push(bp),
             None => groups.push(StoreGroup {
-                store_ident: &bp.store_ident,
+                type_ident: &bp.type_ident,
                 params: vec![bp],
             }),
         }
@@ -332,7 +332,7 @@ fn build_call_body(
 
     let mut current = innermost;
     for group in groups.iter().rev() {
-        let store_ident = group.store_ident;
+        let type_ident = group.type_ident;
 
         let borrow_stmts: Vec<TokenStream> = group.params.iter().map(|bp| {
             let param_name = &bp.param_name;
@@ -364,7 +364,7 @@ fn build_call_body(
         }).collect();
 
         current = quote! {
-            #store_ident.with(|__store| {
+            <#type_ident as anvyx_lang::AnvyxExternType>::with_store(|__store| {
                 let __borrow = __store.borrow();
                 #(#borrow_stmts)*
                 #current
@@ -389,21 +389,10 @@ fn build_call_body(
             Ok(result)
         }),
         ReturnMode::ExternOwned(info) => {
-            let ret_store = &info.store_ident;
-            let cleanup_fn = &info.cleanup_fn_ident;
-            let decl = &info.decl_ident;
-            let to_string_fn = &info.to_string_fn_ident;
+            let ty = &info.type_ident;
             Ok(quote! {
                 let result = #current?;
-                let id = #ret_store.with(|__s| __s.borrow_mut().insert(result));
-                Ok(anvyx_lang::Value::ExternHandle(anvyx_lang::ManagedRc::new(
-                    anvyx_lang::ExternHandleData {
-                        id,
-                        drop_fn: #cleanup_fn,
-                        type_name: #decl.name,
-                        to_string_fn: #to_string_fn,
-                    }
-                )))
+                Ok(anvyx_lang::extern_handle::<#ty>(result))
             })
         }
     }
@@ -427,21 +416,10 @@ fn build_flat_call(call: &TokenStream, mode: &ReturnMode) -> syn::Result<TokenSt
             Ok(result)
         }),
         ReturnMode::ExternOwned(info) => {
-            let store_ident = &info.store_ident;
-            let cleanup_fn = &info.cleanup_fn_ident;
-            let decl = &info.decl_ident;
-            let to_string_fn = &info.to_string_fn_ident;
+            let ty = &info.type_ident;
             Ok(quote! {
                 let result = #call;
-                let id = #store_ident.with(|__s| __s.borrow_mut().insert(result));
-                Ok(anvyx_lang::Value::ExternHandle(anvyx_lang::ManagedRc::new(
-                    anvyx_lang::ExternHandleData {
-                        id,
-                        drop_fn: #cleanup_fn,
-                        type_name: #decl.name,
-                        to_string_fn: #to_string_fn,
-                    }
-                )))
+                Ok(anvyx_lang::extern_handle::<#ty>(result))
             })
         }
     }

@@ -6,6 +6,7 @@ pub mod managed_rc;
 pub mod meta;
 mod runtime;
 mod value;
+pub mod extern_type;
 
 use crate::hir;
 use std::collections::HashMap;
@@ -14,6 +15,7 @@ pub use handle_store::HandleStore;
 pub use managed_rc::ManagedRc;
 pub use runtime::ExternHandler;
 pub use value::RuntimeError;
+pub use extern_type::{AnvyxExternType, extern_handle};
 pub use value::{DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData, MapStorage, StructData, Value};
 
 pub fn run_with_externs(

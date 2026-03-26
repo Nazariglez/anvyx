@@ -1,5 +1,6 @@
 use anvyx_lang::{
-    ExternDecl, ExternHandleData, ExternTypeDeclConst, ManagedRc, Value, export_fn, export_type,
+    AnvyxExternType, ExternDecl, ExternHandleData, ExternTypeDeclConst, ManagedRc, Value,
+    export_fn, export_type,
 };
 
 fn noop_drop(_id: u64) {}
@@ -454,22 +455,18 @@ impl std::fmt::Display for TestVec2 {
 
 #[test]
 fn export_type_with_display_to_string() {
-    let id = __ANVYX_STORE_TESTVEC2.with(|s| s.borrow_mut().insert(TestVec2 { x: 1.0, y: 2.0 }));
-    let result = __anvyx_to_string_TestVec2(id);
+    let id = TestVec2::with_store(|s| s.borrow_mut().insert(TestVec2 { x: 1.0, y: 2.0 }));
+    let result = TestVec2::to_display(id);
     assert_eq!(result, "Vec2(1, 2)");
-    __ANVYX_STORE_TESTVEC2.with(|s| {
-        let _ = s.borrow_mut().remove(id);
-    });
+    TestVec2::cleanup(id);
 }
 
 #[test]
 fn export_type_without_display_to_string() {
-    let id = __ANVYX_STORE_OPAQUEHANDLE.with(|s| s.borrow_mut().insert(OpaqueHandle));
-    let result = __anvyx_to_string_OpaqueHandle(id);
+    let id = OpaqueHandle::with_store(|s| s.borrow_mut().insert(OpaqueHandle));
+    let result = OpaqueHandle::to_display(id);
     assert_eq!(result, "<Handle>");
-    __ANVYX_STORE_OPAQUEHANDLE.with(|s| {
-        let _ = s.borrow_mut().remove(id);
-    });
+    OpaqueHandle::cleanup(id);
 }
 
 // -- provider! with types: tests --
