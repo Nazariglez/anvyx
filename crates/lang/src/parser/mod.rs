@@ -9,6 +9,8 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crate::{
     ast::{self, ExprId, TypeVarId},
     lexer::SpannedToken,
@@ -24,17 +26,16 @@ use chumsky::{
 use decl::{enum_declaration, extern_declaration, function, import_declaration, struct_declaration};
 use stmt::statement;
 
+static NEXT_EXPR_ID: AtomicU64 = AtomicU64::new(0);
+
 #[derive(Debug, Default)]
 pub(super) struct ParserState {
-    next_expr_id: ExprId,
     next_type_var_id: TypeVarId,
 }
 
 impl ParserState {
     pub(super) fn new_expr_id(&mut self) -> ExprId {
-        let id = ExprId(self.next_expr_id.0);
-        self.next_expr_id = ExprId(id.0 + 1);
-        id
+        ExprId(NEXT_EXPR_ID.fetch_add(1, Ordering::Relaxed))
     }
 
     pub(super) fn new_type_var_id(&mut self) -> TypeVarId {
