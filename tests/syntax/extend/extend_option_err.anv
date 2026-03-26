@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: cannot extend
+
+extend int? {
+    fn unwrap(self) -> int { 0 }
+}
+
+fn main() {}

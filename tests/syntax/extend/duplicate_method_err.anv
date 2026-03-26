@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: duplicate extend method
+
+extend float {
+    fn double_val(self) -> float { self * 2.0 }
+}
+
+extend float {
+    fn double_val(self) -> float { self + self }
+}
+
+fn main() {}

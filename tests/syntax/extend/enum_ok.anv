@@ -1,0 +1,24 @@
+// @mode: check
+// @expect: success
+
+enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+extend Direction {
+    fn is_horizontal(self) -> bool {
+        match self {
+            Direction.Left => true,
+            Direction.Right => true,
+            _ => false,
+        }
+    }
+}
+
+fn main() {
+    let d = Direction.Left;
+    let h: bool = d.is_horizontal();
+}

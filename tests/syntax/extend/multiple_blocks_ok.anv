@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+extend int {
+    fn doubled(self) -> int { self * 2 }
+}
+
+extend int {
+    fn tripled(self) -> int { self * 3 }
+}
+
+fn main() {
+    let x = 5;
+    let a: int = x.doubled();
+    let b: int = x.tripled();
+}

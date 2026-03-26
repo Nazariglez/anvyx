@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown method
+
+import math_ext;
+
+fn main() {
+    let x = 1.5;
+    let y = x.double_val();
+}

@@ -55,9 +55,11 @@ pub fn check_program_with_modules(
 
     for (path, stmts) in module_list {
         let (mut module_def, reexport_errors) =
-            build_module_def_with_reexports(stmts, &type_checker);
+            build_module_def_with_reexports(stmts, &type_checker, path);
         errors.extend(reexport_errors);
 
+        // Evaluate this module's consts; dependencies are already in resolved_module_defs
+        // because module_list is in DFS post-order.
         let (const_defs, const_errors) =
             evaluate_and_export_consts(stmts, &type_checker.resolved_module_defs);
         errors.extend(const_errors);
@@ -88,12 +90,14 @@ pub fn check_program_with_modules(
     let baseline_struct_defs = type_checker.struct_defs.clone();
     let baseline_enum_defs = type_checker.enum_defs.clone();
     let baseline_const_defs = type_checker.const_defs.clone();
+    let baseline_extend_defs = type_checker.extend_defs.clone();
     for (_path, stmts) in module_list {
         let _ = check_block_stmts(stmts, None, &mut type_checker, &mut errors, None);
         type_checker.module_defs = baseline_module_defs.clone();
         type_checker.struct_defs = baseline_struct_defs.clone();
         type_checker.enum_defs = baseline_enum_defs.clone();
         type_checker.const_defs = baseline_const_defs.clone();
+        type_checker.extend_defs = baseline_extend_defs.clone();
     }
 
     if !errors.is_empty() {

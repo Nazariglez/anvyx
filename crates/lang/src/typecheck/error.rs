@@ -329,4 +329,27 @@ pub enum TypeErrKind {
     ConstTypeMismatch { expected: Type, got: Type },
     ConstAssignment { name: Ident },
     DuplicateConst { name: Ident },
+
+    AmbiguousExtendMethod {
+        ty: Type,
+        method: Ident,
+        candidates: Vec<Ident>,
+    },
+    ExtendMethodConflict {
+        ty: Type,
+        method: Ident,
+    },
+    DuplicateExtendMethod {
+        ty: Type,
+        method: Ident,
+    },
+    ExtendMethodMissingSelf {
+        method: Ident,
+    },
+    ExtendSelfTypeAnnotation {
+        method: Ident,
+    },
+    ExtendUnsupportedType {
+        ty: Type,
+    },
 }

@@ -1,14 +1,18 @@
-use crate::ast::{ExprId, ExprKind, ExprNode, Type};
+use crate::{ast::{CallNode, ExprId, ExprKind, ExprNode, Ident, Type}, span::Span};
+use internment::Intern;
 
 use super::{
     call::{
-        check_call, check_extern_instance_method_call, check_extern_static_method_call,
-        check_instance_method_call, check_list_method, check_map_method, check_module_func_call,
-        check_var_param_args, type_call_on_base,
+        check_call, check_call_signature, check_extern_instance_method_call,
+        check_extern_static_method_call, check_instance_method_call, check_list_method,
+        check_map_method, check_module_func_call, check_var_param_args, type_call_on_base,
     },
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
-    types::{PostfixNodeRef, TypeChecker, type_field_on_base, type_index_on_base, unwrap_opt_typ},
+    types::{
+        ExtendEntry, ExtendMethodDef, PostfixNodeRef, TypeChecker, type_field_on_base,
+        type_index_on_base, unwrap_opt_typ,
+    },
 };
 
 pub(super) fn collect_postfix_chain<'a>(
@@ -205,6 +209,90 @@ fn continue_postfix_chain(
     current_ty
 }
 
+/// Type-check an extend method call in receiver position: `receiver.method(args...)`.
+/// Uses params[1..] — the self param is consumed by the receiver, not in args.
+fn check_extend_call(
+    def: &ExtendMethodDef,
+    call_node: &CallNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let param_types: Vec<Type> = def.params[1..].iter().map(|p| p.ty.clone()).collect();
+    type_checker
+        .extend_call_targets
+        .insert(call_node.node.func.node.id, def.internal_name);
+    check_call_signature(
+        call_node.span,
+        &param_types,
+        &def.ret,
+        &call_node.node.args,
+        type_checker,
+        errors,
+    )
+}
+
+/// Type-check an extend method in qualified call position: `module.method(receiver, args...)`.
+/// Uses params[0..] — the receiver is explicitly the first argument.
+fn check_extend_qualified_call(
+    def: &ExtendMethodDef,
+    call_node: &CallNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let param_types: Vec<Type> = def.params.iter().map(|p| p.ty.clone()).collect();
+    type_checker
+        .extend_call_targets
+        .insert(call_node.node.func.node.id, def.internal_name);
+    check_call_signature(
+        call_node.span,
+        &param_types,
+        &def.ret,
+        &call_node.node.args,
+        type_checker,
+        errors,
+    )
+}
+
+/// Look up extend methods for `receiver_ty.method_name(...)`. Returns Some(ty) if found,
+/// None if no extend entry exists. Reports AmbiguousExtendMethod if multiple modules define it.
+fn resolve_extend_method(
+    receiver_ty: &Type,
+    method_name: Ident,
+    call_node: &CallNode,
+    span: Span,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Option<Type> {
+    let entries = type_checker.get_extend_methods(receiver_ty, method_name).to_vec();
+
+    // Dedup by source_module — multiple entries from the same module count as one candidate
+    let mut unique: Vec<&ExtendEntry> = vec![];
+    let mut seen: Vec<&Vec<String>> = vec![];
+    for entry in &entries {
+        if !seen.iter().any(|m| *m == &entry.source_module) {
+            seen.push(&entry.source_module);
+            unique.push(entry);
+        }
+    }
+
+    match unique.as_slice() {
+        [] => None,
+        [entry] => Some(check_extend_call(&entry.def, call_node, type_checker, errors)),
+        _ => {
+            let candidates = unique.iter().map(|e| e.binding).collect();
+            errors.push(TypeErr::new(
+                span,
+                TypeErrKind::AmbiguousExtendMethod {
+                    ty: receiver_ty.clone(),
+                    method: method_name,
+                    candidates,
+                },
+            ));
+            Some(Type::Infer)
+        }
+    }
+}
+
 pub(super) enum MethodCallOutcome {
     NotMethod,
     Handled {
@@ -296,16 +384,41 @@ fn handle_method_call_if_applicable(
             });
         };
 
-        let method_ret = check_instance_method_call(
+        let method_name = field_node.node.field;
+        let method_ret = if struct_def.methods.contains_key(&method_name) {
+            // Native method exists — instance or static, let existing path handle it
+            check_instance_method_call(
+                call_node,
+                struct_name,
+                method_name,
+                &struct_type_args,
+                &struct_def,
+                Some(base),
+                type_checker,
+                errors,
+            )
+        } else if let Some(extend_ret) = resolve_extend_method(
+            &detection_ty,
+            method_name,
             call_node,
-            struct_name,
-            field_node.node.field,
-            &struct_type_args,
-            &struct_def,
-            Some(base),
+            field_node.span,
             type_checker,
             errors,
-        );
+        ) {
+            extend_ret
+        } else {
+            // Not found — reuse existing path to emit UnknownMethod
+            check_instance_method_call(
+                call_node,
+                struct_name,
+                method_name,
+                &struct_type_args,
+                &struct_def,
+                Some(base),
+                type_checker,
+                errors,
+            )
+        };
 
         let mut result_ty = method_ret;
         let mut chain_optional = chain_is_optional;
@@ -335,6 +448,27 @@ fn handle_method_call_if_applicable(
                             method: method_name,
                         },
                     ));
+                } else if let Some(extend_ret) = resolve_extend_method(
+                    &detection_ty,
+                    method_name,
+                    call_node,
+                    field_node.span,
+                    type_checker,
+                    errors,
+                ) {
+                    let mut result_ty = extend_ret;
+                    let mut chain_optional = chain_is_optional;
+                    if op_safe || chain_is_optional {
+                        chain_optional = true;
+                        result_ty = Type::option_of(result_ty);
+                    }
+                    return Some(MethodCallOutcome::Handled {
+                        ty: result_ty,
+                        chain_optional,
+                        next_index: index + 2,
+                        call_expr: call_op.expr_id(),
+                        call_span: call_op.span(),
+                    });
                 } else {
                     errors.push(TypeErr::new(
                         field_node.span,
@@ -381,11 +515,12 @@ fn handle_method_call_if_applicable(
     }
 
     let method_target = field_node.node.target.as_ref();
+    let method_name = field_node.node.field;
     let method_ret = match &detection_ty {
         Type::List { elem } => check_list_method(
             call_node,
             method_target,
-            field_node.node.field,
+            method_name,
             elem.as_ref(),
             type_checker,
             errors,
@@ -393,12 +528,54 @@ fn handle_method_call_if_applicable(
         Type::Map { key, value } => check_map_method(
             call_node,
             method_target,
-            field_node.node.field,
+            method_name,
             key.as_ref(),
             value.as_ref(),
             type_checker,
             errors,
         ),
+        Type::Float
+        | Type::Double
+        | Type::Int
+        | Type::Bool
+        | Type::String
+        | Type::Enum { .. } => {
+            if let Some(extend_ret) = resolve_extend_method(
+                &detection_ty,
+                method_name,
+                call_node,
+                field_node.span,
+                type_checker,
+                errors,
+            ) {
+                let mut result_ty = extend_ret;
+                let mut chain_optional = chain_is_optional;
+                if op_safe || chain_is_optional {
+                    chain_optional = true;
+                    result_ty = Type::option_of(result_ty);
+                }
+                return Some(MethodCallOutcome::Handled {
+                    ty: result_ty,
+                    chain_optional,
+                    next_index: index + 2,
+                    call_expr: call_op.expr_id(),
+                    call_span: call_op.span(),
+                });
+            }
+            // No native methods and no extend method found — emit a clear error
+            let type_ident = Ident(Intern::new(format!("{detection_ty}")));
+            errors.push(TypeErr::new(
+                field_node.span,
+                TypeErrKind::UnknownMethod { struct_name: type_ident, method: method_name },
+            ));
+            return Some(MethodCallOutcome::Handled {
+                ty: Type::Infer,
+                chain_optional: chain_is_optional || op_safe,
+                next_index: index + 2,
+                call_expr: call_op.expr_id(),
+                call_span: call_op.span(),
+            });
+        }
         _ => return Some(MethodCallOutcome::NotMethod),
     };
 
@@ -515,6 +692,53 @@ fn try_type_name_dispatch(
                     unreachable!()
                 };
                 let op_safe = op_safe || call_op.safe();
+
+                // Regular functions take precedence over extend methods
+                let is_regular_func = module_def.funcs.contains_key(&member_name)
+                    || module_def.generic_func_templates.contains_key(&member_name);
+
+                if is_regular_func {
+                    let ty = check_module_func_call(
+                        call_node,
+                        *type_name,
+                        member_name,
+                        &module_def,
+                        type_checker,
+                        errors,
+                        expected,
+                    );
+                    return Some((ty, 2, op_safe));
+                }
+
+                // Try extend method: find entry matching member_name
+                let extend_entries: Vec<_> = module_def
+                    .extend_methods
+                    .iter()
+                    .filter(|e| e.name == member_name)
+                    .collect();
+
+                if !extend_entries.is_empty() {
+                    // Disambiguate by type-checking first arg if multiple entries
+                    let def = if extend_entries.len() == 1 {
+                        &extend_entries[0].def
+                    } else {
+                        let first_arg_ty = call_node
+                            .node
+                            .args
+                            .first()
+                            .map(|arg| check_expr(arg, type_checker, errors, None))
+                            .unwrap_or(Type::Infer);
+                        extend_entries
+                            .iter()
+                            .find(|e| e.ty == first_arg_ty)
+                            .map(|e| &e.def)
+                            .unwrap_or(&extend_entries[0].def)
+                    };
+                    let ty = check_extend_qualified_call(def, call_node, type_checker, errors);
+                    return Some((ty, 2, op_safe));
+                }
+
+                // Not a regular func or extend method — emit unknown member error
                 let ty = check_module_func_call(
                     call_node,
                     *type_name,
@@ -526,11 +750,9 @@ fn try_type_name_dispatch(
                 );
                 return Some((ty, 2, op_safe));
             } else {
-                // module.MemberName without a call, check for const access
+                // module.MemberName without a call — check for const access
                 if let Some(const_def) = module_def.const_defs.get(&member_name) {
-                    type_checker
-                        .const_values
-                        .insert(*field_expr_id, const_def.value.clone());
+                    type_checker.const_values.insert(*field_expr_id, const_def.value.clone());
                     return Some((const_def.ty.clone(), 1, op_safe));
                 }
 

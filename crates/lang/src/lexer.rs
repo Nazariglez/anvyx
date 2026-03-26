@@ -133,6 +133,7 @@ pub enum Keyword {
     Extern,
     Type,
     Import,
+    Extend,
 }
 
 impl Display for Keyword {
@@ -168,6 +169,7 @@ impl Display for Keyword {
             Keyword::Extern => write!(f, "extern"),
             Keyword::Type => write!(f, "type"),
             Keyword::Import => write!(f, "import"),
+            Keyword::Extend => write!(f, "extend"),
         }
     }
 }
@@ -602,6 +604,7 @@ fn ident<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
         "extern" => Token::Keyword(Keyword::Extern),
         "type" => Token::Keyword(Keyword::Type),
         "import" => Token::Keyword(Keyword::Import),
+        "extend" => Token::Keyword(Keyword::Extend),
         _ => {
             let ident = ast::Ident(Intern::new(s.to_string()));
             Token::Ident(ident)

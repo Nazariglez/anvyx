@@ -25,6 +25,8 @@ pub type FieldAccessNode = Spanned<FieldAccess>;
 pub type StructDeclNode = Spanned<StructDecl>;
 pub type StructLiteralNode = Spanned<StructLiteral>;
 pub type EnumDeclNode = Spanned<EnumDecl>;
+pub type ExtendDeclNode = Spanned<ExtendDecl>;
+pub type ExtendMethodNode = Spanned<ExtendMethod>;
 pub type RangeNode = Spanned<Range>;
 pub type ArrayLiteralNode = Spanned<ArrayLiteral>;
 pub type ArrayFillNode = Spanned<ArrayFill>;
@@ -49,6 +51,7 @@ pub enum Stmt {
     ExternType(ExternTypeNode),
     Struct(StructDeclNode),
     Enum(EnumDeclNode),
+    Extend(ExtendDeclNode),
     Const(ConstDeclNode),
     Expr(ExprNode),
     Binding(BindingNode),
@@ -851,6 +854,21 @@ pub struct EnumDecl {
     pub visibility: Visibility,
     pub type_params: Vec<TypeParam>,
     pub variants: Vec<EnumVariant>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtendDecl {
+    pub visibility: Visibility,
+    pub ty: Type,
+    pub methods: Vec<ExtendMethodNode>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExtendMethod {
+    pub name: Ident,
+    pub params: Vec<Param>,
+    pub ret: Type,
+    pub body: BlockNode,
 }
 
 #[derive(Debug, Clone, PartialEq)]

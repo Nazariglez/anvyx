@@ -9,7 +9,7 @@ use crate::vm::meta::{EnumMeta, StructMeta, VariantMeta, VariantMetaKind};
 
 use super::{
     FuncLower, LowerCtx, LowerError, SharedCtx, collect_declarations, lower_block,
-    mangle_generic_name, register_named_local,
+    mangle_generic_name, register_extend_declarations, register_named_local,
 };
 
 pub fn lower_program(
@@ -119,7 +119,7 @@ pub fn lower_program(
     let mut next_extern_id = 0u32;
     let mut extern_decls: Vec<hir::ExternDecl> = vec![];
 
-    for (_path, stmts) in module_list {
+    for (path, stmts) in module_list {
         collect_declarations(
             stmts.iter(),
             &mut shared,
@@ -129,6 +129,7 @@ pub fn lower_program(
             &mut extern_decls,
             true,
         );
+        register_extend_declarations(stmts.iter(), path, &mut shared, &mut next_func_id, true);
     }
 
     collect_declarations(
@@ -140,6 +141,7 @@ pub fn lower_program(
         &mut extern_decls,
         false,
     );
+    register_extend_declarations(ast.stmts.iter(), &[], &mut shared, &mut next_func_id, false);
 
     let mut spec_registrations: Vec<(Ident, crate::typecheck::SpecializationKey)> = vec![];
     for spec_key in shared.tcx.specializations().keys() {
@@ -320,11 +322,100 @@ pub fn lower_program(
         struct_meta[*type_id as usize].to_string_fn = Some(id.0 as usize);
     }
 
+    for (path, stmts) in module_list {
+        let module_str = path.join("::");
+        for stmt_node in stmts {
+            let ast::Stmt::Extend(node) = &stmt_node.node else { continue };
+            let resolved_ty = resolve_extend_ty(&node.node.ty, &shared);
+            let Some(resolved_ty) = resolved_ty else { continue };
+            let type_str = format!("{resolved_ty}");
+            for method in &node.node.methods {
+                if method.node.params.is_empty() { continue; }
+                if method.node.params[0].name.0.as_ref() != "self" { continue; }
+                let internal_name = Ident(Intern::new(format!(
+                    "__extend::{}::{}::{}",
+                    module_str, type_str, method.node.name
+                )));
+                let &id = shared.funcs.get(&internal_name).expect("extend method registered in collect_declarations");
+                funcs.push(lower_extend_method(method, &resolved_ty, id, internal_name, &ctx)?);
+            }
+        }
+    }
+
+    for stmt_node in &ast.stmts {
+        let ast::Stmt::Extend(node) = &stmt_node.node else { continue };
+        let resolved_ty = resolve_extend_ty(&node.node.ty, &shared);
+        let Some(resolved_ty) = resolved_ty else { continue };
+        let type_str = format!("{resolved_ty}");
+        for method in &node.node.methods {
+            if method.node.params.is_empty() { continue; }
+            if method.node.params[0].name.0.as_ref() != "self" { continue; }
+            let internal_name = Ident(Intern::new(format!(
+                "__extend::::{}::{}",
+                type_str, method.node.name
+            )));
+            let &id = shared.funcs.get(&internal_name).expect("extend method registered in collect_declarations");
+            funcs.push(lower_extend_method(method, &resolved_ty, id, internal_name, &ctx)?);
+        }
+    }
+
+    funcs.sort_by_key(|f| f.id.0);
+
     Ok(hir::Program {
         funcs,
         externs: extern_decls,
         struct_meta,
         enum_meta,
+    })
+}
+
+fn resolve_extend_ty(ty: &Type, shared: &SharedCtx) -> Option<Type> {
+    match ty {
+        Type::UnresolvedName(name) => {
+            if shared.struct_type_ids.contains_key(name) {
+                Some(Type::Struct { name: *name, type_args: vec![] })
+            } else if shared.enum_type_ids.contains_key(name) {
+                Some(Type::Enum { name: *name, type_args: vec![] })
+            } else if shared.tcx.get_extern_type(*name).is_some() {
+                Some(Type::Extern { name: *name })
+            } else {
+                None
+            }
+        }
+        other => Some(other.clone()),
+    }
+}
+
+fn lower_extend_method(
+    method: &ast::ExtendMethodNode,
+    self_ty: &Type,
+    id: hir::FuncId,
+    name: Ident,
+    ctx: &LowerCtx,
+) -> Result<hir::Func, LowerError> {
+    let mut fc = FuncLower {
+        locals: vec![],
+        local_map: HashMap::new(),
+        scope_log: vec![],
+    };
+
+    for (i, param) in method.node.params.iter().enumerate() {
+        let ty = if i == 0 { self_ty.clone() } else { param.ty.clone() };
+        register_named_local(&mut fc, param.name, ty);
+    }
+    let params_len = fc.locals.len() as u32;
+
+    let ret = method.node.ret.clone();
+    let body = lower_block(&method.node.body, ctx, &mut fc, true, &ret)?;
+
+    Ok(hir::Func {
+        id,
+        name,
+        locals: fc.locals,
+        params_len,
+        ret,
+        body,
+        span: method.span,
     })
 }
 

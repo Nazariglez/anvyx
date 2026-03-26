@@ -622,6 +622,37 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("constant '{name}' is already declared"),
             format!("'{name}' is already declared in this scope"),
         ),
+        TypeErrKind::AmbiguousExtendMethod { ty, method, candidates } => {
+            let mods = candidates
+                .iter()
+                .map(|c| format!("'{c}'"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            (
+                format!("ambiguous method '{method}' on '{ty}'"),
+                format!("found in modules: {mods}; use module.method(val) to disambiguate"),
+            )
+        }
+        TypeErrKind::ExtendMethodConflict { ty, method } => (
+            format!("cannot extend '{ty}' with method '{method}'"),
+            "a method with this name already exists on the type".to_string(),
+        ),
+        TypeErrKind::DuplicateExtendMethod { ty, method } => (
+            format!("duplicate extend method '{method}' on '{ty}'"),
+            format!("'{method}' is already defined in an extend block for '{ty}' in this module"),
+        ),
+        TypeErrKind::ExtendMethodMissingSelf { method } => (
+            format!("extend method '{method}' must have 'self' or 'var self' as its first parameter"),
+            "extend methods require a receiver".to_string(),
+        ),
+        TypeErrKind::ExtendSelfTypeAnnotation { method } => (
+            format!("extend method '{method}': 'self' must not have a type annotation"),
+            "the type of self is determined by the extend block".to_string(),
+        ),
+        TypeErrKind::ExtendUnsupportedType { ty } => (
+            format!("cannot extend type '{ty}'"),
+            "only named types (int, float, double, bool, string, structs, enums, extern types) can be extended".to_string(),
+        ),
     }
 }
 

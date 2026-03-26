@@ -241,7 +241,54 @@ pub(super) fn collect_declarations<'a>(
                     }
                 }
             }
+            Stmt::Extend(_) => {}
             _ => {}
+        }
+    }
+}
+
+pub(super) fn register_extend_declarations<'a>(
+    stmts: impl Iterator<Item = &'a ast::StmtNode>,
+    module_path: &[String],
+    ctx: &mut SharedCtx,
+    next_func_id: &mut u32,
+    skip_existing: bool,
+) {
+    let module_str = module_path.join("::");
+    for stmt_node in stmts {
+        let Stmt::Extend(node) = &stmt_node.node else { continue };
+        let resolved_ty = match &node.node.ty {
+            Type::UnresolvedName(name) => {
+                if ctx.struct_type_ids.contains_key(name) {
+                    Type::Struct { name: *name, type_args: vec![] }
+                } else if ctx.enum_type_ids.contains_key(name) {
+                    Type::Enum { name: *name, type_args: vec![] }
+                } else if ctx.tcx.get_extern_type(*name).is_some() {
+                    Type::Extern { name: *name }
+                } else {
+                    continue;
+                }
+            }
+            other => other.clone(),
+        };
+        let type_str = format!("{resolved_ty}");
+        for method in &node.node.methods {
+            if method.node.params.is_empty() {
+                continue;
+            }
+            if method.node.params[0].name.0.as_ref() != "self" {
+                continue;
+            }
+            let internal_name = Ident(Intern::new(format!(
+                "__extend::{}::{}::{}",
+                module_str, type_str, method.node.name
+            )));
+            if skip_existing && ctx.funcs.contains_key(&internal_name) {
+                continue;
+            }
+            let id = hir::FuncId(*next_func_id);
+            *next_func_id += 1;
+            ctx.funcs.insert(internal_name, id);
         }
     }
 }

@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+extern type Buffer {
+    fn extend(var self, other: Buffer);
+    fn type(self) -> int;
+    fn in(self) -> bool;
+}
+
+extern fn make_buffer() -> Buffer;
+
+fn main() {
+    var b = make_buffer();
+    let t = b.type();
+    let i = b.in();
+}

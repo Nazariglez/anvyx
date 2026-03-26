@@ -125,6 +125,27 @@ pub struct ExternTypeDef {
     pub unary_operators: Vec<ExternUnaryOpDef>,
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct ExtendMethodDef {
+    pub params: Vec<Param>, // full param list including self
+    pub ret: Type,
+    pub internal_name: Ident,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ExtendEntry {
+    pub source_module: Vec<String>,
+    pub binding: Ident,
+    pub def: ExtendMethodDef,
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleExtendEntry {
+    pub ty: Type,
+    pub name: Ident,
+    pub def: ExtendMethodDef,
+}
+
 pub(super) type InferenceSlots = HashMap<TypeVarId, Ident>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -187,6 +208,9 @@ pub(super) struct ModuleDef {
 
     /// public const definitions exported by this module
     pub const_defs: HashMap<Ident, ConstDef>,
+
+    /// extend methods exported by this module
+    pub extend_methods: Vec<ModuleExtendEntry>,
 }
 
 impl ModuleDef {
@@ -279,6 +303,12 @@ pub struct TypeChecker {
 
     /// Tracks const names introduced per block scope inside function bodies
     pub(super) const_scope_stack: Vec<HashSet<Ident>>,
+
+    /// Registered extend methods keyed by (extended type, method name)
+    pub(super) extend_defs: HashMap<(Type, Ident), Vec<ExtendEntry>>,
+
+    /// Maps call expression ExprId to resolved extend method internal_name (for lowering)
+    pub(super) extend_call_targets: HashMap<ExprId, Ident>,
 }
 
 impl TypeChecker {
@@ -421,6 +451,12 @@ impl TypeChecker {
             .map(|def| def.variants.iter().map(|v| (v.name, &v.kind)).collect())
     }
 
+    pub(super) fn get_extend_methods(&self, ty: &Type, name: Ident) -> &[ExtendEntry] {
+        self.extend_defs
+            .get(&(ty.clone(), name))
+            .map_or(&[], Vec::as_slice)
+    }
+
     pub(super) fn get_module(&self, name: Ident) -> Option<&ModuleDef> {
         self.module_defs.get(&name)
     }
@@ -535,6 +571,10 @@ impl TypeChecker {
 
     pub fn call_type_args(&self, callee_expr_id: ExprId) -> Option<&(Ident, Vec<Type>)> {
         self.resolved_call_type_args.get(&callee_expr_id)
+    }
+
+    pub fn extend_call_target(&self, id: ExprId) -> Option<Ident> {
+        self.extend_call_targets.get(&id).copied()
     }
 
     pub(super) fn set_var(&mut self, name: Ident, ty: Type, mutable: bool) {

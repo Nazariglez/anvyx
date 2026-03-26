@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: success
+
+extend float {
+    fn double_val(self) -> float { self * 2.0 }
+}
+
+fn main() {
+    let x = 1.5;
+    let y: float = x.double_val();
+}

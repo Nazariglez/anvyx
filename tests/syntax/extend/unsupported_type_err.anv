@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: cannot extend
+
+extend void {
+    fn nothing(self) {}
+}
+
+fn main() {}

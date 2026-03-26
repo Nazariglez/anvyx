@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: must have 'self'
+
+extend float {
+    fn double_val(x: float) -> float { x * 2.0 }
+}
+
+fn main() {}

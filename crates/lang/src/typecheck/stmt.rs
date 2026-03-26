@@ -8,22 +8,25 @@ use crate::{
 };
 use std::collections::{HashMap, HashSet};
 
+use internment::Intern;
+
 use super::{
     composite::{is_all_nil_array_literal, is_empty_map_literal},
     const_eval::{
-        ConstDef, build_const_dependency_graph, collect_const_decls, eval_const_expr,
-        validate_const_expr,
+        build_const_dependency_graph, collect_const_decls, eval_const_expr, validate_const_expr,
+        ConstDef,
     },
     constraint::TypeRef,
     control::{block_always_diverges, check_for, check_while, is_if_without_else},
-    decl::{check_func, check_struct},
+    decl::{check_body_common, check_func, check_struct},
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
     infer::type_from_fn,
     pattern::{check_pattern, is_refutable},
     types::{
-        EnumDef, ExternFieldDef, ExternMethodDef, ExternOpDef, ExternTypeDef, ExternUnaryOpDef,
-        ModuleDef, StructDef, TypeChecker, build_param_info, unwrap_opt_typ, validate_map_key_type,
+        EnumDef, ExtendEntry, ExtendMethodDef, ExternFieldDef, ExternMethodDef, ExternOpDef,
+        ExternTypeDef, ExternUnaryOpDef, ModuleDef, ModuleExtendEntry, StructDef, TypeChecker,
+        build_param_info, unwrap_opt_typ, validate_map_key_type,
     },
     unify::contains_infer,
 };
@@ -109,12 +112,7 @@ fn process_const_decl(
         .as_ref()
         .map(|ty| type_checker.resolve_type(ty));
 
-    let _ = check_expr(
-        &decl.node.value,
-        type_checker,
-        errors,
-        annotated_ty.as_ref(),
-    );
+    let _ = check_expr(&decl.node.value, type_checker, errors, annotated_ty.as_ref());
 
     let const_value = match eval_const_expr(&decl.node.value, &type_checker.const_defs) {
         Ok(val) => val,
@@ -476,6 +474,27 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                     continue;
                 };
 
+                // Activate extend methods from the imported module for all import forms
+                let binding_name = match &import.kind {
+                    ImportKind::Module => *import.path.last().expect("import path cannot be empty"),
+                    ImportKind::ModuleAs(alias) => *alias,
+                    ImportKind::Selective(_) | ImportKind::Wildcard => {
+                        *import.path.last().expect("import path cannot be empty")
+                    }
+                };
+                for entry in &module_def.extend_methods {
+                    let key = (entry.ty.clone(), entry.name);
+                    let entries = type_checker.extend_defs.entry(key).or_default();
+                    let already_registered = entries.iter().any(|e| e.source_module == path_key);
+                    if !already_registered {
+                        entries.push(ExtendEntry {
+                            source_module: path_key.clone(),
+                            binding: binding_name,
+                            def: entry.def.clone(),
+                        });
+                    }
+                }
+
                 match &import.kind {
                     ImportKind::Module => {
                         let binding = *import.path.last().expect("import path cannot be empty");
@@ -510,6 +529,56 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                 }
             }
 
+            Stmt::Extend(node) => {
+                let decl = &node.node;
+                let resolved_ty = type_checker.resolve_type(&decl.ty);
+                let valid = matches!(
+                    resolved_ty,
+                    Type::Float
+                        | Type::Double
+                        | Type::Int
+                        | Type::Bool
+                        | Type::String
+                        | Type::Struct { .. }
+                        | Type::Enum { .. }
+                        | Type::Extern { .. }
+                );
+                if !valid {
+                    continue;
+                }
+
+                for method in &decl.methods {
+                    if method.node.params.is_empty() {
+                        continue;
+                    }
+                    let self_param = &method.node.params[0];
+                    if self_param.name.0.as_ref() != "self" {
+                        continue;
+                    }
+                    if self_param.ty != Type::Infer {
+                        continue;
+                    }
+
+                    let type_str = format!("{resolved_ty}");
+                    let internal_name =
+                        Ident(Intern::new(format!("__extend::::{}::{}", type_str, method.node.name)));
+
+                    let mut params = method.node.params.clone();
+                    params[0].ty = resolved_ty.clone();
+                    let ret = type_checker.resolve_type(&method.node.ret);
+
+                    let def = ExtendMethodDef { params, ret, internal_name };
+                    type_checker
+                        .extend_defs
+                        .entry((resolved_ty.clone(), method.node.name))
+                        .or_default()
+                        .push(ExtendEntry {
+                            source_module: vec![],
+                            binding: Ident(Intern::new(String::new())),
+                            def,
+                        });
+                }
+            }
             _ => {}
         }
     }
@@ -518,6 +587,7 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
 pub(super) fn build_module_def_with_reexports(
     stmts: &[StmtNode],
     type_checker: &TypeChecker,
+    module_path: &[String],
 ) -> (ModuleDef, Vec<TypeErr>) {
     let mut module_def = ModuleDef::default();
     let mut errors: Vec<TypeErr> = vec![];
@@ -695,6 +765,53 @@ pub(super) fn build_module_def_with_reexports(
             Stmt::Const(node) => {
                 module_def.all_names.insert(node.node.name);
             }
+            Stmt::Extend(node) => {
+                let decl = &node.node;
+                if decl.visibility != Visibility::Public {
+                    continue;
+                }
+                let resolved_ty = resolve(&decl.ty);
+                let valid = matches!(
+                    resolved_ty,
+                    Type::Float
+                        | Type::Double
+                        | Type::Int
+                        | Type::Bool
+                        | Type::String
+                        | Type::Struct { .. }
+                        | Type::Enum { .. }
+                        | Type::Extern { .. }
+                );
+                if !valid {
+                    continue;
+                }
+                let module_str = module_path.join("::");
+                for method in &decl.methods {
+                    if method.node.params.is_empty() {
+                        continue;
+                    }
+                    let self_param = &method.node.params[0];
+                    if self_param.name.0.as_ref() != "self" {
+                        continue;
+                    }
+                    let type_str = format!("{resolved_ty}");
+                    let internal_name = Ident(Intern::new(format!(
+                        "__extend::{}::{}::{}",
+                        module_str,
+                        type_str,
+                        method.node.name
+                    )));
+                    let mut params = method.node.params.clone();
+                    params[0].ty = resolved_ty.clone();
+                    let ret = resolve(&method.node.ret);
+                    let def = ExtendMethodDef { params, ret, internal_name };
+                    module_def.extend_methods.push(ModuleExtendEntry {
+                        ty: resolved_ty.clone(),
+                        name: method.node.name,
+                        def,
+                    });
+                }
+            }
             _ => {}
         }
     }
@@ -784,10 +901,7 @@ pub(super) fn check_stmt(
                 .last()
                 .is_some_and(|scope| scope.contains(&name));
             if already_in_scope {
-                errors.push(TypeErr::new(
-                    stmt.span,
-                    TypeErrKind::DuplicateConst { name },
-                ));
+                errors.push(TypeErr::new(stmt.span, TypeErrKind::DuplicateConst { name }));
                 return;
             }
 
@@ -803,12 +917,7 @@ pub(super) fn check_stmt(
                 .as_ref()
                 .map(|ty| type_checker.resolve_type(ty));
 
-            let _ = check_expr(
-                &decl.node.value,
-                type_checker,
-                errors,
-                annotated_ty.as_ref(),
-            );
+            let _ = check_expr(&decl.node.value, type_checker, errors, annotated_ty.as_ref());
 
             let const_value = match eval_const_expr(&decl.node.value, &type_checker.const_defs) {
                 Ok(val) => val,
@@ -848,6 +957,109 @@ pub(super) fn check_stmt(
                 scope.insert(name);
             }
         }
+        Stmt::Extend(node) => check_extend_decl(node, type_checker, errors),
+    }
+}
+
+fn check_extend_decl(
+    node: &crate::ast::ExtendDeclNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    let decl = &node.node;
+    let resolved_ty = type_checker.resolve_type(&decl.ty);
+
+    let valid = match &resolved_ty {
+        Type::Float | Type::Double | Type::Int | Type::Bool | Type::String | Type::Extern { .. } => {
+            true
+        }
+        Type::Struct { type_args, .. } | Type::Enum { type_args, .. } => type_args.is_empty(),
+        _ => false,
+    };
+    if !valid {
+        errors.push(TypeErr::new(
+            node.span,
+            TypeErrKind::ExtendUnsupportedType { ty: resolved_ty },
+        ));
+        return;
+    }
+
+    for method in &decl.methods {
+        // Validate self param exists
+        if method.node.params.is_empty()
+            || method.node.params[0].name.0.as_ref() != "self"
+        {
+            errors.push(TypeErr::new(
+                method.span,
+                TypeErrKind::ExtendMethodMissingSelf { method: method.node.name },
+            ));
+            continue;
+        }
+
+        // Validate no type annotation on self (ty must be Infer)
+        if method.node.params[0].ty != Type::Infer {
+            errors.push(TypeErr::new(
+                method.span,
+                TypeErrKind::ExtendSelfTypeAnnotation { method: method.node.name },
+            ));
+            continue;
+        }
+
+        // Native conflict check
+        let has_native_conflict = match &resolved_ty {
+            Type::Struct { name, .. } => type_checker
+                .get_struct(*name)
+                .is_some_and(|def| def.methods.contains_key(&method.node.name)),
+            Type::Extern { name } => type_checker
+                .get_extern_type(*name)
+                .is_some_and(|def| def.methods.contains_key(&method.node.name)),
+            _ => false,
+        };
+        if has_native_conflict {
+            errors.push(TypeErr::new(
+                method.span,
+                TypeErrKind::ExtendMethodConflict {
+                    ty: resolved_ty.clone(),
+                    method: method.node.name,
+                },
+            ));
+            continue;
+        }
+
+        // Duplicate check: count entries from current module (source_module == []) for this key
+        let key = (resolved_ty.clone(), method.node.name);
+        let local_count = type_checker
+            .extend_defs
+            .get(&key)
+            .map_or(0, |entries| entries.iter().filter(|e| e.source_module.is_empty()).count());
+        if local_count > 1 {
+            errors.push(TypeErr::new(
+                method.span,
+                TypeErrKind::DuplicateExtendMethod {
+                    ty: resolved_ty.clone(),
+                    method: method.node.name,
+                },
+            ));
+            // Don't skip — still typecheck the body
+        }
+
+        // Build param list for body checking
+        let is_var_self = matches!(method.node.params[0].mutability, Mutability::Mutable);
+        let mut params: Vec<(Ident, Type, bool)> = vec![(
+            method.node.params[0].name,
+            resolved_ty.clone(),
+            is_var_self,
+        )];
+        for p in &method.node.params[1..] {
+            params.push((
+                p.name,
+                type_checker.resolve_type(&p.ty),
+                matches!(p.mutability, Mutability::Mutable),
+            ));
+        }
+
+        let ret_ty = type_checker.resolve_type(&method.node.ret);
+        check_body_common(&params, &method.node.body, &ret_ty, method.span, type_checker, errors);
     }
 }
 

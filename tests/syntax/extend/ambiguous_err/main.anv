@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: ambiguous
+
+import ext_a;
+import ext_b;
+
+fn main() {
+    let x = 1.5;
+    let y = x.double_val();
+}

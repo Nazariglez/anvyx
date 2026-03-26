@@ -297,6 +297,8 @@ fn lower_stmt(
 
         Stmt::Enum(_) => Ok(None),
 
+        Stmt::Extend(_) => Ok(None),
+
         Stmt::LetElse(let_else_node) => lower_let_else(let_else_node, span, ctx, fc, out),
 
         Stmt::Const(_) => Ok(None),

@@ -5,7 +5,7 @@ use crate::{
 };
 use chumsky::{error::Rich, prelude::*};
 
-use super::common::{TupleShapeResult, block_stmt, identifier, literal, validate_tuple_shape_raw};
+use super::common::{TupleShapeResult, block_stmt, field_name_ident, identifier, literal, validate_tuple_shape_raw};
 use super::ops::{
     add_sub_op, and_op, assign_op, cmp_op, coalesce_op, eq_op, infix_left, mul_div_op, or_op,
 };
@@ -182,7 +182,7 @@ fn match_expr<'src>(
 fn struct_literal<'src>(
     expr: impl AnvParser<'src, ast::ExprNode>,
 ) -> BoxedParser<'src, ast::ExprNode> {
-    let field_init = identifier()
+    let field_init = field_name_ident()
         .then_ignore(select! { (Token::Colon, _) => () })
         .then(expr)
         .map(|(name, value)| (name, value));
@@ -649,13 +649,13 @@ fn postfix_expr<'src>(
 
     let safe_field_access = select! { (Token::Question, _) => () }
         .ignore_then(select! { (Token::Dot, _) => () })
-        .ignore_then(identifier())
+        .ignore_then(field_name_ident())
         .map(|ident| PostfixOp::Field { ident, safe: true });
 
     let field_access = select! {
         (Token::Dot, _) => (),
     }
-    .ignore_then(identifier())
+    .ignore_then(field_name_ident())
     .map(|ident| PostfixOp::Field { ident, safe: false });
 
     let safe_index_suffix = select! { (Token::Question, _) => () }

@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+import math_ext { some_func };
+
+fn main() {
+    some_func();
+    let x = 1.5;
+    let y: float = x.double_val();
+}

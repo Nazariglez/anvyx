@@ -445,6 +445,9 @@ fn lower_call_expr(
     fc: &mut FuncLower,
     out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::Expr, LowerError> {
+    if let Some(internal_name) = ctx.shared.tcx.extend_call_target(c.node.func.node.id) {
+        return lower_extend_call(c, internal_name, ty, span, ctx, fc, out);
+    }
     if let Some(expr) = try_lower_method_call(c, &ty, span, ctx, fc, out)? {
         return Ok(expr);
     }
@@ -453,6 +456,46 @@ fn lower_call_expr(
     }
     let kind = lower_direct_call(c, span, ctx, fc, out)?;
     Ok(hir::Expr { ty, span, kind })
+}
+
+fn lower_extend_call(
+    c: &ast::CallNode,
+    internal_name: Ident,
+    ty: Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<hir::Expr, LowerError> {
+    let &func_id = ctx
+        .shared
+        .funcs
+        .get(&internal_name)
+        .ok_or(LowerError::UnknownFunc { name: internal_name, span })?;
+
+    let args = match &c.node.func.node.kind {
+        ast::ExprKind::Field(field) => {
+            let is_qualified = matches!(
+                &field.node.target.node.kind,
+                ast::ExprKind::Ident(name) if ctx.shared.tcx.is_module_name(*name)
+            );
+            if is_qualified {
+                lower_args(&c.node.args, ctx, fc, out)?
+            } else {
+                let receiver = lower_expr(&field.node.target, ctx, fc, out)?;
+                let mut args = vec![receiver];
+                args.extend(lower_args(&c.node.args, ctx, fc, out)?);
+                args
+            }
+        }
+        _ => lower_args(&c.node.args, ctx, fc, out)?,
+    };
+
+    Ok(hir::Expr {
+        ty,
+        span,
+        kind: hir::ExprKind::Call { func: func_id, args },
+    })
 }
 
 fn try_lower_method_call(

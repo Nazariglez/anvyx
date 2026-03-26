@@ -1,0 +1,17 @@
+// @mode: check
+// @expect: success
+
+extern type Texture {
+    fn id(self) -> int;
+}
+
+extend Texture {
+    fn has_id(self) -> bool { self.id() != 0 }
+}
+
+extern fn load_texture() -> Texture;
+
+fn main() {
+    let t = load_texture();
+    let b: bool = t.has_id();
+}

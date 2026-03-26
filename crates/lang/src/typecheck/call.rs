@@ -379,7 +379,7 @@ fn check_and_constrain_arg(
     type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
 }
 
-fn check_call_signature(
+pub(super) fn check_call_signature(
     call_span: Span,
     param_types: &[Type],
     ret_type: &Type,

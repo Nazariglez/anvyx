@@ -4,6 +4,7 @@ use crate::{
     span::{Span, Spanned},
 };
 use chumsky::prelude::*;
+use internment::Intern;
 
 use super::types::{param_type_ident, type_ident};
 use super::{AnvParser, BoxedParser};
@@ -15,6 +16,18 @@ pub(super) fn identifier<'src>() -> BoxedParser<'src, ast::Ident> {
     .labelled("identifier")
     .as_context()
     .boxed()
+}
+
+pub(super) fn keyword_as_ident<'src>() -> BoxedParser<'src, ast::Ident> {
+    select! {
+        (Token::Keyword(kw), _) => ast::Ident(Intern::new(kw.to_string()))
+    }
+    .labelled("identifier")
+    .boxed()
+}
+
+pub(super) fn field_name_ident<'src>() -> BoxedParser<'src, ast::Ident> {
+    choice((identifier(), keyword_as_ident())).boxed()
 }
 
 pub(super) fn literal<'src>() -> BoxedParser<'src, ast::Lit> {

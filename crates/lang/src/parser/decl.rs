@@ -7,7 +7,7 @@ use crate::{
 };
 use chumsky::{error::Rich, prelude::*};
 
-use super::common::{block_stmt, identifier, param, params, return_type};
+use super::common::{block_stmt, field_name_ident, identifier, param, params, return_type};
 use super::expr::expression;
 use super::types::type_ident;
 use super::{AnvParser, BoxedParser};
@@ -331,7 +331,7 @@ fn extern_type_field_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> 
 
 fn extern_type_method_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> {
     select! { (Token::Keyword(Keyword::Fn), _) => () }
-        .ignore_then(identifier())
+        .ignore_then(field_name_ident())
         .then(method_params())
         .then(return_type())
         .map(|((name, (receiver, params)), ret)| {
@@ -753,6 +753,77 @@ pub(super) fn enum_declaration<'src>() -> BoxedParser<'src, ast::EnumDeclNode> {
             )
         })
         .labelled("enum declaration")
+        .as_context()
+        .boxed()
+}
+
+fn extend_method<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::ExtendMethodNode> {
+    let tail_expr = expression(stmt.clone());
+    select! {
+        (Token::Keyword(Keyword::Fn), _) => (),
+    }
+    .ignore_then(field_name_ident())
+    .then(method_params())
+    .then(return_type())
+    .then(block_stmt(stmt, tail_expr))
+    .map_with(|(((name, (receiver, params)), ret), body), e| {
+        let s = e.span();
+        let self_param = receiver.map(|r| ast::Param {
+            mutability: match r {
+                ast::MethodReceiver::Var => ast::Mutability::Mutable,
+                ast::MethodReceiver::Value => ast::Mutability::Immutable,
+            },
+            name: ast::Ident(internment::Intern::new("self".to_string())),
+            ty: ast::Type::Infer,
+        });
+        let all_params: Vec<ast::Param> = self_param.into_iter().chain(params).collect();
+        let ret_ty = ret.unwrap_or(ast::Type::Void);
+        Spanned::new(
+            ast::ExtendMethod {
+                name,
+                params: all_params,
+                ret: ret_ty,
+                body: Spanned::new(body.node, Span::new(s.start, s.end)),
+            },
+            Span::new(s.start, s.end),
+        )
+    })
+    .labelled("extend method")
+    .as_context()
+    .boxed()
+}
+
+pub(super) fn extend_declaration<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::ExtendDeclNode> {
+    visibility()
+        .then_ignore(select! {
+            (Token::Keyword(Keyword::Extend), _) => (),
+        })
+        .then(type_ident())
+        .then(
+            select! { (Token::Open(Delimiter::Brace), _) => () }
+                .ignore_then(
+                    extend_method(stmt)
+                        .repeated()
+                        .collect::<Vec<_>>(),
+                )
+                .then_ignore(select! { (Token::Close(Delimiter::Brace), _) => () }),
+        )
+        .map_with(|((vis, ty), methods), e| {
+            let s = e.span();
+            Spanned::new(
+                ast::ExtendDecl {
+                    visibility: vis,
+                    ty,
+                    methods,
+                },
+                Span::new(s.start, s.end),
+            )
+        })
+        .labelled("extend declaration")
         .as_context()
         .boxed()
 }
