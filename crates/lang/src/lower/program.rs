@@ -162,8 +162,9 @@ pub fn lower_program(
         spec_registrations.push((mangled, spec_key.clone()));
     }
 
-    let mut to_string_methods: Vec<(Ident, u32, &ast::Method)> = vec![];
+    let mut struct_methods: Vec<(Ident, u32, &ast::Method)> = vec![];
     let to_string_name = Ident(Intern::new("to_string".to_string()));
+    let self_ident = Ident(Intern::new("self".to_string()));
     for stmt_node in ast.stmts.iter() {
         if let ast::Stmt::Struct(s) = &stmt_node.node {
             let struct_name = s.node.name;
@@ -173,16 +174,19 @@ pub fn lower_program(
             if !s.node.type_params.is_empty() {
                 continue;
             }
-            if shared.tcx.struct_to_string_body(struct_name).is_none() {
-                continue;
-            }
-            if let Some(method) = s.node.methods.iter().find(|m| m.name == to_string_name) {
-                let mangled = Ident(Intern::new(format!("{struct_name}::to_string")));
+            for method in &s.node.methods {
+                if method.receiver.is_none() {
+                    continue;
+                }
+                if !method.type_params.is_empty() {
+                    continue;
+                }
+                let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
                 if !shared.funcs.contains_key(&mangled) {
                     let id = hir::FuncId(next_func_id);
                     next_func_id += 1;
                     shared.funcs.insert(mangled, id);
-                    to_string_methods.push((struct_name, type_id, method));
+                    struct_methods.push((struct_name, type_id, method));
                 }
             }
         }
@@ -197,16 +201,19 @@ pub fn lower_program(
                 if !s.node.type_params.is_empty() {
                     continue;
                 }
-                if shared.tcx.struct_to_string_body(struct_name).is_none() {
-                    continue;
-                }
-                if let Some(method) = s.node.methods.iter().find(|m| m.name == to_string_name) {
-                    let mangled = Ident(Intern::new(format!("{struct_name}::to_string")));
+                for method in &s.node.methods {
+                    if method.receiver.is_none() {
+                        continue;
+                    }
+                    if !method.type_params.is_empty() {
+                        continue;
+                    }
+                    let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
                     if !shared.funcs.contains_key(&mangled) {
                         let id = hir::FuncId(next_func_id);
                         next_func_id += 1;
                         shared.funcs.insert(mangled, id);
-                        to_string_methods.push((struct_name, type_id, method));
+                        struct_methods.push((struct_name, type_id, method));
                     }
                 }
             }
@@ -286,12 +293,12 @@ pub fn lower_program(
         });
     }
 
-    for (struct_name, type_id, method) in &to_string_methods {
-        let mangled = Ident(Intern::new(format!("{struct_name}::to_string")));
+    for (struct_name, type_id, method) in &struct_methods {
+        let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
         let &id = shared
             .funcs
             .get(&mangled)
-            .expect("to_string func id must exist");
+            .expect("struct method func id must exist");
 
         let mut fc = FuncLower {
             locals: vec![],
@@ -303,8 +310,11 @@ pub fn lower_program(
             name: *struct_name,
             type_args: vec![],
         };
-        let self_ident = Ident(Intern::new("self".to_string()));
         register_named_local(&mut fc, self_ident, self_type);
+
+        for param in &method.params {
+            register_named_local(&mut fc, param.name, param.ty.clone());
+        }
         let params_len = fc.locals.len() as u32;
 
         let body = lower_block(&method.body, &ctx, &mut fc, true, &method.ret)?;
@@ -319,7 +329,9 @@ pub fn lower_program(
             span: method.body.span,
         });
 
-        struct_meta[*type_id as usize].to_string_fn = Some(id.0 as usize);
+        if method.name == to_string_name && shared.tcx.struct_to_string_body(*struct_name).is_some() {
+            struct_meta[*type_id as usize].to_string_fn = Some(id.0 as usize);
+        }
     }
 
     for (path, stmts) in module_list {

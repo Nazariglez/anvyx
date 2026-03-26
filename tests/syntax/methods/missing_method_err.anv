@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: has no method
+
+struct Foo {
+    x: int,
+}
+
+fn main() {
+    let f = Foo { x: 1 };
+    f.bar();
+}

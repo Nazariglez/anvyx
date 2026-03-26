@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// nil
+// nil
+// @match-end
+
+struct Point { x: int, y: int }
+
+fn main() {
+    let p: Point? = nil;
+    let x = p?.x;
+    let y = p?.y;
+    println(x);
+    println(y);
+}

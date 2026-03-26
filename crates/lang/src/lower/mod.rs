@@ -17,7 +17,7 @@ mod match_stmt;
 pub use program::lower_program;
 
 use helpers::*;
-use block::{lower_block, lower_string_interp};
+use block::{lower_block, lower_block_to_target, lower_string_interp};
 use expr::lower_expr;
 use for_loop::lower_for;
 use assign::lower_assign;

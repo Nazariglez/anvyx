@@ -1,0 +1,34 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 5.0
+// (3, 4)
+// @match-end
+
+import std.math { sqrt };
+
+struct Vec2 {
+    x: float,
+    y: float,
+
+    fn length(self) -> float {
+        sqrt(self.x * self.x + self.y * self.y)
+    }
+}
+
+struct Point {
+    x: int,
+    y: int,
+
+    fn as_tuple(self) -> (int, int) {
+        (self.x, self.y)
+    }
+}
+
+fn main() {
+    let v = Vec2 { x: 3.0, y: 4.0 };
+    println(v.length());
+
+    let p = Point { x: 3, y: 4 };
+    println(p.as_tuple());
+}

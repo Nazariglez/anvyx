@@ -330,6 +330,33 @@ fn lower_if(
     })
 }
 
+pub(super) fn lower_block_to_target(
+    block: &ast::BlockNode,
+    target: hir::LocalId,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+) -> Result<hir::Block, LowerError> {
+    let mark = fc.enter_scope();
+    let mut stmts = vec![];
+
+    for stmt_node in &block.node.stmts {
+        if let Some(hir_stmt) = lower_stmt(stmt_node, ctx, fc, &mut stmts)? {
+            stmts.push(hir_stmt);
+        }
+    }
+
+    if let Some(tail_expr) = &block.node.tail {
+        let expr = lower_expr(tail_expr, ctx, fc, &mut stmts)?;
+        stmts.push(hir::Stmt {
+            span: tail_expr.span,
+            kind: hir::StmtKind::Assign { local: target, value: expr },
+        });
+    }
+
+    fc.leave_scope(mark);
+    Ok(hir::Block { stmts })
+}
+
 pub(super) fn lower_string_interp(
     parts: &[StringPart],
     span: Span,

@@ -1,0 +1,20 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 10
+// nil
+// @match-end
+
+extend int {
+    fn doubled(self) -> int { self * 2 }
+}
+
+fn main() {
+    let x: int? = 5;
+    let d = x?.doubled();
+    println(d);
+
+    let y: int? = nil;
+    let e = y?.doubled();
+    println(e);
+}

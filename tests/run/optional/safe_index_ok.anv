@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 2
+// nil
+// @match-end
+
+fn main() {
+    let arr: [int; 3]? = [1, 2, 3];
+    let x = arr?[1];
+    println(x);
+
+    let none_arr: [int; 3]? = nil;
+    let y = none_arr?[0];
+    println(y);
+}

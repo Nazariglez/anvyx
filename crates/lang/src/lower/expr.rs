@@ -1,14 +1,16 @@
-use crate::ast::{self, ArrayLen, BinaryOp, Ident, Lit, Type, UnaryOp};
-use crate::builtin::Builtin;
-use crate::hir;
-use crate::span::Span;
-use crate::typecheck::{ConstValue, FieldDefault};
+use crate::{
+    ast::{self, ArrayLen, BinaryOp, Ident, Lit, Type, UnaryOp},
+    builtin::Builtin,
+    hir,
+    span::Span,
+    typecheck::{ConstValue, FieldDefault},
+};
 use internment::Intern;
 
 use super::{
-    FuncLower, LowerCtx, LowerError, extern_binary_op_key, extern_unary_op_key,
-    lower_string_interp, mangle_generic_name, resolve_enum_type_id, resolve_struct_type_id,
-    resolve_variant_index,
+    FuncLower, LowerCtx, LowerError, alloc_assign_temp, extern_binary_op_key, extern_unary_op_key,
+    lower_block_to_target, lower_if_let, lower_match_stmts, lower_string_interp,
+    mangle_generic_name, resolve_enum_type_id, resolve_struct_type_id, resolve_variant_index,
 };
 
 fn lower_args(
@@ -193,6 +195,9 @@ pub(super) fn lower_expr(
         }
 
         ast::ExprKind::Index(index_node) => {
+            if index_node.node.safe {
+                return lower_safe_index_expr(index_node, ty, span, ctx, fc, out);
+            }
             let target = lower_expr(&index_node.node.target, ctx, fc, out)?;
             let index = lower_expr(&index_node.node.index, ctx, fc, out)?;
             hir::ExprKind::IndexGet {
@@ -218,6 +223,30 @@ pub(super) fn lower_expr(
                 return Ok(inner);
             }
             hir::ExprKind::Cast(Box::new(inner))
+        }
+
+        ast::ExprKind::If(if_node) => {
+            return lower_if_as_expr(if_node, ty, span, ctx, fc, out);
+        }
+
+        ast::ExprKind::IfLet(if_let_node) => {
+            return lower_if_let_as_expr(if_let_node, ty, span, ctx, fc, out);
+        }
+
+        ast::ExprKind::Match(match_node) => {
+            return lower_match_as_expr(match_node, ty, span, ctx, fc, out);
+        }
+
+        ast::ExprKind::Block(block_node) => {
+            return lower_block_as_expr(block_node, ty, span, ctx, fc, out);
+        }
+
+        ast::ExprKind::NamedTuple(fields) => {
+            let mut lowered = vec![];
+            for (_label, expr) in fields {
+                lowered.push(lower_expr(expr, ctx, fc, out)?);
+            }
+            hir::ExprKind::TupleLiteral { elements: lowered }
         }
 
         other => {
@@ -439,6 +468,600 @@ fn lower_coalesce_expr(
     Ok(hir::Expr::local(ty, span, result_local))
 }
 
+fn lower_safe_field_expr(
+    field_access: &ast::FieldAccessNode,
+    ty: Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<hir::Expr, LowerError> {
+    let scrutinee_expr = lower_expr(&field_access.node.target, ctx, fc, out)?;
+    let scrutinee_ty = scrutinee_expr.ty.clone();
+
+    let (enum_name, inner_ty) = match &scrutinee_ty {
+        Type::Enum { name, .. } => {
+            let inner = scrutinee_ty.option_inner().cloned().ok_or_else(|| {
+                LowerError::UnsupportedExprKind {
+                    span,
+                    kind: "safe field access on non-optional type".to_string(),
+                }
+            })?;
+            (*name, inner)
+        }
+        _ => {
+            return Err(LowerError::UnsupportedExprKind {
+                span,
+                kind: "safe field access on non-optional type".to_string(),
+            });
+        }
+    };
+
+    let scrutinee_local = hir::LocalId(fc.locals.len() as u32);
+    fc.locals.push(hir::Local {
+        name: None,
+        ty: scrutinee_ty,
+    });
+
+    let result_local = hir::LocalId(fc.locals.len() as u32);
+    fc.locals.push(hir::Local {
+        name: None,
+        ty: ty.clone(),
+    });
+
+    let some_variant = ctx
+        .shared
+        .tcx
+        .enum_variant_index(enum_name, Ident(Intern::new("Some".to_string())))
+        .unwrap_or(1);
+
+    let inner_local = hir::LocalId(fc.locals.len() as u32);
+    fc.locals.push(hir::Local {
+        name: None,
+        ty: inner_ty.clone(),
+    });
+
+    let field_name = field_access.node.field;
+    let field_index = match &inner_ty {
+        Type::Struct { name, .. } => ctx
+            .shared
+            .tcx
+            .struct_field_index(*name, field_name)
+            .ok_or_else(|| LowerError::UnsupportedExprKind {
+                span,
+                kind: format!("unknown field '{field_name}' on struct '{name}'"),
+            })? as u16,
+        Type::NamedTuple(fields) => fields
+            .iter()
+            .position(|(label, _)| *label == field_name)
+            .ok_or_else(|| LowerError::UnsupportedExprKind {
+                span,
+                kind: format!("unknown field '{field_name}' on named tuple"),
+            })? as u16,
+        other => {
+            return Err(LowerError::UnsupportedExprKind {
+                span,
+                kind: format!("safe field access on unsupported inner type '{other}'"),
+            });
+        }
+    };
+
+    let field_ty = ty.option_inner().cloned().unwrap_or(ty.clone());
+
+    let field_get = hir::Expr {
+        ty: field_ty.clone(),
+        span,
+        kind: hir::ExprKind::FieldGet {
+            object: Box::new(hir::Expr::local(inner_ty.clone(), span, inner_local)),
+            index: field_index,
+        },
+    };
+
+    let option_type_id = resolve_enum_type_id(ctx, span, enum_name)?;
+    let wrapped = hir::Expr {
+        ty: ty.clone(),
+        span,
+        kind: hir::ExprKind::EnumLiteral {
+            type_id: option_type_id,
+            variant: some_variant,
+            fields: vec![field_get],
+        },
+    };
+
+    let some_arm = hir::MatchArm {
+        variant: some_variant,
+        bindings: vec![hir::MatchBinding {
+            field_index: 0,
+            local: inner_local,
+            mutable: false,
+        }],
+        body: hir::Block {
+            stmts: vec![hir::Stmt {
+                span,
+                kind: hir::StmtKind::Assign {
+                    local: result_local,
+                    value: wrapped,
+                },
+            }],
+        },
+    };
+
+    let none_expr = hir::Expr {
+        ty: ty.clone(),
+        span,
+        kind: hir::ExprKind::Nil,
+    };
+    let none_else = hir::MatchElse {
+        binding: None,
+        body: hir::Block {
+            stmts: vec![hir::Stmt {
+                span,
+                kind: hir::StmtKind::Assign {
+                    local: result_local,
+                    value: none_expr,
+                },
+            }],
+        },
+    };
+
+    out.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Match {
+            scrutinee_init: Box::new(scrutinee_expr),
+            scrutinee: scrutinee_local,
+            arms: vec![some_arm],
+            else_body: Some(none_else),
+        },
+    });
+
+    Ok(hir::Expr::local(ty, span, result_local))
+}
+
+fn lower_safe_index_expr(
+    index_node: &ast::IndexNode,
+    ty: Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<hir::Expr, LowerError> {
+    let scrutinee_expr = lower_expr(&index_node.node.target, ctx, fc, out)?;
+    let index_expr = lower_expr(&index_node.node.index, ctx, fc, out)?;
+    let scrutinee_ty = scrutinee_expr.ty.clone();
+
+    let (enum_name, inner_ty) = match &scrutinee_ty {
+        Type::Enum { name, .. } => {
+            let inner = scrutinee_ty.option_inner().cloned().ok_or_else(|| {
+                LowerError::UnsupportedExprKind {
+                    span,
+                    kind: "safe index on non-optional type".to_string(),
+                }
+            })?;
+            (*name, inner)
+        }
+        _ => {
+            return Err(LowerError::UnsupportedExprKind {
+                span,
+                kind: "safe index on non-optional type".to_string(),
+            });
+        }
+    };
+
+    let scrutinee_local = hir::LocalId(fc.locals.len() as u32);
+    fc.locals.push(hir::Local {
+        name: None,
+        ty: scrutinee_ty,
+    });
+
+    let result_local = hir::LocalId(fc.locals.len() as u32);
+    fc.locals.push(hir::Local {
+        name: None,
+        ty: ty.clone(),
+    });
+
+    let some_variant = ctx
+        .shared
+        .tcx
+        .enum_variant_index(enum_name, Ident(Intern::new("Some".to_string())))
+        .unwrap_or(1);
+
+    let inner_local = hir::LocalId(fc.locals.len() as u32);
+    fc.locals.push(hir::Local {
+        name: None,
+        ty: inner_ty.clone(),
+    });
+
+    let elem_ty = ty.option_inner().cloned().unwrap_or(ty.clone());
+
+    let index_get = hir::Expr {
+        ty: elem_ty,
+        span,
+        kind: hir::ExprKind::IndexGet {
+            target: Box::new(hir::Expr::local(inner_ty.clone(), span, inner_local)),
+            index: Box::new(index_expr),
+        },
+    };
+
+    let option_type_id = resolve_enum_type_id(ctx, span, enum_name)?;
+    let wrapped = hir::Expr {
+        ty: ty.clone(),
+        span,
+        kind: hir::ExprKind::EnumLiteral {
+            type_id: option_type_id,
+            variant: some_variant,
+            fields: vec![index_get],
+        },
+    };
+
+    let some_arm = hir::MatchArm {
+        variant: some_variant,
+        bindings: vec![hir::MatchBinding {
+            field_index: 0,
+            local: inner_local,
+            mutable: false,
+        }],
+        body: hir::Block {
+            stmts: vec![hir::Stmt {
+                span,
+                kind: hir::StmtKind::Assign {
+                    local: result_local,
+                    value: wrapped,
+                },
+            }],
+        },
+    };
+
+    let none_expr = hir::Expr {
+        ty: ty.clone(),
+        span,
+        kind: hir::ExprKind::Nil,
+    };
+    let none_else = hir::MatchElse {
+        binding: None,
+        body: hir::Block {
+            stmts: vec![hir::Stmt {
+                span,
+                kind: hir::StmtKind::Assign {
+                    local: result_local,
+                    value: none_expr,
+                },
+            }],
+        },
+    };
+
+    out.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Match {
+            scrutinee_init: Box::new(scrutinee_expr),
+            scrutinee: scrutinee_local,
+            arms: vec![some_arm],
+            else_body: Some(none_else),
+        },
+    });
+
+    Ok(hir::Expr::local(ty, span, result_local))
+}
+
+fn lower_safe_call_expr(
+    c: &ast::CallNode,
+    ty: Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<hir::Expr, LowerError> {
+    let ast::ExprKind::Field(field) = &c.node.func.node.kind else {
+        return Err(LowerError::UnsupportedExprKind {
+            span,
+            kind: "safe call on non-method expression".to_string(),
+        });
+    };
+
+    let scrutinee_expr = lower_expr(&field.node.target, ctx, fc, out)?;
+    let scrutinee_ty = scrutinee_expr.ty.clone();
+
+    let (enum_name, inner_ty) = match &scrutinee_ty {
+        Type::Enum { name, .. } => {
+            let inner = scrutinee_ty.option_inner().cloned().ok_or_else(|| {
+                LowerError::UnsupportedExprKind {
+                    span,
+                    kind: "safe call on non-optional type".to_string(),
+                }
+            })?;
+            (*name, inner)
+        }
+        _ => {
+            return Err(LowerError::UnsupportedExprKind {
+                span,
+                kind: "safe call on non-optional type".to_string(),
+            });
+        }
+    };
+
+    let pre_args = lower_args(&c.node.args, ctx, fc, out)?;
+
+    let scrutinee_local = hir::LocalId(fc.locals.len() as u32);
+    fc.locals.push(hir::Local {
+        name: None,
+        ty: scrutinee_ty,
+    });
+
+    let result_local = hir::LocalId(fc.locals.len() as u32);
+    fc.locals.push(hir::Local {
+        name: None,
+        ty: ty.clone(),
+    });
+
+    let some_variant = ctx
+        .shared
+        .tcx
+        .enum_variant_index(enum_name, Ident(Intern::new("Some".to_string())))
+        .unwrap_or(1);
+
+    let inner_local = hir::LocalId(fc.locals.len() as u32);
+    fc.locals.push(hir::Local {
+        name: None,
+        ty: inner_ty.clone(),
+    });
+
+    let option_type_id = resolve_enum_type_id(ctx, span, enum_name)?;
+    let method_name = field.node.field;
+    let inner_result_ty = ty.option_inner().cloned().unwrap_or(ty.clone());
+
+    let call_expr =
+        if let Some(internal_name) = ctx.shared.tcx.extend_call_target(c.node.func.node.id) {
+            let &func_id = ctx
+                .shared
+                .funcs
+                .get(&internal_name)
+                .ok_or(LowerError::UnknownFunc {
+                    name: internal_name,
+                    span,
+                })?;
+            let receiver = hir::Expr::local(inner_ty.clone(), span, inner_local);
+            let mut args = vec![receiver];
+            args.extend(pre_args);
+            hir::Expr {
+                ty: inner_result_ty,
+                span,
+                kind: hir::ExprKind::Call {
+                    func: func_id,
+                    args,
+                },
+            }
+        } else if let Type::Extern { name: type_name } = &inner_ty {
+            let qualified = Ident(Intern::new(format!("{type_name}::{method_name}")));
+            let &extern_id = ctx.shared.externs.get(&qualified).ok_or_else(|| {
+                LowerError::UnsupportedExprKind {
+                    span,
+                    kind: format!("unknown extern method '{method_name}' on '{type_name}'"),
+                }
+            })?;
+            let receiver = hir::Expr::local(inner_ty.clone(), span, inner_local);
+            let mut args = vec![receiver];
+            args.extend(pre_args);
+            hir::Expr {
+                ty: inner_result_ty,
+                span,
+                kind: hir::ExprKind::CallExtern { extern_id, args },
+            }
+        } else if let Type::Struct {
+            name: struct_name, ..
+        } = &inner_ty
+        {
+            let mangled = Ident(Intern::new(format!("{struct_name}::{method_name}")));
+            let &func_id =
+                ctx.shared
+                    .funcs
+                    .get(&mangled)
+                    .ok_or_else(|| LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("unknown method '{method_name}' on struct '{struct_name}'"),
+                    })?;
+            let receiver = hir::Expr::local(inner_ty.clone(), span, inner_local);
+            let mut args = vec![receiver];
+            args.extend(pre_args);
+            hir::Expr {
+                ty: inner_result_ty,
+                span,
+                kind: hir::ExprKind::Call {
+                    func: func_id,
+                    args,
+                },
+            }
+        } else {
+            return Err(LowerError::UnsupportedExprKind {
+                span,
+                kind: format!(
+                    "safe method call '?.{method_name}()' on unsupported inner type '{inner_ty}'"
+                ),
+            });
+        };
+
+    let wrapped = hir::Expr {
+        ty: ty.clone(),
+        span,
+        kind: hir::ExprKind::EnumLiteral {
+            type_id: option_type_id,
+            variant: some_variant,
+            fields: vec![call_expr],
+        },
+    };
+
+    let some_arm = hir::MatchArm {
+        variant: some_variant,
+        bindings: vec![hir::MatchBinding {
+            field_index: 0,
+            local: inner_local,
+            mutable: false,
+        }],
+        body: hir::Block {
+            stmts: vec![hir::Stmt {
+                span,
+                kind: hir::StmtKind::Assign {
+                    local: result_local,
+                    value: wrapped,
+                },
+            }],
+        },
+    };
+
+    let none_expr = hir::Expr {
+        ty: ty.clone(),
+        span,
+        kind: hir::ExprKind::Nil,
+    };
+    let none_else = hir::MatchElse {
+        binding: None,
+        body: hir::Block {
+            stmts: vec![hir::Stmt {
+                span,
+                kind: hir::StmtKind::Assign {
+                    local: result_local,
+                    value: none_expr,
+                },
+            }],
+        },
+    };
+
+    out.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::Match {
+            scrutinee_init: Box::new(scrutinee_expr),
+            scrutinee: scrutinee_local,
+            arms: vec![some_arm],
+            else_body: Some(none_else),
+        },
+    });
+
+    Ok(hir::Expr::local(ty, span, result_local))
+}
+
+fn lower_if_as_expr(
+    if_node: &ast::IfNode,
+    ty: Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<hir::Expr, LowerError> {
+    let result_local = alloc_assign_temp(fc, ty.clone());
+    let cond = lower_expr(&if_node.node.cond, ctx, fc, out)?;
+    let then_block = lower_block_to_target(&if_node.node.then_block, result_local, ctx, fc)?;
+    let else_block = match &if_node.node.else_block {
+        Some(b) => Some(lower_block_to_target(b, result_local, ctx, fc)?),
+        None => None,
+    };
+    out.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::If {
+            cond,
+            then_block,
+            else_block,
+        },
+    });
+    Ok(hir::Expr::local(ty, span, result_local))
+}
+
+fn lower_if_let_as_expr(
+    if_let_node: &ast::IfLetNode,
+    ty: Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<hir::Expr, LowerError> {
+    let result_local = alloc_assign_temp(fc, ty.clone());
+    let stmt = lower_if_let(if_let_node, span, ctx, fc, false, &Type::Void, out)?;
+    let modified = inject_assign_target(stmt, result_local);
+    out.push(modified);
+    Ok(hir::Expr::local(ty, span, result_local))
+}
+
+fn lower_match_as_expr(
+    match_node: &ast::MatchNode,
+    ty: Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<hir::Expr, LowerError> {
+    let result_local = alloc_assign_temp(fc, ty.clone());
+    let stmt = lower_match_stmts(match_node, span, ctx, fc, false, &Type::Void, out)?;
+    let modified = inject_assign_target(stmt, result_local);
+    out.push(modified);
+    Ok(hir::Expr::local(ty, span, result_local))
+}
+
+fn lower_block_as_expr(
+    block_node: &ast::BlockNode,
+    ty: Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<hir::Expr, LowerError> {
+    let result_local = alloc_assign_temp(fc, ty.clone());
+    let block = lower_block_to_target(block_node, result_local, ctx, fc)?;
+    out.extend(block.stmts);
+    Ok(hir::Expr::local(ty, span, result_local))
+}
+
+fn inject_assign_target(stmt: hir::Stmt, target: hir::LocalId) -> hir::Stmt {
+    let kind = match stmt.kind {
+        hir::StmtKind::Expr(expr) => hir::StmtKind::Assign {
+            local: target,
+            value: expr,
+        },
+        hir::StmtKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => hir::StmtKind::If {
+            cond,
+            then_block: inject_assign_target_block(then_block, target),
+            else_block: else_block.map(|b| inject_assign_target_block(b, target)),
+        },
+        hir::StmtKind::Match {
+            scrutinee_init,
+            scrutinee,
+            arms,
+            else_body,
+        } => {
+            let arms = arms
+                .into_iter()
+                .map(|arm| hir::MatchArm {
+                    variant: arm.variant,
+                    bindings: arm.bindings,
+                    body: inject_assign_target_block(arm.body, target),
+                })
+                .collect();
+            let else_body = else_body.map(|e| hir::MatchElse {
+                binding: e.binding,
+                body: inject_assign_target_block(e.body, target),
+            });
+            hir::StmtKind::Match {
+                scrutinee_init,
+                scrutinee,
+                arms,
+                else_body,
+            }
+        }
+        other => other,
+    };
+    hir::Stmt {
+        span: stmt.span,
+        kind,
+    }
+}
+
+fn inject_assign_target_block(mut block: hir::Block, target: hir::LocalId) -> hir::Block {
+    if let Some(last) = block.stmts.pop() {
+        block.stmts.push(inject_assign_target(last, target));
+    }
+    block
+}
+
 fn lower_call_expr(
     c: &ast::CallNode,
     ty: Type,
@@ -447,6 +1070,11 @@ fn lower_call_expr(
     fc: &mut FuncLower,
     out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::Expr, LowerError> {
+    if let ast::ExprKind::Field(field) = &c.node.func.node.kind {
+        if field.node.safe || c.node.safe {
+            return lower_safe_call_expr(c, ty, span, ctx, fc, out);
+        }
+    }
     if let Some(internal_name) = ctx.shared.tcx.extend_call_target(c.node.func.node.id) {
         return lower_extend_call(c, internal_name, ty, span, ctx, fc, out);
     }
@@ -517,58 +1145,79 @@ fn try_lower_method_call(
     let ast::ExprKind::Field(field) = &c.node.func.node.kind else {
         return Ok(None);
     };
-    let ast::ExprKind::Ident(root_name) = &field.node.target.node.kind else {
-        return Ok(None);
-    };
+    if let ast::ExprKind::Ident(root_name) = &field.node.target.node.kind {
+        let is_type_name = ctx.shared.tcx.is_module_name(*root_name)
+            || ctx.shared.enum_type_ids.contains_key(root_name)
+            || ctx.shared.struct_type_ids.contains_key(root_name)
+            || ctx.shared.tcx.get_extern_type(*root_name).is_some();
+        if is_type_name {
+            return Ok(None);
+        }
 
-    let is_type_name = ctx.shared.tcx.is_module_name(*root_name)
-        || ctx.shared.enum_type_ids.contains_key(root_name)
-        || ctx.shared.struct_type_ids.contains_key(root_name)
-        || ctx.shared.tcx.get_extern_type(*root_name).is_some();
-    if is_type_name {
-        return Ok(None);
+        let method_name = field.node.field;
+        let target_ty = ctx.expr_type(field.node.target.node.id, span)?;
+
+        let collection_method = match (&target_ty, method_name.0.as_ref().as_str()) {
+            (Type::List { .. }, "push") => Some(hir::CollectionMethod::ListPush),
+            (Type::List { .. }, "pop") => Some(hir::CollectionMethod::ListPop),
+            (Type::Map { .. }, "insert") => Some(hir::CollectionMethod::MapInsert),
+            (Type::Map { .. }, "remove") => Some(hir::CollectionMethod::MapRemove),
+            _ => None,
+        };
+        if let Some(method) = collection_method {
+            let local_id = *fc
+                .local_map
+                .get(root_name)
+                .ok_or(LowerError::UnknownLocal {
+                    name: *root_name,
+                    span,
+                })?;
+            let args = lower_args(&c.node.args, ctx, fc, out)?;
+            return Ok(Some(hir::Expr {
+                ty: ty.clone(),
+                span,
+                kind: hir::ExprKind::CollectionMut {
+                    object: local_id,
+                    method,
+                    args,
+                },
+            }));
+        }
+
+        if let Type::Extern { name: type_name } = &target_ty {
+            let qualified = Ident(Intern::new(format!("{type_name}::{method_name}")));
+            if let Some(&extern_id) = ctx.shared.externs.get(&qualified) {
+                let receiver = lower_expr(&field.node.target, ctx, fc, out)?;
+                let mut args = vec![receiver];
+                args.extend(lower_args(&c.node.args, ctx, fc, out)?);
+                return Ok(Some(hir::Expr {
+                    ty: ty.clone(),
+                    span,
+                    kind: hir::ExprKind::CallExtern { extern_id, args },
+                }));
+            }
+        }
     }
 
     let method_name = field.node.field;
     let target_ty = ctx.expr_type(field.node.target.node.id, span)?;
 
-    let collection_method = match (&target_ty, method_name.0.as_ref().as_str()) {
-        (Type::List { .. }, "push") => Some(hir::CollectionMethod::ListPush),
-        (Type::List { .. }, "pop") => Some(hir::CollectionMethod::ListPop),
-        (Type::Map { .. }, "insert") => Some(hir::CollectionMethod::MapInsert),
-        (Type::Map { .. }, "remove") => Some(hir::CollectionMethod::MapRemove),
-        _ => None,
-    };
-    if let Some(method) = collection_method {
-        let local_id = *fc
-            .local_map
-            .get(root_name)
-            .ok_or(LowerError::UnknownLocal {
-                name: *root_name,
-                span,
-            })?;
-        let args = lower_args(&c.node.args, ctx, fc, out)?;
-        return Ok(Some(hir::Expr {
-            ty: ty.clone(),
-            span,
-            kind: hir::ExprKind::CollectionMut {
-                object: local_id,
-                method,
-                args,
-            },
-        }));
-    }
-
-    if let Type::Extern { name: type_name } = &target_ty {
-        let qualified = Ident(Intern::new(format!("{type_name}::{method_name}")));
-        if let Some(&extern_id) = ctx.shared.externs.get(&qualified) {
+    if let Type::Struct {
+        name: struct_name, ..
+    } = &target_ty
+    {
+        let mangled = Ident(Intern::new(format!("{struct_name}::{method_name}")));
+        if let Some(&func_id) = ctx.shared.funcs.get(&mangled) {
             let receiver = lower_expr(&field.node.target, ctx, fc, out)?;
             let mut args = vec![receiver];
             args.extend(lower_args(&c.node.args, ctx, fc, out)?);
             return Ok(Some(hir::Expr {
                 ty: ty.clone(),
                 span,
-                kind: hir::ExprKind::CallExtern { extern_id, args },
+                kind: hir::ExprKind::Call {
+                    func: func_id,
+                    args,
+                },
             }));
         }
     }
@@ -835,6 +1484,10 @@ fn lower_field_expr(
     fc: &mut FuncLower,
     out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::Expr, LowerError> {
+    if field_access.node.safe {
+        return lower_safe_field_expr(field_access, ty, span, ctx, fc, out);
+    }
+
     let target = &field_access.node.target;
     let field_name = field_access.node.field;
 

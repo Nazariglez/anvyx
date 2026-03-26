@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 5
+// nil
+// @match-end
+
+struct Inner { value: int }
+struct Outer { inner: Inner }
+
+fn main() {
+    let a: Outer? = Outer { inner: Inner { value: 5 } };
+    println(a?.inner?.value);
+
+    let b: Outer? = nil;
+    println(b?.inner?.value);
+}
