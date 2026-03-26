@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: the else block of a let-else must always return, break, or continue
+
+fn main() {
+    let opt: int? = 42;
+    let Option.Some(x) = opt else { println("nope"); }
+}

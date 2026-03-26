@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: success
+
+fn process(opt: int?) -> int {
+    let _ = opt else { return 0; }
+    42
+}
+
+fn main() {
+    let _r = process(nil);
+}

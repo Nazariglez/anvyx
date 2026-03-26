@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    self, ExprKind, ExprNode, ForNode, Ident, IfNode, Lit, MatchNode, Pattern, Type, WhileNode,
+    self, BlockNode, ExprKind, ExprNode, ForNode, Ident, IfLetNode, IfNode, Lit, MatchNode,
+    Pattern, Stmt, Type, WhileNode,
 };
 use internment::Intern;
 use crate::span::Span;
@@ -273,6 +274,80 @@ pub(super) fn is_if_without_else(expr: &ExprNode) -> bool {
     match &expr.node.kind {
         ExprKind::If(if_node) => if_node.node.else_block.is_none(),
         _ => false,
+    }
+}
+
+pub(super) fn block_always_diverges(block: &BlockNode) -> bool {
+    if block.node.tail.is_some() {
+        return false;
+    }
+    matches!(
+        block.node.stmts.last().map(|s| &s.node),
+        Some(Stmt::Return(_) | Stmt::Break | Stmt::Continue)
+    )
+}
+
+pub(super) fn check_if_let(
+    if_let_node: &IfLetNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    let node = &if_let_node.node;
+
+    let value_ty = check_expr(&node.value, type_checker, errors, None);
+
+    type_checker.push_scope();
+    check_pattern(&node.pattern, &value_ty, false, type_checker, errors);
+    let (then_ty, then_expr_id) = check_block_expr(&node.then_block, type_checker, errors, None);
+    type_checker.pop_scope();
+
+    let Some(else_block) = &node.else_block else {
+        return Type::Void;
+    };
+
+    let (else_ty, else_expr_id) = check_block_expr(else_block, type_checker, errors, None);
+
+    // unify branch types
+    let same_ty = then_ty == else_ty;
+    if same_ty {
+        return then_ty;
+    }
+
+    let then_is_nil = then_ty.is_option_with_infer();
+    let else_is_nil = else_ty.is_option_with_infer();
+
+    if !then_ty.is_option() && else_is_nil {
+        let result_ty = Type::option_of(then_ty);
+        if let Some(id) = else_expr_id {
+            type_checker.set_type(id, result_ty.clone(), else_block.span);
+        }
+        return result_ty;
+    }
+
+    if !else_ty.is_option() && then_is_nil {
+        let result_ty = Type::option_of(else_ty);
+        if let Some(id) = then_expr_id {
+            type_checker.set_type(id, result_ty.clone(), node.then_block.span);
+        }
+        return result_ty;
+    }
+
+    let is_unifiable = contains_infer(&then_ty) || contains_infer(&else_ty);
+    if !is_unifiable {
+        errors.push(TypeErr::new(
+            if_let_node.span,
+            TypeErrKind::MismatchedTypes {
+                expected: then_ty.clone(),
+                found: else_ty.clone(),
+            },
+        ));
+        return Type::Infer;
+    }
+
+    if contains_infer(&then_ty) {
+        else_ty
+    } else {
+        then_ty
     }
 }
 

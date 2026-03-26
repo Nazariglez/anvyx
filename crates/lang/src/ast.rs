@@ -17,6 +17,8 @@ pub type CallNode = Spanned<Call>;
 pub type AssignNode = Spanned<Assign>;
 pub type ReturnNode = Spanned<Return>;
 pub type IfNode = Spanned<If>;
+pub type IfLetNode = Spanned<IfLet>;
+pub type LetElseNode = Spanned<LetElse>;
 pub type TupleIndexNode = Spanned<TupleIndex>;
 pub type PatternNode = Spanned<Pattern>;
 pub type FieldAccessNode = Spanned<FieldAccess>;
@@ -49,6 +51,7 @@ pub enum Stmt {
     Enum(EnumDeclNode),
     Expr(ExprNode),
     Binding(BindingNode),
+    LetElse(LetElseNode),
     Return(ReturnNode),
     While(WhileNode),
     For(ForNode),
@@ -81,6 +84,7 @@ pub enum ExprKind {
     Unary(UnaryNode),
     Assign(AssignNode),
     If(IfNode),
+    IfLet(IfLetNode),
     Tuple(Vec<ExprNode>),
     NamedTuple(Vec<(Ident, ExprNode)>),
     TupleIndex(TupleIndexNode),
@@ -107,6 +111,7 @@ impl ExprKind {
             Self::Unary(_) => "Unary",
             Self::Assign(_) => "Assign",
             Self::If(_) => "If",
+            Self::IfLet(_) => "if let",
             Self::Tuple(_) => "Tuple",
             Self::NamedTuple(_) => "NamedTuple",
             Self::TupleIndex(_) => "TupleIndex",
@@ -441,6 +446,13 @@ pub struct Binding {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct LetElse {
+    pub pattern: PatternNode,
+    pub value: ExprNode,
+    pub else_block: BlockNode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     Ident(Ident),
     Tuple(Vec<PatternNode>),
@@ -719,6 +731,14 @@ pub struct For {
 #[derive(Debug, Clone, PartialEq)]
 pub struct If {
     pub cond: Box<ExprNode>,
+    pub then_block: BlockNode,
+    pub else_block: Option<BlockNode>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IfLet {
+    pub pattern: PatternNode,
+    pub value: Box<ExprNode>,
     pub then_block: BlockNode,
     pub else_block: Option<BlockNode>,
 }

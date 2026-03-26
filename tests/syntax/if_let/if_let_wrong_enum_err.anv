@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: pattern does not match scrutinee enum
+
+enum Color { Red, Blue }
+enum Shape { Circle, Square }
+
+fn main() {
+    let c: Color = Color.Red;
+    if let Shape.Circle = c {
+        println("wrong");
+    }
+}

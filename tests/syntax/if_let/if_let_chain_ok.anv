@@ -1,0 +1,14 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let a: int? = nil;
+    let b: int? = 42;
+    if let Option.Some(x) = a {
+        println(x);
+    } else if let Option.Some(y) = b {
+        println(y);
+    } else {
+        println(0);
+    }
+}

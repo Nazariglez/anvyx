@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use super::{
     composite::{is_all_nil_array_literal, is_empty_map_literal},
     constraint::TypeRef,
-    control::{check_for, check_while, is_if_without_else},
+    control::{block_always_diverges, check_for, check_while, is_if_without_else},
     decl::{check_func, check_struct},
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
@@ -627,6 +627,7 @@ pub(super) fn check_stmt(
             let _ = check_expr(node, type_checker, errors, None);
         }
         Stmt::Binding(node) => check_binding(node, type_checker, errors),
+        Stmt::LetElse(node) => check_let_else(node, type_checker, errors),
         Stmt::Return(node) => check_ret(node, type_checker, errors),
         Stmt::While(node) => check_while(node, type_checker, errors),
         Stmt::For(node) => check_for(node, type_checker, errors),
@@ -706,6 +707,35 @@ pub(super) fn check_binding(
 
     let mutable = matches!(node.mutability, Mutability::Mutable);
     check_pattern(&node.pattern, &binding_ty, mutable, type_checker, errors);
+}
+
+pub(super) fn check_let_else(
+    let_else_node: &crate::ast::LetElseNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    let node = &let_else_node.node;
+
+    let value_ty = check_expr(&node.value, type_checker, errors, None);
+
+    type_checker.push_scope();
+    check_block_stmts(
+        &node.else_block.node.stmts,
+        node.else_block.node.tail.as_deref(),
+        type_checker,
+        errors,
+        None,
+    );
+    type_checker.pop_scope();
+
+    if !block_always_diverges(&node.else_block) {
+        errors.push(TypeErr::new(
+            node.else_block.span,
+            TypeErrKind::LetElseMustDiverge,
+        ));
+    }
+
+    check_pattern(&node.pattern, &value_ty, false, type_checker, errors);
 }
 
 fn is_array_literal_with_infer_elem(expr: &ExprNode, value_ty: &Type) -> bool {

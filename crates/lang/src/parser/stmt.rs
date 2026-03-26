@@ -23,6 +23,28 @@ pub(super) fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
         let break_s = break_stmt();
         let continue_s = continue_stmt();
 
+        let let_else = select! { (Token::Keyword(Keyword::Let), _) => () }
+            .ignore_then(pattern())
+            .then_ignore(select! { (Token::Op(Op::Assign), _) => () })
+            .then(expression(stmt.clone()))
+            .then_ignore(select! { (Token::Keyword(Keyword::Else), _) => () })
+            .then(block_stmt(stmt.clone(), expr.clone()))
+            .map_with(|((pat, value), else_block), e| {
+                let s = e.span();
+                let span = Span::new(s.start, s.end);
+                Spanned::new(
+                    ast::Stmt::LetElse(Spanned::new(
+                        ast::LetElse {
+                            pattern: pat,
+                            value,
+                            else_block,
+                        },
+                        span,
+                    )),
+                    span,
+                )
+            });
+
         let at_stmt_start = select! {
             (Token::Keyword(Keyword::Let), _) => (),
             (Token::Keyword(Keyword::Var), _) => (),
@@ -66,6 +88,7 @@ pub(super) fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
                 let span = func_node.span;
                 Spanned::new(ast::Stmt::Func(func_node), span)
             }),
+            let_else,
             bind.map(|bind_node| {
                 let span = bind_node.span;
                 Spanned::new(ast::Stmt::Binding(bind_node), span)

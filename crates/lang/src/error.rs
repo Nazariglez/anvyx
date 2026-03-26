@@ -586,6 +586,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "ambiguous operator".to_string(),
             format!("operator '{op}' is declared by both '{left}' and '{right}'"),
         ),
+        TypeErrKind::LetElseMustDiverge => (
+            "let-else block must diverge".to_string(),
+            "the else block of a let-else must always return, break, or continue".to_string(),
+        ),
     }
 }
 

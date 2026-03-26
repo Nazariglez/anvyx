@@ -1,0 +1,8 @@
+// @mode: run
+// @expect: success
+// @match: 99
+
+fn main() {
+    let x = 99 else { return; }
+    println(x);
+}

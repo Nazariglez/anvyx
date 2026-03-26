@@ -21,7 +21,7 @@ use block::{lower_block, lower_string_interp};
 use expr::lower_expr;
 use for_loop::lower_for;
 use assign::lower_assign;
-use match_stmt::lower_match_stmts;
+use match_stmt::{lower_match_stmts, lower_if_let, lower_let_else};
 
 #[derive(Debug)]
 pub enum LowerError {

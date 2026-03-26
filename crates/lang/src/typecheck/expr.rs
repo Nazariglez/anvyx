@@ -5,7 +5,7 @@ use super::{
         check_array_fill, check_array_literal, check_map_literal, check_named_tuple, check_range,
         check_struct_lit, check_tuple, check_tuple_index,
     },
-    control::{check_if, check_match},
+    control::{check_if, check_if_let, check_match},
     error::{TypeErr, TypeErrKind},
     ops::{check_assign, check_binary, check_unary},
     postfix::{check_postfix_chain, collect_postfix_chain},
@@ -49,6 +49,7 @@ pub(super) fn check_expr(
         ExprKind::Unary(unary) => check_unary(unary, type_checker, errors),
         ExprKind::Assign(assign) => check_assign(assign, type_checker, errors),
         ExprKind::If(if_node) => check_if(if_node, type_checker, errors),
+        ExprKind::IfLet(if_let_node) => check_if_let(if_let_node, type_checker, errors),
         ExprKind::Tuple(elements) => check_tuple(elements, type_checker, errors),
         ExprKind::NamedTuple(elements) => {
             check_named_tuple(elements, expr_node.span, type_checker, errors)

@@ -5,7 +5,8 @@ use internment::Intern;
 
 use super::{
     FuncLower, LowerCtx, LowerError,
-    alloc_and_bind, lower_assign, lower_expr, lower_for, lower_match_stmts, register_named_local,
+    alloc_and_bind, lower_assign, lower_expr, lower_for, lower_if_let, lower_let_else,
+    lower_match_stmts, register_named_local,
 };
 
 pub(super) fn lower_block(
@@ -63,6 +64,9 @@ fn lower_expr_as_stmt(
         ast::ExprKind::Assign(assign_node) => lower_assign(assign_node, span, ctx, fc, out),
         ast::ExprKind::Match(match_node) => {
             lower_match_stmts(match_node, span, ctx, fc, is_func_body, ret_ty, out)
+        }
+        ast::ExprKind::IfLet(if_let_node) => {
+            lower_if_let(if_let_node, span, ctx, fc, is_func_body, ret_ty, out)
         }
         _ => {
             let hir_expr = lower_expr(expr_node, ctx, fc, out)?;
@@ -292,6 +296,8 @@ fn lower_stmt(
         Stmt::Struct(_) => Ok(None),
 
         Stmt::Enum(_) => Ok(None),
+
+        Stmt::LetElse(let_else_node) => lower_let_else(let_else_node, span, ctx, fc, out),
     }
 }
 

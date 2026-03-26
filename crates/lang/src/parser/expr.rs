@@ -45,8 +45,6 @@ fn if_expr<'src>(
     expr: impl AnvParser<'src, ast::ExprNode>,
 ) -> BoxedParser<'src, ast::ExprNode> {
     recursive(|if_parser| {
-        let cond_expr = cond_expression();
-
         let else_branch = select! {
             (Token::Keyword(Keyword::Else), _) => (),
         }
@@ -67,10 +65,34 @@ fn if_expr<'src>(
         )))
         .or_not();
 
-        select! {
+        let if_let = select! { (Token::Keyword(Keyword::If), _) => () }
+            .ignore_then(select! { (Token::Keyword(Keyword::Let), _) => () })
+            .ignore_then(pattern())
+            .then_ignore(select! { (Token::Op(Op::Assign), _) => () })
+            .then(cond_expression())
+            .then(block_stmt(stmt.clone(), expr.clone()))
+            .then(else_branch.clone())
+            .map_with(|(((pat, value), then_block), else_block), e| {
+                let s = e.span();
+                let span = Span::new(s.start, s.end);
+                let if_let_node = Spanned::new(
+                    ast::IfLet {
+                        pattern: pat,
+                        value: Box::new(value),
+                        then_block,
+                        else_block,
+                    },
+                    span,
+                );
+                let expr_id = e.state().new_expr_id();
+                let expr = ast::Expr::new(ast::ExprKind::IfLet(if_let_node), expr_id);
+                Spanned::new(expr, span)
+            });
+
+        let if_cond = select! {
             (Token::Keyword(Keyword::If), _) => (),
         }
-        .ignore_then(cond_expr)
+        .ignore_then(cond_expression())
         .then(block_stmt(stmt.clone(), expr.clone()))
         .then(else_branch)
         .map_with(|((cond, then_block), else_block), e| {
@@ -87,7 +109,9 @@ fn if_expr<'src>(
             let expr_id = e.state().new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::If(if_node), expr_id);
             Spanned::new(expr, span)
-        })
+        });
+
+        choice((if_let, if_cond))
     })
     .labelled("if expression")
     .as_context()

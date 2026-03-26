@@ -318,4 +318,6 @@ pub enum TypeErrKind {
         left: Type,
         right: Type,
     },
+
+    LetElseMustDiverge,
 }
