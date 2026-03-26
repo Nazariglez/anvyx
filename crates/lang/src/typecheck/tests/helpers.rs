@@ -595,6 +595,7 @@ pub(super) fn generic_struct_decl(
         .map(|(n, ty)| StructField {
             name: dummy_ident(n),
             ty,
+            default: None,
         })
         .collect();
     StmtNode {

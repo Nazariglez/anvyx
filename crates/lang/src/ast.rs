@@ -799,6 +799,7 @@ pub type CastNode = Spanned<Cast>;
 pub struct StructField {
     pub name: Ident,
     pub ty: Type,
+    pub default: Option<ExprNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

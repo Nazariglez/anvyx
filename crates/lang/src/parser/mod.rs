@@ -87,7 +87,7 @@ fn parser<'src>() -> BoxedParser<'src, ast::Program> {
         let span = struct_node.span;
         Spanned::new(ast::Stmt::Struct(struct_node), span)
     });
-    let enum_decl = enum_declaration().map(|enum_node| {
+    let enum_decl = enum_declaration(stmt.clone()).map(|enum_node| {
         let span = enum_node.span;
         Spanned::new(ast::Stmt::Enum(enum_node), span)
     });

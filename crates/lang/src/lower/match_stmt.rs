@@ -545,6 +545,7 @@ fn build_rhs_from_const_value(cv: &ConstValue, span: Span) -> hir::Expr {
             span,
             kind: hir::ExprKind::String(s.clone()),
         },
+        ConstValue::Nil => unreachable!("Nil cannot appear as a const pattern in match"),
     }
 }
 

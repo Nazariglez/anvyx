@@ -13,6 +13,7 @@ pub enum ConstValue {
     Double(f64),
     Bool(bool),
     String(String),
+    Nil,
 }
 
 impl ConstValue {
@@ -23,6 +24,7 @@ impl ConstValue {
             ConstValue::Double(_) => Type::Double,
             ConstValue::Bool(_) => Type::Bool,
             ConstValue::String(_) => Type::String,
+            ConstValue::Nil => unreachable!("Nil is polymorphic; do not call ty() on ConstValue::Nil"),
         }
     }
 }
@@ -189,7 +191,7 @@ pub(super) fn eval_const_expr(
     const_defs: &HashMap<Ident, ConstDef>,
 ) -> Result<ConstValue, TypeErr> {
     match &expr.node.kind {
-        ExprKind::Lit(lit) => eval_lit(lit, expr.span),
+        ExprKind::Lit(lit) => eval_lit(lit),
         ExprKind::Ident(name) => {
             if let Some(def) = const_defs.get(name) {
                 Ok(def.value.clone())
@@ -227,7 +229,7 @@ pub(super) fn eval_const_expr(
     }
 }
 
-fn eval_lit(lit: &Lit, span: Span) -> Result<ConstValue, TypeErr> {
+fn eval_lit(lit: &Lit) -> Result<ConstValue, TypeErr> {
     match lit {
         Lit::Int(n) => Ok(ConstValue::Int(*n)),
         Lit::Float { value, suffix } => match suffix {
@@ -236,7 +238,7 @@ fn eval_lit(lit: &Lit, span: Span) -> Result<ConstValue, TypeErr> {
         },
         Lit::Bool(b) => Ok(ConstValue::Bool(*b)),
         Lit::String(s) => Ok(ConstValue::String(s.clone())),
-        Lit::Nil => Err(TypeErr::new(span, TypeErrKind::NotConstantExpression)),
+        Lit::Nil => Ok(ConstValue::Nil),
     }
 }
 
@@ -362,6 +364,7 @@ fn const_value_to_string(val: &ConstValue) -> String {
         }
         ConstValue::Bool(b) => b.to_string(),
         ConstValue::String(s) => s.clone(),
+        ConstValue::Nil => "None".to_string(),
     }
 }
 

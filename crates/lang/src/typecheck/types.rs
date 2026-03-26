@@ -71,10 +71,40 @@ impl MethodDef {
 }
 
 #[derive(Debug, Clone)]
+pub enum FieldDefault {
+    Const(ConstValue),
+    EmptyArray,
+    EmptyMap,
+}
+
+pub(super) fn type_references_generic(ty: &Type, type_params: &[TypeParam]) -> bool {
+    match ty {
+        Type::Var(id) => type_params.iter().any(|p| p.id == *id),
+        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+            type_references_generic(elem, type_params)
+        }
+        Type::Map { key, value } => {
+            type_references_generic(key, type_params) || type_references_generic(value, type_params)
+        }
+        Type::Tuple(elems) => elems.iter().any(|e| type_references_generic(e, type_params)),
+        Type::NamedTuple(fields) => fields.iter().any(|(_, t)| type_references_generic(t, type_params)),
+        Type::Struct { type_args, .. } | Type::Enum { type_args, .. } => {
+            type_args.iter().any(|a| type_references_generic(a, type_params))
+        }
+        Type::Func { params, ret } => {
+            params.iter().any(|t| type_references_generic(t, type_params))
+                || type_references_generic(ret, type_params)
+        }
+        _ => false,
+    }
+}
+
+#[derive(Debug, Clone)]
 pub(super) struct StructDef {
     pub type_params: Vec<TypeParam>,
     pub fields: Vec<StructField>,
     pub methods: HashMap<Ident, MethodDef>,
+    pub field_defaults: HashMap<Ident, FieldDefault>,
 }
 
 impl StructDef {
@@ -84,6 +114,7 @@ impl StructDef {
             type_params: decl.type_params.clone(),
             fields: decl.fields.clone(),
             methods,
+            field_defaults: HashMap::new(),
         }
     }
 }
@@ -377,6 +408,13 @@ impl TypeChecker {
             .iter()
             .find(|f| f.name == field_name)
             .map(|f| f.ty.clone())
+    }
+
+    pub fn struct_field_default(&self, struct_name: Ident, field_name: Ident) -> Option<&FieldDefault> {
+        self.struct_defs
+            .get(&struct_name)?
+            .field_defaults
+            .get(&field_name)
     }
 
     pub fn struct_to_string_body(&self, name: Ident) -> Option<(&BlockNode, &Type)> {

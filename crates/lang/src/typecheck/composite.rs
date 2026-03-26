@@ -190,16 +190,31 @@ pub(super) fn check_struct_lit(
     }
 
     let provided: Vec<(Ident, Span)> = lit.fields.iter().map(|(n, e)| (*n, e.span)).collect();
+    let has_defaults = !struct_def.field_defaults.is_empty();
     let matched = validate_field_names(
         &provided,
         lit_node.span,
         &struct_def.fields,
-        false,
+        has_defaults,
         |field| TypeErrKind::StructDuplicateField { struct_name, field },
         |field| TypeErrKind::StructUnknownField { struct_name, field },
         |field| TypeErrKind::StructMissingField { struct_name, field },
         errors,
     );
+
+    if has_defaults {
+        let provided_names: HashSet<Ident> = provided.iter().map(|(n, _)| *n).collect();
+        for field in &struct_def.fields {
+            let is_missing = !provided_names.contains(&field.name);
+            let has_default = struct_def.field_defaults.contains_key(&field.name);
+            if is_missing && !has_default {
+                errors.push(TypeErr::new(
+                    lit_node.span,
+                    TypeErrKind::StructMissingField { struct_name, field: field.name },
+                ));
+            }
+        }
+    }
 
     let type_args = constrain_fields_and_extract_type_args(
         &lit.fields,
@@ -247,6 +262,7 @@ fn check_extern_init_lit(
             StructField {
                 name: *name,
                 ty: def.ty.clone(),
+                default: None,
             }
         })
         .collect();

@@ -152,6 +152,20 @@ pub enum TypeErrKind {
         struct_name: Ident,
         field: Ident,
     },
+    FieldDefaultNotConst {
+        struct_name: Ident,
+        field: Ident,
+    },
+    FieldDefaultTypeMismatch {
+        struct_name: Ident,
+        field: Ident,
+        expected: Type,
+        found: Type,
+    },
+    FieldDefaultOnGenericType {
+        struct_name: Ident,
+        field: Ident,
+    },
     UnknownMethod {
         struct_name: Ident,
         method: Ident,

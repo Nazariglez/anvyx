@@ -339,6 +339,18 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("Duplicate field '{field}' in struct literal"),
             format!("field '{field}' is specified more than once in '{struct_name}'"),
         ),
+        TypeErrKind::FieldDefaultNotConst { struct_name, field } => (
+            "default field value must be a constant expression".to_string(),
+            format!("field '{field}' on struct '{struct_name}' has a non-constant default"),
+        ),
+        TypeErrKind::FieldDefaultTypeMismatch { struct_name, field, expected, found } => (
+            format!("default value type mismatch for field '{field}'"),
+            format!("field '{field}' on struct '{struct_name}': expected '{expected}', found '{found}'"),
+        ),
+        TypeErrKind::FieldDefaultOnGenericType { struct_name, field } => (
+            "default values are not allowed on fields with generic types".to_string(),
+            format!("field '{field}' on struct '{struct_name}' has a generic type"),
+        ),
         TypeErrKind::UnknownMethod {
             struct_name,
             method,

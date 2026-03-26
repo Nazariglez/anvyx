@@ -1,8 +1,8 @@
 use crate::ast::{self, ArrayLen, BinaryOp, Ident, Lit, Type, UnaryOp};
-use crate::typecheck::ConstValue;
 use crate::builtin::Builtin;
 use crate::hir;
 use crate::span::Span;
+use crate::typecheck::{ConstValue, FieldDefault};
 use internment::Intern;
 
 use super::{
@@ -40,6 +40,7 @@ pub(super) fn lower_expr(
                     ConstValue::Double(d) => hir::ExprKind::Double(*d),
                     ConstValue::Bool(b) => hir::ExprKind::Bool(*b),
                     ConstValue::String(s) => hir::ExprKind::String(s.clone()),
+                    ConstValue::Nil => hir::ExprKind::Nil,
                 }
             } else {
                 let local_id = *fc
@@ -117,6 +118,7 @@ pub(super) fn lower_expr(
                     ConstValue::Double(d) => hir::ExprKind::Double(*d),
                     ConstValue::Bool(b) => hir::ExprKind::Bool(*b),
                     ConstValue::String(s) => hir::ExprKind::String(s.clone()),
+                    ConstValue::Nil => hir::ExprKind::Nil,
                 }
             } else {
                 return lower_field_expr(field_access, ty, span, ctx, fc, out);
@@ -471,7 +473,10 @@ fn lower_extend_call(
         .shared
         .funcs
         .get(&internal_name)
-        .ok_or(LowerError::UnknownFunc { name: internal_name, span })?;
+        .ok_or(LowerError::UnknownFunc {
+            name: internal_name,
+            span,
+        })?;
 
     let args = match &c.node.func.node.kind {
         ast::ExprKind::Field(field) => {
@@ -494,7 +499,10 @@ fn lower_extend_call(
     Ok(hir::Expr {
         ty,
         span,
-        kind: hir::ExprKind::Call { func: func_id, args },
+        kind: hir::ExprKind::Call {
+            func: func_id,
+            args,
+        },
     })
 }
 
@@ -766,22 +774,57 @@ fn lower_struct_literal_expr(
             span,
             kind: format!("unknown struct '{struct_name}'"),
         })?;
-    // lower fields in declaration order
+    // lower fields in declaration order, synthesizing defaults for omitted fields
     let mut fields = vec![];
     for decl_name in &field_names {
-        let (_, expr) = lit
-            .node
-            .fields
-            .iter()
-            .find(|(name, _)| *name == *decl_name)
-            .expect("typechecker ensures all declared fields are provided");
-        fields.push(lower_expr(expr, ctx, fc, out)?);
+        match lit.node.fields.iter().find(|(name, _)| *name == *decl_name) {
+            Some((_, expr)) => {
+                fields.push(lower_expr(expr, ctx, fc, out)?);
+            }
+            None => {
+                let default = ctx
+                    .shared
+                    .tcx
+                    .struct_field_default(struct_name, *decl_name)
+                    .expect("typechecker ensures omitted fields have defaults");
+                let field_ty = ctx
+                    .shared
+                    .tcx
+                    .struct_field_type(struct_name, *decl_name)
+                    .expect("field type exists");
+                fields.push(synthesize_default_hir_expr(default, &field_ty, span));
+            }
+        }
     }
     Ok(hir::Expr {
         ty,
         span,
         kind: hir::ExprKind::StructLiteral { type_id, fields },
     })
+}
+
+fn synthesize_default_hir_expr(default: &FieldDefault, field_ty: &Type, span: Span) -> hir::Expr {
+    let kind = match default {
+        FieldDefault::Const(cv) => match cv {
+            ConstValue::Int(n) => hir::ExprKind::Int(*n),
+            ConstValue::Float(f) => hir::ExprKind::Float(*f),
+            ConstValue::Double(d) => hir::ExprKind::Double(*d),
+            ConstValue::Bool(b) => hir::ExprKind::Bool(*b),
+            ConstValue::String(s) => hir::ExprKind::String(s.clone()),
+            ConstValue::Nil => hir::ExprKind::Nil,
+        },
+        FieldDefault::EmptyArray => match field_ty {
+            Type::Array { .. } => hir::ExprKind::ArrayLiteral { elements: vec![] },
+            Type::List { .. } => hir::ExprKind::ListLiteral { elements: vec![] },
+            _ => unreachable!("typechecker validated empty array default against field type"),
+        },
+        FieldDefault::EmptyMap => hir::ExprKind::MapLiteral { entries: vec![] },
+    };
+    hir::Expr {
+        ty: field_ty.clone(),
+        span,
+        kind,
+    }
 }
 
 fn lower_field_expr(
@@ -795,7 +838,72 @@ fn lower_field_expr(
     let target = &field_access.node.target;
     let field_name = field_access.node.field;
 
-    // unit enum variant Color.Red (result type is Enum)
+    if let Ok(target_ty) = ctx.expr_type(target.node.id, span) {
+        match target_ty {
+            Type::Struct { name, .. } => {
+                let index = ctx
+                    .shared
+                    .tcx
+                    .struct_field_index(name, field_name)
+                    .ok_or_else(|| LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("unknown field '{field_name}' on struct '{name}'"),
+                    })? as u16;
+                let object = lower_expr(target, ctx, fc, out)?;
+                return Ok(hir::Expr {
+                    ty,
+                    span,
+                    kind: hir::ExprKind::FieldGet {
+                        object: Box::new(object),
+                        index,
+                    },
+                });
+            }
+            Type::NamedTuple(fields) => {
+                let index = fields
+                    .iter()
+                    .position(|(label, _)| *label == field_name)
+                    .ok_or_else(|| LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("unknown field '{field_name}' on named tuple"),
+                    })? as u16;
+                let object = lower_expr(target, ctx, fc, out)?;
+                return Ok(hir::Expr {
+                    ty,
+                    span,
+                    kind: hir::ExprKind::FieldGet {
+                        object: Box::new(object),
+                        index,
+                    },
+                });
+            }
+            Type::Extern { name } => {
+                let qualified = Ident(Intern::new(format!("{name}::__get_{field_name}")));
+                let extern_id = *ctx.shared.externs.get(&qualified).ok_or_else(|| {
+                    LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("unknown extern field getter '{qualified}'"),
+                    }
+                })?;
+                let object = lower_expr(target, ctx, fc, out)?;
+                return Ok(hir::Expr {
+                    ty,
+                    span,
+                    kind: hir::ExprKind::CallExtern {
+                        extern_id,
+                        args: vec![object],
+                    },
+                });
+            }
+            other => {
+                return Err(LowerError::UnsupportedExprKind {
+                    span,
+                    kind: format!("field access on unsupported type '{other}'"),
+                });
+            }
+        }
+    }
+
     if let Type::Enum {
         name: enum_name, ..
     } = &ty
@@ -814,57 +922,8 @@ fn lower_field_expr(
         });
     }
 
-    let target_ty = ctx.expr_type(target.node.id, span)?;
-
-    let index = match &target_ty {
-        Type::Struct { name, .. } => ctx
-            .shared
-            .tcx
-            .struct_field_index(*name, field_name)
-            .ok_or_else(|| LowerError::UnsupportedExprKind {
-                span,
-                kind: format!("unknown field '{field_name}' on struct '{name}'"),
-            })? as u16,
-        Type::NamedTuple(fields) => fields
-            .iter()
-            .position(|(label, _)| *label == field_name)
-            .ok_or_else(|| LowerError::UnsupportedExprKind {
-                span,
-                kind: format!("unknown field '{field_name}' on named tuple"),
-            })? as u16,
-        Type::Extern { name } => {
-            let qualified = Ident(Intern::new(format!("{name}::__get_{field_name}")));
-            let extern_id = *ctx.shared.externs.get(&qualified).ok_or_else(|| {
-                LowerError::UnsupportedExprKind {
-                    span,
-                    kind: format!("unknown extern field getter '{qualified}'"),
-                }
-            })?;
-            let object = lower_expr(target, ctx, fc, out)?;
-            return Ok(hir::Expr {
-                ty,
-                span,
-                kind: hir::ExprKind::CallExtern {
-                    extern_id,
-                    args: vec![object],
-                },
-            });
-        }
-        other => {
-            return Err(LowerError::UnsupportedExprKind {
-                span,
-                kind: format!("field access on unsupported type '{other}'"),
-            });
-        }
-    };
-
-    let object = lower_expr(target, ctx, fc, out)?;
-    Ok(hir::Expr {
-        ty,
+    Err(LowerError::UnsupportedExprKind {
         span,
-        kind: hir::ExprKind::FieldGet {
-            object: Box::new(object),
-            index,
-        },
+        kind: "field access on type with no type information".to_string(),
     })
 }

@@ -21,7 +21,7 @@ mod tests;
 pub use const_eval::ConstValue;
 pub use error::{TypeErr, TypeErrKind};
 pub use infer::subst_type;
-pub use types::{ExternTypeDef, SpecializationKey, TypeChecker};
+pub use types::{ExternTypeDef, FieldDefault, SpecializationKey, TypeChecker};
 
 use crate::ast::{Program, StmtNode, Visibility};
 use crate::builtin::Builtin;

@@ -1,15 +1,17 @@
 use crate::{
-    ast::{BlockNode, Func, FuncNode, Ident, MethodReceiver, Mutability, StructDeclNode, Type},
+    ast::{ArrayLen, BlockNode, ExprKind, Func, FuncNode, Ident, MethodReceiver, Mutability, StructDeclNode, Type},
     span::Span,
 };
 use internment::Intern;
+use std::collections::HashSet;
 
 use super::{
+    const_eval::{ConstValue, eval_const_expr, validate_const_expr},
     constraint::TypeRef,
     error::{TypeErr, TypeErrKind},
     infer::type_from_fn,
     stmt::check_block_expr,
-    types::{MethodContext, MethodDef, StructDef, TypeChecker},
+    types::{FieldDefault, MethodContext, MethodDef, StructDef, TypeChecker, type_references_generic},
 };
 
 pub(super) fn check_body_common(
@@ -238,9 +240,124 @@ pub(super) fn check_struct(
         }
     }
 
-    let Some(struct_def) = type_checker.get_struct(struct_name).cloned() else {
+    let Some(mut struct_def) = type_checker.get_struct(struct_name).cloned() else {
         return;
     };
+
+    let known_consts: HashSet<Ident> = type_checker.const_defs.keys().copied().collect();
+    for field in &decl.fields {
+        let Some(expr) = &field.default else {
+            continue;
+        };
+
+        if type_references_generic(&field.ty, &decl.type_params) {
+            errors.push(TypeErr::new(
+                expr.span,
+                TypeErrKind::FieldDefaultOnGenericType { struct_name, field: field.name },
+            ));
+            continue;
+        }
+
+        let resolved_ty = type_checker.resolve_type(&field.ty);
+
+        if let ExprKind::ArrayLiteral(arr) = &expr.node.kind {
+            if arr.node.elements.is_empty() {
+                let is_array_or_list = matches!(resolved_ty, Type::Array { .. } | Type::List { .. });
+                if !is_array_or_list {
+                    errors.push(TypeErr::new(
+                        expr.span,
+                        TypeErrKind::FieldDefaultTypeMismatch {
+                            struct_name,
+                            field: field.name,
+                            expected: resolved_ty,
+                            found: Type::Array { elem: Type::Infer.boxed(), len: ArrayLen::Fixed(0) },
+                        },
+                    ));
+                } else {
+                    struct_def.field_defaults.insert(field.name, FieldDefault::EmptyArray);
+                }
+                continue;
+            }
+        }
+
+        if let ExprKind::MapLiteral(map) = &expr.node.kind {
+            if map.node.entries.is_empty() {
+                let is_map = matches!(resolved_ty, Type::Map { .. });
+                if !is_map {
+                    errors.push(TypeErr::new(
+                        expr.span,
+                        TypeErrKind::FieldDefaultTypeMismatch {
+                            struct_name,
+                            field: field.name,
+                            expected: resolved_ty,
+                            found: Type::Map {
+                                key: Type::Infer.boxed(),
+                                value: Type::Infer.boxed(),
+                            },
+                        },
+                    ));
+                } else {
+                    struct_def.field_defaults.insert(field.name, FieldDefault::EmptyMap);
+                }
+                continue;
+            }
+        }
+
+        if let Err(_) = validate_const_expr(expr, &known_consts) {
+            errors.push(TypeErr::new(
+                expr.span,
+                TypeErrKind::FieldDefaultNotConst { struct_name, field: field.name },
+            ));
+            continue;
+        }
+
+        let value = match eval_const_expr(expr, &type_checker.const_defs) {
+            Ok(val) => val,
+            Err(_) => {
+                errors.push(TypeErr::new(
+                    expr.span,
+                    TypeErrKind::FieldDefaultNotConst { struct_name, field: field.name },
+                ));
+                continue;
+            }
+        };
+
+        match &value {
+            ConstValue::Nil => {
+                if !resolved_ty.is_option() {
+                    errors.push(TypeErr::new(
+                        expr.span,
+                        TypeErrKind::FieldDefaultTypeMismatch {
+                            struct_name,
+                            field: field.name,
+                            expected: resolved_ty,
+                            found: Type::Void,
+                        },
+                    ));
+                    continue;
+                }
+            }
+            _ => {
+                let value_ty = value.ty();
+                if value_ty != resolved_ty {
+                    errors.push(TypeErr::new(
+                        expr.span,
+                        TypeErrKind::FieldDefaultTypeMismatch {
+                            struct_name,
+                            field: field.name,
+                            expected: resolved_ty,
+                            found: value_ty,
+                        },
+                    ));
+                    continue;
+                }
+            }
+        }
+
+        struct_def.field_defaults.insert(field.name, FieldDefault::Const(value));
+    }
+
+    type_checker.struct_defs.insert(struct_name, struct_def.clone());
 
     let to_string_ident = Ident(Intern::new("to_string".to_string()));
     if let Some(method_def) = struct_def.methods.get(&to_string_ident) {

@@ -410,13 +410,20 @@ pub(super) fn function<'src>(
         .boxed()
 }
 
-fn struct_field<'src>() -> BoxedParser<'src, ast::StructField> {
+fn struct_field<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::StructField> {
     identifier()
         .then_ignore(select! {
             (Token::Colon, _) => (),
         })
         .then(type_ident())
-        .map(|(name, ty)| ast::StructField { name, ty })
+        .then(
+            select! { (Token::Op(Op::Assign), _) => () }
+                .ignore_then(expression(stmt))
+                .or_not(),
+        )
+        .map(|((name, ty), default)| ast::StructField { name, ty, default })
         .labelled("struct field")
         .as_context()
         .boxed()
@@ -550,7 +557,7 @@ pub(super) fn struct_declaration<'src>(
                 (Token::Open(Delimiter::Brace), _) => (),
             }
             .ignore_then(
-                struct_field()
+                struct_field(stmt.clone())
                     .separated_by(select! { (Token::Comma, _) => () })
                     .allow_trailing()
                     .collect::<Vec<_>>(),
@@ -583,7 +590,7 @@ pub(super) fn struct_declaration<'src>(
                         &struct_type_param_map,
                         Some(&self_type),
                     );
-                    ast::StructField { name: f.name, ty }
+                    ast::StructField { name: f.name, ty, default: f.default }
                 })
                 .collect();
 
@@ -656,10 +663,12 @@ fn enum_variant_tuple_payload<'src>() -> BoxedParser<'src, ast::VariantKind> {
         .boxed()
 }
 
-fn enum_variant_struct_payload<'src>() -> BoxedParser<'src, ast::VariantKind> {
+fn enum_variant_struct_payload<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::VariantKind> {
     select! { (Token::Open(Delimiter::Brace), _) => () }
         .ignore_then(
-            struct_field()
+            struct_field(stmt)
                 .separated_by(select! { (Token::Comma, _) => () })
                 .allow_trailing()
                 .collect::<Vec<_>>(),
@@ -669,11 +678,13 @@ fn enum_variant_struct_payload<'src>() -> BoxedParser<'src, ast::VariantKind> {
         .boxed()
 }
 
-fn enum_variant<'src>() -> BoxedParser<'src, ast::EnumVariant> {
+fn enum_variant<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::EnumVariant> {
     identifier()
         .then(choice((
             enum_variant_tuple_payload(),
-            enum_variant_struct_payload(),
+            enum_variant_struct_payload(stmt),
             empty().to(ast::VariantKind::Unit),
         )))
         .map(|(name, kind)| ast::EnumVariant { name, kind })
@@ -682,7 +693,9 @@ fn enum_variant<'src>() -> BoxedParser<'src, ast::EnumVariant> {
         .boxed()
 }
 
-pub(super) fn enum_declaration<'src>() -> BoxedParser<'src, ast::EnumDeclNode> {
+pub(super) fn enum_declaration<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::EnumDeclNode> {
     visibility()
         .then_ignore(select! { (Token::Keyword(Keyword::Enum), _) => () })
         .then(identifier())
@@ -690,7 +703,7 @@ pub(super) fn enum_declaration<'src>() -> BoxedParser<'src, ast::EnumDeclNode> {
         .then(
             select! { (Token::Open(Delimiter::Brace), _) => () }
                 .ignore_then(
-                    enum_variant()
+                    enum_variant(stmt)
                         .separated_by(select! { (Token::Comma, _) => () })
                         .allow_trailing()
                         .collect::<Vec<_>>(),
@@ -721,6 +734,7 @@ pub(super) fn enum_declaration<'src>() -> BoxedParser<'src, ast::EnumDeclNode> {
                                 .map(|f| ast::StructField {
                                     name: f.name,
                                     ty: resolve_type_params(&f.ty, &type_param_map),
+                                    default: None,
                                 })
                                 .collect();
                             ast::VariantKind::Struct(resolved)
