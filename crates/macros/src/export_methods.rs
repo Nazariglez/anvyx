@@ -860,7 +860,10 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                     param_anvyx_types.push(quote! { (#param_name_str, #decl.name) });
                 }
                 ParamMode::ExternRef(info) => {
-                    let ExternTypeInfo { type_ident: ref_type, decl_ident: ref_decl } = info;
+                    let ExternTypeInfo {
+                        type_ident: ref_type,
+                        decl_ident: ref_decl,
+                    } = info;
                     let handle_ident = format_ident!("__handle_{}", i);
                     param_extractions.push(quote! {
                         let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
@@ -882,7 +885,10 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                     });
                 }
                 ParamMode::ExternMutRef(info) => {
-                    let ExternTypeInfo { type_ident: ref_type, decl_ident: ref_decl } = info;
+                    let ExternTypeInfo {
+                        type_ident: ref_type,
+                        decl_ident: ref_decl,
+                    } = info;
                     let handle_ident = format_ident!("__handle_{}", i);
                     param_extractions.push(quote! {
                         let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
@@ -1223,13 +1229,13 @@ fn resolve_self_in_return(output: &ReturnType, type_ident: &syn::Ident) -> Retur
 fn resolve_self_in_type(ty: &Type, type_ident: &syn::Ident) -> Type {
     match ty {
         Type::Path(path) if path.qself.is_none() => {
-            if let Some(ident) = path.path.get_ident() {
-                if ident == "Self" {
-                    return Type::Path(syn::TypePath {
-                        qself: None,
-                        path: type_ident.clone().into(),
-                    });
-                }
+            if let Some(ident) = path.path.get_ident()
+                && ident == "Self"
+            {
+                return Type::Path(syn::TypePath {
+                    qself: None,
+                    path: type_ident.clone().into(),
+                });
             }
             ty.clone()
         }

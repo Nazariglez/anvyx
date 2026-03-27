@@ -6,24 +6,24 @@ use crate::hir;
 use crate::span::Span;
 use crate::typecheck::TypeChecker;
 
-mod helpers;
-mod program;
+mod assign;
 mod block;
 mod expr;
 mod for_loop;
-mod assign;
+mod helpers;
 mod match_stmt;
 mod ownership;
+mod program;
 
-pub use program::lower_program;
 pub use ownership::analyze_ownership;
+pub use program::lower_program;
 
-use helpers::*;
+use assign::lower_assign;
 use block::{lower_block, lower_block_to_target, lower_string_interp};
 use expr::lower_expr;
 use for_loop::lower_for;
-use assign::lower_assign;
-use match_stmt::{lower_match_stmts, lower_if_let, lower_let_else};
+use helpers::*;
+use match_stmt::{lower_if_let, lower_let_else, lower_match_stmts};
 
 #[derive(Debug)]
 pub enum LowerError {
@@ -121,8 +121,12 @@ impl FuncLower {
         while self.scope_log.len() > mark {
             let (name, prev) = self.scope_log.pop().unwrap();
             match prev {
-                Some(old_id) => { self.local_map.insert(name, old_id); }
-                None => { self.local_map.remove(&name); }
+                Some(old_id) => {
+                    self.local_map.insert(name, old_id);
+                }
+                None => {
+                    self.local_map.remove(&name);
+                }
             }
         }
     }
@@ -132,7 +136,6 @@ impl FuncLower {
         self.scope_log.push((name, prev));
     }
 }
-
 
 #[cfg(test)]
 mod tests;

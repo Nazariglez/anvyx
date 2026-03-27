@@ -7,9 +7,7 @@ use syn::{
     parse::{Parse, ParseStream},
 };
 
-use crate::type_map::{
-    ExternTypeInfo, ParamMode, ReturnMode, classify_param, classify_return,
-};
+use crate::type_map::{ExternTypeInfo, ParamMode, ReturnMode, classify_param, classify_return};
 
 struct ExportFnArgs {
     name: Option<String>,
@@ -120,10 +118,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         let handle_ident = format_ident!("__handle_{}", i);
 
         let mode = classify_param(&pat_type.ty).ok_or_else(|| {
-            syn::Error::new_spanned(
-                &pat_type.ty,
-                "unsupported type in #[export_fn]",
-            )
+            syn::Error::new_spanned(&pat_type.ty, "unsupported type in #[export_fn]")
         })?;
 
         match mode {
@@ -176,7 +171,10 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 param_tuples.push(quote! { (#param_name_str, #type_decl_ident.name) });
             }
             ParamMode::ExternRef(info) => {
-                let ExternTypeInfo { type_ident, decl_ident } = info;
+                let ExternTypeInfo {
+                    type_ident,
+                    decl_ident,
+                } = info;
 
                 extractions.push(quote! {
                     let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#i] else {
@@ -198,7 +196,10 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 });
             }
             ParamMode::ExternMutRef(info) => {
-                let ExternTypeInfo { type_ident, decl_ident } = info;
+                let ExternTypeInfo {
+                    type_ident,
+                    decl_ident,
+                } = info;
 
                 extractions.push(quote! {
                     let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#i] else {
@@ -334,34 +335,38 @@ fn build_call_body(
     for group in groups.iter().rev() {
         let type_ident = group.type_ident;
 
-        let borrow_stmts: Vec<TokenStream> = group.params.iter().map(|bp| {
-            let param_name = &bp.param_name;
-            let handle_ident = &bp.handle_ident;
-            let guard_ident = &bp.guard_ident;
-            let param_name_str = param_name.to_string();
+        let borrow_stmts: Vec<TokenStream> = group
+            .params
+            .iter()
+            .map(|bp| {
+                let param_name = &bp.param_name;
+                let handle_ident = &bp.handle_ident;
+                let guard_ident = &bp.guard_ident;
+                let param_name_str = param_name.to_string();
 
-            if bp.is_mut {
-                quote! {
-                    let mut #guard_ident = __borrow.borrow_mut(#handle_ident).map_err(|e| {
-                        anvyx_lang::RuntimeError::new(format!(
-                            "invalid handle for parameter '{}' in extern fn '{}': {}",
-                            #param_name_str, #export_name, e.message
-                        ))
-                    })?;
-                    let #param_name = &mut *#guard_ident;
+                if bp.is_mut {
+                    quote! {
+                        let mut #guard_ident = __borrow.borrow_mut(#handle_ident).map_err(|e| {
+                            anvyx_lang::RuntimeError::new(format!(
+                                "invalid handle for parameter '{}' in extern fn '{}': {}",
+                                #param_name_str, #export_name, e.message
+                            ))
+                        })?;
+                        let #param_name = &mut *#guard_ident;
+                    }
+                } else {
+                    quote! {
+                        let #guard_ident = __borrow.borrow(#handle_ident).map_err(|e| {
+                            anvyx_lang::RuntimeError::new(format!(
+                                "invalid handle for parameter '{}' in extern fn '{}': {}",
+                                #param_name_str, #export_name, e.message
+                            ))
+                        })?;
+                        let #param_name = &*#guard_ident;
+                    }
                 }
-            } else {
-                quote! {
-                    let #guard_ident = __borrow.borrow(#handle_ident).map_err(|e| {
-                        anvyx_lang::RuntimeError::new(format!(
-                            "invalid handle for parameter '{}' in extern fn '{}': {}",
-                            #param_name_str, #export_name, e.message
-                        ))
-                    })?;
-                    let #param_name = &*#guard_ident;
-                }
-            }
-        }).collect();
+            })
+            .collect();
 
         current = quote! {
             <#type_ident as anvyx_lang::AnvyxExternType>::with_store(|__store| {

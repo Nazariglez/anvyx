@@ -1,7 +1,7 @@
-use std::cell::RefCell;
 use super::handle_store::HandleStore;
 use super::managed_rc::ManagedRc;
 use super::value::{ExternHandleData, Value};
+use std::cell::RefCell;
 
 pub trait AnvyxExternType: Sized + 'static {
     const TYPE_NAME: &'static str;

@@ -52,9 +52,9 @@ fn run(cli: Cli) -> Result<(), String> {
             let path = match file {
                 Some(f) => f,
                 None => {
-                    let m = manifest
-                        .as_ref()
-                        .ok_or("No file provided and no anvyx.toml found in the current directory")?;
+                    let m = manifest.as_ref().ok_or(
+                        "No file provided and no anvyx.toml found in the current directory",
+                    )?;
                     PathBuf::from(&m.project.entry)
                 }
             };
@@ -91,9 +91,9 @@ fn run(cli: Cli) -> Result<(), String> {
             let path = match file {
                 Some(f) => f,
                 None => {
-                    let m = manifest
-                        .as_ref()
-                        .ok_or("No file provided and no anvyx.toml found in the current directory")?;
+                    let m = manifest.as_ref().ok_or(
+                        "No file provided and no anvyx.toml found in the current directory",
+                    )?;
                     PathBuf::from(&m.project.entry)
                 }
             };
@@ -123,14 +123,17 @@ fn run(cli: Cli) -> Result<(), String> {
                 progress::status("Checking", &format!("{}...", path.display()));
                 check::cmd(&path)?;
             }
-            progress::status("Finished", &format!("{} checked successfully", path.display()));
+            progress::status(
+                "Finished",
+                &format!("{} checked successfully", path.display()),
+            );
         }
         Command::Init { name } => {
             init::cmd(name.as_deref())?;
         }
         Command::Build => {
-            let manifest = manifest::parse_manifest()?
-                .ok_or("anvyx build requires an anvyx.toml manifest")?;
+            let manifest =
+                manifest::parse_manifest()?.ok_or("anvyx build requires an anvyx.toml manifest")?;
             let cwd = std::env::current_dir()
                 .map_err(|e| format!("Failed to get current directory: {e}"))?;
             let project_name = build::resolve_project_name(&manifest, &cwd);

@@ -8,11 +8,7 @@ pub(crate) enum Builtin {
     AssertMsg,
 }
 
-const ALL: &[Builtin] = &[
-    Builtin::Println,
-    Builtin::Assert,
-    Builtin::AssertMsg,
-];
+const ALL: &[Builtin] = &[Builtin::Println, Builtin::Assert, Builtin::AssertMsg];
 
 impl Builtin {
     pub fn name(&self) -> &'static str {

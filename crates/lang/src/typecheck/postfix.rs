@@ -216,8 +216,6 @@ fn continue_postfix_chain(
     current_ty
 }
 
-
-
 #[allow(clippy::too_many_arguments)]
 fn try_specialize_extend(
     receiver_ty: &Type,
@@ -240,9 +238,15 @@ fn try_specialize_extend(
         type_args: type_args.to_vec(),
     };
 
-    let context_name = format!("extend {}<{}>",
+    let context_name = format!(
+        "extend {}<{}>",
         base_name,
-        type_args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "));
+        type_args
+            .iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
 
     if let Some(cached) = type_checker.extend_spec_cache.get(&cache_key).cloned() {
         report_cached_spec_error(
@@ -254,13 +258,21 @@ fn try_specialize_extend(
             errors,
         );
         let mangled = cache_key.mangle(&template.source_module);
-        type_checker.extend_call_targets.insert(call_node.node.func.node.id, mangled);
+        type_checker
+            .extend_call_targets
+            .insert(call_node.node.func.node.id, mangled);
         let specialized_params: Vec<Type> = {
             let subst = build_subst(&template.type_params, type_args);
-            template.method.node.params.iter().enumerate()
+            template
+                .method
+                .node
+                .params
+                .iter()
+                .enumerate()
                 .map(|(i, p)| {
-                    if i == 0 { receiver_ty.clone() }
-                    else {
+                    if i == 0 {
+                        receiver_ty.clone()
+                    } else {
                         let resolved = resolve_type_param_names(
                             &type_checker.resolve_type(&p.ty),
                             &template.type_params,
@@ -286,14 +298,16 @@ fn try_specialize_extend(
     let method = &template.method.node;
     let type_params = &template.type_params;
 
-    let specialized_params: Vec<Type> = method.params.iter().enumerate()
+    let specialized_params: Vec<Type> = method
+        .params
+        .iter()
+        .enumerate()
         .map(|(i, p)| {
-            if i == 0 { receiver_ty.clone() }
-            else {
-                let resolved = resolve_type_param_names(
-                    &type_checker.resolve_type(&p.ty),
-                    type_params,
-                );
+            if i == 0 {
+                receiver_ty.clone()
+            } else {
+                let resolved =
+                    resolve_type_param_names(&type_checker.resolve_type(&p.ty), type_params);
                 subst_type(&resolved, &subst)
             }
         })
@@ -307,7 +321,10 @@ fn try_specialize_extend(
     let module_scope = if template.source_module.is_empty() {
         None
     } else {
-        type_checker.resolved_module_defs.get(&template.source_module).cloned()
+        type_checker
+            .resolved_module_defs
+            .get(&template.source_module)
+            .cloned()
     };
     if let Some(ref module_def) = module_scope {
         type_checker.push_scope();
@@ -316,13 +333,28 @@ fn try_specialize_extend(
         }
     }
 
-    let body_params: Vec<(Ident, Type, bool)> = method.params.iter()
+    let body_params: Vec<(Ident, Type, bool)> = method
+        .params
+        .iter()
         .zip(specialized_params.iter())
-        .map(|(p, ty)| (p.name, ty.clone(), matches!(p.mutability, Mutability::Mutable)))
+        .map(|(p, ty)| {
+            (
+                p.name,
+                ty.clone(),
+                matches!(p.mutability, Mutability::Mutable),
+            )
+        })
         .collect();
 
     let mut body_errors = vec![];
-    check_body_common(&body_params, &method.body, &specialized_ret, span, type_checker, &mut body_errors);
+    check_body_common(
+        &body_params,
+        &method.body,
+        &specialized_ret,
+        span,
+        type_checker,
+        &mut body_errors,
+    );
 
     if module_scope.is_some() {
         type_checker.pop_scope();
@@ -351,7 +383,9 @@ fn try_specialize_extend(
     );
 
     let mangled = cache_key.mangle(&template.source_module);
-    type_checker.extend_call_targets.insert(call_node.node.func.node.id, mangled);
+    type_checker
+        .extend_call_targets
+        .insert(call_node.node.func.node.id, mangled);
 
     check_call_signature(
         call_node.span,
@@ -430,14 +464,21 @@ fn resolve_extend_method(
     let mut unique: Vec<&ExtendEntry> = vec![];
     let mut seen: Vec<&Vec<String>> = vec![];
     for entry in &entries {
-        if !seen.iter().any(|m| *m == &entry.source_module) {
+        if !seen.contains(&&entry.source_module) {
             seen.push(&entry.source_module);
             unique.push(entry);
         }
     }
 
     match unique.as_slice() {
-        [] => try_resolve_generic_extend(receiver_ty, method_name, call_node, span, type_checker, errors),
+        [] => try_resolve_generic_extend(
+            receiver_ty,
+            method_name,
+            call_node,
+            span,
+            type_checker,
+            errors,
+        ),
         [entry] => Some(check_extend_call(
             &entry.def,
             call_node,
@@ -480,7 +521,7 @@ fn try_resolve_generic_extend(
     let mut unique: Vec<&GenericExtendTemplate> = vec![];
     let mut seen: Vec<&Vec<String>> = vec![];
     for tmpl in &templates {
-        if !seen.iter().any(|m| *m == &tmpl.source_module) {
+        if !seen.contains(&&tmpl.source_module) {
             seen.push(&tmpl.source_module);
             unique.push(tmpl);
         }
@@ -565,7 +606,9 @@ fn handle_method_call_if_applicable(
 
     let detection_ty = unwrap_opt_typ(current_ty);
     let struct_info = match &detection_ty {
-        Type::Struct { name, type_args } | Type::DataRef { name, type_args } => Some((*name, type_args.clone())),
+        Type::Struct { name, type_args } | Type::DataRef { name, type_args } => {
+            Some((*name, type_args.clone()))
+        }
         _ => None,
     };
 
@@ -621,7 +664,7 @@ fn handle_method_call_if_applicable(
                 errors,
             )
         } else if let Some(extend_ret) = resolve_extend_method(
-            &detection_ty,
+            detection_ty,
             method_name,
             call_node,
             field_node.span,
@@ -659,82 +702,82 @@ fn handle_method_call_if_applicable(
         });
     }
 
-    if let Type::Extern { name } = &detection_ty {
-        if let Some(extern_def) = type_checker.get_extern_type(*name).cloned() {
-            let method_name = field_node.node.field;
-            let Some(method) = extern_def.methods.get(&method_name) else {
-                if extern_def.statics.contains_key(&method_name) {
-                    errors.push(TypeErr::new(
-                        call_node.span,
-                        TypeErrKind::StaticMethodOnValue {
-                            struct_name: *name,
-                            method: method_name,
-                        },
-                    ));
-                } else if let Some(extend_ret) = resolve_extend_method(
-                    &detection_ty,
-                    method_name,
-                    call_node,
-                    field_node.span,
-                    type_checker,
-                    errors,
-                ) {
-                    let mut result_ty = extend_ret;
-                    let mut chain_optional = chain_is_optional;
-                    if op_safe || chain_is_optional {
-                        chain_optional = true;
-                        result_ty = Type::option_of(result_ty);
-                    }
-                    return Some(MethodCallOutcome::Handled {
-                        ty: result_ty,
-                        chain_optional,
-                        next_index: index + 2,
-                        call_expr: call_op.expr_id(),
-                        call_span: call_op.span(),
-                    });
-                } else {
-                    errors.push(TypeErr::new(
-                        field_node.span,
-                        TypeErrKind::ExternUnknownMethod {
-                            type_name: *name,
-                            method: method_name,
-                        },
-                    ));
+    if let Type::Extern { name } = &detection_ty
+        && let Some(extern_def) = type_checker.get_extern_type(*name).cloned()
+    {
+        let method_name = field_node.node.field;
+        let Some(method) = extern_def.methods.get(&method_name) else {
+            if extern_def.statics.contains_key(&method_name) {
+                errors.push(TypeErr::new(
+                    call_node.span,
+                    TypeErrKind::StaticMethodOnValue {
+                        struct_name: *name,
+                        method: method_name,
+                    },
+                ));
+            } else if let Some(extend_ret) = resolve_extend_method(
+                detection_ty,
+                method_name,
+                call_node,
+                field_node.span,
+                type_checker,
+                errors,
+            ) {
+                let mut result_ty = extend_ret;
+                let mut chain_optional = chain_is_optional;
+                if op_safe || chain_is_optional {
+                    chain_optional = true;
+                    result_ty = Type::option_of(result_ty);
                 }
                 return Some(MethodCallOutcome::Handled {
-                    ty: Type::Infer,
-                    chain_optional: chain_is_optional || op_safe,
+                    ty: result_ty,
+                    chain_optional,
                     next_index: index + 2,
                     call_expr: call_op.expr_id(),
                     call_span: call_op.span(),
                 });
-            };
-
-            let method_ret = check_extern_instance_method_call(
-                call_node,
-                *name,
-                method_name,
-                method,
-                Some(base),
-                type_checker,
-                errors,
-            );
-
-            let mut result_ty = method_ret;
-            let mut chain_optional = chain_is_optional;
-            if op_safe || chain_is_optional {
-                chain_optional = true;
-                result_ty = Type::option_of(result_ty);
+            } else {
+                errors.push(TypeErr::new(
+                    field_node.span,
+                    TypeErrKind::ExternUnknownMethod {
+                        type_name: *name,
+                        method: method_name,
+                    },
+                ));
             }
-
             return Some(MethodCallOutcome::Handled {
-                ty: result_ty,
-                chain_optional,
+                ty: Type::Infer,
+                chain_optional: chain_is_optional || op_safe,
                 next_index: index + 2,
                 call_expr: call_op.expr_id(),
                 call_span: call_op.span(),
             });
+        };
+
+        let method_ret = check_extern_instance_method_call(
+            call_node,
+            *name,
+            method_name,
+            method,
+            Some(base),
+            type_checker,
+            errors,
+        );
+
+        let mut result_ty = method_ret;
+        let mut chain_optional = chain_is_optional;
+        if op_safe || chain_is_optional {
+            chain_optional = true;
+            result_ty = Type::option_of(result_ty);
         }
+
+        return Some(MethodCallOutcome::Handled {
+            ty: result_ty,
+            chain_optional,
+            next_index: index + 2,
+            call_expr: call_op.expr_id(),
+            call_span: call_op.span(),
+        });
     }
 
     let method_target = field_node.node.target.as_ref();
@@ -759,7 +802,7 @@ fn handle_method_call_if_applicable(
         ),
         Type::Float | Type::Double | Type::Int | Type::Bool | Type::String | Type::Enum { .. } => {
             if let Some(extend_ret) = resolve_extend_method(
-                &detection_ty,
+                detection_ty,
                 method_name,
                 call_node,
                 field_node.span,

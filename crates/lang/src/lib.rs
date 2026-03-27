@@ -14,11 +14,15 @@ pub mod metadata;
 
 pub use anvyx_macros::{export_fn, export_methods, export_type, provider};
 pub use metadata::{
-    ExternDecl, ExternFieldDecl, ExternMethodDecl, ExternOpDecl, ExternOpMeta,
-    ExternStaticMethodDecl, ExternTypeDecl, ExternTypeDeclConst, ExternFuncMeta,
-    ExternProviderMeta, exports_to_json, parse_provider_json,
+    ExternDecl, ExternFieldDecl, ExternFuncMeta, ExternMethodDecl, ExternOpDecl, ExternOpMeta,
+    ExternProviderMeta, ExternStaticMethodDecl, ExternTypeDecl, ExternTypeDeclConst,
+    exports_to_json, parse_provider_json,
 };
-pub use vm::{AnvyxExternType, DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData, ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData, Value, extern_handle};
+pub use vm::{
+    AnvyxExternType, DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData,
+    ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData, Value,
+    extern_handle,
+};
 
 pub mod cycle_collector {
     pub use crate::vm::cycle_collector::{collect_cycles, set_auto_collect};
@@ -342,8 +346,9 @@ mod std_import_tests {
         m.insert(
             "math".to_string(),
             StdModuleSource {
-                anv_source: "extern fn sin(x: float) -> float;\nextern fn cos(x: float) -> float;\n"
-                    .to_string(),
+                anv_source:
+                    "extern fn sin(x: float) -> float;\nextern fn cos(x: float) -> float;\n"
+                        .to_string(),
             },
         );
         m

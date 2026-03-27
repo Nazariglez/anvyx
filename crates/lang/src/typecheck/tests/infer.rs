@@ -198,7 +198,12 @@ fn test_subst_type_list() {
         elem: Box::new(type_var(0)),
     };
     let result = subst_type(&list_t, &subst);
-    assert_eq!(result, Type::List { elem: Box::new(Type::Int) });
+    assert_eq!(
+        result,
+        Type::List {
+            elem: Box::new(Type::Int)
+        }
+    );
 }
 
 #[test]
@@ -232,5 +237,10 @@ fn test_subst_type_array_view() {
         elem: Box::new(type_var(0)),
     };
     let result = subst_type(&view_t, &subst);
-    assert_eq!(result, Type::ArrayView { elem: Box::new(Type::Int) });
+    assert_eq!(
+        result,
+        Type::ArrayView {
+            elem: Box::new(Type::Int)
+        }
+    );
 }

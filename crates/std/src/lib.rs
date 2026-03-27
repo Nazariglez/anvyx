@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anvyx_lang::{ExternDecl, ExternTypeDecl, ExternHandler};
+use anvyx_lang::{ExternDecl, ExternHandler, ExternTypeDecl};
 
 pub struct StdModule {
     pub name: &'static str,
@@ -89,9 +89,8 @@ impl StdModule {
                         "Neg" => "-",
                         other => panic!("unknown operator: {other}"),
                     };
-                    let as_self = |s: &'static str| -> &'static str {
-                        if s == ty.name { "Self" } else { s }
-                    };
+                    let as_self =
+                        |s: &'static str| -> &'static str { if s == ty.name { "Self" } else { s } };
                     let ret_str = as_self(op.ret);
                     match (op.rhs, op.lhs) {
                         (None, None) => {
@@ -156,7 +155,12 @@ impl StdModule {
 }
 
 pub fn std_modules() -> Vec<StdModule> {
-    vec![math::module(), maps::module(), linalg::module(), mem::module()]
+    vec![
+        math::module(),
+        maps::module(),
+        linalg::module(),
+        mem::module(),
+    ]
 }
 
 mod linalg;

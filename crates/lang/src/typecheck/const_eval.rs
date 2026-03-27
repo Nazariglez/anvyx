@@ -1,10 +1,16 @@
 use crate::{
-    ast::{BinaryOp, ConstDeclNode, ExprKind, ExprNode, FloatSuffix, Ident, ImportKind, Lit, Stmt, StmtNode, StringPart, Type, UnaryOp, Visibility},
+    ast::{
+        BinaryOp, ConstDeclNode, ExprKind, ExprNode, FloatSuffix, Ident, ImportKind, Lit, Stmt,
+        StmtNode, StringPart, Type, UnaryOp, Visibility,
+    },
     span::Span,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use super::{error::{TypeErr, TypeErrKind}, types::ModuleDef};
+use super::{
+    error::{TypeErr, TypeErrKind},
+    types::ModuleDef,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstValue {
@@ -24,7 +30,9 @@ impl ConstValue {
             ConstValue::Double(_) => Type::Double,
             ConstValue::Bool(_) => Type::Bool,
             ConstValue::String(_) => Type::String,
-            ConstValue::Nil => unreachable!("Nil is polymorphic; do not call ty() on ConstValue::Nil"),
+            ConstValue::Nil => {
+                unreachable!("Nil is polymorphic; do not call ty() on ConstValue::Nil")
+            }
         }
     }
 }
@@ -60,7 +68,10 @@ pub(super) fn build_const_dependency_graph(
     for (i, decl) in decls.iter().enumerate() {
         let name = decl.node.name;
         if name_to_idx.contains_key(&name) {
-            return Err(TypeErr::new(decl.span, TypeErrKind::DuplicateConst { name }));
+            return Err(TypeErr::new(
+                decl.span,
+                TypeErrKind::DuplicateConst { name },
+            ));
         }
         name_to_idx.insert(name, i);
     }
@@ -109,7 +120,9 @@ pub(super) fn build_const_dependency_graph(
         let decl = decls[cycle_node];
         return Err(TypeErr::new(
             decl.span,
-            TypeErrKind::CircularConstDependency { name: decl.node.name },
+            TypeErrKind::CircularConstDependency {
+                name: decl.node.name,
+            },
         ));
     }
 
@@ -455,17 +468,17 @@ pub(super) fn evaluate_and_export_consts(
         };
 
         let value_ty = const_value.ty();
-        if let Some(ann_ty) = &decl.node.ty {
-            if *ann_ty != value_ty {
-                errors.push(TypeErr::new(
-                    decl.span,
-                    TypeErrKind::ConstTypeMismatch {
-                        expected: ann_ty.clone(),
-                        got: value_ty,
-                    },
-                ));
-                continue;
-            }
+        if let Some(ann_ty) = &decl.node.ty
+            && *ann_ty != value_ty
+        {
+            errors.push(TypeErr::new(
+                decl.span,
+                TypeErrKind::ConstTypeMismatch {
+                    expected: ann_ty.clone(),
+                    got: value_ty,
+                },
+            ));
+            continue;
         }
 
         let final_ty = decl.node.ty.clone().unwrap_or_else(|| const_value.ty());

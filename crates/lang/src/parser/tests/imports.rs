@@ -139,9 +139,7 @@ fn import_wildcard_parses() {
 
 #[test]
 fn multiple_imports_parse() {
-    let prog = parse_program(
-        "import foo;\nimport bar.baz;\nimport qux { * };\nfn main() {}",
-    );
+    let prog = parse_program("import foo;\nimport bar.baz;\nimport qux { * };\nfn main() {}");
     assert_eq!(prog.stmts.len(), 4);
     assert!(matches!(prog.stmts[0].node, ast::Stmt::Import(_)));
     assert!(matches!(prog.stmts[1].node, ast::Stmt::Import(_)));

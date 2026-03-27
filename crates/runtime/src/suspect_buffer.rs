@@ -13,9 +13,9 @@ pub struct SuspectEntry {
 }
 
 thread_local! {
-    pub(crate) static SUSPECT_BUFFER: RefCell<Vec<SuspectEntry>> = RefCell::new(vec![]);
-    static AUTO_COLLECT_ENABLED: Cell<bool> = Cell::new(true);
-    static COLLECT_THRESHOLD: Cell<usize> = Cell::new(DEFAULT_THRESHOLD);
+    pub(crate) static SUSPECT_BUFFER: RefCell<Vec<SuspectEntry>> = const { RefCell::new(vec![]) };
+    static AUTO_COLLECT_ENABLED: Cell<bool> = const { Cell::new(true) };
+    static COLLECT_THRESHOLD: Cell<usize> = const { Cell::new(DEFAULT_THRESHOLD) };
 }
 
 pub fn set_auto_collect(enabled: bool) {

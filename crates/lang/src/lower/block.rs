@@ -4,9 +4,8 @@ use crate::span::Span;
 use internment::Intern;
 
 use super::{
-    FuncLower, LowerCtx, LowerError,
-    alloc_and_bind, lower_assign, lower_expr, lower_for, lower_if_let, lower_let_else,
-    lower_match_stmts, register_named_local,
+    FuncLower, LowerCtx, LowerError, alloc_and_bind, lower_assign, lower_expr, lower_for,
+    lower_if_let, lower_let_else, lower_match_stmts, register_named_local,
 };
 
 pub(super) fn lower_block(
@@ -188,12 +187,15 @@ fn lower_stmt(
                                 let qualified = Ident(Intern::new(format!(
                                     "{extern_name}::__get_{field_name}"
                                 )));
-                                let extern_id = *ctx.shared.externs.get(&qualified).ok_or_else(|| {
-                                    LowerError::UnsupportedExprKind {
-                                        span,
-                                        kind: format!("unknown extern field getter '{qualified}'"),
-                                    }
-                                })?;
+                                let extern_id =
+                                    *ctx.shared.externs.get(&qualified).ok_or_else(|| {
+                                        LowerError::UnsupportedExprKind {
+                                            span,
+                                            kind: format!(
+                                                "unknown extern field getter '{qualified}'"
+                                            ),
+                                        }
+                                    })?;
 
                                 let field_ty = ctx
                                     .shared
@@ -351,7 +353,10 @@ pub(super) fn lower_block_to_target(
         let expr = lower_expr(tail_expr, ctx, fc, &mut stmts)?;
         stmts.push(hir::Stmt {
             span: tail_expr.span,
-            kind: hir::StmtKind::Assign { local: target, value: expr },
+            kind: hir::StmtKind::Assign {
+                local: target,
+                value: expr,
+            },
         });
     }
 
@@ -379,7 +384,11 @@ pub(super) fn lower_string_interp(
                 if lowered.ty == Type::String {
                     lowered
                 } else {
-                    hir::Expr::new(Type::String, span, hir::ExprKind::ToString(Box::new(lowered)))
+                    hir::Expr::new(
+                        Type::String,
+                        span,
+                        hir::ExprKind::ToString(Box::new(lowered)),
+                    )
                 }
             }
         };

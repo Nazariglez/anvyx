@@ -210,7 +210,10 @@ pub(super) fn check_struct_lit(
             if is_missing && !has_default {
                 errors.push(TypeErr::new(
                     lit_node.span,
-                    TypeErrKind::StructMissingField { struct_name, field: field.name },
+                    TypeErrKind::StructMissingField {
+                        struct_name,
+                        field: field.name,
+                    },
                 ));
             }
         }

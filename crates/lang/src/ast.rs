@@ -327,9 +327,7 @@ impl Type {
             Type::NamedTuple(fields) => fields.iter().any(|(_, ty)| ty.contains_any()),
             Type::Struct { type_args, .. }
             | Type::DataRef { type_args, .. }
-            | Type::Enum { type_args, .. } => {
-                type_args.iter().any(|a| a.contains_any())
-            }
+            | Type::Enum { type_args, .. } => type_args.iter().any(|a| a.contains_any()),
             _ => false,
         }
     }
@@ -407,11 +405,11 @@ impl Display for Type {
                 }
             }
             Type::Enum { name, type_args } => {
-                if name.0.as_ref() == OPTION_ENUM_NAME {
-                    if let Some(inner) = type_args.first() {
-                        write!(f, "{inner}?")?;
-                        return Ok(());
-                    }
+                if name.0.as_ref() == OPTION_ENUM_NAME
+                    && let Some(inner) = type_args.first()
+                {
+                    write!(f, "{inner}?")?;
+                    return Ok(());
                 }
                 if type_args.is_empty() {
                     write!(f, "{name}")

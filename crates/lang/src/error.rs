@@ -143,7 +143,9 @@ pub fn report_import_errors(
                     None,
                 );
             }
-            ImportError::ParseError { file_path: imported_path } => {
+            ImportError::ParseError {
+                file_path: imported_path,
+            } => {
                 emit_report(
                     src,
                     file_path,

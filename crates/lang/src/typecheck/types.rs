@@ -89,11 +89,17 @@ pub(super) fn type_references_generic(ty: &Type, type_params: &[TypeParam]) -> b
         Type::Map { key, value } => {
             type_references_generic(key, type_params) || type_references_generic(value, type_params)
         }
-        Type::Tuple(elems) => elems.iter().any(|e| type_references_generic(e, type_params)),
-        Type::NamedTuple(fields) => fields.iter().any(|(_, t)| type_references_generic(t, type_params)),
-        Type::Struct { type_args, .. } | Type::Enum { type_args, .. } | Type::DataRef { type_args, .. } => {
-            type_args.iter().any(|a| type_references_generic(a, type_params))
-        }
+        Type::Tuple(elems) => elems
+            .iter()
+            .any(|e| type_references_generic(e, type_params)),
+        Type::NamedTuple(fields) => fields
+            .iter()
+            .any(|(_, t)| type_references_generic(t, type_params)),
+        Type::Struct { type_args, .. }
+        | Type::Enum { type_args, .. }
+        | Type::DataRef { type_args, .. } => type_args
+            .iter()
+            .any(|a| type_references_generic(a, type_params)),
         Type::Func { params, ret } => {
             params
                 .iter()
@@ -223,7 +229,10 @@ impl ExtendSpecKey {
             .collect::<Vec<_>>()
             .join(", ");
         let type_str = format!("{}<{}>", self.base_name, args_str);
-        let name = format!("__extend::{}::{}::{}", module_part, type_str, self.method_name);
+        let name = format!(
+            "__extend::{}::{}::{}",
+            module_part, type_str, self.method_name
+        );
         Ident(Intern::new(name))
     }
 }
@@ -751,7 +760,11 @@ impl TypeChecker {
         &self.extend_spec_cache
     }
 
-    pub fn get_generic_extend_template(&self, base_name: Ident, method_name: Ident) -> Option<&GenericExtendTemplate> {
+    pub fn get_generic_extend_template(
+        &self,
+        base_name: Ident,
+        method_name: Ident,
+    ) -> Option<&GenericExtendTemplate> {
         self.generic_extend_templates
             .get(&(base_name, method_name))
             .and_then(|v| v.first())

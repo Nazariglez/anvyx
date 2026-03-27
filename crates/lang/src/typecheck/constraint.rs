@@ -3,11 +3,7 @@ use crate::{
     span::Span,
 };
 
-use super::{
-    error::TypeErr,
-    types::TypeChecker,
-    unify::unify_equal,
-};
+use super::{error::TypeErr, types::TypeChecker, unify::unify_equal};
 
 #[derive(Debug, Clone)]
 pub(super) enum TypeRef {

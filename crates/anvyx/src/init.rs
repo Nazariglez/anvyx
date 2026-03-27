@@ -31,16 +31,13 @@ pub fn cmd(name: Option<&str>) -> Result<(), String> {
             return Err(format!("directory '{}' is not empty", target_dir.display()));
         }
     } else {
-        fs::create_dir_all(&target_dir)
-            .map_err(|e| format!("Failed to create directory: {e}"))?;
+        fs::create_dir_all(&target_dir).map_err(|e| format!("Failed to create directory: {e}"))?;
     }
 
     let src_dir = target_dir.join("src");
     fs::create_dir_all(&src_dir).map_err(|e| format!("Failed to create src/ directory: {e}"))?;
 
-    let manifest = format!(
-        "[project]\nname = \"{project_name}\"\nentry = \"src/main.anv\"\n"
-    );
+    let manifest = format!("[project]\nname = \"{project_name}\"\nentry = \"src/main.anv\"\n");
     fs::write(target_dir.join("anvyx.toml"), manifest)
         .map_err(|e| format!("Failed to write anvyx.toml: {e}"))?;
 

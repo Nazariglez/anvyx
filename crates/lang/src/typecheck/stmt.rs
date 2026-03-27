@@ -129,17 +129,17 @@ fn process_const_decl(
     };
 
     let value_ty = const_value.ty();
-    if let Some(ref ann_ty) = annotated_ty {
-        if *ann_ty != value_ty {
-            errors.push(TypeErr::new(
-                decl.span,
-                TypeErrKind::ConstTypeMismatch {
-                    expected: ann_ty.clone(),
-                    got: value_ty,
-                },
-            ));
-            return;
-        }
+    if let Some(ref ann_ty) = annotated_ty
+        && *ann_ty != value_ty
+    {
+        errors.push(TypeErr::new(
+            decl.span,
+            TypeErrKind::ConstTypeMismatch {
+                expected: ann_ty.clone(),
+                got: value_ty,
+            },
+        ));
+        return;
     }
 
     let final_ty = annotated_ty.unwrap_or_else(|| const_value.ty());
@@ -1147,17 +1147,17 @@ pub(super) fn check_stmt(
             };
 
             let value_ty = const_value.ty();
-            if let Some(ref ann_ty) = annotated_ty {
-                if *ann_ty != value_ty {
-                    errors.push(TypeErr::new(
-                        decl.span,
-                        TypeErrKind::ConstTypeMismatch {
-                            expected: ann_ty.clone(),
-                            got: value_ty,
-                        },
-                    ));
-                    return;
-                }
+            if let Some(ref ann_ty) = annotated_ty
+                && *ann_ty != value_ty
+            {
+                errors.push(TypeErr::new(
+                    decl.span,
+                    TypeErrKind::ConstTypeMismatch {
+                        expected: ann_ty.clone(),
+                        got: value_ty,
+                    },
+                ));
+                return;
             }
 
             let final_ty = annotated_ty.unwrap_or_else(|| const_value.ty());

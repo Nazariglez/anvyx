@@ -1,9 +1,9 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
+    Path, Token,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
-    Path, Token,
 };
 
 struct ProviderArgs {
@@ -24,8 +24,7 @@ impl Parse for ProviderArgs {
                 let _colon: Token![:] = input.parse()?;
                 let content;
                 syn::bracketed!(content in input);
-                let types: Punctuated<Path, Token![,]> =
-                    Punctuated::parse_terminated(&content)?;
+                let types: Punctuated<Path, Token![,]> = Punctuated::parse_terminated(&content)?;
                 type_paths = types.into_iter().collect();
                 if !input.is_empty() {
                     let _comma: Token![,] = input.parse()?;
@@ -34,7 +33,10 @@ impl Parse for ProviderArgs {
         }
 
         let fn_paths = Punctuated::parse_terminated(input)?;
-        Ok(Self { type_paths, fn_paths })
+        Ok(Self {
+            type_paths,
+            fn_paths,
+        })
     }
 }
 
@@ -63,10 +65,7 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
         let decl_ident = format_ident!("__ANVYX_DECL_{}", decl_upper);
 
         let (companion_call, decl_ref) = if segments.len() == 1 {
-            (
-                quote! { #companion_ident() },
-                quote! { #decl_ident },
-            )
+            (quote! { #companion_ident() }, quote! { #decl_ident })
         } else {
             let prefix: Vec<_> = segments.iter().take(segments.len() - 1).collect();
             (

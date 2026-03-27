@@ -3,8 +3,8 @@ use crate::hir;
 use crate::span::Span;
 
 use super::{
-    FuncLower, LowerCtx, LowerError,
-    alloc_and_bind, emit_counter_increment, lower_block, lower_expr, register_named_local,
+    FuncLower, LowerCtx, LowerError, alloc_and_bind, emit_counter_increment, lower_block,
+    lower_expr, register_named_local,
 };
 
 enum IterableKind {
@@ -232,14 +232,16 @@ fn lower_for_seq_body(
 ) -> Result<Vec<hir::Stmt>, LowerError> {
     let mut body_stmts = vec![];
 
-    let index_get_expr = || hir::Expr::new(
-        elem_ty.clone(),
-        span,
-        hir::ExprKind::IndexGet {
-            target: Box::new(hir::Expr::local(xs_ty.clone(), span, xs_local)),
-            index: Box::new(hir::Expr::local(Type::Int, span, i_local)),
-        },
-    );
+    let index_get_expr = || {
+        hir::Expr::new(
+            elem_ty.clone(),
+            span,
+            hir::ExprKind::IndexGet {
+                target: Box::new(hir::Expr::local(xs_ty.clone(), span, xs_local)),
+                index: Box::new(hir::Expr::local(Type::Int, span, i_local)),
+            },
+        )
+    };
 
     match &for_node.node.pattern.node {
         Pattern::Ident(name) => {
@@ -394,14 +396,16 @@ fn lower_for_map_body(
 ) -> Result<Vec<hir::Stmt>, LowerError> {
     let mut body_stmts = vec![];
 
-    let entry_at_expr = || hir::Expr::new(
-        entry_ty.clone(),
-        span,
-        hir::ExprKind::MapEntryAt {
-            map: Box::new(hir::Expr::local(m_ty.clone(), span, m_local)),
-            index: Box::new(hir::Expr::local(Type::Int, span, i_local)),
-        },
-    );
+    let entry_at_expr = || {
+        hir::Expr::new(
+            entry_ty.clone(),
+            span,
+            hir::ExprKind::MapEntryAt {
+                map: Box::new(hir::Expr::local(m_ty.clone(), span, m_local)),
+                index: Box::new(hir::Expr::local(Type::Int, span, i_local)),
+            },
+        )
+    };
 
     match &for_node.node.pattern.node {
         Pattern::Ident(name) => {

@@ -15,9 +15,9 @@ pub(super) fn contains_infer(ty: &Type) -> bool {
         Type::Func { params, ret } => params.iter().any(contains_infer) || contains_infer(ret),
         Type::Tuple(elems) => elems.iter().any(contains_infer),
         Type::NamedTuple(fields) => fields.iter().any(|(_, t)| contains_infer(t)),
-        Type::Struct { type_args, .. } | Type::Enum { type_args, .. } | Type::DataRef { type_args, .. } => {
-            type_args.iter().any(contains_infer)
-        }
+        Type::Struct { type_args, .. }
+        | Type::Enum { type_args, .. }
+        | Type::DataRef { type_args, .. } => type_args.iter().any(contains_infer),
         Type::Array { elem, .. } => contains_infer(elem),
         Type::ArrayView { elem } => contains_infer(elem),
         Type::List { elem } => contains_infer(elem),

@@ -1,4 +1,4 @@
-use anvyx_lang::{MapStorage, ManagedRc, Value, export_fn, provider};
+use anvyx_lang::{ManagedRc, MapStorage, Value, export_fn, provider};
 
 use super::StdModule;
 

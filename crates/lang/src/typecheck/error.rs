@@ -363,15 +363,31 @@ pub enum TypeErrKind {
     LetElseIrrefutable,
 
     NotConstantExpression,
-    CircularConstDependency { name: Ident },
+    CircularConstDependency {
+        name: Ident,
+    },
     ConstDivisionByZero,
     ConstIntegerOverflow,
-    ConstTypeMismatch { expected: Type, got: Type },
-    ConstAssignment { name: Ident },
-    DuplicateConst { name: Ident },
-    DuplicateTypeDefinition { name: Ident },
-    ImportNameConflict { name: Ident, existing: &'static str },
-    ModuleBindingConflict { name: Ident },
+    ConstTypeMismatch {
+        expected: Type,
+        got: Type,
+    },
+    ConstAssignment {
+        name: Ident,
+    },
+    DuplicateConst {
+        name: Ident,
+    },
+    DuplicateTypeDefinition {
+        name: Ident,
+    },
+    ImportNameConflict {
+        name: Ident,
+        existing: &'static str,
+    },
+    ModuleBindingConflict {
+        name: Ident,
+    },
 
     AmbiguousExtendMethod {
         ty: Type,

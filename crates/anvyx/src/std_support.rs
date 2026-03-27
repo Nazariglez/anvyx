@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use anvyx_lang::{ExternHandler, StdModuleSource};
 
-pub fn collect_std() -> (HashMap<String, StdModuleSource>, HashMap<String, ExternHandler>) {
+pub fn collect_std() -> (
+    HashMap<String, StdModuleSource>,
+    HashMap<String, ExternHandler>,
+) {
     let modules = anvyx_std::std_modules();
     let mut sources = HashMap::new();
     let mut handlers = HashMap::new();

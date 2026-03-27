@@ -2140,10 +2140,8 @@ mod op_tests {
 
     #[test]
     fn op_add_handler_works() {
-        let id_a =
-            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 1.0, y: 2.0 }));
-        let id_b =
-            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 3.0, y: 4.0 }));
+        let id_a = __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 1.0, y: 2.0 }));
+        let id_b = __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 3.0, y: 4.0 }));
         let (_, handler) = __anvyx_method_OpVec2___op_add__Vec2();
         let result = handler(vec![extern_handle(id_a), extern_handle(id_b)]).unwrap();
         let Value::ExternHandle(new_handle) = result else {
@@ -2163,10 +2161,8 @@ mod op_tests {
 
     #[test]
     fn op_sub_handler_works() {
-        let id_a =
-            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 5.0, y: 7.0 }));
-        let id_b =
-            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 2.0, y: 3.0 }));
+        let id_a = __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 5.0, y: 7.0 }));
+        let id_b = __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 2.0, y: 3.0 }));
         let (_, handler) = __anvyx_method_OpVec2___op_sub__Vec2();
         let result = handler(vec![extern_handle(id_a), extern_handle(id_b)]).unwrap();
         let Value::ExternHandle(new_handle) = result else {
@@ -2192,8 +2188,7 @@ mod op_tests {
 
     #[test]
     fn op_mul_scalar_handler_works() {
-        let id =
-            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 2.0, y: 3.0 }));
+        let id = __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 2.0, y: 3.0 }));
         let (_, handler) = __anvyx_method_OpVec2___op_mul__float();
         let result = handler(vec![extern_handle(id), Value::Float(2.0)]).unwrap();
         let Value::ExternHandle(new_handle) = result else {
@@ -2218,8 +2213,7 @@ mod op_tests {
 
     #[test]
     fn op_scalar_mul_handler_swaps_args() {
-        let id =
-            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 2.0, y: 3.0 }));
+        let id = __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 2.0, y: 3.0 }));
         let (_, handler) = __anvyx_method_OpVec2___op_rmul__float();
         // right-dispatch: float first, Vec2 handle second
         let result = handler(vec![Value::Float(2.0), extern_handle(id)]).unwrap();
@@ -2245,8 +2239,7 @@ mod op_tests {
 
     #[test]
     fn op_neg_handler_works() {
-        let id =
-            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 1.0, y: -2.0 }));
+        let id = __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 1.0, y: -2.0 }));
         let (_, handler) = __anvyx_method_OpVec2___op_neg();
         let result = handler(vec![extern_handle(id)]).unwrap();
         let Value::ExternHandle(new_handle) = result else {
@@ -2271,12 +2264,9 @@ mod op_tests {
 
     #[test]
     fn op_eq_handler_returns_bool() {
-        let id_a =
-            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 1.0, y: 2.0 }));
-        let id_b =
-            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 1.0, y: 2.0 }));
-        let id_c =
-            __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 9.0, y: 9.0 }));
+        let id_a = __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 1.0, y: 2.0 }));
+        let id_b = __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 1.0, y: 2.0 }));
+        let id_c = __ANVYX_STORE_OPVEC2.with(|s| s.borrow_mut().insert(OpVec2 { x: 9.0, y: 9.0 }));
         let (_, handler) = __anvyx_method_OpVec2___op_eq__Vec2();
         let result_eq = handler(vec![extern_handle(id_a), extern_handle(id_b)]).unwrap();
         assert_eq!(result_eq, Value::Bool(true));
@@ -2320,7 +2310,10 @@ mod op_tests {
     fn op_metadata_binary_right_dispatch() {
         let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
         // float * Self
-        let rmul = ops.iter().find(|o| o.op == "Mul" && o.lhs.is_some()).unwrap();
+        let rmul = ops
+            .iter()
+            .find(|o| o.op == "Mul" && o.lhs.is_some())
+            .unwrap();
         assert!(rmul.rhs.is_none());
         assert_eq!(rmul.lhs, Some("float"));
         assert_eq!(rmul.ret, "Vec2");
@@ -2330,7 +2323,10 @@ mod op_tests {
     fn op_metadata_binary_left_float() {
         let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
         // Self * float
-        let mul = ops.iter().find(|o| o.op == "Mul" && o.rhs.is_some()).unwrap();
+        let mul = ops
+            .iter()
+            .find(|o| o.op == "Mul" && o.rhs.is_some())
+            .unwrap();
         assert_eq!(mul.rhs, Some("float"));
         assert!(mul.lhs.is_none());
     }

@@ -1,6 +1,6 @@
 use super::helpers::{
-    assert_expr_type, block_expr, expr_stmt, fn_decl, get_expr_id, ident_expr, let_binding, lit_int,
-    program, reset_expr_ids, run_err, run_ok,
+    assert_expr_type, block_expr, expr_stmt, fn_decl, get_expr_id, ident_expr, let_binding,
+    lit_int, program, reset_expr_ids, run_err, run_ok,
 };
 use crate::ast::Type;
 use crate::typecheck::error::TypeErrKind;

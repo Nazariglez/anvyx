@@ -134,7 +134,13 @@ pub(super) fn block_stmt<'src>(
     })
     .map_with(|(stmts, tail), e| {
         let s = e.span();
-        Spanned::new(ast::Block { stmts, tail: tail.map(Box::new) }, Span::new(s.start, s.end))
+        Spanned::new(
+            ast::Block {
+                stmts,
+                tail: tail.map(Box::new),
+            },
+            Span::new(s.start, s.end),
+        )
     })
     .labelled("block")
     .as_context()

@@ -95,20 +95,18 @@ pub fn classify_param(ty: &Type) -> Option<ParamMode> {
     }
 
     if let Type::Reference(ref_type) = ty {
-        if let Type::Path(path) = &*ref_type.elem {
-            if path.qself.is_none() {
-                if let Some(ident) = path.path.get_ident() {
-                    if map_type(&ref_type.elem).is_none() && !is_value_passthrough(&ref_type.elem)
-                    {
-                        let info = extern_type_info(ident);
-                        return Some(if ref_type.mutability.is_some() {
-                            ParamMode::ExternMutRef(info)
-                        } else {
-                            ParamMode::ExternRef(info)
-                        });
-                    }
-                }
-            }
+        if let Type::Path(path) = &*ref_type.elem
+            && path.qself.is_none()
+            && let Some(ident) = path.path.get_ident()
+            && map_type(&ref_type.elem).is_none()
+            && !is_value_passthrough(&ref_type.elem)
+        {
+            let info = extern_type_info(ident);
+            return Some(if ref_type.mutability.is_some() {
+                ParamMode::ExternMutRef(info)
+            } else {
+                ParamMode::ExternRef(info)
+            });
         }
         return None;
     }
@@ -117,12 +115,11 @@ pub fn classify_param(ty: &Type) -> Option<ParamMode> {
         return Some(ParamMode::Primitive(mapping));
     }
 
-    if let Type::Path(path) = ty {
-        if path.qself.is_none() {
-            if let Some(ident) = path.path.get_ident() {
-                return Some(ParamMode::ExternOwned(extern_type_info(ident)));
-            }
-        }
+    if let Type::Path(path) = ty
+        && path.qself.is_none()
+        && let Some(ident) = path.path.get_ident()
+    {
+        return Some(ParamMode::ExternOwned(extern_type_info(ident)));
     }
 
     None
@@ -142,12 +139,11 @@ pub fn classify_return(output: &ReturnType) -> Option<ReturnMode> {
             if let Some(mapping) = map_type(ty) {
                 return Some(ReturnMode::Primitive(mapping));
             }
-            if let Type::Path(path) = ty.as_ref() {
-                if path.qself.is_none() {
-                    if let Some(ident) = path.path.get_ident() {
-                        return Some(ReturnMode::ExternOwned(extern_type_info(ident)));
-                    }
-                }
+            if let Type::Path(path) = ty.as_ref()
+                && path.qself.is_none()
+                && let Some(ident) = path.path.get_ident()
+            {
+                return Some(ReturnMode::ExternOwned(extern_type_info(ident)));
             }
             None
         }

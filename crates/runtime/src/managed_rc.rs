@@ -7,8 +7,8 @@ use std::ops::Deref;
 use std::ptr::NonNull;
 
 thread_local! {
-    static RC_INC_COUNT: Cell<u64> = Cell::new(0);
-    static RC_DEC_COUNT: Cell<u64> = Cell::new(0);
+    static RC_INC_COUNT: Cell<u64> = const { Cell::new(0) };
+    static RC_DEC_COUNT: Cell<u64> = const { Cell::new(0) };
     static MANAGED_ALLOC_COUNTS: RefCell<HashMap<usize, u64>> = RefCell::new(HashMap::new());
 }
 
@@ -273,13 +273,13 @@ impl<T> Drop for ManagedRc<T> {
                 // SAFETY: last handle; Box reconstructs and frees exactly once.
                 unsafe { drop(Box::from_raw(self.ptr.as_ptr())) }
             }
-        } else if let Some(vt) = header.cycle_vtable {
-            if vt.buffer_on_decrement {
-                header.color.set(CycleColor::Purple);
-                if !header.buffered.get() {
-                    header.buffered.set(true);
-                    crate::suspect_buffer::push_suspect(self.ptr.cast());
-                }
+        } else if let Some(vt) = header.cycle_vtable
+            && vt.buffer_on_decrement
+        {
+            header.color.set(CycleColor::Purple);
+            if !header.buffered.get() {
+                header.buffered.set(true);
+                crate::suspect_buffer::push_suspect(self.ptr.cast());
             }
         }
     }

@@ -1,15 +1,24 @@
+use super::value::RuntimeError;
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
-use super::value::RuntimeError;
 
 pub struct HandleStore<T> {
     entries: HashMap<u64, RefCell<T>>,
     next_id: u64,
 }
 
+impl<T> Default for HandleStore<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> HandleStore<T> {
     pub fn new() -> Self {
-        Self { entries: HashMap::new(), next_id: 0 }
+        Self {
+            entries: HashMap::new(),
+            next_id: 0,
+        }
     }
 
     pub fn insert(&mut self, value: T) -> u64 {
@@ -20,21 +29,26 @@ impl<T> HandleStore<T> {
     }
 
     pub fn borrow(&self, id: u64) -> Result<Ref<'_, T>, RuntimeError> {
-        self.entries.get(&id)
+        self.entries
+            .get(&id)
             .ok_or_else(|| RuntimeError::new(format!("invalid extern handle: {id}")))?
             .try_borrow()
-            .map_err(|_| RuntimeError::new(format!("extern handle {id} is already mutably borrowed")))
+            .map_err(|_| {
+                RuntimeError::new(format!("extern handle {id} is already mutably borrowed"))
+            })
     }
 
     pub fn borrow_mut(&self, id: u64) -> Result<RefMut<'_, T>, RuntimeError> {
-        self.entries.get(&id)
+        self.entries
+            .get(&id)
             .ok_or_else(|| RuntimeError::new(format!("invalid extern handle: {id}")))?
             .try_borrow_mut()
             .map_err(|_| RuntimeError::new(format!("extern handle {id} is already borrowed")))
     }
 
     pub fn remove(&mut self, id: u64) -> Result<T, RuntimeError> {
-        self.entries.remove(&id)
+        self.entries
+            .remove(&id)
             .map(|cell| cell.into_inner())
             .ok_or_else(|| RuntimeError::new(format!("invalid extern handle: {id}")))
     }

@@ -832,7 +832,10 @@ fn lower_safe_call_expr(
             hir::Expr::new(
                 inner_result_ty,
                 span,
-                hir::ExprKind::Call { func: func_id, args },
+                hir::ExprKind::Call {
+                    func: func_id,
+                    args,
+                },
             )
         } else if let Type::Extern { name: type_name } = &inner_ty {
             let qualified = Ident(Intern::new(format!("{type_name}::{method_name}")));
@@ -866,16 +869,20 @@ fn lower_safe_call_expr(
             let receiver = hir::Expr::local(inner_ty.clone(), span, inner_local);
             let mut args = vec![receiver];
             args.extend(pre_args);
-            let defaults = ctx.shared.tcx.method_param_defaults(*struct_name, method_name);
-            for default in defaults.iter().skip(c.node.args.len()) {
-                if let Some(val) = default {
-                    args.push(const_value_to_hir_expr(val, span));
-                }
+            let defaults = ctx
+                .shared
+                .tcx
+                .method_param_defaults(*struct_name, method_name);
+            for val in defaults.iter().skip(c.node.args.len()).flatten() {
+                args.push(const_value_to_hir_expr(val, span));
             }
             hir::Expr::new(
                 inner_result_ty,
                 span,
-                hir::ExprKind::Call { func: func_id, args },
+                hir::ExprKind::Call {
+                    func: func_id,
+                    args,
+                },
             )
         } else {
             return Err(LowerError::UnsupportedExprKind {
@@ -1074,10 +1081,10 @@ fn lower_call_expr(
     fc: &mut FuncLower,
     out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::Expr, LowerError> {
-    if let ast::ExprKind::Field(field) = &c.node.func.node.kind {
-        if field.node.safe || c.node.safe {
-            return lower_safe_call_expr(c, ty, span, ctx, fc, out);
-        }
+    if let ast::ExprKind::Field(field) = &c.node.func.node.kind
+        && (field.node.safe || c.node.safe)
+    {
+        return lower_safe_call_expr(c, ty, span, ctx, fc, out);
     }
     if let Some(internal_name) = ctx.shared.tcx.extend_call_target(c.node.func.node.id) {
         return lower_extend_call(c, internal_name, ty, span, ctx, fc, out);
@@ -1128,7 +1135,14 @@ fn lower_extend_call(
         _ => lower_args(&c.node.args, ctx, fc, out)?,
     };
 
-    Ok(hir::Expr::new(ty, span, hir::ExprKind::Call { func: func_id, args }))
+    Ok(hir::Expr::new(
+        ty,
+        span,
+        hir::ExprKind::Call {
+            func: func_id,
+            args,
+        },
+    ))
 }
 
 fn try_lower_method_call(
@@ -1208,16 +1222,20 @@ fn try_lower_method_call(
             let receiver = lower_expr(&field.node.target, ctx, fc, out)?;
             let mut args = vec![receiver];
             args.extend(lower_args(&c.node.args, ctx, fc, out)?);
-            let defaults = ctx.shared.tcx.method_param_defaults(*struct_name, method_name);
-            for default in defaults.iter().skip(c.node.args.len()) {
-                if let Some(val) = default {
-                    args.push(const_value_to_hir_expr(val, span));
-                }
+            let defaults = ctx
+                .shared
+                .tcx
+                .method_param_defaults(*struct_name, method_name);
+            for val in defaults.iter().skip(c.node.args.len()).flatten() {
+                args.push(const_value_to_hir_expr(val, span));
             }
             return Ok(Some(hir::Expr::new(
                 ty.clone(),
                 span,
-                hir::ExprKind::Call { func: func_id, args },
+                hir::ExprKind::Call {
+                    func: func_id,
+                    args,
+                },
             )));
         }
     }
@@ -1254,7 +1272,11 @@ fn try_lower_enum_constructor(
     Ok(Some(hir::Expr::new(
         ty.clone(),
         span,
-        hir::ExprKind::EnumLiteral { type_id, variant, fields },
+        hir::ExprKind::EnumLiteral {
+            type_id,
+            variant,
+            fields,
+        },
     )))
 }
 
@@ -1274,7 +1296,10 @@ fn lower_direct_call(
                     (field.node.field, Some(*mod_name))
                 } else if ctx.shared.tcx.get_extern_type(*mod_name).is_some() {
                     let method_name = field.node.field;
-                    (Ident(Intern::new(format!("{mod_name}::{method_name}"))), None)
+                    (
+                        Ident(Intern::new(format!("{mod_name}::{method_name}"))),
+                        None,
+                    )
                 } else {
                     return Err(LowerError::NonDirectCall { span });
                 }
@@ -1298,10 +1323,8 @@ fn lower_direct_call(
     let mut args = lower_args(&c.node.args, ctx, fc, out)?;
 
     let inject_defaults = |args: &mut Vec<hir::Expr>, defaults: &[Option<ConstValue>]| {
-        for default in defaults.iter().skip(c.node.args.len()) {
-            if let Some(val) = default {
-                args.push(const_value_to_hir_expr(val, span));
-            }
+        for val in defaults.iter().skip(c.node.args.len()).flatten() {
+            args.push(const_value_to_hir_expr(val, span));
         }
     };
 
@@ -1381,7 +1404,11 @@ fn lower_struct_literal_expr(
         return Ok(hir::Expr::new(
             ty,
             span,
-            hir::ExprKind::EnumLiteral { type_id, variant, fields },
+            hir::ExprKind::EnumLiteral {
+                type_id,
+                variant,
+                fields,
+            },
         ));
     }
 
@@ -1413,7 +1440,11 @@ fn lower_struct_literal_expr(
                 .expect("typechecker ensures all declared fields are provided");
             args.push(lower_expr(expr, ctx, fc, out)?);
         }
-        return Ok(hir::Expr::new(ty, span, hir::ExprKind::CallExtern { extern_id, args }));
+        return Ok(hir::Expr::new(
+            ty,
+            span,
+            hir::ExprKind::CallExtern { extern_id, args },
+        ));
     }
 
     let struct_name = lit.node.name;
@@ -1506,7 +1537,10 @@ fn lower_field_expr(
                 return Ok(hir::Expr::new(
                     ty,
                     span,
-                    hir::ExprKind::FieldGet { object: Box::new(object), index },
+                    hir::ExprKind::FieldGet {
+                        object: Box::new(object),
+                        index,
+                    },
                 ));
             }
             Type::DataRef { name, .. } => {
@@ -1522,7 +1556,10 @@ fn lower_field_expr(
                 return Ok(hir::Expr::new(
                     ty,
                     span,
-                    hir::ExprKind::FieldGet { object: Box::new(object), index },
+                    hir::ExprKind::FieldGet {
+                        object: Box::new(object),
+                        index,
+                    },
                 ));
             }
             Type::NamedTuple(fields) => {
@@ -1537,7 +1574,10 @@ fn lower_field_expr(
                 return Ok(hir::Expr::new(
                     ty,
                     span,
-                    hir::ExprKind::FieldGet { object: Box::new(object), index },
+                    hir::ExprKind::FieldGet {
+                        object: Box::new(object),
+                        index,
+                    },
                 ));
             }
             Type::Extern { name } => {
@@ -1552,7 +1592,10 @@ fn lower_field_expr(
                 return Ok(hir::Expr::new(
                     ty,
                     span,
-                    hir::ExprKind::CallExtern { extern_id, args: vec![object] },
+                    hir::ExprKind::CallExtern {
+                        extern_id,
+                        args: vec![object],
+                    },
                 ));
             }
             other => {
@@ -1574,7 +1617,11 @@ fn lower_field_expr(
         return Ok(hir::Expr::new(
             ty,
             span,
-            hir::ExprKind::EnumLiteral { type_id, variant, fields: vec![] },
+            hir::ExprKind::EnumLiteral {
+                type_id,
+                variant,
+                fields: vec![],
+            },
         ));
     }
 

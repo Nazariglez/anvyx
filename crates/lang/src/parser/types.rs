@@ -4,7 +4,7 @@ use crate::{
 };
 use chumsky::{error::Rich, prelude::*};
 
-use super::common::{identifier, validate_tuple_shape_raw, TupleShapeResult};
+use super::common::{TupleShapeResult, identifier, validate_tuple_shape_raw};
 use super::{AnvParser, BoxedParser};
 
 #[derive(Clone)]

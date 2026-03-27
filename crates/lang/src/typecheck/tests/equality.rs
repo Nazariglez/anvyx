@@ -1,8 +1,8 @@
 use super::helpers::{
     array_literal, assert_expr_type, binary_expr, call_expr, enum_decl, field_expr, fn_decl,
     get_expr_id, ident_expr, let_binding, lit_bool, lit_float, lit_int, lit_nil, lit_string,
-    map_literal_expr, opt_type, program, reset_expr_ids, return_stmt, run_err, run_ok,
-    struct_decl, struct_literal_expr,
+    map_literal_expr, opt_type, program, reset_expr_ids, return_stmt, run_err, run_ok, struct_decl,
+    struct_literal_expr,
 };
 use crate::ast::{ArrayLen, BinaryOp, Type, VariantKind};
 use crate::typecheck::error::TypeErrKind;

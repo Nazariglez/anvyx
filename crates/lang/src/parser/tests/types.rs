@@ -1,5 +1,5 @@
+use super::helpers::{parse_param_type, parse_type};
 use crate::ast;
-use super::helpers::{parse_type, parse_param_type};
 
 #[test]
 fn array_type_fixed_len_parses() {
@@ -94,7 +94,10 @@ fn function_type_parses() {
 #[test]
 fn optional_function_type_parses() {
     let ty = parse_type("(fn(float) -> int)?");
-    assert!(ty.is_option(), "expected optional function type, found {ty:?}");
+    assert!(
+        ty.is_option(),
+        "expected optional function type, found {ty:?}"
+    );
     let inner = ty.option_inner().expect("is_option guarantees inner");
     match inner {
         ast::Type::Func { params, ret } => {
@@ -131,7 +134,10 @@ fn type_nested_optional_parses() {
     let ty = parse_type("(int?)?");
     assert!(ty.is_option(), "expected optional type, found {ty:?}");
     let inner = ty.option_inner().expect("is_option guarantees inner");
-    assert!(inner.is_option(), "expected Optional(Optional(Int)), found {inner:?}");
+    assert!(
+        inner.is_option(),
+        "expected Optional(Optional(Int)), found {inner:?}"
+    );
     let inner2 = inner.option_inner().expect("is_option guarantees inner");
     assert_eq!(*inner2, ast::Type::Int);
 }

@@ -100,20 +100,20 @@ pub(super) fn check_binary(
                 unified
             };
 
-            if let Some(ref ty) = eq_ty {
-                if !ty.is_infer() {
-                    let has_extern_eq = matches!(ty, Type::Extern { name }
+            if let Some(ref ty) = eq_ty
+                && !ty.is_infer()
+            {
+                let has_extern_eq = matches!(ty, Type::Extern { name }
                         if type_checker
                             .get_extern_type(*name)
-                            .map_or(false, |def| def.operators.iter().any(|o| o.op == BinaryOp::Eq)));
-                    if !has_extern_eq && !is_equatable(ty, type_checker) {
-                        let mut err =
-                            TypeErr::new(bin.span, TypeErrKind::NotEquatable { ty: ty.clone() });
-                        if let Some(reason) = equatable_reason(ty, type_checker) {
-                            err.notes.push(reason);
-                        }
-                        errors.push(err);
+                            .is_some_and(|def| def.operators.iter().any(|o| o.op == BinaryOp::Eq)));
+                if !has_extern_eq && !is_equatable(ty, type_checker) {
+                    let mut err =
+                        TypeErr::new(bin.span, TypeErrKind::NotEquatable { ty: ty.clone() });
+                    if let Some(reason) = equatable_reason(ty, type_checker) {
+                        err.notes.push(reason);
                     }
+                    errors.push(err);
                 }
             }
             Type::Bool
@@ -236,27 +236,23 @@ fn resolve_extern_binary_op(
     type_checker: &TypeChecker,
 ) -> Option<ExternOpResult> {
     let left_match = if let Type::Extern { name } = left_ty {
-        type_checker
-            .get_extern_type(*name)
-            .and_then(|def| {
-                def.operators
-                    .iter()
-                    .find(|o| o.op == op && !o.self_on_right && o.other_ty == *right_ty)
-                    .map(|o| o.ret.clone())
-            })
+        type_checker.get_extern_type(*name).and_then(|def| {
+            def.operators
+                .iter()
+                .find(|o| o.op == op && !o.self_on_right && o.other_ty == *right_ty)
+                .map(|o| o.ret.clone())
+        })
     } else {
         None
     };
 
     let right_match = if let Type::Extern { name } = right_ty {
-        type_checker
-            .get_extern_type(*name)
-            .and_then(|def| {
-                def.operators
-                    .iter()
-                    .find(|o| o.op == op && o.self_on_right && o.other_ty == *left_ty)
-                    .map(|o| o.ret.clone())
-            })
+        type_checker.get_extern_type(*name).and_then(|def| {
+            def.operators
+                .iter()
+                .find(|o| o.op == op && o.self_on_right && o.other_ty == *left_ty)
+                .map(|o| o.ret.clone())
+        })
     } else {
         None
     };
@@ -281,13 +277,11 @@ pub(super) fn check_unary(
         UnaryOp::Neg if expr_ty.is_num() => expr_ty,
         UnaryOp::Not if expr_ty.is_bool() => Type::Bool,
         UnaryOp::Neg => {
-            if let Type::Extern { name } = &expr_ty {
-                if let Some(def) = type_checker.get_extern_type(*name) {
-                    if let Some(op_def) = def.unary_operators.iter().find(|o| o.op == UnaryOp::Neg)
-                    {
-                        return op_def.ret.clone();
-                    }
-                }
+            if let Type::Extern { name } = &expr_ty
+                && let Some(def) = type_checker.get_extern_type(*name)
+                && let Some(op_def) = def.unary_operators.iter().find(|o| o.op == UnaryOp::Neg)
+            {
+                return op_def.ret.clone();
             }
             errors.push(TypeErr::new(
                 unary.span,
@@ -366,14 +360,14 @@ pub(super) fn check_assign(
         return Type::Infer;
     }
 
-    if let Some(name) = root_ident(&assign.node.target) {
-        if type_checker.const_defs.contains_key(&name) {
-            errors.push(TypeErr::new(
-                assign.span,
-                TypeErrKind::ConstAssignment { name },
-            ));
-            return Type::Infer;
-        }
+    if let Some(name) = root_ident(&assign.node.target)
+        && type_checker.const_defs.contains_key(&name)
+    {
+        errors.push(TypeErr::new(
+            assign.span,
+            TypeErrKind::ConstAssignment { name },
+        ));
+        return Type::Infer;
     }
 
     if let Some(error) = immutable_assignment_error(assign, type_checker) {
@@ -383,7 +377,11 @@ pub(super) fn check_assign(
 
     let node = &assign.node;
     let target_ty = check_expr(&node.target, type_checker, errors, None);
-    let expected = if target_ty != Type::Infer { Some(&target_ty) } else { None };
+    let expected = if target_ty != Type::Infer {
+        Some(&target_ty)
+    } else {
+        None
+    };
     check_expr(&node.value, type_checker, errors, expected);
 
     let target_ref = TypeRef::Expr(node.target.node.id);

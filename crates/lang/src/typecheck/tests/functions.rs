@@ -1,6 +1,6 @@
 use super::helpers::{
-    assert_expr_type, call_expr, expr_stmt, fn_decl, get_expr_id, ident_expr, let_binding, lit_bool,
-    lit_int, program, reset_expr_ids, return_stmt, run_err, run_ok,
+    assert_expr_type, call_expr, expr_stmt, fn_decl, get_expr_id, ident_expr, let_binding,
+    lit_bool, lit_int, program, reset_expr_ids, return_stmt, run_err, run_ok,
 };
 use crate::ast::Type;
 use crate::typecheck::error::TypeErrKind;
@@ -347,7 +347,9 @@ fn test_nested_fn_implicit_return() {
 
 // ---- extern fn typechecker tests ----
 
-fn check_src(src: &str) -> Result<crate::typecheck::TypeChecker, Vec<crate::typecheck::error::TypeErr>> {
+fn check_src(
+    src: &str,
+) -> Result<crate::typecheck::TypeChecker, Vec<crate::typecheck::error::TypeErr>> {
     let tokens = crate::lexer::tokenize(crate::CORE_PRELUDE).unwrap();
     let prelude = crate::parser::parse_ast(&tokens).unwrap();
     let user_tokens = crate::lexer::tokenize(src).unwrap();
@@ -360,8 +362,13 @@ fn check_src(src: &str) -> Result<crate::typecheck::TypeChecker, Vec<crate::type
 
 #[test]
 fn extern_fn_call_correct_types_ok() {
-    let result = check_src("extern fn add(a: int, b: int) -> int;\nfn main() { let x = add(1, 2); }");
-    assert!(result.is_ok(), "expected typecheck to pass, got: {:?}", result.err());
+    let result =
+        check_src("extern fn add(a: int, b: int) -> int;\nfn main() { let x = add(1, 2); }");
+    assert!(
+        result.is_ok(),
+        "expected typecheck to pass, got: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -379,7 +386,11 @@ fn extern_fn_call_wrong_arity_typecheck_err() {
 #[test]
 fn extern_fn_void_return_ok() {
     let result = check_src("extern fn tick();\nfn main() { tick(); }");
-    assert!(result.is_ok(), "expected typecheck to pass, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected typecheck to pass, got: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -393,7 +404,11 @@ fn main() {
     draw(s);
 }";
     let result = check_src(src);
-    assert!(result.is_ok(), "expected typecheck to pass, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected typecheck to pass, got: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -444,5 +459,9 @@ fn main() {
     let s = find();
 }";
     let result = check_src(src);
-    assert!(result.is_ok(), "expected typecheck to pass, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected typecheck to pass, got: {:?}",
+        result.err()
+    );
 }

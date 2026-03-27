@@ -4,8 +4,8 @@ use crate::ast::{
     self, BlockNode, ExprKind, ExprNode, ForNode, Ident, IfLetNode, IfNode, Lit, MatchNode,
     Pattern, Stmt, Type, WhileNode,
 };
-use internment::Intern;
 use crate::span::Span;
+use internment::Intern;
 
 use super::{
     error::{TypeErr, TypeErrKind},
@@ -360,9 +360,9 @@ pub(super) fn check_match(
     let scrutinee_ty = check_expr(scrutinee, type_checker, errors, None);
 
     match &scrutinee_ty {
-        Type::Enum { name: enum_name, .. } => {
-            check_match_enum(match_node, &scrutinee_ty, *enum_name, type_checker, errors)
-        }
+        Type::Enum {
+            name: enum_name, ..
+        } => check_match_enum(match_node, &scrutinee_ty, *enum_name, type_checker, errors),
         Type::Bool => check_match_bool(match_node, &scrutinee_ty, type_checker, errors),
         Type::Int | Type::String => {
             check_match_scalar(match_node, &scrutinee_ty, type_checker, errors)

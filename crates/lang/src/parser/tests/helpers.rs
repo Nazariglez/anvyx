@@ -3,13 +3,13 @@ use crate::lexer;
 use crate::parser::expr::expression;
 use crate::parser::stmt::statement;
 use crate::parser::types::{param_type_ident, type_ident};
-use crate::parser::{parser, ParserState};
+use crate::parser::{ParserState, parser};
 use chumsky::extra::SimpleState;
 use chumsky::prelude::*;
 
 pub(super) fn parse_expr(src: &str) -> ast::ExprNode {
-    let tokens = lexer::tokenize(src)
-        .unwrap_or_else(|errs| panic!("failed to tokenize '{src}': {errs:?}"));
+    let tokens =
+        lexer::tokenize(src).unwrap_or_else(|errs| panic!("failed to tokenize '{src}': {errs:?}"));
     let stmt_parser = statement();
     let expr_parser = expression(stmt_parser.clone()).then_ignore(end());
     let mut state = SimpleState(ParserState::default());
@@ -20,8 +20,8 @@ pub(super) fn parse_expr(src: &str) -> ast::ExprNode {
 }
 
 pub(super) fn parse_program(src: &str) -> ast::Program {
-    let tokens = lexer::tokenize(src)
-        .unwrap_or_else(|errs| panic!("failed to tokenize '{src}': {errs:?}"));
+    let tokens =
+        lexer::tokenize(src).unwrap_or_else(|errs| panic!("failed to tokenize '{src}': {errs:?}"));
     let mut state = SimpleState(ParserState::default());
     parser()
         .parse_with_state(&tokens, &mut state)
@@ -34,10 +34,11 @@ pub(super) fn parse_program_err(src: &str) {
         return; // lex error is also acceptable
     };
     let mut state = SimpleState(ParserState::default());
-    let result = parser()
-        .parse_with_state(&tokens, &mut state)
-        .into_result();
-    assert!(result.is_err(), "expected parse error for '{src}' but it succeeded");
+    let result = parser().parse_with_state(&tokens, &mut state).into_result();
+    assert!(
+        result.is_err(),
+        "expected parse error for '{src}' but it succeeded"
+    );
 }
 
 pub(super) fn parse_type(src: &str) -> ast::Type {
@@ -135,7 +136,11 @@ pub(super) fn expect_unary<'a>(expr: &'a ast::ExprNode, op: ast::UnaryOp) -> &'a
     }
 }
 
-pub(super) fn expect_field<'a>(expr: &'a ast::ExprNode, name: &str, safe: bool) -> &'a ast::ExprNode {
+pub(super) fn expect_field<'a>(
+    expr: &'a ast::ExprNode,
+    name: &str,
+    safe: bool,
+) -> &'a ast::ExprNode {
     match &expr.node.kind {
         ast::ExprKind::Field(field_node) => {
             let node = field_node.node();

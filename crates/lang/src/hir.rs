@@ -269,20 +269,40 @@ pub enum ExprKind {
 
 impl Expr {
     pub fn new(ty: Type, span: Span, kind: ExprKind) -> Self {
-        Self { ty, span, kind, ownership: Ownership::Own }
+        Self {
+            ty,
+            span,
+            kind,
+            ownership: Ownership::Own,
+        }
     }
 
     pub fn local(ty: Type, span: Span, id: LocalId) -> Self {
-        Self { ty, span, kind: ExprKind::Local(id), ownership: Ownership::Own }
+        Self {
+            ty,
+            span,
+            kind: ExprKind::Local(id),
+            ownership: Ownership::Own,
+        }
     }
 
     pub fn int_lit(span: Span, v: i64) -> Self {
-        Self { ty: Type::Int, span, kind: ExprKind::Int(v), ownership: Ownership::Own }
+        Self {
+            ty: Type::Int,
+            span,
+            kind: ExprKind::Int(v),
+            ownership: Ownership::Own,
+        }
     }
 
     #[cfg(test)]
     pub fn bool_lit(span: Span, v: bool) -> Self {
-        Self { ty: Type::Bool, span, kind: ExprKind::Bool(v), ownership: Ownership::Own }
+        Self {
+            ty: Type::Bool,
+            span,
+            kind: ExprKind::Bool(v),
+            ownership: Ownership::Own,
+        }
     }
 
     pub fn binary(ty: Type, span: Span, op: BinaryOp, lhs: Self, rhs: Self) -> Self {
@@ -550,7 +570,10 @@ mod tests {
         let expr = Expr::new(
             Type::Int,
             dummy_span(),
-            ExprKind::Unary { op: UnaryOp::Neg, expr: Box::new(int_expr(1)) },
+            ExprKind::Unary {
+                op: UnaryOp::Neg,
+                expr: Box::new(int_expr(1)),
+            },
         );
         assert!(matches!(
             expr.kind,
@@ -586,7 +609,10 @@ mod tests {
         let expr = Expr::new(
             Type::Void,
             dummy_span(),
-            ExprKind::Call { func: FuncId(0), args: vec![int_expr(1)] },
+            ExprKind::Call {
+                func: FuncId(0),
+                args: vec![int_expr(1)],
+            },
         );
         assert!(matches!(expr.kind, ExprKind::Call { .. }));
     }
@@ -598,7 +624,11 @@ mod tests {
             dummy_span(),
             ExprKind::CallBuiltin {
                 builtin: Builtin::Println,
-                args: vec![Expr::new(Type::String, dummy_span(), ExprKind::String("hi".into()))],
+                args: vec![Expr::new(
+                    Type::String,
+                    dummy_span(),
+                    ExprKind::String("hi".into()),
+                )],
             },
         );
         assert!(matches!(
@@ -637,7 +667,10 @@ mod tests {
         let expr = Expr::new(
             Type::Int,
             dummy_span(),
-            ExprKind::StructLiteral { type_id: 7, fields: vec![int_expr(10), int_expr(20)] },
+            ExprKind::StructLiteral {
+                type_id: 7,
+                fields: vec![int_expr(10), int_expr(20)],
+            },
         );
         assert!(matches!(
             expr.kind,
@@ -650,7 +683,9 @@ mod tests {
         let expr = Expr::new(
             Type::Int,
             dummy_span(),
-            ExprKind::TupleLiteral { elements: vec![int_expr(1), bool_expr(false)] },
+            ExprKind::TupleLiteral {
+                elements: vec![int_expr(1), bool_expr(false)],
+            },
         );
         assert!(matches!(expr.kind, ExprKind::TupleLiteral { .. }));
     }
@@ -661,7 +696,10 @@ mod tests {
         let expr = Expr::new(
             Type::Int,
             dummy_span(),
-            ExprKind::FieldGet { object: Box::new(obj), index: 2 },
+            ExprKind::FieldGet {
+                object: Box::new(obj),
+                index: 2,
+            },
         );
         assert!(matches!(expr.kind, ExprKind::FieldGet { index: 2, .. }));
     }
@@ -672,7 +710,10 @@ mod tests {
         let expr = Expr::new(
             Type::Int,
             dummy_span(),
-            ExprKind::TupleIndex { tuple: Box::new(tup), index: 1 },
+            ExprKind::TupleIndex {
+                tuple: Box::new(tup),
+                index: 1,
+            },
         );
         assert!(matches!(expr.kind, ExprKind::TupleIndex { index: 1, .. }));
     }
@@ -698,7 +739,11 @@ mod tests {
         let expr = Expr::new(
             Type::Int,
             dummy_span(),
-            ExprKind::EnumLiteral { type_id: 5, variant: 0, fields: vec![] },
+            ExprKind::EnumLiteral {
+                type_id: 5,
+                variant: 0,
+                fields: vec![],
+            },
         );
         assert!(matches!(
             expr.kind,
@@ -715,7 +760,11 @@ mod tests {
         let expr = Expr::new(
             Type::Int,
             dummy_span(),
-            ExprKind::EnumLiteral { type_id: 2, variant: 1, fields: vec![int_expr(42)] },
+            ExprKind::EnumLiteral {
+                type_id: 2,
+                variant: 1,
+                fields: vec![int_expr(42)],
+            },
         );
         assert!(matches!(
             expr.kind,
@@ -796,7 +845,9 @@ mod tests {
         let expr = Expr::new(
             Type::Int,
             dummy_span(),
-            ExprKind::ArrayLiteral { elements: vec![int_expr(1), int_expr(2)] },
+            ExprKind::ArrayLiteral {
+                elements: vec![int_expr(1), int_expr(2)],
+            },
         );
         assert!(matches!(expr.kind, ExprKind::ArrayLiteral { .. }));
         if let ExprKind::ArrayLiteral { elements } = &expr.kind {
@@ -809,7 +860,9 @@ mod tests {
         let expr = Expr::new(
             Type::Int,
             dummy_span(),
-            ExprKind::ListLiteral { elements: vec![int_expr(10), int_expr(20)] },
+            ExprKind::ListLiteral {
+                elements: vec![int_expr(10), int_expr(20)],
+            },
         );
         assert!(matches!(expr.kind, ExprKind::ListLiteral { .. }));
         if let ExprKind::ListLiteral { elements } = &expr.kind {
@@ -822,7 +875,10 @@ mod tests {
         let expr = Expr::new(
             Type::Int,
             dummy_span(),
-            ExprKind::ArrayFill { value: Box::new(int_expr(0)), len: 3 },
+            ExprKind::ArrayFill {
+                value: Box::new(int_expr(0)),
+                len: 3,
+            },
         );
         assert!(matches!(expr.kind, ExprKind::ArrayFill { .. }));
         if let ExprKind::ArrayFill { len, .. } = &expr.kind {
@@ -835,7 +891,10 @@ mod tests {
         let expr = Expr::new(
             Type::Int,
             dummy_span(),
-            ExprKind::ListFill { value: Box::new(int_expr(0)), len: 5 },
+            ExprKind::ListFill {
+                value: Box::new(int_expr(0)),
+                len: 5,
+            },
         );
         assert!(matches!(expr.kind, ExprKind::ListFill { .. }));
         if let ExprKind::ListFill { len, .. } = &expr.kind {
@@ -877,7 +936,9 @@ mod tests {
         let expr = Expr::new(
             Type::Int,
             dummy_span(),
-            ExprKind::MapLiteral { entries: vec![(int_expr(1), bool_expr(true))] },
+            ExprKind::MapLiteral {
+                entries: vec![(int_expr(1), bool_expr(true))],
+            },
         );
         assert!(matches!(expr.kind, ExprKind::MapLiteral { .. }));
         if let ExprKind::MapLiteral { entries } = &expr.kind {
@@ -899,10 +960,10 @@ mod tests {
                 Stmt {
                     span: dummy_span(),
                     kind: StmtKind::Return(Some(Expr::new(
-                    Type::Int,
-                    dummy_span(),
-                    ExprKind::Local(LocalId(0)),
-                ))),
+                        Type::Int,
+                        dummy_span(),
+                        ExprKind::Local(LocalId(0)),
+                    ))),
                 },
             ],
         };

@@ -203,7 +203,10 @@ fn lower_assign_to_chain(
             AssignAccessStep::Field { field_index, .. } => hir::Expr::new(
                 chain.steps[i].value_type().clone(),
                 span,
-                hir::ExprKind::FieldGet { object: Box::new(source_expr), index: *field_index },
+                hir::ExprKind::FieldGet {
+                    object: Box::new(source_expr),
+                    index: *field_index,
+                },
             ),
             AssignAccessStep::Index { .. } => {
                 let idx_local = index_temp_ids[i].expect("index temp for non-leaf Index step");
@@ -352,14 +355,12 @@ pub(super) fn lower_assign(
             if let Type::Extern { name } = &target_ty {
                 let field_name = field_access.node.field;
                 let qualified = Ident(Intern::new(format!("{name}::__set_{field_name}")));
-                let extern_id =
-                    *ctx.shared
-                        .externs
-                        .get(&qualified)
-                        .ok_or_else(|| LowerError::UnsupportedAssign {
-                            span,
-                            detail: format!("unknown extern field setter '{qualified}'"),
-                        })?;
+                let extern_id = *ctx.shared.externs.get(&qualified).ok_or_else(|| {
+                    LowerError::UnsupportedAssign {
+                        span,
+                        detail: format!("unknown extern field setter '{qualified}'"),
+                    }
+                })?;
                 let receiver = lower_expr(target_expr, ctx, fc, out)?;
                 let value = lower_expr(&assign_node.node.value, ctx, fc, out)?;
                 Ok(hir::Stmt {
@@ -367,7 +368,10 @@ pub(super) fn lower_assign(
                     kind: hir::StmtKind::Expr(hir::Expr::new(
                         Type::Void,
                         span,
-                        hir::ExprKind::CallExtern { extern_id, args: vec![receiver, value] },
+                        hir::ExprKind::CallExtern {
+                            extern_id,
+                            args: vec![receiver, value],
+                        },
                     )),
                 })
             } else {

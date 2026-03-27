@@ -1,5 +1,5 @@
-use crate::ast;
 use super::helpers::*;
+use crate::ast;
 
 #[test]
 fn multiplication_outbinds_addition() {

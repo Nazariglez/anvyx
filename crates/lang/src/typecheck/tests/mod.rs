@@ -1,17 +1,17 @@
 mod helpers;
 
-mod unify;
 mod infer;
 mod types;
+mod unify;
 
-mod ops;
-mod call;
-mod range;
-mod binding;
-mod functions;
 mod arrays;
+mod binding;
 mod blocks;
-mod mutability;
+mod call;
 mod constraint;
 mod equality;
+mod functions;
 mod keyable;
+mod mutability;
+mod ops;
+mod range;

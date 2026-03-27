@@ -60,7 +60,7 @@ pub(super) fn import_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
         .map(|(name, alias)| ast::ImportItem { name, alias });
 
     let selective_items = import_item
-        .separated_by(comma.clone())
+        .separated_by(comma)
         .allow_trailing()
         .at_least(1)
         .collect::<Vec<_>>();
@@ -68,7 +68,7 @@ pub(super) fn import_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
     let import_tail = choice((
         as_kw
             .ignore_then(identifier())
-            .then_ignore(semicolon.clone())
+            .then_ignore(semicolon)
             .map(ast::ImportKind::ModuleAs),
         open_brace
             .ignore_then(choice((
@@ -76,7 +76,7 @@ pub(super) fn import_declaration<'src>() -> BoxedParser<'src, ast::StmtNode> {
                 selective_items.map(ast::ImportKind::Selective),
             )))
             .then_ignore(close_brace)
-            .then_ignore(semicolon.clone()),
+            .then_ignore(semicolon),
         semicolon.to(ast::ImportKind::Module),
     ));
 
@@ -249,7 +249,7 @@ fn extern_type_body<'src>(
 
     let semicolon = select! { (Token::Semicolon, _) => () };
     let init_item = select! { (Token::Ident(ident), _) if ident.0.as_ref() == "init" => () }
-        .then_ignore(semicolon.clone())
+        .then_ignore(semicolon)
         .map(|_| BodyItem::Init);
     let member_item = extern_type_member(stmt).map(BodyItem::Member);
 
@@ -288,8 +288,8 @@ fn extern_type_member<'src>(
     let semicolon = select! { (Token::Semicolon, _) => () };
 
     choice((
-        extern_type_op_member().then_ignore(semicolon.clone()),
-        extern_type_method_member(stmt).then_ignore(semicolon.clone()),
+        extern_type_op_member().then_ignore(semicolon),
+        extern_type_method_member(stmt).then_ignore(semicolon),
         extern_type_field_member().then_ignore(semicolon),
     ))
     .boxed()
@@ -314,7 +314,7 @@ fn extern_type_op_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> {
 
     let unary = select! { (Token::Op(Op::Sub), _) => () }
         .then_ignore(type_ident())
-        .then_ignore(arrow.clone())
+        .then_ignore(arrow)
         .then(type_ident())
         .map(|((), ret)| ast::ExternTypeMember::UnaryOperator {
             op: ast::UnaryOp::Neg,

@@ -1,5 +1,8 @@
 use crate::{
-    ast::{ArrayLen, BlockNode, ExprKind, Func, FuncNode, Ident, MethodReceiver, Mutability, Param, StructDeclNode, Type, TypeParam},
+    ast::{
+        ArrayLen, BlockNode, ExprKind, Func, FuncNode, Ident, MethodReceiver, Mutability, Param,
+        StructDeclNode, Type, TypeParam,
+    },
     span::Span,
 };
 use internment::Intern;
@@ -11,7 +14,9 @@ use super::{
     error::{TypeErr, TypeErrKind},
     infer::type_from_fn,
     stmt::check_block_expr,
-    types::{FieldDefault, MethodContext, MethodDef, StructDef, TypeChecker, type_references_generic},
+    types::{
+        FieldDefault, MethodContext, MethodDef, StructDef, TypeChecker, type_references_generic,
+    },
 };
 
 pub(super) fn check_body_common(
@@ -123,7 +128,11 @@ pub(super) fn check_method_body(
 
     let self_type = struct_def.make_type(
         struct_name,
-        struct_def.type_params.iter().map(|tp| Type::Var(tp.id)).collect(),
+        struct_def
+            .type_params
+            .iter()
+            .map(|tp| Type::Var(tp.id))
+            .collect(),
     );
 
     // build the param list, prepending self when there is a receiver
@@ -356,7 +365,10 @@ pub(super) fn check_struct(
 
     for field in &decl.fields {
         if field.ty.contains_any() {
-            errors.push(TypeErr::new(struct_node.span, TypeErrKind::AnyTypeNotAllowed));
+            errors.push(TypeErr::new(
+                struct_node.span,
+                TypeErrKind::AnyTypeNotAllowed,
+            ));
         }
     }
 
@@ -373,60 +385,73 @@ pub(super) fn check_struct(
         if type_references_generic(&field.ty, &decl.type_params) {
             errors.push(TypeErr::new(
                 expr.span,
-                TypeErrKind::FieldDefaultOnGenericType { struct_name, field: field.name },
+                TypeErrKind::FieldDefaultOnGenericType {
+                    struct_name,
+                    field: field.name,
+                },
             ));
             continue;
         }
 
         let resolved_ty = type_checker.resolve_type(&field.ty);
 
-        if let ExprKind::ArrayLiteral(arr) = &expr.node.kind {
-            if arr.node.elements.is_empty() {
-                let is_array_or_list = matches!(resolved_ty, Type::Array { .. } | Type::List { .. });
-                if !is_array_or_list {
-                    errors.push(TypeErr::new(
-                        expr.span,
-                        TypeErrKind::FieldDefaultTypeMismatch {
-                            struct_name,
-                            field: field.name,
-                            expected: resolved_ty,
-                            found: Type::Array { elem: Type::Infer.boxed(), len: ArrayLen::Fixed(0) },
+        if let ExprKind::ArrayLiteral(arr) = &expr.node.kind
+            && arr.node.elements.is_empty()
+        {
+            let is_array_or_list = matches!(resolved_ty, Type::Array { .. } | Type::List { .. });
+            if !is_array_or_list {
+                errors.push(TypeErr::new(
+                    expr.span,
+                    TypeErrKind::FieldDefaultTypeMismatch {
+                        struct_name,
+                        field: field.name,
+                        expected: resolved_ty,
+                        found: Type::Array {
+                            elem: Type::Infer.boxed(),
+                            len: ArrayLen::Fixed(0),
                         },
-                    ));
-                } else {
-                    struct_def.field_defaults.insert(field.name, FieldDefault::EmptyArray);
-                }
-                continue;
+                    },
+                ));
+            } else {
+                struct_def
+                    .field_defaults
+                    .insert(field.name, FieldDefault::EmptyArray);
             }
+            continue;
         }
 
-        if let ExprKind::MapLiteral(map) = &expr.node.kind {
-            if map.node.entries.is_empty() {
-                let is_map = matches!(resolved_ty, Type::Map { .. });
-                if !is_map {
-                    errors.push(TypeErr::new(
-                        expr.span,
-                        TypeErrKind::FieldDefaultTypeMismatch {
-                            struct_name,
-                            field: field.name,
-                            expected: resolved_ty,
-                            found: Type::Map {
-                                key: Type::Infer.boxed(),
-                                value: Type::Infer.boxed(),
-                            },
+        if let ExprKind::MapLiteral(map) = &expr.node.kind
+            && map.node.entries.is_empty()
+        {
+            let is_map = matches!(resolved_ty, Type::Map { .. });
+            if !is_map {
+                errors.push(TypeErr::new(
+                    expr.span,
+                    TypeErrKind::FieldDefaultTypeMismatch {
+                        struct_name,
+                        field: field.name,
+                        expected: resolved_ty,
+                        found: Type::Map {
+                            key: Type::Infer.boxed(),
+                            value: Type::Infer.boxed(),
                         },
-                    ));
-                } else {
-                    struct_def.field_defaults.insert(field.name, FieldDefault::EmptyMap);
-                }
-                continue;
+                    },
+                ));
+            } else {
+                struct_def
+                    .field_defaults
+                    .insert(field.name, FieldDefault::EmptyMap);
             }
+            continue;
         }
 
-        if let Err(_) = validate_const_expr(expr, &known_consts) {
+        if validate_const_expr(expr, &known_consts).is_err() {
             errors.push(TypeErr::new(
                 expr.span,
-                TypeErrKind::FieldDefaultNotConst { struct_name, field: field.name },
+                TypeErrKind::FieldDefaultNotConst {
+                    struct_name,
+                    field: field.name,
+                },
             ));
             continue;
         }
@@ -436,7 +461,10 @@ pub(super) fn check_struct(
             Err(_) => {
                 errors.push(TypeErr::new(
                     expr.span,
-                    TypeErrKind::FieldDefaultNotConst { struct_name, field: field.name },
+                    TypeErrKind::FieldDefaultNotConst {
+                        struct_name,
+                        field: field.name,
+                    },
                 ));
                 continue;
             }
@@ -474,27 +502,29 @@ pub(super) fn check_struct(
             }
         }
 
-        struct_def.field_defaults.insert(field.name, FieldDefault::Const(value));
+        struct_def
+            .field_defaults
+            .insert(field.name, FieldDefault::Const(value));
     }
 
     for method in &decl.methods {
         let has_defaults = method.params.iter().any(|p| p.default.is_some());
-        if has_defaults {
-            if let Some(method_def) = struct_def.methods.get_mut(&method.name) {
-                let defaults = validate_param_defaults(
-                    &method.params,
-                    &method.type_params,
-                    method.name,
-                    method.body.span,
-                    type_checker,
-                    errors,
-                );
-                method_def.param_defaults = defaults;
-            }
+        if has_defaults && let Some(method_def) = struct_def.methods.get_mut(&method.name) {
+            let defaults = validate_param_defaults(
+                &method.params,
+                &method.type_params,
+                method.name,
+                method.body.span,
+                type_checker,
+                errors,
+            );
+            method_def.param_defaults = defaults;
         }
     }
 
-    type_checker.struct_defs.insert(struct_name, struct_def.clone());
+    type_checker
+        .struct_defs
+        .insert(struct_name, struct_def.clone());
 
     let to_string_ident = Ident(Intern::new("to_string".to_string()));
     if let Some(method_def) = struct_def.methods.get(&to_string_ident) {

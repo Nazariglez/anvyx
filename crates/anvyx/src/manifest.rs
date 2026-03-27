@@ -34,10 +34,10 @@ pub fn parse_manifest() -> Result<Option<Manifest>, String> {
         return Ok(None);
     }
 
-    let contents = fs::read_to_string(manifest_path)
-        .map_err(|e| format!("Failed to read anvyx.toml: {e}"))?;
-    let manifest: Manifest = toml::from_str(&contents)
-        .map_err(|e| format!("Failed to parse anvyx.toml: {e}"))?;
+    let contents =
+        fs::read_to_string(manifest_path).map_err(|e| format!("Failed to read anvyx.toml: {e}"))?;
+    let manifest: Manifest =
+        toml::from_str(&contents).map_err(|e| format!("Failed to parse anvyx.toml: {e}"))?;
 
     Ok(Some(manifest))
 }

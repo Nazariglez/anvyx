@@ -63,10 +63,12 @@ struct ExportsJson<'a> {
 }
 
 pub fn exports_to_json(decls: &[ExternDecl], type_decls: &[ExternTypeDecl]) -> String {
-    let wrapper = ExportsJson { types: type_decls, functions: decls };
+    let wrapper = ExportsJson {
+        types: type_decls,
+        functions: decls,
+    };
     serde_json::to_string(&wrapper).expect("metadata serialization cannot fail")
 }
-
 
 #[derive(Debug, Deserialize)]
 pub struct ExternFuncMeta {
@@ -246,7 +248,14 @@ pub(crate) fn metadata_to_extern_stmts(
             }
         }
 
-        let node = Spanned::new(ExternType { name, has_init: ty.has_init, members }, span);
+        let node = Spanned::new(
+            ExternType {
+                name,
+                has_init: ty.has_init,
+                members,
+            },
+            span,
+        );
         stmts.push(Spanned::new(Stmt::ExternType(node), span));
     }
 
@@ -262,9 +271,7 @@ pub(crate) fn metadata_to_extern_stmts(
     Ok(stmts)
 }
 
-fn params_to_ast(
-    params: &[(String, String)],
-) -> Result<Vec<crate::ast::Param>, String> {
+fn params_to_ast(params: &[(String, String)]) -> Result<Vec<crate::ast::Param>, String> {
     use crate::ast::{Ident, Mutability, Param};
     use internment::Intern;
 
@@ -307,8 +314,16 @@ mod tests {
     #[test]
     fn multiple_functions() {
         let decls = [
-            ExternDecl { name: "add", params: &[("a", "int"), ("b", "int")], ret: "int" },
-            ExternDecl { name: "greet", params: &[("name", "string")], ret: "string" },
+            ExternDecl {
+                name: "add",
+                params: &[("a", "int"), ("b", "int")],
+                ret: "int",
+            },
+            ExternDecl {
+                name: "greet",
+                params: &[("name", "string")],
+                ret: "string",
+            },
         ];
         let json = exports_to_json(&decls, &[]);
         assert!(json.contains("\"name\":\"add\""));
@@ -319,7 +334,11 @@ mod tests {
 
     #[test]
     fn void_return() {
-        let decl = ExternDecl { name: "noop", params: &[], ret: "void" };
+        let decl = ExternDecl {
+            name: "noop",
+            params: &[],
+            ret: "void",
+        };
         let json = exports_to_json(&[decl], &[]);
         assert!(json.contains("\"ret\":\"void\""));
         assert!(json.contains("\"params\":[]"));
@@ -328,10 +347,26 @@ mod tests {
     #[test]
     fn all_type_variants() {
         let decls = [
-            ExternDecl { name: "f_int", params: &[("x", "int")], ret: "int" },
-            ExternDecl { name: "f_float", params: &[("x", "float")], ret: "float" },
-            ExternDecl { name: "f_bool", params: &[("x", "bool")], ret: "bool" },
-            ExternDecl { name: "f_string", params: &[("x", "string")], ret: "string" },
+            ExternDecl {
+                name: "f_int",
+                params: &[("x", "int")],
+                ret: "int",
+            },
+            ExternDecl {
+                name: "f_float",
+                params: &[("x", "float")],
+                ret: "float",
+            },
+            ExternDecl {
+                name: "f_bool",
+                params: &[("x", "bool")],
+                ret: "bool",
+            },
+            ExternDecl {
+                name: "f_string",
+                params: &[("x", "string")],
+                ret: "string",
+            },
         ];
         let json = exports_to_json(&decls, &[]);
         assert!(json.contains("\"int\""));
@@ -342,7 +377,11 @@ mod tests {
 
     #[test]
     fn no_params() {
-        let decl = ExternDecl { name: "get_val", params: &[], ret: "int" };
+        let decl = ExternDecl {
+            name: "get_val",
+            params: &[],
+            ret: "int",
+        };
         let json = exports_to_json(&[decl], &[]);
         assert!(json.contains("\"params\":[]"));
         assert!(json.contains("\"ret\":\"int\""));
@@ -372,32 +411,67 @@ mod tests {
     #[test]
     fn parse_valid_json_round_trip() {
         let decls = [
-            ExternDecl { name: "add", params: &[("a", "int"), ("b", "int")], ret: "int" },
-            ExternDecl { name: "greet", params: &[("name", "string")], ret: "string" },
+            ExternDecl {
+                name: "add",
+                params: &[("a", "int"), ("b", "int")],
+                ret: "int",
+            },
+            ExternDecl {
+                name: "greet",
+                params: &[("name", "string")],
+                ret: "string",
+            },
         ];
         let json = exports_to_json(&decls, &[]);
         let meta = parse_provider_json(&json).unwrap();
         assert_eq!(meta.functions.len(), 2);
         assert_eq!(meta.functions[0].name, "add");
-        assert_eq!(meta.functions[0].params, vec![("a".to_string(), "int".to_string()), ("b".to_string(), "int".to_string())]);
+        assert_eq!(
+            meta.functions[0].params,
+            vec![
+                ("a".to_string(), "int".to_string()),
+                ("b".to_string(), "int".to_string())
+            ]
+        );
         assert_eq!(meta.functions[0].ret, "int");
         assert_eq!(meta.functions[1].name, "greet");
-        assert_eq!(meta.functions[1].params, vec![("name".to_string(), "string".to_string())]);
+        assert_eq!(
+            meta.functions[1].params,
+            vec![("name".to_string(), "string".to_string())]
+        );
         assert_eq!(meta.functions[1].ret, "string");
     }
 
     #[test]
     fn anvyx_type_from_str_valid() {
-        assert!(matches!(anvyx_type_from_str("int"), Ok(crate::ast::Type::Int)));
-        assert!(matches!(anvyx_type_from_str("float"), Ok(crate::ast::Type::Float)));
-        assert!(matches!(anvyx_type_from_str("bool"), Ok(crate::ast::Type::Bool)));
-        assert!(matches!(anvyx_type_from_str("string"), Ok(crate::ast::Type::String)));
-        assert!(matches!(anvyx_type_from_str("void"), Ok(crate::ast::Type::Void)));
+        assert!(matches!(
+            anvyx_type_from_str("int"),
+            Ok(crate::ast::Type::Int)
+        ));
+        assert!(matches!(
+            anvyx_type_from_str("float"),
+            Ok(crate::ast::Type::Float)
+        ));
+        assert!(matches!(
+            anvyx_type_from_str("bool"),
+            Ok(crate::ast::Type::Bool)
+        ));
+        assert!(matches!(
+            anvyx_type_from_str("string"),
+            Ok(crate::ast::Type::String)
+        ));
+        assert!(matches!(
+            anvyx_type_from_str("void"),
+            Ok(crate::ast::Type::Void)
+        ));
     }
 
     #[test]
     fn anvyx_type_from_str_any() {
-        assert!(matches!(anvyx_type_from_str("any"), Ok(crate::ast::Type::Any)));
+        assert!(matches!(
+            anvyx_type_from_str("any"),
+            Ok(crate::ast::Type::Any)
+        ));
     }
 
     #[test]
@@ -442,16 +516,14 @@ mod tests {
 
         let meta = ExternProviderMeta {
             types: vec![],
-            functions: vec![
-                ExternFuncMeta {
-                    name: "add".to_string(),
-                    params: vec![
-                        ("a".to_string(), "int".to_string()),
-                        ("b".to_string(), "int".to_string()),
-                    ],
-                    ret: "int".to_string(),
-                },
-            ],
+            functions: vec![ExternFuncMeta {
+                name: "add".to_string(),
+                params: vec![
+                    ("a".to_string(), "int".to_string()),
+                    ("b".to_string(), "int".to_string()),
+                ],
+                ret: "int".to_string(),
+            }],
         };
 
         let stmts = metadata_to_extern_stmts(&meta).unwrap();
@@ -487,8 +559,22 @@ mod tests {
     #[test]
     fn exports_to_json_with_types() {
         let type_decls = [
-            ExternTypeDecl { name: "Sprite", has_init: false, fields: vec![], methods: vec![], statics: vec![], operators: vec![] },
-            ExternTypeDecl { name: "Texture", has_init: false, fields: vec![], methods: vec![], statics: vec![], operators: vec![] },
+            ExternTypeDecl {
+                name: "Sprite",
+                has_init: false,
+                fields: vec![],
+                methods: vec![],
+                statics: vec![],
+                operators: vec![],
+            },
+            ExternTypeDecl {
+                name: "Texture",
+                has_init: false,
+                fields: vec![],
+                methods: vec![],
+                statics: vec![],
+                operators: vec![],
+            },
         ];
         let json = exports_to_json(&[], &type_decls);
         assert!(json.contains("\"name\":\"Sprite\""));
@@ -502,8 +588,19 @@ mod tests {
 
     #[test]
     fn exports_to_json_with_types_and_functions() {
-        let type_decls = [ExternTypeDecl { name: "Sprite", has_init: false, fields: vec![], methods: vec![], statics: vec![], operators: vec![] }];
-        let func_decls = [ExternDecl { name: "create", params: &[], ret: "Sprite" }];
+        let type_decls = [ExternTypeDecl {
+            name: "Sprite",
+            has_init: false,
+            fields: vec![],
+            methods: vec![],
+            statics: vec![],
+            operators: vec![],
+        }];
+        let func_decls = [ExternDecl {
+            name: "create",
+            params: &[],
+            ret: "Sprite",
+        }];
         let json = exports_to_json(&func_decls, &type_decls);
         assert!(json.contains("\"name\":\"Sprite\""));
         assert!(json.contains("\"name\":\"create\""));
@@ -566,8 +663,19 @@ mod tests {
     fn round_trip_with_types() {
         use crate::ast::Stmt;
 
-        let type_decls = [ExternTypeDecl { name: "Sprite", has_init: false, fields: vec![], methods: vec![], statics: vec![], operators: vec![] }];
-        let func_decls = [ExternDecl { name: "create", params: &[("x", "int")], ret: "int" }];
+        let type_decls = [ExternTypeDecl {
+            name: "Sprite",
+            has_init: false,
+            fields: vec![],
+            methods: vec![],
+            statics: vec![],
+            operators: vec![],
+        }];
+        let func_decls = [ExternDecl {
+            name: "create",
+            params: &[("x", "int")],
+            ret: "int",
+        }];
         let json = exports_to_json(&func_decls, &type_decls);
         let meta = parse_provider_json(&json).unwrap();
 
@@ -587,8 +695,16 @@ mod tests {
             name: "Point",
             has_init: false,
             fields: vec![
-                ExternFieldDecl { name: "x", ty: "float", computed: false },
-                ExternFieldDecl { name: "y", ty: "float", computed: false },
+                ExternFieldDecl {
+                    name: "x",
+                    ty: "float",
+                    computed: false,
+                },
+                ExternFieldDecl {
+                    name: "y",
+                    ty: "float",
+                    computed: false,
+                },
             ],
             methods: vec![ExternMethodDecl {
                 name: "move_by",
@@ -665,8 +781,16 @@ mod tests {
                 name: "Point".to_string(),
                 has_init: false,
                 fields: vec![
-                    ExternFieldMeta { name: "x".to_string(), ty: "float".to_string(), computed: false },
-                    ExternFieldMeta { name: "y".to_string(), ty: "float".to_string(), computed: false },
+                    ExternFieldMeta {
+                        name: "x".to_string(),
+                        ty: "float".to_string(),
+                        computed: false,
+                    },
+                    ExternFieldMeta {
+                        name: "y".to_string(),
+                        ty: "float".to_string(),
+                        computed: false,
+                    },
                 ],
                 methods: vec![ExternMethodMeta {
                     name: "move_by".to_string(),
@@ -698,12 +822,20 @@ mod tests {
         assert_eq!(ty_node.node.name.to_string(), "Point");
         assert_eq!(ty_node.node.members.len(), 4);
 
-        assert!(matches!(&ty_node.node.members[0], ExternTypeMember::Field { name, .. } if name.to_string() == "x"));
-        assert!(matches!(&ty_node.node.members[1], ExternTypeMember::Field { name, .. } if name.to_string() == "y"));
-        assert!(matches!(&ty_node.node.members[2], ExternTypeMember::Method { name, receiver, params, .. }
-            if name.to_string() == "move_by" && *receiver == MethodReceiver::Var && params.len() == 2));
-        assert!(matches!(&ty_node.node.members[3], ExternTypeMember::StaticMethod { name, params, .. }
-            if name.to_string() == "new" && params.len() == 2));
+        assert!(
+            matches!(&ty_node.node.members[0], ExternTypeMember::Field { name, .. } if name.to_string() == "x")
+        );
+        assert!(
+            matches!(&ty_node.node.members[1], ExternTypeMember::Field { name, .. } if name.to_string() == "y")
+        );
+        assert!(
+            matches!(&ty_node.node.members[2], ExternTypeMember::Method { name, receiver, params, .. }
+            if name.to_string() == "move_by" && *receiver == MethodReceiver::Var && params.len() == 2)
+        );
+        assert!(
+            matches!(&ty_node.node.members[3], ExternTypeMember::StaticMethod { name, params, .. }
+            if name.to_string() == "new" && params.len() == 2)
+        );
     }
 
     #[test]
@@ -728,12 +860,20 @@ mod tests {
         };
 
         let stmts = metadata_to_extern_stmts(&make_meta("self")).unwrap();
-        let Stmt::ExternType(ty) = &stmts[0].node else { panic!() };
-        assert!(matches!(&ty.node.members[0], ExternTypeMember::Method { receiver, .. } if *receiver == MethodReceiver::Value));
+        let Stmt::ExternType(ty) = &stmts[0].node else {
+            panic!()
+        };
+        assert!(
+            matches!(&ty.node.members[0], ExternTypeMember::Method { receiver, .. } if *receiver == MethodReceiver::Value)
+        );
 
         let stmts = metadata_to_extern_stmts(&make_meta("var")).unwrap();
-        let Stmt::ExternType(ty) = &stmts[0].node else { panic!() };
-        assert!(matches!(&ty.node.members[0], ExternTypeMember::Method { receiver, .. } if *receiver == MethodReceiver::Var));
+        let Stmt::ExternType(ty) = &stmts[0].node else {
+            panic!()
+        };
+        assert!(
+            matches!(&ty.node.members[0], ExternTypeMember::Method { receiver, .. } if *receiver == MethodReceiver::Var)
+        );
     }
 
     #[test]
@@ -807,7 +947,9 @@ mod tests {
             functions: vec![],
         };
         let stmts = metadata_to_extern_stmts(&meta).unwrap();
-        let Stmt::ExternType(ty) = &stmts[0].node else { panic!("expected ExternType") };
+        let Stmt::ExternType(ty) = &stmts[0].node else {
+            panic!("expected ExternType")
+        };
         assert!(ty.node.has_init);
     }
 
@@ -820,11 +962,36 @@ mod tests {
             methods: vec![],
             statics: vec![],
             operators: vec![
-                ExternOpDecl { op: "Add", rhs: Some("Vec2"), lhs: None, ret: "Vec2" },
-                ExternOpDecl { op: "Mul", rhs: Some("float"), lhs: None, ret: "Vec2" },
-                ExternOpDecl { op: "Mul", rhs: None, lhs: Some("float"), ret: "Vec2" },
-                ExternOpDecl { op: "Neg", rhs: None, lhs: None, ret: "Vec2" },
-                ExternOpDecl { op: "Eq", rhs: Some("Vec2"), lhs: None, ret: "bool" },
+                ExternOpDecl {
+                    op: "Add",
+                    rhs: Some("Vec2"),
+                    lhs: None,
+                    ret: "Vec2",
+                },
+                ExternOpDecl {
+                    op: "Mul",
+                    rhs: Some("float"),
+                    lhs: None,
+                    ret: "Vec2",
+                },
+                ExternOpDecl {
+                    op: "Mul",
+                    rhs: None,
+                    lhs: Some("float"),
+                    ret: "Vec2",
+                },
+                ExternOpDecl {
+                    op: "Neg",
+                    rhs: None,
+                    lhs: None,
+                    ret: "Vec2",
+                },
+                ExternOpDecl {
+                    op: "Eq",
+                    rhs: Some("Vec2"),
+                    lhs: None,
+                    ret: "bool",
+                },
             ],
         }];
         let json = exports_to_json(&[], &type_decls);
@@ -874,9 +1041,24 @@ mod tests {
             methods: vec![],
             statics: vec![],
             operators: vec![
-                ExternOpDecl { op: "Add", rhs: Some("Vec2"), lhs: None, ret: "Vec2" },
-                ExternOpDecl { op: "Neg", rhs: None, lhs: None, ret: "Vec2" },
-                ExternOpDecl { op: "Eq", rhs: Some("Vec2"), lhs: None, ret: "bool" },
+                ExternOpDecl {
+                    op: "Add",
+                    rhs: Some("Vec2"),
+                    lhs: None,
+                    ret: "Vec2",
+                },
+                ExternOpDecl {
+                    op: "Neg",
+                    rhs: None,
+                    lhs: None,
+                    ret: "Vec2",
+                },
+                ExternOpDecl {
+                    op: "Eq",
+                    rhs: Some("Vec2"),
+                    lhs: None,
+                    ret: "bool",
+                },
             ],
         }];
         let json = exports_to_json(&[], &type_decls);
@@ -906,9 +1088,24 @@ mod tests {
                 methods: vec![],
                 statics: vec![],
                 operators: vec![
-                    ExternOpMeta { op: "Add".to_string(), rhs: Some("Vec2".to_string()), lhs: None, ret: "Vec2".to_string() },
-                    ExternOpMeta { op: "Neg".to_string(), rhs: None, lhs: None, ret: "Vec2".to_string() },
-                    ExternOpMeta { op: "Eq".to_string(), rhs: Some("Vec2".to_string()), lhs: None, ret: "bool".to_string() },
+                    ExternOpMeta {
+                        op: "Add".to_string(),
+                        rhs: Some("Vec2".to_string()),
+                        lhs: None,
+                        ret: "Vec2".to_string(),
+                    },
+                    ExternOpMeta {
+                        op: "Neg".to_string(),
+                        rhs: None,
+                        lhs: None,
+                        ret: "Vec2".to_string(),
+                    },
+                    ExternOpMeta {
+                        op: "Eq".to_string(),
+                        rhs: Some("Vec2".to_string()),
+                        lhs: None,
+                        ret: "bool".to_string(),
+                    },
                 ],
             }],
             functions: vec![],
@@ -916,20 +1113,34 @@ mod tests {
 
         let stmts = metadata_to_extern_stmts(&meta).unwrap();
         assert_eq!(stmts.len(), 1);
-        let Stmt::ExternType(ty_node) = &stmts[0].node else { panic!("expected ExternType") };
+        let Stmt::ExternType(ty_node) = &stmts[0].node else {
+            panic!("expected ExternType")
+        };
         assert_eq!(ty_node.node.members.len(), 3);
 
         assert!(matches!(
             &ty_node.node.members[0],
-            ExternTypeMember::Operator { op: BinaryOp::Add, self_on_right: false, .. }
+            ExternTypeMember::Operator {
+                op: BinaryOp::Add,
+                self_on_right: false,
+                ..
+            }
         ));
         assert!(matches!(
             &ty_node.node.members[1],
-            ExternTypeMember::UnaryOperator { op: UnaryOp::Neg, .. }
+            ExternTypeMember::UnaryOperator {
+                op: UnaryOp::Neg,
+                ..
+            }
         ));
         assert!(matches!(
             &ty_node.node.members[2],
-            ExternTypeMember::Operator { op: BinaryOp::Eq, ret: Type::Bool, self_on_right: false, .. }
+            ExternTypeMember::Operator {
+                op: BinaryOp::Eq,
+                ret: Type::Bool,
+                self_on_right: false,
+                ..
+            }
         ));
     }
 
@@ -945,24 +1156,44 @@ mod tests {
                 methods: vec![],
                 statics: vec![],
                 operators: vec![
-                    ExternOpMeta { op: "Mul".to_string(), rhs: Some("float".to_string()), lhs: None, ret: "Vec2".to_string() },
-                    ExternOpMeta { op: "Mul".to_string(), rhs: None, lhs: Some("float".to_string()), ret: "Vec2".to_string() },
+                    ExternOpMeta {
+                        op: "Mul".to_string(),
+                        rhs: Some("float".to_string()),
+                        lhs: None,
+                        ret: "Vec2".to_string(),
+                    },
+                    ExternOpMeta {
+                        op: "Mul".to_string(),
+                        rhs: None,
+                        lhs: Some("float".to_string()),
+                        ret: "Vec2".to_string(),
+                    },
                 ],
             }],
             functions: vec![],
         };
 
         let stmts = metadata_to_extern_stmts(&meta).unwrap();
-        let Stmt::ExternType(ty_node) = &stmts[0].node else { panic!() };
+        let Stmt::ExternType(ty_node) = &stmts[0].node else {
+            panic!()
+        };
         assert_eq!(ty_node.node.members.len(), 2);
 
         assert!(matches!(
             &ty_node.node.members[0],
-            ExternTypeMember::Operator { op: BinaryOp::Mul, self_on_right: false, .. }
+            ExternTypeMember::Operator {
+                op: BinaryOp::Mul,
+                self_on_right: false,
+                ..
+            }
         ));
         assert!(matches!(
             &ty_node.node.members[1],
-            ExternTypeMember::Operator { op: BinaryOp::Mul, self_on_right: true, .. }
+            ExternTypeMember::Operator {
+                op: BinaryOp::Mul,
+                self_on_right: true,
+                ..
+            }
         ));
     }
 }

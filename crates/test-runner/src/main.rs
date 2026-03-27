@@ -49,9 +49,9 @@ fn main() {
             .collect(),
     };
 
-    println!("");
+    println!();
     println!("{CYAN}Running {} tests...{RESET}", work.len());
-    println!("");
+    println!();
 
     let results = work
         .par_iter()
@@ -78,7 +78,7 @@ fn main() {
         summary.add(file, result, args.quiet);
     }
     summary.print_summary(start_time);
-    println!("");
+    println!();
 }
 
 #[derive(Debug, Default)]
@@ -131,9 +131,9 @@ impl Summary {
     }
 
     fn print_summary(&self, start_time: Instant) {
-        println!("");
+        println!();
         println!("{CYAN}Summary: {RESET}");
-        println!("");
+        println!();
 
         if self.skipped > 0 {
             println!("* {}Skipped:{} {}", YELLOW, RESET, self.skipped);
@@ -141,7 +141,7 @@ impl Summary {
                 println!("{YELLOW}  - {}:{RESET}", f.display());
                 tab_print(4, m, false);
             });
-            println!("");
+            println!();
         }
 
         if self.timed_out > 0 {
@@ -149,21 +149,21 @@ impl Summary {
             self.timeouts
                 .iter()
                 .for_each(|f| eprintln!("{BLUE}  - {}{RESET}", f.display()));
-            println!("");
+            println!();
         }
 
         if self.failed > 0 {
             eprintln!("* {}Failed:{} {}", RED, RESET, self.failed);
             self.failures.iter().for_each(|(f, m)| {
-                println!("");
+                println!();
                 eprintln!("{RED}  - {}:{RESET}", f.display());
                 tab_print(4, m, true);
             });
-            println!("");
+            println!();
         }
 
         println!("* {GREEN}Passed:{RESET} {}", self.passed);
-        println!("");
+        println!();
         let result = format!(
             "{GREEN}{}{RESET} passed; {RED}{}{RESET} failed; {BLUE}{}{RESET} timed out; {YELLOW}{}{RESET} skipped; {GREY}{}{RESET} helpers; finished in: {CYAN}{:.2}s{RESET}",
             self.passed,

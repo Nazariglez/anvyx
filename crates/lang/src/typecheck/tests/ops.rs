@@ -134,7 +134,11 @@ fn test_binary_string_comparison_all_ops_ok() {
     let lt = binary_expr(lit_string("a"), BinaryOp::LessThan, lit_string("b"));
     let gt = binary_expr(lit_string("z"), BinaryOp::GreaterThan, lit_string("a"));
     let lte = binary_expr(lit_string("abc"), BinaryOp::LessThanEq, lit_string("abd"));
-    let gte = binary_expr(lit_string("xyz"), BinaryOp::GreaterThanEq, lit_string("xyz"));
+    let gte = binary_expr(
+        lit_string("xyz"),
+        BinaryOp::GreaterThanEq,
+        lit_string("xyz"),
+    );
     let lt_id = get_expr_id(&lt);
     let gt_id = get_expr_id(&gt);
     let lte_id = get_expr_id(&lte);
@@ -445,11 +449,7 @@ fn test_coalesce_mismatched_inner_types() {
     let nil_expr = lit_nil();
     let bool_expr = lit_bool(true);
     let coalesce = binary_expr(nil_expr, BinaryOp::Coalesce, bool_expr);
-    let prog = program(vec![let_binding(
-        "a",
-        Some(opt_type(Type::Int)),
-        coalesce,
-    )]);
+    let prog = program(vec![let_binding("a", Some(opt_type(Type::Int)), coalesce)]);
 
     let errors = run_err(prog);
     assert!(
@@ -677,10 +677,7 @@ fn test_string_interp_text_only_ok() {
 #[test]
 fn test_string_interp_with_string_var_ok() {
     reset_expr_ids();
-    let interp = string_interp_expr(vec![
-        text_part("val: "),
-        expr_part(ident_expr("x")),
-    ]);
+    let interp = string_interp_expr(vec![text_part("val: "), expr_part(ident_expr("x"))]);
     let interp_id = get_expr_id(&interp);
     let prog = program(vec![
         let_binding("x", Some(Type::String), lit_string("a")),
@@ -694,10 +691,7 @@ fn test_string_interp_with_string_var_ok() {
 #[test]
 fn test_string_interp_with_int_ok() {
     reset_expr_ids();
-    let interp = string_interp_expr(vec![
-        text_part("n="),
-        expr_part(lit_int(42)),
-    ]);
+    let interp = string_interp_expr(vec![text_part("n="), expr_part(lit_int(42))]);
     let interp_id = get_expr_id(&interp);
     let prog = program(vec![expr_stmt(interp)]);
 
@@ -708,10 +702,7 @@ fn test_string_interp_with_int_ok() {
 #[test]
 fn test_string_interp_with_float_ok() {
     reset_expr_ids();
-    let interp = string_interp_expr(vec![
-        text_part("f="),
-        expr_part(lit_float(3.14)),
-    ]);
+    let interp = string_interp_expr(vec![text_part("f="), expr_part(lit_float(3.14))]);
     let interp_id = get_expr_id(&interp);
     let prog = program(vec![expr_stmt(interp)]);
 
@@ -806,10 +797,7 @@ fn test_cast_bool_to_int_err() {
 #[test]
 fn test_cast_string_to_int_err() {
     reset_expr_ids();
-    let prog = program(vec![expr_stmt(cast_expr_node(
-        lit_string("hi"),
-        Type::Int,
-    ))]);
+    let prog = program(vec![expr_stmt(cast_expr_node(lit_string("hi"), Type::Int))]);
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
@@ -833,10 +821,7 @@ fn test_cast_int_to_bool_err() {
 #[test]
 fn test_cast_int_to_string_err() {
     reset_expr_ids();
-    let prog = program(vec![expr_stmt(cast_expr_node(
-        lit_int(1),
-        Type::String,
-    ))]);
+    let prog = program(vec![expr_stmt(cast_expr_node(lit_int(1), Type::String))]);
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,

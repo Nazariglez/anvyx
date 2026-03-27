@@ -219,7 +219,9 @@ pub fn lower_program(
             continue;
         }
 
-        let template = shared.tcx.get_generic_extend_template(spec_key.base_name, spec_key.method_name);
+        let template = shared
+            .tcx
+            .get_generic_extend_template(spec_key.base_name, spec_key.method_name);
         let Some(template) = template else { continue };
 
         let mangled = spec_key.mangle(&template.source_module);
@@ -253,10 +255,10 @@ pub fn lower_program(
                     continue;
                 }
                 let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
-                if !shared.funcs.contains_key(&mangled) {
+                if let std::collections::hash_map::Entry::Vacant(e) = shared.funcs.entry(mangled) {
                     let id = hir::FuncId(next_func_id);
                     next_func_id += 1;
-                    shared.funcs.insert(mangled, id);
+                    e.insert(id);
                     struct_methods.push((struct_name, type_id, method, false));
                 }
             }
@@ -277,10 +279,10 @@ pub fn lower_program(
                     continue;
                 }
                 let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
-                if !shared.funcs.contains_key(&mangled) {
+                if let std::collections::hash_map::Entry::Vacant(e) = shared.funcs.entry(mangled) {
                     let id = hir::FuncId(next_func_id);
                     next_func_id += 1;
-                    shared.funcs.insert(mangled, id);
+                    e.insert(id);
                     struct_methods.push((struct_name, type_id, method, true));
                 }
             }
@@ -304,10 +306,12 @@ pub fn lower_program(
                         continue;
                     }
                     let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
-                    if !shared.funcs.contains_key(&mangled) {
+                    if let std::collections::hash_map::Entry::Vacant(e) =
+                        shared.funcs.entry(mangled)
+                    {
                         let id = hir::FuncId(next_func_id);
                         next_func_id += 1;
-                        shared.funcs.insert(mangled, id);
+                        e.insert(id);
                         struct_methods.push((struct_name, type_id, method, false));
                     }
                 }
@@ -328,10 +332,12 @@ pub fn lower_program(
                         continue;
                     }
                     let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
-                    if !shared.funcs.contains_key(&mangled) {
+                    if let std::collections::hash_map::Entry::Vacant(e) =
+                        shared.funcs.entry(mangled)
+                    {
                         let id = hir::FuncId(next_func_id);
                         next_func_id += 1;
-                        shared.funcs.insert(mangled, id);
+                        e.insert(id);
                         struct_methods.push((struct_name, type_id, method, true));
                     }
                 }
@@ -426,9 +432,15 @@ pub fn lower_program(
         };
 
         let self_type = if *is_dataref {
-            Type::DataRef { name: *struct_name, type_args: vec![] }
+            Type::DataRef {
+                name: *struct_name,
+                type_args: vec![],
+            }
         } else {
-            Type::Struct { name: *struct_name, type_args: vec![] }
+            Type::Struct {
+                name: *struct_name,
+                type_args: vec![],
+            }
         };
         register_named_local(&mut fc, self_ident, self_type);
 
@@ -449,7 +461,8 @@ pub fn lower_program(
             span: method.body.span,
         });
 
-        if method.name == to_string_name && shared.tcx.struct_to_string_body(*struct_name).is_some() {
+        if method.name == to_string_name && shared.tcx.struct_to_string_body(*struct_name).is_some()
+        {
             struct_meta[*type_id as usize].to_string_fn = Some(id.0 as usize);
         }
     }
@@ -457,39 +470,77 @@ pub fn lower_program(
     for (path, stmts) in module_list {
         let module_str = path.join("::");
         for stmt_node in stmts {
-            let ast::Stmt::Extend(node) = &stmt_node.node else { continue };
-            if !node.node.type_params.is_empty() { continue; }
+            let ast::Stmt::Extend(node) = &stmt_node.node else {
+                continue;
+            };
+            if !node.node.type_params.is_empty() {
+                continue;
+            }
             let resolved_ty = resolve_extend_ty(&node.node.ty, &shared);
-            let Some(resolved_ty) = resolved_ty else { continue };
+            let Some(resolved_ty) = resolved_ty else {
+                continue;
+            };
             let type_str = format!("{resolved_ty}");
             for method in &node.node.methods {
-                if method.node.params.is_empty() { continue; }
-                if method.node.params[0].name.0.as_ref() != "self" { continue; }
+                if method.node.params.is_empty() {
+                    continue;
+                }
+                if method.node.params[0].name.0.as_ref() != "self" {
+                    continue;
+                }
                 let internal_name = Ident(Intern::new(format!(
                     "__extend::{}::{}::{}",
                     module_str, type_str, method.node.name
                 )));
-                let &id = shared.funcs.get(&internal_name).expect("extend method registered in collect_declarations");
-                funcs.push(lower_extend_method(method, &resolved_ty, id, internal_name, &ctx)?);
+                let &id = shared
+                    .funcs
+                    .get(&internal_name)
+                    .expect("extend method registered in collect_declarations");
+                funcs.push(lower_extend_method(
+                    method,
+                    &resolved_ty,
+                    id,
+                    internal_name,
+                    &ctx,
+                )?);
             }
         }
     }
 
     for stmt_node in &ast.stmts {
-        let ast::Stmt::Extend(node) = &stmt_node.node else { continue };
-        if !node.node.type_params.is_empty() { continue; }
+        let ast::Stmt::Extend(node) = &stmt_node.node else {
+            continue;
+        };
+        if !node.node.type_params.is_empty() {
+            continue;
+        }
         let resolved_ty = resolve_extend_ty(&node.node.ty, &shared);
-        let Some(resolved_ty) = resolved_ty else { continue };
+        let Some(resolved_ty) = resolved_ty else {
+            continue;
+        };
         let type_str = format!("{resolved_ty}");
         for method in &node.node.methods {
-            if method.node.params.is_empty() { continue; }
-            if method.node.params[0].name.0.as_ref() != "self" { continue; }
+            if method.node.params.is_empty() {
+                continue;
+            }
+            if method.node.params[0].name.0.as_ref() != "self" {
+                continue;
+            }
             let internal_name = Ident(Intern::new(format!(
                 "__extend::::{}::{}",
                 type_str, method.node.name
             )));
-            let &id = shared.funcs.get(&internal_name).expect("extend method registered in collect_declarations");
-            funcs.push(lower_extend_method(method, &resolved_ty, id, internal_name, &ctx)?);
+            let &id = shared
+                .funcs
+                .get(&internal_name)
+                .expect("extend method registered in collect_declarations");
+            funcs.push(lower_extend_method(
+                method,
+                &resolved_ty,
+                id,
+                internal_name,
+                &ctx,
+            )?);
         }
     }
 
@@ -565,13 +616,7 @@ pub fn lower_program(
         }
         let params_len = fc.locals.len() as u32;
 
-        let body = lower_block(
-            &method.body,
-            &spec_ctx,
-            &mut fc,
-            true,
-            &specialized_ret,
-        )?;
+        let body = lower_block(&method.body, &spec_ctx, &mut fc, true, &specialized_ret)?;
 
         funcs.push(hir::Func {
             id,
@@ -603,12 +648,21 @@ fn resolve_extend_ty(ty: &Type, shared: &SharedCtx) -> Option<Type> {
         Type::UnresolvedName(name) => {
             if shared.struct_type_ids.contains_key(name) {
                 if shared.tcx.is_dataref(*name) {
-                    Some(Type::DataRef { name: *name, type_args: vec![] })
+                    Some(Type::DataRef {
+                        name: *name,
+                        type_args: vec![],
+                    })
                 } else {
-                    Some(Type::Struct { name: *name, type_args: vec![] })
+                    Some(Type::Struct {
+                        name: *name,
+                        type_args: vec![],
+                    })
                 }
             } else if shared.enum_type_ids.contains_key(name) {
-                Some(Type::Enum { name: *name, type_args: vec![] })
+                Some(Type::Enum {
+                    name: *name,
+                    type_args: vec![],
+                })
             } else if shared.tcx.get_extern_type(*name).is_some() {
                 Some(Type::Extern { name: *name })
             } else {
@@ -633,7 +687,11 @@ fn lower_extend_method(
     };
 
     for (i, param) in method.node.params.iter().enumerate() {
-        let ty = if i == 0 { self_ty.clone() } else { param.ty.clone() };
+        let ty = if i == 0 {
+            self_ty.clone()
+        } else {
+            param.ty.clone()
+        };
         register_named_local(&mut fc, param.name, ty);
     }
     let params_len = fc.locals.len() as u32;

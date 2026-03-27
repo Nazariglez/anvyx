@@ -356,10 +356,7 @@ fn extern_type_block_with_methods_parses() {
     assert!(params.is_empty());
     assert_eq!(*ret, Type::Float);
 
-    let ast::ExternTypeMember::Method {
-        name, receiver, ..
-    } = &node.node.members[1]
-    else {
+    let ast::ExternTypeMember::Method { name, receiver, .. } = &node.node.members[1] else {
         panic!("expected Method");
     };
     assert_eq!(name.0.as_ref(), "move_by");
@@ -453,9 +450,7 @@ fn extern_fn_still_parses_after_refactor() {
 
 #[test]
 fn extern_type_and_extern_fn_in_same_program() {
-    let prog = parse_program(
-        "extern type Sprite;\nextern fn create() -> Sprite;",
-    );
+    let prog = parse_program("extern type Sprite;\nextern fn create() -> Sprite;");
     assert_eq!(prog.stmts.len(), 2);
     assert!(matches!(prog.stmts[0].node, ast::Stmt::ExternType(_)));
     assert!(matches!(prog.stmts[1].node, ast::Stmt::ExternFunc(_)));
@@ -463,7 +458,7 @@ fn extern_type_and_extern_fn_in_same_program() {
 
 #[test]
 fn index_assign_parses() {
-    use super::helpers::{expect_index, expect_int, expect_ident};
+    use super::helpers::{expect_ident, expect_index, expect_int};
     let prog = parse_program("fn main() { var a = [1, 2, 3]; a[0] = 5; }");
     let ast::Stmt::Func(func_node) = &prog.stmts[0].node else {
         panic!("expected Func");
@@ -484,7 +479,7 @@ fn index_assign_parses() {
 
 #[test]
 fn field_then_index_assign_parses() {
-    use super::helpers::{expect_index, expect_int, expect_field};
+    use super::helpers::{expect_field, expect_index, expect_int};
     let prog = parse_program("fn main() { a.x[0] = 5; }");
     let ast::Stmt::Func(func_node) = &prog.stmts[0].node else {
         panic!("expected Func");

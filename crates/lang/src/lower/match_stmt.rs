@@ -468,10 +468,10 @@ fn lower_match_non_enum(
         kind: "match with no arms".into(),
     })?;
 
-    if outermost.stmts.len() == 1 {
-        if let hir::StmtKind::If { .. } = &outermost.stmts[0].kind {
-            return Ok(outermost.stmts.into_iter().next().unwrap());
-        }
+    if outermost.stmts.len() == 1
+        && let hir::StmtKind::If { .. } = &outermost.stmts[0].kind
+    {
+        return Ok(outermost.stmts.into_iter().next().unwrap());
     }
 
     let true_cond = hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(true));
@@ -1172,7 +1172,10 @@ pub(super) fn lower_let_else(
                 let neg_cond = hir::Expr::new(
                     Type::Bool,
                     span,
-                    hir::ExprKind::Unary { op: UnaryOp::Not, expr: Box::new(cond) },
+                    hir::ExprKind::Unary {
+                        op: UnaryOp::Not,
+                        expr: Box::new(cond),
+                    },
                 );
                 let else_body =
                     lower_block(&let_else_node.node.else_block, ctx, fc, false, &Type::Void)?;

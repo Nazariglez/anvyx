@@ -152,7 +152,8 @@ pub(super) fn register_extern_type_members(
     }
 
     for op_def in &extern_def.operators {
-        let key = extern_binary_op_key(type_name, op_def.op, &op_def.other_ty, op_def.self_on_right);
+        let key =
+            extern_binary_op_key(type_name, op_def.op, &op_def.other_ty, op_def.self_on_right);
         let params = if op_def.self_on_right {
             vec![op_def.other_ty.clone(), Type::Extern { name: type_name }]
         } else {
@@ -214,7 +215,12 @@ pub(super) fn collect_declarations<'a>(
                 extern_decls.push(hir::ExternDecl {
                     id,
                     name: extern_node.node.name,
-                    params: extern_node.node.params.iter().map(|p| p.ty.clone()).collect(),
+                    params: extern_node
+                        .node
+                        .params
+                        .iter()
+                        .map(|p| p.ty.clone())
+                        .collect(),
                     ret: extern_node.node.ret.clone(),
                 });
             }
@@ -256,18 +262,31 @@ pub(super) fn register_extend_declarations<'a>(
 ) {
     let module_str = module_path.join("::");
     for stmt_node in stmts {
-        let Stmt::Extend(node) = &stmt_node.node else { continue };
-        if !node.node.type_params.is_empty() { continue; }
+        let Stmt::Extend(node) = &stmt_node.node else {
+            continue;
+        };
+        if !node.node.type_params.is_empty() {
+            continue;
+        }
         let resolved_ty = match &node.node.ty {
             Type::UnresolvedName(name) => {
                 if ctx.struct_type_ids.contains_key(name) {
                     if ctx.tcx.is_dataref(*name) {
-                        Type::DataRef { name: *name, type_args: vec![] }
+                        Type::DataRef {
+                            name: *name,
+                            type_args: vec![],
+                        }
                     } else {
-                        Type::Struct { name: *name, type_args: vec![] }
+                        Type::Struct {
+                            name: *name,
+                            type_args: vec![],
+                        }
                     }
                 } else if ctx.enum_type_ids.contains_key(name) {
-                    Type::Enum { name: *name, type_args: vec![] }
+                    Type::Enum {
+                        name: *name,
+                        type_args: vec![],
+                    }
                 } else if ctx.tcx.get_extern_type(*name).is_some() {
                     Type::Extern { name: *name }
                 } else {
@@ -367,8 +386,13 @@ pub(super) fn resolve_variant_index(
         })
 }
 
-pub(super) fn resolve_enum_type_id(ctx: &LowerCtx, span: Span, name: Ident) -> Result<u32, LowerError> {
-    ctx.shared.enum_type_ids
+pub(super) fn resolve_enum_type_id(
+    ctx: &LowerCtx,
+    span: Span,
+    name: Ident,
+) -> Result<u32, LowerError> {
+    ctx.shared
+        .enum_type_ids
         .get(&name)
         .copied()
         .ok_or_else(|| LowerError::UnsupportedExprKind {
@@ -377,8 +401,13 @@ pub(super) fn resolve_enum_type_id(ctx: &LowerCtx, span: Span, name: Ident) -> R
         })
 }
 
-pub(super) fn resolve_struct_type_id(ctx: &LowerCtx, span: Span, name: Ident) -> Result<u32, LowerError> {
-    ctx.shared.struct_type_ids
+pub(super) fn resolve_struct_type_id(
+    ctx: &LowerCtx,
+    span: Span,
+    name: Ident,
+) -> Result<u32, LowerError> {
+    ctx.shared
+        .struct_type_ids
         .get(&name)
         .copied()
         .ok_or_else(|| LowerError::UnsupportedExprKind {
