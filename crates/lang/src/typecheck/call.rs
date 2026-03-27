@@ -1317,7 +1317,7 @@ pub(super) fn check_extern_static_method_call(
     result
 }
 
-fn generic_context_strings(
+pub(super) fn generic_context_strings(
     name: &str,
     type_params: &[TypeParam],
     type_args: &[Type],
@@ -1338,7 +1338,7 @@ fn generic_context_strings(
     (label, note)
 }
 
-fn report_cached_spec_error(
+pub(super) fn report_cached_spec_error(
     cached: &SpecializationResult,
     context_name: &str,
     type_params: &[TypeParam],
@@ -1356,7 +1356,7 @@ fn report_cached_spec_error(
     }
 }
 
-fn report_instantiation_errors(
+pub(super) fn report_instantiation_errors(
     body_errors: Vec<TypeErr>,
     context_name: &str,
     type_params: &[TypeParam],

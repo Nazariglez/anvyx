@@ -13,8 +13,8 @@ use internment::Intern;
 use super::{
     composite::{is_all_nil_array_literal, is_empty_map_literal},
     const_eval::{
-        build_const_dependency_graph, collect_const_decls, eval_const_expr, validate_const_expr,
-        ConstDef,
+        ConstDef, build_const_dependency_graph, collect_const_decls, eval_const_expr,
+        validate_const_expr,
     },
     constraint::TypeRef,
     control::{block_always_diverges, check_for, check_while, is_if_without_else},
@@ -25,8 +25,9 @@ use super::{
     pattern::{check_pattern, is_refutable},
     types::{
         EnumDef, ExtendEntry, ExtendMethodDef, ExternFieldDef, ExternMethodDef, ExternOpDef,
-        ExternTypeDef, ExternUnaryOpDef, ModuleDef, ModuleExtendEntry, StructDef, TypeChecker,
-        build_param_info, unwrap_opt_typ, validate_map_key_type,
+        ExternTypeDef, ExternUnaryOpDef, GenericExtendTemplate, ModuleDef, ModuleExtendEntry,
+        ModuleGenericExtendEntry, StructDef, TypeChecker, build_param_info, unwrap_opt_typ,
+        validate_map_key_type,
     },
     unify::contains_infer,
 };
@@ -112,7 +113,12 @@ fn process_const_decl(
         .as_ref()
         .map(|ty| type_checker.resolve_type(ty));
 
-    let _ = check_expr(&decl.node.value, type_checker, errors, annotated_ty.as_ref());
+    let _ = check_expr(
+        &decl.node.value,
+        type_checker,
+        errors,
+        annotated_ty.as_ref(),
+    );
 
     let const_value = match eval_const_expr(&decl.node.value, &type_checker.const_defs) {
         Ok(val) => val,
@@ -504,6 +510,23 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                         });
                     }
                 }
+                for entry in &module_def.generic_extend_methods {
+                    let key = (entry.base_name, entry.method_name);
+                    let entries = type_checker
+                        .generic_extend_templates
+                        .entry(key)
+                        .or_default();
+                    let already_registered = entries.iter().any(|e| e.source_module == path_key);
+                    if !already_registered {
+                        entries.push(GenericExtendTemplate {
+                            type_params: entry.type_params.clone(),
+                            method: entry.method.clone(),
+                            visibility: Visibility::Public,
+                            source_module: path_key.clone(),
+                            binding: binding_name,
+                        });
+                    }
+                }
 
                 match &import.kind {
                     ImportKind::Module => {
@@ -541,6 +564,10 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
 
             Stmt::Extend(node) => {
                 let decl = &node.node;
+                if !decl.type_params.is_empty() {
+                    // generic template are registered by check_extend_decl, not here
+                    continue;
+                }
                 let resolved_ty = type_checker.resolve_type(&decl.ty);
                 let valid = matches!(
                     resolved_ty,
@@ -570,14 +597,20 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                     }
 
                     let type_str = format!("{resolved_ty}");
-                    let internal_name =
-                        Ident(Intern::new(format!("__extend::::{}::{}", type_str, method.node.name)));
+                    let internal_name = Ident(Intern::new(format!(
+                        "__extend::::{}::{}",
+                        type_str, method.node.name
+                    )));
 
                     let mut params = method.node.params.clone();
                     params[0].ty = resolved_ty.clone();
                     let ret = type_checker.resolve_type(&method.node.ret);
 
-                    let def = ExtendMethodDef { params, ret, internal_name };
+                    let def = ExtendMethodDef {
+                        params,
+                        ret,
+                        internal_name,
+                    };
                     type_checker
                         .extend_defs
                         .entry((resolved_ty.clone(), method.node.name))
@@ -780,6 +813,32 @@ pub(super) fn build_module_def_with_reexports(
                 if decl.visibility != Visibility::Public {
                     continue;
                 }
+
+                if !decl.type_params.is_empty() {
+                    // generic extend export base name extracted from UnresolvedName
+                    let base_name = match &decl.ty {
+                        Type::UnresolvedName(name) => *name,
+                        _ => continue, // primitives can't be generic
+                    };
+                    for method in &decl.methods {
+                        if method.node.params.is_empty() {
+                            continue;
+                        }
+                        if method.node.params[0].name.0.as_ref() != "self" {
+                            continue;
+                        }
+                        module_def
+                            .generic_extend_methods
+                            .push(ModuleGenericExtendEntry {
+                                base_name,
+                                type_params: decl.type_params.clone(),
+                                method_name: method.node.name,
+                                method: method.clone(),
+                            });
+                    }
+                    continue;
+                }
+
                 let resolved_ty = resolve(&decl.ty);
                 let valid = matches!(
                     resolved_ty,
@@ -807,14 +866,16 @@ pub(super) fn build_module_def_with_reexports(
                     let type_str = format!("{resolved_ty}");
                     let internal_name = Ident(Intern::new(format!(
                         "__extend::{}::{}::{}",
-                        module_str,
-                        type_str,
-                        method.node.name
+                        module_str, type_str, method.node.name
                     )));
                     let mut params = method.node.params.clone();
                     params[0].ty = resolved_ty.clone();
                     let ret = resolve(&method.node.ret);
-                    let def = ExtendMethodDef { params, ret, internal_name };
+                    let def = ExtendMethodDef {
+                        params,
+                        ret,
+                        internal_name,
+                    };
                     module_def.extend_methods.push(ModuleExtendEntry {
                         ty: resolved_ty.clone(),
                         name: method.node.name,
@@ -911,7 +972,10 @@ pub(super) fn check_stmt(
                 .last()
                 .is_some_and(|scope| scope.contains(&name));
             if already_in_scope {
-                errors.push(TypeErr::new(stmt.span, TypeErrKind::DuplicateConst { name }));
+                errors.push(TypeErr::new(
+                    stmt.span,
+                    TypeErrKind::DuplicateConst { name },
+                ));
                 return;
             }
 
@@ -927,7 +991,12 @@ pub(super) fn check_stmt(
                 .as_ref()
                 .map(|ty| type_checker.resolve_type(ty));
 
-            let _ = check_expr(&decl.node.value, type_checker, errors, annotated_ty.as_ref());
+            let _ = check_expr(
+                &decl.node.value,
+                type_checker,
+                errors,
+                annotated_ty.as_ref(),
+            );
 
             let const_value = match eval_const_expr(&decl.node.value, &type_checker.const_defs) {
                 Ok(val) => val,
@@ -977,12 +1046,21 @@ fn check_extend_decl(
     errors: &mut Vec<TypeErr>,
 ) {
     let decl = &node.node;
+
+    if !decl.type_params.is_empty() {
+        check_generic_extend_decl(node, type_checker, errors);
+        return;
+    }
+
     let resolved_ty = type_checker.resolve_type(&decl.ty);
 
     let valid = match &resolved_ty {
-        Type::Float | Type::Double | Type::Int | Type::Bool | Type::String | Type::Extern { .. } => {
-            true
-        }
+        Type::Float
+        | Type::Double
+        | Type::Int
+        | Type::Bool
+        | Type::String
+        | Type::Extern { .. } => true,
         Type::Struct { type_args, .. } | Type::Enum { type_args, .. } => type_args.is_empty(),
         _ => false,
     };
@@ -996,12 +1074,12 @@ fn check_extend_decl(
 
     for method in &decl.methods {
         // Validate self param exists
-        if method.node.params.is_empty()
-            || method.node.params[0].name.0.as_ref() != "self"
-        {
+        if method.node.params.is_empty() || method.node.params[0].name.0.as_ref() != "self" {
             errors.push(TypeErr::new(
                 method.span,
-                TypeErrKind::ExtendMethodMissingSelf { method: method.node.name },
+                TypeErrKind::ExtendMethodMissingSelf {
+                    method: method.node.name,
+                },
             ));
             continue;
         }
@@ -1010,7 +1088,9 @@ fn check_extend_decl(
         if method.node.params[0].ty != Type::Infer {
             errors.push(TypeErr::new(
                 method.span,
-                TypeErrKind::ExtendSelfTypeAnnotation { method: method.node.name },
+                TypeErrKind::ExtendSelfTypeAnnotation {
+                    method: method.node.name,
+                },
             ));
             continue;
         }
@@ -1038,10 +1118,12 @@ fn check_extend_decl(
 
         // Duplicate check: count entries from current module (source_module == []) for this key
         let key = (resolved_ty.clone(), method.node.name);
-        let local_count = type_checker
-            .extend_defs
-            .get(&key)
-            .map_or(0, |entries| entries.iter().filter(|e| e.source_module.is_empty()).count());
+        let local_count = type_checker.extend_defs.get(&key).map_or(0, |entries| {
+            entries
+                .iter()
+                .filter(|e| e.source_module.is_empty())
+                .count()
+        });
         if local_count > 1 {
             errors.push(TypeErr::new(
                 method.span,
@@ -1055,11 +1137,8 @@ fn check_extend_decl(
 
         // Build param list for body checking
         let is_var_self = matches!(method.node.params[0].mutability, Mutability::Mutable);
-        let mut params: Vec<(Ident, Type, bool)> = vec![(
-            method.node.params[0].name,
-            resolved_ty.clone(),
-            is_var_self,
-        )];
+        let mut params: Vec<(Ident, Type, bool)> =
+            vec![(method.node.params[0].name, resolved_ty.clone(), is_var_self)];
         for p in &method.node.params[1..] {
             params.push((
                 p.name,
@@ -1069,7 +1148,156 @@ fn check_extend_decl(
         }
 
         let ret_ty = type_checker.resolve_type(&method.node.ret);
-        check_body_common(&params, &method.node.body, &ret_ty, method.span, type_checker, errors);
+        check_body_common(
+            &params,
+            &method.node.body,
+            &ret_ty,
+            method.span,
+            type_checker,
+            errors,
+        );
+    }
+}
+
+fn check_generic_extend_decl(
+    node: &crate::ast::ExtendDeclNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    let decl = &node.node;
+
+    // base type must be an unresolved name (primitives can't be generic)
+    let base_name = match &decl.ty {
+        Type::UnresolvedName(name) => *name,
+        _ => {
+            errors.push(TypeErr::new(
+                node.span,
+                TypeErrKind::ExtendUnsupportedType {
+                    ty: type_checker.resolve_type(&decl.ty),
+                },
+            ));
+            return;
+        }
+    };
+
+    // resolve to find the actual struct/enum definition
+    let resolved_ty = type_checker.resolve_type(&decl.ty);
+    let (def_type_params, resolved_base_name) = match &resolved_ty {
+        Type::Struct { name, .. } => {
+            let tp = type_checker
+                .get_struct(*name)
+                .map(|d| d.type_params.clone())
+                .unwrap_or_default();
+            (tp, *name)
+        }
+        Type::Enum { name, .. } => {
+            let tp = type_checker
+                .get_enum(*name)
+                .map(|d| d.type_params.clone())
+                .unwrap_or_default();
+            (tp, *name)
+        }
+        _ => {
+            errors.push(TypeErr::new(
+                node.span,
+                TypeErrKind::ExtendUnsupportedType { ty: resolved_ty },
+            ));
+            return;
+        }
+    };
+
+    if def_type_params.is_empty() {
+        errors.push(TypeErr::new(
+            node.span,
+            TypeErrKind::ExtendTypeParamsOnNonGeneric { ty_name: base_name },
+        ));
+        return;
+    }
+
+    if decl.type_params.len() != def_type_params.len() {
+        errors.push(TypeErr::new(
+            node.span,
+            TypeErrKind::ExtendTypeParamCountMismatch {
+                ty_name: base_name,
+                expected: def_type_params.len(),
+                found: decl.type_params.len(),
+            },
+        ));
+        return;
+    }
+
+    for method in &decl.methods {
+        // vlidate self param exists
+        if method.node.params.is_empty() || method.node.params[0].name.0.as_ref() != "self" {
+            errors.push(TypeErr::new(
+                method.span,
+                TypeErrKind::ExtendMethodMissingSelf {
+                    method: method.node.name,
+                },
+            ));
+            continue;
+        }
+
+        // validate no type annotation on self
+        if method.node.params[0].ty != Type::Infer {
+            errors.push(TypeErr::new(
+                method.span,
+                TypeErrKind::ExtendSelfTypeAnnotation {
+                    method: method.node.name,
+                },
+            ));
+            continue;
+        }
+
+        // native conflict check
+        let has_native_conflict = type_checker
+            .get_struct(resolved_base_name)
+            .is_some_and(|def| def.methods.contains_key(&method.node.name));
+        if has_native_conflict {
+            errors.push(TypeErr::new(
+                method.span,
+                TypeErrKind::ExtendMethodConflict {
+                    ty: resolved_ty.clone(),
+                    method: method.node.name,
+                },
+            ));
+            continue;
+        }
+
+        // checl is there already a local template for this (base, method) pair?
+        let key = (resolved_base_name, method.node.name);
+        let local_count = type_checker
+            .generic_extend_templates
+            .get(&key)
+            .map_or(0, |entries| {
+                entries
+                    .iter()
+                    .filter(|e| e.source_module.is_empty())
+                    .count()
+            });
+        if local_count > 0 {
+            errors.push(TypeErr::new(
+                method.span,
+                TypeErrKind::DuplicateExtendMethod {
+                    ty: resolved_ty.clone(),
+                    method: method.node.name,
+                },
+            ));
+            continue;
+        }
+
+        // store template, body is NOT typechecked here (lazy specialization)
+        type_checker
+            .generic_extend_templates
+            .entry(key)
+            .or_default()
+            .push(GenericExtendTemplate {
+                type_params: decl.type_params.clone(),
+                method: method.clone(),
+                visibility: decl.visibility,
+                source_module: vec![],
+                binding: Ident(Intern::new(String::new())),
+            });
     }
 }
 

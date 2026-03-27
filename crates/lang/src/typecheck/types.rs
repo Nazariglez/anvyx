@@ -1,8 +1,9 @@
 use crate::{
     ast::{
-        ArrayLen, BinaryOp, BlockNode, CallNode, EnumDecl, ExprId, FieldAccessNode, FuncNode,
-        Ident, IndexNode, Method, MethodReceiver, Mutability, Param, StmtNode, StructDecl,
-        StructField, Type, TypeParam, TypeVarId, UnaryOp, VariantKind,
+        ArrayLen, BinaryOp, BlockNode, CallNode, EnumDecl, ExprId, ExtendMethodNode,
+        FieldAccessNode, FuncNode, Ident, IndexNode, Method, MethodReceiver, Mutability, Param,
+        StmtNode, StructDecl, StructField, Type, TypeParam, TypeVarId, UnaryOp, VariantKind,
+        Visibility,
     },
     span::Span,
 };
@@ -88,13 +89,19 @@ pub(super) fn type_references_generic(ty: &Type, type_params: &[TypeParam]) -> b
         Type::Map { key, value } => {
             type_references_generic(key, type_params) || type_references_generic(value, type_params)
         }
-        Type::Tuple(elems) => elems.iter().any(|e| type_references_generic(e, type_params)),
-        Type::NamedTuple(fields) => fields.iter().any(|(_, t)| type_references_generic(t, type_params)),
-        Type::Struct { type_args, .. } | Type::Enum { type_args, .. } => {
-            type_args.iter().any(|a| type_references_generic(a, type_params))
-        }
+        Type::Tuple(elems) => elems
+            .iter()
+            .any(|e| type_references_generic(e, type_params)),
+        Type::NamedTuple(fields) => fields
+            .iter()
+            .any(|(_, t)| type_references_generic(t, type_params)),
+        Type::Struct { type_args, .. } | Type::Enum { type_args, .. } => type_args
+            .iter()
+            .any(|a| type_references_generic(a, type_params)),
         Type::Func { params, ret } => {
-            params.iter().any(|t| type_references_generic(t, type_params))
+            params
+                .iter()
+                .any(|t| type_references_generic(t, type_params))
                 || type_references_generic(ret, type_params)
         }
         _ => false,
@@ -179,6 +186,53 @@ pub struct ModuleExtendEntry {
     pub def: ExtendMethodDef,
 }
 
+#[derive(Debug, Clone)]
+pub struct GenericExtendTemplate {
+    pub type_params: Vec<TypeParam>,
+    pub method: ExtendMethodNode,
+    pub visibility: Visibility,
+    pub source_module: Vec<String>,
+    pub binding: Ident,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ExtendSpecKey {
+    pub base_name: Ident,
+    pub method_name: Ident,
+    pub type_args: Vec<Type>,
+}
+
+impl ExtendSpecKey {
+    pub fn mangle(&self, source_module: &[String]) -> Ident {
+        use internment::Intern;
+        let module_part = if source_module.is_empty() {
+            String::new()
+        } else {
+            source_module.join("::")
+        };
+        let args_str = self
+            .type_args
+            .iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let type_str = format!("{}<{}>", self.base_name, args_str);
+        let name = format!(
+            "__extend::{}::{}::{}",
+            module_part, type_str, self.method_name
+        );
+        Ident(Intern::new(name))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleGenericExtendEntry {
+    pub base_name: Ident,
+    pub type_params: Vec<TypeParam>,
+    pub method_name: Ident,
+    pub method: ExtendMethodNode,
+}
+
 pub(super) type InferenceSlots = HashMap<TypeVarId, Ident>;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -244,6 +298,9 @@ pub(super) struct ModuleDef {
 
     /// extend methods exported by this module
     pub extend_methods: Vec<ModuleExtendEntry>,
+
+    /// generic extend method templates exported by this module
+    pub generic_extend_methods: Vec<ModuleGenericExtendEntry>,
 
     /// evaluated parameter defaults for exported functions, parallel to params (None = required)
     pub func_param_defaults: HashMap<Ident, Vec<Option<ConstValue>>>,
@@ -346,6 +403,12 @@ pub struct TypeChecker {
     /// Registered extend methods keyed by (extended type, method name)
     pub(super) extend_defs: HashMap<(Type, Ident), Vec<ExtendEntry>>,
 
+    /// Generic extend templates keyed by (base type name, method name)
+    pub(super) generic_extend_templates: HashMap<(Ident, Ident), Vec<GenericExtendTemplate>>,
+
+    /// Specialization cache for generic extend methods
+    pub(super) extend_spec_cache: HashMap<ExtendSpecKey, SpecializationResult>,
+
     /// Maps call expression ExprId to resolved extend method internal_name (for lowering)
     pub(super) extend_call_targets: HashMap<ExprId, Ident>,
 }
@@ -376,7 +439,11 @@ impl TypeChecker {
             .unwrap_or(&[])
     }
 
-    pub fn method_param_defaults(&self, struct_name: Ident, method_name: Ident) -> &[Option<ConstValue>] {
+    pub fn method_param_defaults(
+        &self,
+        struct_name: Ident,
+        method_name: Ident,
+    ) -> &[Option<ConstValue>] {
         self.struct_defs
             .get(&struct_name)
             .and_then(|sd| sd.methods.get(&method_name))
@@ -384,7 +451,11 @@ impl TypeChecker {
             .unwrap_or(&[])
     }
 
-    pub fn module_func_param_defaults(&self, module_name: Ident, func_name: Ident) -> &[Option<ConstValue>] {
+    pub fn module_func_param_defaults(
+        &self,
+        module_name: Ident,
+        func_name: Ident,
+    ) -> &[Option<ConstValue>] {
         self.module_defs
             .get(&module_name)
             .and_then(|m| m.func_param_defaults.get(&func_name))
@@ -441,7 +512,11 @@ impl TypeChecker {
             .map(|f| f.ty.clone())
     }
 
-    pub fn struct_field_default(&self, struct_name: Ident, field_name: Ident) -> Option<&FieldDefault> {
+    pub fn struct_field_default(
+        &self,
+        struct_name: Ident,
+        field_name: Ident,
+    ) -> Option<&FieldDefault> {
         self.struct_defs
             .get(&struct_name)?
             .field_defaults
@@ -644,6 +719,20 @@ impl TypeChecker {
 
     pub fn extend_call_target(&self, id: ExprId) -> Option<Ident> {
         self.extend_call_targets.get(&id).copied()
+    }
+
+    pub fn extend_specializations(&self) -> &HashMap<ExtendSpecKey, SpecializationResult> {
+        &self.extend_spec_cache
+    }
+
+    pub fn get_generic_extend_template(
+        &self,
+        base_name: Ident,
+        method_name: Ident,
+    ) -> Option<&GenericExtendTemplate> {
+        self.generic_extend_templates
+            .get(&(base_name, method_name))
+            .and_then(|v| v.first())
     }
 
     pub(super) fn set_var(&mut self, name: Ident, ty: Type, mutable: bool) {

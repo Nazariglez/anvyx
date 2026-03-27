@@ -1,0 +1,19 @@
+// @mode: run
+// @expect: success
+// @match: a 1
+
+struct Entry<K, V> {
+    key: K,
+    value: V,
+}
+
+extend Entry<K, V> {
+    fn display(self) -> string {
+        "{self.key} {self.value}"
+    }
+}
+
+fn main() {
+    let e: Entry<string, int> = Entry { key: "a", value: 1 };
+    println(e.display());
+}

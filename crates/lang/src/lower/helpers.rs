@@ -257,6 +257,7 @@ pub(super) fn register_extend_declarations<'a>(
     let module_str = module_path.join("::");
     for stmt_node in stmts {
         let Stmt::Extend(node) = &stmt_node.node else { continue };
+        if !node.node.type_params.is_empty() { continue; }
         let resolved_ty = match &node.node.ty {
             Type::UnresolvedName(name) => {
                 if ctx.struct_type_ids.contains_key(name) {

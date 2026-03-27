@@ -665,6 +665,16 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("cannot extend type '{ty}'"),
             "only named types (int, float, double, bool, string, structs, enums, extern types) can be extended".to_string(),
         ),
+        TypeErrKind::ExtendTypeParamCountMismatch { ty_name, expected, found } => (
+            format!("extend type '{ty_name}' expects {expected} type parameter{}, but {found} {} provided",
+                if *expected == 1 { "" } else { "s" },
+                if *found == 1 { "was" } else { "were" }),
+            format!("'{ty_name}' has {expected} type parameter{}", if *expected == 1 { "" } else { "s" }),
+        ),
+        TypeErrKind::ExtendTypeParamsOnNonGeneric { ty_name } => (
+            format!("type '{ty_name}' is not generic, but type parameters were provided on extend"),
+            "remove the type parameters from the extend head".to_string(),
+        ),
         TypeErrKind::RequiredParamAfterOptional { func, param } => (
             format!("required parameter '{param}' cannot follow a parameter with a default value"),
             format!("in function '{func}': reorder so all required parameters come first"),

@@ -1,0 +1,14 @@
+// @mode: check
+// @expect: error
+// @contains: type parameter
+
+struct Pair<T> {
+    first: T,
+    second: T,
+}
+
+extend Pair<T, U> {
+    fn foo(self) {}
+}
+
+fn main() {}

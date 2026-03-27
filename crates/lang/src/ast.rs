@@ -862,6 +862,7 @@ pub struct EnumDecl {
 pub struct ExtendDecl {
     pub visibility: Visibility,
     pub ty: Type,
+    pub type_params: Vec<TypeParam>,
     pub methods: Vec<ExtendMethodNode>,
 }
 

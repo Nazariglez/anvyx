@@ -1,0 +1,18 @@
+// @mode: check
+// @expect: success
+
+struct Pair<T> {
+    first: T,
+    second: T,
+}
+
+extend Pair<T> {
+    fn sum(self) -> T {
+        self.first + self.second
+    }
+}
+
+fn main() {
+    let p: Pair<int> = Pair { first: 2, second: 3 };
+    let result = p.sum();
+}

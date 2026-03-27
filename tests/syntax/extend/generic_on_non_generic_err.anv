@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: not generic
+
+struct Counter {
+    value: int,
+}
+
+extend Counter<T> {
+    fn foo(self) {}
+}
+
+fn main() {}

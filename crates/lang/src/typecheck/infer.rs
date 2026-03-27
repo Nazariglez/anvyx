@@ -330,3 +330,42 @@ pub(super) fn constrain_slots_from_type(
         _ => {}
     }
 }
+
+pub fn resolve_type_param_names(ty: &Type, type_params: &[TypeParam]) -> Type {
+    match ty {
+        Type::UnresolvedName(name) => {
+            if let Some(param) = type_params.iter().find(|p| p.name == *name) {
+                Type::Var(param.id)
+            } else {
+                ty.clone()
+            }
+        }
+        Type::Struct { name, type_args } => Type::Struct {
+            name: *name,
+            type_args: type_args.iter().map(|a| resolve_type_param_names(a, type_params)).collect(),
+        },
+        Type::Enum { name, type_args } => Type::Enum {
+            name: *name,
+            type_args: type_args.iter().map(|a| resolve_type_param_names(a, type_params)).collect(),
+        },
+        Type::Tuple(elems) => {
+            Type::Tuple(elems.iter().map(|e| resolve_type_param_names(e, type_params)).collect())
+        }
+        Type::Func { params, ret } => Type::Func {
+            params: params.iter().map(|p| resolve_type_param_names(p, type_params)).collect(),
+            ret: resolve_type_param_names(ret, type_params).boxed(),
+        },
+        Type::List { elem } => Type::List {
+            elem: resolve_type_param_names(elem, type_params).boxed(),
+        },
+        Type::Array { elem, len } => Type::Array {
+            elem: resolve_type_param_names(elem, type_params).boxed(),
+            len: *len,
+        },
+        Type::Map { key, value } => Type::Map {
+            key: resolve_type_param_names(key, type_params).boxed(),
+            value: resolve_type_param_names(value, type_params).boxed(),
+        },
+        _ => ty.clone(),
+    }
+}

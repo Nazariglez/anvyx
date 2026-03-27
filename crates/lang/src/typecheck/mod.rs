@@ -20,8 +20,8 @@ mod tests;
 
 pub use const_eval::ConstValue;
 pub use error::{TypeErr, TypeErrKind};
-pub use infer::subst_type;
-pub use types::{ExternTypeDef, FieldDefault, SpecializationKey, TypeChecker};
+pub use infer::{resolve_type_param_names, subst_type};
+pub use types::{ExtendSpecKey, ExternTypeDef, FieldDefault, SpecializationKey, TypeChecker};
 
 use crate::ast::{Program, Stmt, StmtNode, Visibility};
 use crate::builtin::Builtin;
@@ -113,6 +113,7 @@ pub fn check_program_with_modules(
     let baseline_enum_defs = type_checker.enum_defs.clone();
     let baseline_const_defs = type_checker.const_defs.clone();
     let baseline_extend_defs = type_checker.extend_defs.clone();
+    let baseline_generic_extend_templates = type_checker.generic_extend_templates.clone();
     for (_path, stmts) in module_list {
         let _ = check_block_stmts(stmts, None, &mut type_checker, &mut errors, None);
         type_checker.module_defs = baseline_module_defs.clone();
@@ -120,6 +121,7 @@ pub fn check_program_with_modules(
         type_checker.enum_defs = baseline_enum_defs.clone();
         type_checker.const_defs = baseline_const_defs.clone();
         type_checker.extend_defs = baseline_extend_defs.clone();
+        type_checker.generic_extend_templates = baseline_generic_extend_templates.clone();
     }
 
     if !errors.is_empty() {

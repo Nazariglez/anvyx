@@ -392,4 +392,12 @@ pub enum TypeErrKind {
     ExtendUnsupportedType {
         ty: Type,
     },
+    ExtendTypeParamCountMismatch {
+        ty_name: Ident,
+        expected: usize,
+        found: usize,
+    },
+    ExtendTypeParamsOnNonGeneric {
+        ty_name: Ident,
+    },
 }

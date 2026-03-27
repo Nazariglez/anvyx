@@ -1,0 +1,14 @@
+// @mode: check
+// @expect: error
+// @contains: must have 'self'
+
+struct Pair<T> {
+    first: T,
+    second: T,
+}
+
+extend Pair<T> {
+    fn bad(x: int) -> int { x }
+}
+
+fn main() {}

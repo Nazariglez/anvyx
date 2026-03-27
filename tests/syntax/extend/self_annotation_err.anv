@@ -1,6 +1,6 @@
 // @mode: check
-// @expect: success
-// @skip: parser silently discards type annotations on self, so self: float is treated as plain self
+// @expect: error
+// @contains: type annotation
 
 extend float {
     fn double_val(self: float) -> float { self * 2.0 }

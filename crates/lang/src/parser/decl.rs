@@ -218,14 +218,17 @@ fn resolve_extern_members(
                     ret: resolve_type_params_with_self(&ret, type_param_map, Some(self_type)),
                 }
             }
-            ast::ExternTypeMember::Operator { op, other_ty, ret, self_on_right } => {
-                ast::ExternTypeMember::Operator {
-                    op,
-                    other_ty: resolve_type_params_with_self(&other_ty, type_param_map, Some(self_type)),
-                    ret: resolve_type_params_with_self(&ret, type_param_map, Some(self_type)),
-                    self_on_right,
-                }
-            }
+            ast::ExternTypeMember::Operator {
+                op,
+                other_ty,
+                ret,
+                self_on_right,
+            } => ast::ExternTypeMember::Operator {
+                op,
+                other_ty: resolve_type_params_with_self(&other_ty, type_param_map, Some(self_type)),
+                ret: resolve_type_params_with_self(&ret, type_param_map, Some(self_type)),
+                self_on_right,
+            },
             ast::ExternTypeMember::UnaryOperator { op, ret } => {
                 ast::ExternTypeMember::UnaryOperator {
                     op,
@@ -251,7 +254,11 @@ fn extern_type_body<'src>(
     let member_item = extern_type_member(stmt).map(BodyItem::Member);
 
     select! { (Token::Open(Delimiter::Brace), _) => () }
-        .ignore_then(choice((init_item, member_item)).repeated().collect::<Vec<_>>())
+        .ignore_then(
+            choice((init_item, member_item))
+                .repeated()
+                .collect::<Vec<_>>(),
+        )
         .then_ignore(select! { (Token::Close(Delimiter::Brace), _) => () })
         .validate(|items, extra, emitter| {
             let mut members = vec![];
@@ -262,7 +269,10 @@ fn extern_type_body<'src>(
                     BodyItem::Init => {
                         init_count += 1;
                         if init_count > 1 {
-                            emitter.emit(Rich::custom(extra.span(), "duplicate 'init' in extern type body"));
+                            emitter.emit(Rich::custom(
+                                extra.span(),
+                                "duplicate 'init' in extern type body",
+                            ));
                         }
                     }
                 }
@@ -325,7 +335,12 @@ fn extern_type_op_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> {
                 emitter.emit(Rich::custom(extra.span(), "one operand must be 'Self'"));
                 (lhs, false)
             };
-            ast::ExternTypeMember::Operator { op, other_ty, ret, self_on_right }
+            ast::ExternTypeMember::Operator {
+                op,
+                other_ty,
+                ret,
+                self_on_right,
+            }
         });
 
     op_kw.ignore_then(choice((unary, binary))).boxed()
@@ -335,7 +350,11 @@ fn extern_type_field_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> 
     identifier()
         .then_ignore(select! { (Token::Colon, _) => () })
         .then(type_ident())
-        .map(|(name, ty)| ast::ExternTypeMember::Field { name, ty, computed: false })
+        .map(|(name, ty)| ast::ExternTypeMember::Field {
+            name,
+            ty,
+            computed: false,
+        })
         .boxed()
 }
 
@@ -346,7 +365,7 @@ fn extern_type_method_member<'src>(
         .ignore_then(field_name_ident())
         .then(method_params(stmt))
         .then(return_type())
-        .map(|((name, (receiver, params)), ret)| {
+        .map(|((name, (receiver, _, params)), ret)| {
             let ret = ret.unwrap_or(ast::Type::Void);
             match receiver {
                 Some(recv) => ast::ExternTypeMember::Method {
@@ -455,7 +474,7 @@ fn struct_method<'src>(
     .then(return_type())
     .then(block_stmt(stmt, tail_expr))
     .map_with(
-        |((((name, method_type_params), (receiver, params)), ret), body), e| {
+        |((((name, method_type_params), (receiver, _, params)), ret), body), e| {
             let s = e.span();
 
             let type_param_map = method_type_params
@@ -499,7 +518,14 @@ fn struct_method<'src>(
 
 fn method_params<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
-) -> BoxedParser<'src, (Option<ast::MethodReceiver>, Vec<ast::Param>)> {
+) -> BoxedParser<
+    'src,
+    (
+        Option<ast::MethodReceiver>,
+        Option<ast::Type>,
+        Vec<ast::Param>,
+    ),
+> {
     select! {
         (Token::Open(Delimiter::Parent), _) => (),
     }
@@ -514,7 +540,7 @@ fn method_params<'src>(
     .boxed()
 }
 
-fn self_param<'src>() -> BoxedParser<'src, ast::MethodReceiver> {
+fn self_param<'src>() -> BoxedParser<'src, (ast::MethodReceiver, Option<ast::Type>)> {
     let var_kw = select! {
         (Token::Keyword(Keyword::Var), _) => (),
     }
@@ -528,21 +554,31 @@ fn self_param<'src>() -> BoxedParser<'src, ast::MethodReceiver> {
                 Err(Rich::custom(span, "expected 'self'"))
             }
         }))
-        .then_ignore(
+        .then(
             select! { (Token::Colon, _) => () }
                 .ignore_then(type_ident())
                 .or_not(),
         )
-        .map(|(var_opt, _)| match var_opt {
-            Some(()) => ast::MethodReceiver::Var,
-            None => ast::MethodReceiver::Value,
+        .map(|((var_opt, _), annotation)| {
+            let receiver = match var_opt {
+                Some(()) => ast::MethodReceiver::Var,
+                None => ast::MethodReceiver::Value,
+            };
+            (receiver, annotation)
         })
         .boxed()
 }
 
 fn method_param_list<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
-) -> BoxedParser<'src, (Option<ast::MethodReceiver>, Vec<ast::Param>)> {
+) -> BoxedParser<
+    'src,
+    (
+        Option<ast::MethodReceiver>,
+        Option<ast::Type>,
+        Vec<ast::Param>,
+    ),
+> {
     let regular_params = param(stmt)
         .separated_by(select! { (Token::Comma, _) => () })
         .collect::<Vec<_>>();
@@ -555,8 +591,8 @@ fn method_param_list<'src>(
                     .or_not()
                     .map(|opt| opt.unwrap_or_default()),
             )
-            .map(|(receiver, params)| (Some(receiver), params)),
-        regular_params.map(|params| (None, params)),
+            .map(|((receiver, annotation), params)| (Some(receiver), annotation, params)),
+        regular_params.map(|params| (None, None, params)),
     ))
     .boxed()
 }
@@ -580,90 +616,92 @@ pub(super) fn struct_declaration<'src>(
                     .allow_trailing()
                     .collect::<Vec<_>>(),
             )
-            .then(
-                struct_method(stmt)
-                    .repeated()
-                    .collect::<Vec<_>>(),
-            )
+            .then(struct_method(stmt).repeated().collect::<Vec<_>>())
             .then_ignore(select! {
                 (Token::Close(Delimiter::Brace), _) => (),
             }),
         )
-        .map_with(|(((vis, name), type_params), (raw_fields, raw_methods)), e| {
-            let s = e.span();
+        .map_with(
+            |(((vis, name), type_params), (raw_fields, raw_methods)), e| {
+                let s = e.span();
 
-            let struct_type_param_map: HashMap<ast::Ident, ast::TypeVarId> =
-                type_params.iter().map(|tp| (tp.name, tp.id)).collect();
+                let struct_type_param_map: HashMap<ast::Ident, ast::TypeVarId> =
+                    type_params.iter().map(|tp| (tp.name, tp.id)).collect();
 
-            let self_type = ast::Type::Struct {
-                name,
-                type_args: type_params.iter().map(|tp| ast::Type::Var(tp.id)).collect(),
-            };
-
-            let fields = raw_fields
-                .into_iter()
-                .map(|f| {
-                    let ty = resolve_type_params_with_self(
-                        &f.ty,
-                        &struct_type_param_map,
-                        Some(&self_type),
-                    );
-                    ast::StructField { name: f.name, ty, default: f.default }
-                })
-                .collect();
-
-            let methods = raw_methods
-                .into_iter()
-                .map(|m| {
-                    let mut combined_type_param_map = struct_type_param_map.clone();
-                    for tp in &m.type_params {
-                        combined_type_param_map.insert(tp.name, tp.id);
-                    }
-
-                    let resolved_params = m
-                        .params
-                        .iter()
-                        .map(|p| ast::Param {
-                            mutability: p.mutability,
-                            name: p.name,
-                            ty: resolve_type_params_with_self(
-                                &p.ty,
-                                &combined_type_param_map,
-                                Some(&self_type),
-                            ),
-                            default: p.default.clone(),
-                        })
-                        .collect();
-
-                    let resolved_ret = resolve_type_params_with_self(
-                        &m.ret,
-                        &combined_type_param_map,
-                        Some(&self_type),
-                    );
-
-                    ast::Method {
-                        name: m.name,
-                        visibility: m.visibility,
-                        type_params: m.type_params,
-                        receiver: m.receiver,
-                        params: resolved_params,
-                        ret: resolved_ret,
-                        body: m.body,
-                    }
-                })
-                .collect();
-
-            Spanned::new(
-                ast::StructDecl {
+                let self_type = ast::Type::Struct {
                     name,
-                    visibility: vis,
-                    type_params,
-                    fields,
-                    methods,
-                },
-                Span::new(s.start, s.end),
-            )
-        })
+                    type_args: type_params.iter().map(|tp| ast::Type::Var(tp.id)).collect(),
+                };
+
+                let fields = raw_fields
+                    .into_iter()
+                    .map(|f| {
+                        let ty = resolve_type_params_with_self(
+                            &f.ty,
+                            &struct_type_param_map,
+                            Some(&self_type),
+                        );
+                        ast::StructField {
+                            name: f.name,
+                            ty,
+                            default: f.default,
+                        }
+                    })
+                    .collect();
+
+                let methods = raw_methods
+                    .into_iter()
+                    .map(|m| {
+                        let mut combined_type_param_map = struct_type_param_map.clone();
+                        for tp in &m.type_params {
+                            combined_type_param_map.insert(tp.name, tp.id);
+                        }
+
+                        let resolved_params = m
+                            .params
+                            .iter()
+                            .map(|p| ast::Param {
+                                mutability: p.mutability,
+                                name: p.name,
+                                ty: resolve_type_params_with_self(
+                                    &p.ty,
+                                    &combined_type_param_map,
+                                    Some(&self_type),
+                                ),
+                                default: p.default.clone(),
+                            })
+                            .collect();
+
+                        let resolved_ret = resolve_type_params_with_self(
+                            &m.ret,
+                            &combined_type_param_map,
+                            Some(&self_type),
+                        );
+
+                        ast::Method {
+                            name: m.name,
+                            visibility: m.visibility,
+                            type_params: m.type_params,
+                            receiver: m.receiver,
+                            params: resolved_params,
+                            ret: resolved_ret,
+                            body: m.body,
+                        }
+                    })
+                    .collect();
+
+                Spanned::new(
+                    ast::StructDecl {
+                        name,
+                        visibility: vis,
+                        type_params,
+                        fields,
+                        methods,
+                    },
+                    Span::new(s.start, s.end),
+                )
+            },
+        )
         .labelled("struct declaration")
         .as_context()
         .boxed()
@@ -792,8 +830,14 @@ fn extend_method<'src>(
     .then(method_params(stmt.clone()))
     .then(return_type())
     .then(block_stmt(stmt, tail_expr))
-    .map_with(|(((name, (receiver, params)), ret), body), e| {
-        let s = e.span();
+    .validate(|(((name, (receiver, self_annotation, params)), ret), body), extra, emitter| {
+        let s = extra.span();
+        if self_annotation.is_some() {
+            emitter.emit(Rich::custom(
+                s,
+                "'self' must not have a type annotation in extend methods — the type is determined by the extend block",
+            ));
+        }
         let self_param = receiver.map(|r| ast::Param {
             mutability: match r {
                 ast::MethodReceiver::Var => ast::Mutability::Mutable,
@@ -823,26 +867,32 @@ fn extend_method<'src>(
 pub(super) fn extend_declaration<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::ExtendDeclNode> {
+    let extend_head = choice((
+        // identifier with optional type params handles named types (structs/enums) with generics
+        identifier()
+            .then(type_params())
+            .map(|(name, tp)| (ast::Type::UnresolvedName(name), tp)),
+        // any other type expression with no type params (primitives, lists, options, etc)
+        type_ident().map(|ty| (ty, vec![])),
+    ));
+
     visibility()
         .then_ignore(select! {
             (Token::Keyword(Keyword::Extend), _) => (),
         })
-        .then(type_ident())
+        .then(extend_head)
         .then(
             select! { (Token::Open(Delimiter::Brace), _) => () }
-                .ignore_then(
-                    extend_method(stmt)
-                        .repeated()
-                        .collect::<Vec<_>>(),
-                )
+                .ignore_then(extend_method(stmt).repeated().collect::<Vec<_>>())
                 .then_ignore(select! { (Token::Close(Delimiter::Brace), _) => () }),
         )
-        .map_with(|((vis, ty), methods), e| {
+        .map_with(|((vis, (ty, type_params)), methods), e| {
             let s = e.span();
             Spanned::new(
                 ast::ExtendDecl {
                     visibility: vis,
                     ty,
+                    type_params,
                     methods,
                 },
                 Span::new(s.start, s.end),

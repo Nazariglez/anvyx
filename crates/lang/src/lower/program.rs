@@ -4,7 +4,7 @@ use internment::Intern;
 
 use crate::ast::{self, Ident, Type, TypeVarId, VariantKind};
 use crate::hir;
-use crate::typecheck::{TypeChecker, subst_type};
+use crate::typecheck::{ExtendSpecKey, TypeChecker, resolve_type_param_names, subst_type};
 use crate::vm::meta::{EnumMeta, StructMeta, VariantMeta, VariantMetaKind};
 
 use super::{
@@ -160,6 +160,26 @@ pub fn lower_program(
         next_func_id += 1;
         shared.funcs.insert(mangled, id);
         spec_registrations.push((mangled, spec_key.clone()));
+    }
+
+    let mut extend_spec_registrations: Vec<(Ident, ExtendSpecKey)> = vec![];
+    for (spec_key, spec_result) in shared.tcx.extend_specializations() {
+        if spec_result.err.is_some() {
+            continue;
+        }
+
+        let template = shared.tcx.get_generic_extend_template(spec_key.base_name, spec_key.method_name);
+        let Some(template) = template else { continue };
+
+        let mangled = spec_key.mangle(&template.source_module);
+        if shared.funcs.contains_key(&mangled) {
+            continue;
+        }
+
+        let id = hir::FuncId(next_func_id);
+        next_func_id += 1;
+        shared.funcs.insert(mangled, id);
+        extend_spec_registrations.push((mangled, spec_key.clone()));
     }
 
     let mut struct_methods: Vec<(Ident, u32, &ast::Method)> = vec![];
@@ -338,6 +358,7 @@ pub fn lower_program(
         let module_str = path.join("::");
         for stmt_node in stmts {
             let ast::Stmt::Extend(node) = &stmt_node.node else { continue };
+            if !node.node.type_params.is_empty() { continue; }
             let resolved_ty = resolve_extend_ty(&node.node.ty, &shared);
             let Some(resolved_ty) = resolved_ty else { continue };
             let type_str = format!("{resolved_ty}");
@@ -356,6 +377,7 @@ pub fn lower_program(
 
     for stmt_node in &ast.stmts {
         let ast::Stmt::Extend(node) = &stmt_node.node else { continue };
+        if !node.node.type_params.is_empty() { continue; }
         let resolved_ty = resolve_extend_ty(&node.node.ty, &shared);
         let Some(resolved_ty) = resolved_ty else { continue };
         let type_str = format!("{resolved_ty}");
@@ -369,6 +391,90 @@ pub fn lower_program(
             let &id = shared.funcs.get(&internal_name).expect("extend method registered in collect_declarations");
             funcs.push(lower_extend_method(method, &resolved_ty, id, internal_name, &ctx)?);
         }
+    }
+
+    for (mangled, spec_key) in &extend_spec_registrations {
+        let spec_result = &shared.tcx.extend_specializations()[spec_key];
+        let template = shared
+            .tcx
+            .get_generic_extend_template(spec_key.base_name, spec_key.method_name)
+            .expect("template must exist — registered during pre-registration");
+
+        let &id = shared
+            .funcs
+            .get(mangled)
+            .expect("mangled name was just registered");
+
+        let subst: HashMap<TypeVarId, Type> = template
+            .type_params
+            .iter()
+            .zip(spec_key.type_args.iter())
+            .map(|(param, arg)| (param.id, arg.clone()))
+            .collect();
+
+        let self_ty = if shared.struct_type_ids.contains_key(&spec_key.base_name) {
+            Type::Struct {
+                name: spec_key.base_name,
+                type_args: spec_key.type_args.clone(),
+            }
+        } else {
+            Type::Enum {
+                name: spec_key.base_name,
+                type_args: spec_key.type_args.clone(),
+            }
+        };
+
+        let method = &template.method.node;
+
+        let specialized_params: Vec<Type> = method
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                if i == 0 {
+                    self_ty.clone()
+                } else {
+                    let resolved = resolve_type_param_names(&p.ty, &template.type_params);
+                    subst_type(&resolved, &subst)
+                }
+            })
+            .collect();
+        let raw_ret = resolve_type_param_names(&method.ret, &template.type_params);
+        let specialized_ret = subst_type(&raw_ret, &subst);
+
+        let spec_ctx = LowerCtx {
+            shared: &shared,
+            type_overrides: Some(&spec_result.body_types),
+        };
+
+        let mut fc = FuncLower {
+            locals: vec![],
+            local_map: HashMap::new(),
+            scope_log: vec![],
+        };
+
+        for (param, ty) in method.params.iter().zip(specialized_params.iter()) {
+            register_named_local(&mut fc, param.name, ty.clone());
+        }
+        let params_len = fc.locals.len() as u32;
+
+        let body = lower_block(
+            &method.body,
+            &spec_ctx,
+            &mut fc,
+            true,
+            &specialized_ret,
+        )?;
+
+        funcs.push(hir::Func {
+            id,
+            name: *mangled,
+            locals: fc.locals,
+            params_len,
+            ret: specialized_ret,
+            body,
+            span: template.method.span,
+        });
     }
 
     funcs.sort_by_key(|f| f.id.0);
