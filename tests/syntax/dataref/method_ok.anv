@@ -1,0 +1,14 @@
+// @mode: check
+// @expect: success
+
+dataref Node {
+    value: int,
+}
+
+extend dataref Node {
+    fn label(self) -> string {
+        "node"
+    }
+}
+
+fn main() {}

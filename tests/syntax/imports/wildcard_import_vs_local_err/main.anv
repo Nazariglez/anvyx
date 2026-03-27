@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: conflicts with a locally defined type
+
+struct Point { a: float }
+
+import helpers { * };
+
+fn main() {}

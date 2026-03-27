@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+dataref Node {
+    value: int,
+    child: Node?,
+}
+
+fn main() {
+    let leaf = Node { value: 1, child: nil };
+    let root = Node { value: 0, child: leaf };
+}

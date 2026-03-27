@@ -1,0 +1,10 @@
+// @mode: run
+// @expect: success
+// @match: ok
+
+import std.mem;
+
+fn main() {
+    mem.collect_cycles();
+    println("ok");
+}

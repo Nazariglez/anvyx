@@ -674,7 +674,7 @@ fn try_check_method_call(
     }
 
     let target_ty = check_expr(target, type_checker, errors, None);
-    if let Type::Struct { name, type_args } = &target_ty
+    if let Type::Struct { name, type_args } | Type::DataRef { name, type_args } = &target_ty
         && let Some(struct_def) = type_checker.get_struct(*name).cloned()
     {
         return Some(check_instance_method_call(
@@ -1554,10 +1554,7 @@ fn instantiate_method_body(
         .collect();
     let specialized_ret = subst_type(&method.ret, &subst);
 
-    let self_type = Type::Struct {
-        name: struct_name,
-        type_args: struct_type_args.to_vec(),
-    };
+    let self_type = struct_def.make_type(struct_name, struct_type_args.to_vec());
     let self_ident = Ident(Intern::new("self".to_string()));
 
     let mut params: Vec<(Ident, Type, bool)> = vec![];

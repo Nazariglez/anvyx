@@ -86,6 +86,7 @@ name = "anvyx-lang"
 version = "0.1.0"
 dependencies = [
  "anvyx-macros",
+ "anvyx-runtime",
  "ariadne",
  "chumsky",
  "indexmap",
@@ -105,10 +106,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "anvyx-runtime"
+version = "0.1.0"
+
+[[package]]
 name = "anvyx-std"
 version = "0.1.0"
 dependencies = [
  "anvyx-lang",
+ "anvyx-runtime",
  "glam",
 ]
 

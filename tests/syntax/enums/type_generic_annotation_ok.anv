@@ -1,11 +1,6 @@
 // @mode: check
 // @expect: success
 
-enum Option<T> {
-    Some(T),
-    None,
-}
-
 fn main() {
     let o: Option<int> = Option.Some(42);
 }

@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+dataref A { x: int }
+dataref B { x: int }
+
+fn main() {
+    let a = A { x: 1 };
+    let b = B { x: 1 };
+    let eq = a == b;
+}

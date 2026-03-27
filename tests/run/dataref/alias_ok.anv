@@ -1,0 +1,18 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 99
+// true
+// @match-end
+
+dataref Node {
+    value: int,
+}
+
+fn main() {
+    var a = Node { value: 1 };
+    var b = a;
+    b.value = 99;
+    println("{a.value}");
+    println(a == b);
+}

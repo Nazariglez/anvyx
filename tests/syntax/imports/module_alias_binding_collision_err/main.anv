@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: module binding 'x' is already in use
+
+import alpha as x;
+import beta as x;
+
+fn main() {}

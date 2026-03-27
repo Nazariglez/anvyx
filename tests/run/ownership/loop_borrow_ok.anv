@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// hello
+// hello
+// hello
+// @match-end
+
+fn main() {
+    let s = "hello";
+    var i = 0;
+    while i < 3 {
+        println(s);
+        i = i + 1;
+    }
+}

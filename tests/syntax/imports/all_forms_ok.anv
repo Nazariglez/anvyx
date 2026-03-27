@@ -7,9 +7,8 @@ import foo.bar.baz;
 import foo as f;
 import foo.bar as b;
 import foo { x };
-import foo { x, y };
+import foo { y };
 import foo { x as a };
-import foo { x, y as z };
-import foo { * };
+import foo { y as z };
 
 fn main() {}

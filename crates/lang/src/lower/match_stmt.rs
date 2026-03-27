@@ -354,10 +354,10 @@ fn lower_match_non_enum(
                     match &subpat.node {
                         Pattern::Lit(lit) => {
                             is_catchall = false;
-                            let elem_expr = hir::Expr {
-                                ty: elem_ty,
+                            let elem_expr = hir::Expr::new(
+                                elem_ty,
                                 span,
-                                kind: hir::ExprKind::TupleIndex {
+                                hir::ExprKind::TupleIndex {
                                     tuple: Box::new(hir::Expr::local(
                                         scrutinee_ty.clone(),
                                         span,
@@ -365,7 +365,7 @@ fn lower_match_non_enum(
                                     )),
                                     index: i as u16,
                                 },
-                            };
+                            );
                             let rhs = build_rhs_from_lit(lit, span)?;
                             conditions.push(hir::Expr::binary(
                                 Type::Bool,
@@ -381,10 +381,10 @@ fn lower_match_non_enum(
                                 span,
                                 kind: hir::StmtKind::Let {
                                     local,
-                                    init: hir::Expr {
-                                        ty: elem_ty,
+                                    init: hir::Expr::new(
+                                        elem_ty,
                                         span,
-                                        kind: hir::ExprKind::TupleIndex {
+                                        hir::ExprKind::TupleIndex {
                                             tuple: Box::new(hir::Expr::local(
                                                 scrutinee_ty.clone(),
                                                 span,
@@ -392,7 +392,7 @@ fn lower_match_non_enum(
                                             )),
                                             index: i as u16,
                                         },
-                                    },
+                                    ),
                                 },
                             });
                         }
@@ -402,10 +402,10 @@ fn lower_match_non_enum(
                                 span,
                                 kind: hir::StmtKind::Let {
                                     local,
-                                    init: hir::Expr {
-                                        ty: elem_ty,
+                                    init: hir::Expr::new(
+                                        elem_ty,
                                         span,
-                                        kind: hir::ExprKind::TupleIndex {
+                                        hir::ExprKind::TupleIndex {
                                             tuple: Box::new(hir::Expr::local(
                                                 scrutinee_ty.clone(),
                                                 span,
@@ -413,7 +413,7 @@ fn lower_match_non_enum(
                                             )),
                                             index: i as u16,
                                         },
-                                    },
+                                    ),
                                 },
                             });
                         }
@@ -474,11 +474,7 @@ fn lower_match_non_enum(
         }
     }
 
-    let true_cond = hir::Expr {
-        ty: Type::Bool,
-        span,
-        kind: hir::ExprKind::Bool(true),
-    };
+    let true_cond = hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(true));
     Ok(hir::Stmt {
         span,
         kind: hir::StmtKind::If {
@@ -492,16 +488,8 @@ fn lower_match_non_enum(
 fn build_rhs_from_lit(lit: &Lit, span: Span) -> Result<hir::Expr, LowerError> {
     Ok(match lit {
         Lit::Int(v) => hir::Expr::int_lit(span, *v),
-        Lit::Bool(v) => hir::Expr {
-            ty: Type::Bool,
-            span,
-            kind: hir::ExprKind::Bool(*v),
-        },
-        Lit::String(s) => hir::Expr {
-            ty: Type::String,
-            span,
-            kind: hir::ExprKind::String(s.clone()),
-        },
+        Lit::Bool(v) => hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(*v)),
+        Lit::String(s) => hir::Expr::new(Type::String, span, hir::ExprKind::String(s.clone())),
         Lit::Float { .. } | Lit::Nil => {
             return Err(LowerError::UnsupportedExprKind {
                 span,
@@ -525,26 +513,12 @@ fn build_lit_cond(
 fn build_rhs_from_const_value(cv: &ConstValue, span: Span) -> hir::Expr {
     match cv {
         ConstValue::Int(n) => hir::Expr::int_lit(span, *n),
-        ConstValue::Float(f) => hir::Expr {
-            ty: Type::Float,
-            span,
-            kind: hir::ExprKind::Float(*f),
-        },
-        ConstValue::Double(d) => hir::Expr {
-            ty: Type::Double,
-            span,
-            kind: hir::ExprKind::Double(*d),
-        },
-        ConstValue::Bool(b) => hir::Expr {
-            ty: Type::Bool,
-            span,
-            kind: hir::ExprKind::Bool(*b),
-        },
-        ConstValue::String(s) => hir::Expr {
-            ty: Type::String,
-            span,
-            kind: hir::ExprKind::String(s.clone()),
-        },
+        ConstValue::Float(f) => hir::Expr::new(Type::Float, span, hir::ExprKind::Float(*f)),
+        ConstValue::Double(d) => hir::Expr::new(Type::Double, span, hir::ExprKind::Double(*d)),
+        ConstValue::Bool(b) => hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(*b)),
+        ConstValue::String(s) => {
+            hir::Expr::new(Type::String, span, hir::ExprKind::String(s.clone()))
+        }
         ConstValue::Nil => unreachable!("Nil cannot appear as a const pattern in match"),
     }
 }
@@ -612,10 +586,10 @@ fn build_non_enum_cond_preamble(
                 let elem_ty = elem_types.get(i).cloned().unwrap_or(Type::Void);
                 match &subpat.node {
                     Pattern::Lit(lit) => {
-                        let elem_expr = hir::Expr {
-                            ty: elem_ty,
+                        let elem_expr = hir::Expr::new(
+                            elem_ty,
                             span,
-                            kind: hir::ExprKind::TupleIndex {
+                            hir::ExprKind::TupleIndex {
                                 tuple: Box::new(hir::Expr::local(
                                     scrutinee_ty.clone(),
                                     span,
@@ -623,7 +597,7 @@ fn build_non_enum_cond_preamble(
                                 )),
                                 index: i as u16,
                             },
-                        };
+                        );
                         let rhs = build_rhs_from_lit(lit, span)?;
                         conditions.push(hir::Expr::binary(
                             Type::Bool,
@@ -639,10 +613,10 @@ fn build_non_enum_cond_preamble(
                             span,
                             kind: hir::StmtKind::Let {
                                 local,
-                                init: hir::Expr {
-                                    ty: elem_ty,
+                                init: hir::Expr::new(
+                                    elem_ty,
                                     span,
-                                    kind: hir::ExprKind::TupleIndex {
+                                    hir::ExprKind::TupleIndex {
                                         tuple: Box::new(hir::Expr::local(
                                             scrutinee_ty.clone(),
                                             span,
@@ -650,7 +624,7 @@ fn build_non_enum_cond_preamble(
                                         )),
                                         index: i as u16,
                                     },
-                                },
+                                ),
                             },
                         });
                     }
@@ -660,10 +634,10 @@ fn build_non_enum_cond_preamble(
                             span,
                             kind: hir::StmtKind::Let {
                                 local,
-                                init: hir::Expr {
-                                    ty: elem_ty,
+                                init: hir::Expr::new(
+                                    elem_ty,
                                     span,
-                                    kind: hir::ExprKind::TupleIndex {
+                                    hir::ExprKind::TupleIndex {
                                         tuple: Box::new(hir::Expr::local(
                                             scrutinee_ty.clone(),
                                             span,
@@ -671,7 +645,7 @@ fn build_non_enum_cond_preamble(
                                         )),
                                         index: i as u16,
                                     },
-                                },
+                                ),
                             },
                         });
                     }
@@ -958,11 +932,8 @@ pub(super) fn lower_if_let(
                 None => None,
             };
 
-            let cond = cond_opt.unwrap_or_else(|| hir::Expr {
-                ty: Type::Bool,
-                span,
-                kind: hir::ExprKind::Bool(true),
-            });
+            let cond = cond_opt
+                .unwrap_or_else(|| hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(true)));
 
             Ok(hir::Stmt {
                 span,
@@ -1198,14 +1169,11 @@ pub(super) fn lower_let_else(
 
             // if there's a condition emit an inverted guard that runs the else_block on mismatch
             if let Some(cond) = cond_opt {
-                let neg_cond = hir::Expr {
-                    ty: Type::Bool,
+                let neg_cond = hir::Expr::new(
+                    Type::Bool,
                     span,
-                    kind: hir::ExprKind::Unary {
-                        op: UnaryOp::Not,
-                        expr: Box::new(cond),
-                    },
-                };
+                    hir::ExprKind::Unary { op: UnaryOp::Not, expr: Box::new(cond) },
+                );
                 let else_body =
                     lower_block(&let_else_node.node.else_block, ctx, fc, false, &Type::Void)?;
                 out.push(hir::Stmt {

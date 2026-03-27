@@ -1,0 +1,4 @@
+[package]
+name = "anvyx-runtime"
+version.workspace = true
+edition.workspace = true

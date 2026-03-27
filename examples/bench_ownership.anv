@@ -1,0 +1,31 @@
+struct Vec2 { x: int, y: int }
+
+fn make_vec2(x: int, y: int) -> Vec2 {
+    Vec2 { x: x, y: y }
+}
+
+fn add_vec2(a: Vec2, b: Vec2) -> Vec2 {
+    make_vec2(a.x + b.x, a.y + b.y)
+}
+
+fn scale(v: Vec2, s: int) -> Vec2 {
+    make_vec2(v.x * s, v.y * s)
+}
+
+fn dot(a: Vec2, b: Vec2) -> int {
+    a.x * b.x + a.y * b.y
+}
+
+fn main() {
+    var total = 0;
+    var i = 0;
+    while i < 1000 {
+        let a = make_vec2(i, i + 1);
+        let b = make_vec2(i * 2, i + 3);
+        let c = add_vec2(a, b);
+        let d = scale(c, 2);
+        total = total + dot(d, a);
+        i = i + 1;
+    }
+    println(total);
+}

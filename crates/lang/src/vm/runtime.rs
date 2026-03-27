@@ -5,8 +5,8 @@ use crate::builtin::Builtin;
 use super::builtins;
 use super::bytecode::{CastKind, Op};
 use super::compiler::CompiledProgram;
-use super::meta::VariantMetaKind;
 use super::managed_rc::ManagedRc;
+use super::meta::VariantMetaKind;
 use super::value::{
     EnumData, MapStorage, RuntimeError, StructData, Value, value_add, value_and, value_div,
     value_eq, value_gt, value_gte, value_lt, value_lte, value_mul, value_negate, value_neq,
@@ -21,7 +21,6 @@ fn as_usize_index(val: &Value) -> Result<usize, RuntimeError> {
         other => Err(RuntimeError::new(format!("index must be int, got {other}"))),
     }
 }
-
 
 struct CallFrame {
     chunk_idx: usize,
@@ -111,9 +110,21 @@ impl<'a> VM<'a> {
                     self.push(val);
                 }
 
+                Op::MoveLocal(idx) => {
+                    let slot = &mut self.stack[stack_base + idx as usize];
+                    let val = std::mem::replace(slot, Value::Nil);
+                    self.push(val);
+                }
+
+                Op::CloneLocal(idx) => {
+                    let val = self.stack[stack_base + idx as usize].clone();
+                    self.push(val);
+                }
+
                 Op::SetLocal(idx) => {
                     let val = self.pop();
-                    self.stack[stack_base + idx as usize] = val;
+                    let old = std::mem::replace(&mut self.stack[stack_base + idx as usize], val);
+                    drop(old);
                 }
 
                 Op::Negate => {
@@ -302,6 +313,15 @@ impl<'a> VM<'a> {
                     self.push(Value::Struct(ManagedRc::new(data)));
                 }
 
+                Op::ConstructDataRef(type_id, field_count) => {
+                    let count = field_count as usize;
+                    let start = self.stack.len() - count;
+                    let fields: Vec<Value> = self.stack.drain(start..).collect();
+                    let data = StructData { type_id, fields };
+                    let vtable = self.program.struct_meta[type_id as usize].vtable.unwrap();
+                    self.push(Value::DataRef(ManagedRc::new_with_vtable(data, vtable)));
+                }
+
                 Op::ConstructTuple(count) => {
                     let count = count as usize;
                     let start = self.stack.len() - count;
@@ -337,6 +357,9 @@ impl<'a> VM<'a> {
                         Value::Struct(s) => s.fields.get(idx).cloned().ok_or_else(|| {
                             RuntimeError::new(format!("field index {idx} out of bounds on struct"))
                         })?,
+                        Value::DataRef(s) => s.fields.get(idx).cloned().ok_or_else(|| {
+                            RuntimeError::new(format!("field index {idx} out of bounds on dataref"))
+                        })?,
                         Value::Tuple(t) => t.get(idx).cloned().ok_or_else(|| {
                             RuntimeError::new(format!("index {idx} out of bounds on tuple"))
                         })?,
@@ -358,6 +381,11 @@ impl<'a> VM<'a> {
                         Value::Struct(mut s) => {
                             ManagedRc::make_mut(&mut s).fields[idx] = new_value;
                             self.push(Value::Struct(s));
+                        }
+                        Value::DataRef(mut s) => {
+                            // shared state is intentional
+                            s.force_mut().fields[idx] = new_value;
+                            self.push(Value::DataRef(s));
                         }
                         other => {
                             return Err(RuntimeError::new(format!(
@@ -612,7 +640,9 @@ impl<'a> VM<'a> {
                             Value::Double(n as f64)
                         }
                         CastKind::DoubleToInt => {
-                            let Value::Double(d) = val else { unreachable!() };
+                            let Value::Double(d) = val else {
+                                unreachable!()
+                            };
                             Value::Int(d as i64)
                         }
                         CastKind::FloatToDouble => {
@@ -620,7 +650,9 @@ impl<'a> VM<'a> {
                             Value::Double(f as f64)
                         }
                         CastKind::DoubleToFloat => {
-                            let Value::Double(d) = val else { unreachable!() };
+                            let Value::Double(d) = val else {
+                                unreachable!()
+                            };
                             Value::Float(d as f32)
                         }
                     };
@@ -648,7 +680,11 @@ impl<'a> VM<'a> {
             let chunk = &self.program.chunks[chunk_idx];
             chunk.local_count as usize - chunk.params_count as usize
         };
-        self.frames.push(CallFrame { chunk_idx, ip: 0, stack_base });
+        self.frames.push(CallFrame {
+            chunk_idx,
+            ip: 0,
+            stack_base,
+        });
         for _ in 0..extra_locals {
             self.stack.push(Value::Nil);
         }
@@ -659,6 +695,31 @@ impl<'a> VM<'a> {
     fn format_value(&mut self, value: &Value) -> Result<String, RuntimeError> {
         match value {
             Value::Struct(s) => {
+                let program = self.program;
+                let meta = &program.struct_meta[s.type_id as usize];
+                if let Some(chunk_idx) = meta.to_string_fn {
+                    let result = self.call_function(chunk_idx, vec![value.clone()])?;
+                    match result {
+                        Value::String(s) => Ok((*s).clone()),
+                        _ => Err(RuntimeError::new("to_string must return a string")),
+                    }
+                } else {
+                    let name = meta.name.clone();
+                    let field_names: Vec<String> = meta.field_names.clone();
+                    let fields: Vec<Value> = s.fields.clone();
+                    let mut out = format!("{name}(");
+                    for (i, (fname, val)) in field_names.iter().zip(fields.iter()).enumerate() {
+                        if i > 0 {
+                            out.push_str(", ");
+                        }
+                        let formatted = self.format_value(val)?;
+                        write!(out, "{fname}: {formatted}").unwrap();
+                    }
+                    out.push(')');
+                    Ok(out)
+                }
+            }
+            Value::DataRef(s) => {
                 let program = self.program;
                 let meta = &program.struct_meta[s.type_id as usize];
                 if let Some(chunk_idx) = meta.to_string_fn {

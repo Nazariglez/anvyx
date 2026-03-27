@@ -634,6 +634,18 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("constant '{name}' is already declared"),
             format!("'{name}' is already declared in this scope"),
         ),
+        TypeErrKind::DuplicateTypeDefinition { name } => (
+            format!("type '{name}' is already defined"),
+            format!("'{name}' is already defined in this scope"),
+        ),
+        TypeErrKind::ImportNameConflict { name, existing } => (
+            format!("imported name '{name}' conflicts with {existing}"),
+            format!("'{name}' is already bound as {existing} in this scope"),
+        ),
+        TypeErrKind::ModuleBindingConflict { name } => (
+            format!("module binding '{name}' is already in use"),
+            format!("'{name}' is already bound as a module in this scope"),
+        ),
         TypeErrKind::AmbiguousExtendMethod { ty, method, candidates } => {
             let mods = candidates
                 .iter()

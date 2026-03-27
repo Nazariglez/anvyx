@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 42
+// hello
+// @match-end
+
+dataref Node {
+    value: int,
+    label: string,
+}
+
+fn main() {
+    let n = Node { value: 42, label: "hello" };
+    println("{n.value}");
+    println("{n.label}");
+}

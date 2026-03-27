@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+dataref Node {
+    value: int,
+}
+
+fn main() {
+    let n = Node { value: "wrong" };
+}

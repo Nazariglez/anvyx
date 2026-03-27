@@ -20,6 +20,10 @@ pub use metadata::{
 };
 pub use vm::{AnvyxExternType, DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData, ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData, Value, extern_handle};
 
+pub mod cycle_collector {
+    pub use crate::vm::cycle_collector::{collect_cycles, set_auto_collect};
+}
+
 pub struct StdModuleSource {
     pub anv_source: String,
 }

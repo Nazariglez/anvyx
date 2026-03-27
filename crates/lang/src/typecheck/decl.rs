@@ -121,14 +121,10 @@ pub(super) fn check_method_body(
         return;
     }
 
-    let self_type = Type::Struct {
-        name: struct_name,
-        type_args: struct_def
-            .type_params
-            .iter()
-            .map(|tp| Type::Var(tp.id))
-            .collect(),
-    };
+    let self_type = struct_def.make_type(
+        struct_name,
+        struct_def.type_params.iter().map(|tp| Type::Var(tp.id)).collect(),
+    );
 
     // build the param list, prepending self when there is a receiver
     let mut params: Vec<(Ident, Type, bool)> = vec![];

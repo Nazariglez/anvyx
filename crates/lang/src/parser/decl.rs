@@ -707,6 +707,116 @@ pub(super) fn struct_declaration<'src>(
         .boxed()
 }
 
+pub(super) fn dataref_declaration<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::DataRefDeclNode> {
+    visibility()
+        .then_ignore(select! {
+            (Token::Keyword(Keyword::DataRef), _) => (),
+        })
+        .then(identifier())
+        .then(type_params())
+        .then(
+            select! {
+                (Token::Open(Delimiter::Brace), _) => (),
+            }
+            .ignore_then(
+                struct_field(stmt.clone())
+                    .separated_by(select! { (Token::Comma, _) => () })
+                    .allow_trailing()
+                    .collect::<Vec<_>>(),
+            )
+            .then(struct_method(stmt).repeated().collect::<Vec<_>>())
+            .then_ignore(select! {
+                (Token::Close(Delimiter::Brace), _) => (),
+            }),
+        )
+        .map_with(
+            |(((vis, name), type_params), (raw_fields, raw_methods)), e| {
+                let s = e.span();
+
+                let struct_type_param_map: HashMap<ast::Ident, ast::TypeVarId> =
+                    type_params.iter().map(|tp| (tp.name, tp.id)).collect();
+
+                let self_type = ast::Type::DataRef {
+                    name,
+                    type_args: type_params.iter().map(|tp| ast::Type::Var(tp.id)).collect(),
+                };
+
+                let fields = raw_fields
+                    .into_iter()
+                    .map(|f| {
+                        let ty = resolve_type_params_with_self(
+                            &f.ty,
+                            &struct_type_param_map,
+                            Some(&self_type),
+                        );
+                        ast::StructField {
+                            name: f.name,
+                            ty,
+                            default: f.default,
+                        }
+                    })
+                    .collect();
+
+                let methods = raw_methods
+                    .into_iter()
+                    .map(|m| {
+                        let mut combined_type_param_map = struct_type_param_map.clone();
+                        for tp in &m.type_params {
+                            combined_type_param_map.insert(tp.name, tp.id);
+                        }
+
+                        let resolved_params = m
+                            .params
+                            .iter()
+                            .map(|p| ast::Param {
+                                mutability: p.mutability,
+                                name: p.name,
+                                ty: resolve_type_params_with_self(
+                                    &p.ty,
+                                    &combined_type_param_map,
+                                    Some(&self_type),
+                                ),
+                                default: p.default.clone(),
+                            })
+                            .collect();
+
+                        let resolved_ret = resolve_type_params_with_self(
+                            &m.ret,
+                            &combined_type_param_map,
+                            Some(&self_type),
+                        );
+
+                        ast::Method {
+                            name: m.name,
+                            visibility: m.visibility,
+                            type_params: m.type_params,
+                            receiver: m.receiver,
+                            params: resolved_params,
+                            ret: resolved_ret,
+                            body: m.body,
+                        }
+                    })
+                    .collect();
+
+                Spanned::new(
+                    ast::StructDecl {
+                        name,
+                        visibility: vis,
+                        type_params,
+                        fields,
+                        methods,
+                    },
+                    Span::new(s.start, s.end),
+                )
+            },
+        )
+        .labelled("dataref declaration")
+        .as_context()
+        .boxed()
+}
+
 fn enum_variant_tuple_payload<'src>() -> BoxedParser<'src, ast::VariantKind> {
     select! { (Token::Open(Delimiter::Parent), _) => () }
         .ignore_then(
@@ -868,11 +978,24 @@ pub(super) fn extend_declaration<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::ExtendDeclNode> {
     let extend_head = choice((
-        // identifier with optional type params handles named types (structs/enums) with generics
+        // dataref keyword followed by identifier produces Type::DataRef directly
+        select! { (Token::Keyword(Keyword::DataRef), _) => () }
+            .ignore_then(identifier())
+            .then(type_params())
+            .map(|(name, tp)| {
+                (
+                    ast::Type::DataRef {
+                        name,
+                        type_args: vec![],
+                    },
+                    tp,
+                )
+            }),
+        // identifier with optional type params, handles named types (structs/enums) with generics
         identifier()
             .then(type_params())
             .map(|(name, tp)| (ast::Type::UnresolvedName(name), tp)),
-        // any other type expression with no type params (primitives, lists, options, etc)
+        // any other type expression, no type params possible (primitives, lists, options, etc.)
         type_ident().map(|ty| (ty, vec![])),
     ));
 
@@ -1003,6 +1126,17 @@ fn resolve_type_params_with_self(
                 .map(|arg| resolve_type_params_with_self(arg, type_param_map, self_type))
                 .collect::<Vec<_>>();
             Struct {
+                name: *name,
+                type_args: resolved_args,
+            }
+        }
+
+        DataRef { name, type_args } => {
+            let resolved_args = type_args
+                .iter()
+                .map(|arg| resolve_type_params_with_self(arg, type_param_map, self_type))
+                .collect::<Vec<_>>();
+            DataRef {
                 name: *name,
                 type_args: resolved_args,
             }

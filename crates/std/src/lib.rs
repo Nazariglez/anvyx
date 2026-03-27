@@ -156,9 +156,10 @@ impl StdModule {
 }
 
 pub fn std_modules() -> Vec<StdModule> {
-    vec![math::module(), maps::module(), linalg::module()]
+    vec![math::module(), maps::module(), linalg::module(), mem::module()]
 }
 
 mod linalg;
 mod maps;
 mod math;
+mod mem;

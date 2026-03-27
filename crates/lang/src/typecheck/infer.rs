@@ -42,6 +42,10 @@ pub fn subst_type(ty: &Type, subst: &HashMap<TypeVarId, Type>) -> Type {
             name: *name,
             type_args: type_args.iter().map(|a| subst_type(a, subst)).collect(),
         },
+        DataRef { name, type_args } => DataRef {
+            name: *name,
+            type_args: type_args.iter().map(|a| subst_type(a, subst)).collect(),
+        },
         Enum { name, type_args } => Enum {
             name: *name,
             type_args: type_args.iter().map(|a| subst_type(a, subst)).collect(),
@@ -314,6 +318,20 @@ pub(super) fn constrain_slots_from_type(
             }
         }
         (
+            Type::DataRef {
+                name: tn,
+                type_args: ta,
+            },
+            Type::DataRef {
+                name: en,
+                type_args: ea,
+            },
+        ) if tn == en => {
+            for (t, e) in ta.iter().zip(ea.iter()) {
+                constrain_slots_from_type(t, e, slots, span, type_checker, errors);
+            }
+        }
+        (
             Type::Enum {
                 name: tn,
                 type_args: ta,
@@ -341,6 +359,10 @@ pub fn resolve_type_param_names(ty: &Type, type_params: &[TypeParam]) -> Type {
             }
         }
         Type::Struct { name, type_args } => Type::Struct {
+            name: *name,
+            type_args: type_args.iter().map(|a| resolve_type_param_names(a, type_params)).collect(),
+        },
+        Type::DataRef { name, type_args } => Type::DataRef {
             name: *name,
             type_args: type_args.iter().map(|a| resolve_type_param_names(a, type_params)).collect(),
         },

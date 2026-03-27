@@ -299,7 +299,11 @@ fn compile_stmt(fc: &mut FuncCompiler, stmt: &hir::Stmt) -> Result<(), CompileEr
             }
         }
 
-        hir::StmtKind::SetIndex { object, index, value } => {
+        hir::StmtKind::SetIndex {
+            object,
+            index,
+            value,
+        } => {
             fc.emit(Op::GetLocal(object.0 as u16));
             compile_expr(fc, index)?;
             compile_expr(fc, value)?;
@@ -314,7 +318,12 @@ fn compile_stmt(fc: &mut FuncCompiler, stmt: &hir::Stmt) -> Result<(), CompileEr
 fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileError> {
     match &expr.kind {
         hir::ExprKind::Local(id) => {
-            fc.emit(Op::GetLocal(id.0 as u16));
+            let idx = id.0 as u16;
+            match expr.ownership {
+                hir::Ownership::Move => fc.emit(Op::MoveLocal(idx)),
+                hir::Ownership::Borrow => fc.emit(Op::GetLocal(idx)),
+                hir::Ownership::Own => fc.emit(Op::CloneLocal(idx)),
+            }
         }
 
         hir::ExprKind::Int(v) => {
@@ -406,6 +415,13 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
                 compile_expr(fc, field)?;
             }
             fc.emit(Op::ConstructStruct(*type_id, fields.len() as u16));
+        }
+
+        hir::ExprKind::DataRefLiteral { type_id, fields } => {
+            for field in fields {
+                compile_expr(fc, field)?;
+            }
+            fc.emit(Op::ConstructDataRef(*type_id, fields.len() as u16));
         }
 
         hir::ExprKind::TupleLiteral { elements } => {
@@ -513,7 +529,11 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             fc.emit(Op::ToString);
         }
 
-        hir::ExprKind::CollectionMut { object, method, args } => {
+        hir::ExprKind::CollectionMut {
+            object,
+            method,
+            args,
+        } => {
             fc.emit(Op::GetLocal(object.0 as u16));
             for arg in args {
                 compile_expr(fc, arg)?;
@@ -718,10 +738,9 @@ mod tests {
         };
         let compiled = compile(&prog(func)).unwrap();
         let chunk = &compiled.chunks[0];
-        // Constant(0), SetLocal(0), GetLocal(0), Pop, Nil, Return
         assert_eq!(chunk.code[0], Op::Constant(0));
         assert_eq!(chunk.code[1], Op::SetLocal(0));
-        assert_eq!(chunk.code[2], Op::GetLocal(0));
+        assert_eq!(chunk.code[2], Op::CloneLocal(0));
         assert_eq!(chunk.code[3], Op::Pop);
     }
 
@@ -744,14 +763,14 @@ mod tests {
             params_len: 0,
             ret: Type::Void,
             body: Block {
-                stmts: vec![stmt(StmtKind::Expr(Expr {
-                    ty: Type::Void,
-                    span: dummy_span(),
-                    kind: ExprKind::Call {
+                stmts: vec![stmt(StmtKind::Expr(Expr::new(
+                    Type::Void,
+                    dummy_span(),
+                    ExprKind::Call {
                         func: FuncId(0),
                         args: vec![],
                     },
-                }))],
+                )))],
             },
             span: dummy_span(),
         };
@@ -785,18 +804,18 @@ mod tests {
     #[test]
     fn call_builtin_println_emits_call_builtin_op() {
         use crate::hir::ExprKind as EK;
-        let func = main_func(vec![stmt(StmtKind::Expr(Expr {
-            ty: Type::Void,
-            span: dummy_span(),
-            kind: EK::CallBuiltin {
+        let func = main_func(vec![stmt(StmtKind::Expr(Expr::new(
+            Type::Void,
+            dummy_span(),
+            EK::CallBuiltin {
                 builtin: Builtin::Println,
-                args: vec![Expr {
-                    ty: Type::String,
-                    span: dummy_span(),
-                    kind: EK::String("hi".into()),
-                }],
+                args: vec![Expr::new(
+                    Type::String,
+                    dummy_span(),
+                    EK::String("hi".into()),
+                )],
             },
-        }))]);
+        )))]);
         let compiled = compile(&prog(func)).unwrap();
         let chunk = &compiled.chunks[0];
         // Constant(0) [String "hi"], CallBuiltin(0, 1), Pop, Nil, Return
@@ -810,14 +829,14 @@ mod tests {
         use crate::hir::ExprKind as EK;
         let func = main_func(vec![stmt(StmtKind::Let {
             local: LocalId(0),
-            init: Expr {
-                ty: Type::Int,
-                span: dummy_span(),
-                kind: EK::StructLiteral {
+            init: Expr::new(
+                Type::Int,
+                dummy_span(),
+                EK::StructLiteral {
                     type_id: 5,
                     fields: vec![int_expr(10), int_expr(20)],
                 },
-            },
+            ),
         })]);
         let compiled = compile(&prog(Func {
             locals: vec![Local {
@@ -840,13 +859,13 @@ mod tests {
         use crate::hir::ExprKind as EK;
         let func = main_func(vec![stmt(StmtKind::Let {
             local: LocalId(0),
-            init: Expr {
-                ty: Type::Int,
-                span: dummy_span(),
-                kind: EK::TupleLiteral {
+            init: Expr::new(
+                Type::Int,
+                dummy_span(),
+                EK::TupleLiteral {
                     elements: vec![int_expr(1), int_expr(2), int_expr(3)],
                 },
-            },
+            ),
         })]);
         let compiled = compile(&prog(Func {
             locals: vec![Local {
@@ -863,14 +882,14 @@ mod tests {
     #[test]
     fn field_get_emits_get_field() {
         use crate::hir::ExprKind as EK;
-        let func = main_func(vec![stmt(StmtKind::Expr(Expr {
-            ty: Type::Int,
-            span: dummy_span(),
-            kind: EK::FieldGet {
+        let func = main_func(vec![stmt(StmtKind::Expr(Expr::new(
+            Type::Int,
+            dummy_span(),
+            EK::FieldGet {
                 object: Box::new(int_expr(0)),
                 index: 2,
             },
-        }))]);
+        )))]);
         let compiled = compile(&prog(func)).unwrap();
         let chunk = &compiled.chunks[0];
         // Constant(0), GetField(2), Pop, Nil, Return
@@ -911,15 +930,15 @@ mod tests {
         use crate::hir::ExprKind as EK;
         let func = main_func(vec![stmt(StmtKind::Let {
             local: LocalId(0),
-            init: Expr {
-                ty: Type::Int,
-                span: dummy_span(),
-                kind: EK::EnumLiteral {
+            init: Expr::new(
+                Type::Int,
+                dummy_span(),
+                EK::EnumLiteral {
                     type_id: 3,
                     variant: 1,
                     fields: vec![],
                 },
-            },
+            ),
         })]);
         let compiled = compile(&prog(Func {
             locals: vec![Local {
@@ -940,15 +959,15 @@ mod tests {
         use crate::hir::ExprKind as EK;
         let func = main_func(vec![stmt(StmtKind::Let {
             local: LocalId(0),
-            init: Expr {
-                ty: Type::Int,
-                span: dummy_span(),
-                kind: EK::EnumLiteral {
+            init: Expr::new(
+                Type::Int,
+                dummy_span(),
+                EK::EnumLiteral {
                     type_id: 2,
                     variant: 0,
                     fields: vec![int_expr(42)],
                 },
-            },
+            ),
         })]);
         let compiled = compile(&prog(Func {
             locals: vec![Local {
@@ -971,22 +990,18 @@ mod tests {
         let func = main_func(vec![
             stmt(StmtKind::Let {
                 local: LocalId(0),
-                init: Expr {
-                    ty: Type::Int,
-                    span: dummy_span(),
-                    kind: EK::EnumLiteral {
+                init: Expr::new(
+                    Type::Int,
+                    dummy_span(),
+                    EK::EnumLiteral {
                         type_id: 0,
                         variant: 0,
                         fields: vec![],
                     },
-                },
+                ),
             }),
             stmt(StmtKind::Match {
-                scrutinee_init: Box::new(Expr {
-                    ty: Type::Int,
-                    span: dummy_span(),
-                    kind: EK::Local(LocalId(0)),
-                }),
+                scrutinee_init: Box::new(Expr::new(Type::Int, dummy_span(), EK::Local(LocalId(0)))),
                 scrutinee: LocalId(1),
                 arms: vec![MatchArm {
                     variant: 0,
@@ -1027,19 +1042,22 @@ mod tests {
         let func = Func {
             id: FuncId(0),
             name: dummy_ident("main"),
-            locals: vec![Local { name: None, ty: Type::Int }],
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
             params_len: 0,
             ret: Type::Void,
             body: Block {
                 stmts: vec![stmt(StmtKind::Let {
                     local: LocalId(0),
-                    init: Expr {
-                        ty: Type::Int,
-                        span: dummy_span(),
-                        kind: ExprKind::ArrayLiteral {
+                    init: Expr::new(
+                        Type::Int,
+                        dummy_span(),
+                        ExprKind::ArrayLiteral {
                             elements: vec![int_expr(1), int_expr(2)],
                         },
-                    },
+                    ),
                 })],
             },
             span: dummy_span(),
@@ -1048,7 +1066,12 @@ mod tests {
         let chunk = &compiled.chunks[0];
         assert_eq!(
             &chunk.code[..4],
-            &[Op::Constant(0), Op::Constant(1), Op::ConstructArray(2), Op::SetLocal(0)]
+            &[
+                Op::Constant(0),
+                Op::Constant(1),
+                Op::ConstructArray(2),
+                Op::SetLocal(0)
+            ]
         );
     }
 
@@ -1057,19 +1080,22 @@ mod tests {
         let func = Func {
             id: FuncId(0),
             name: dummy_ident("main"),
-            locals: vec![Local { name: None, ty: Type::Int }],
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
             params_len: 0,
             ret: Type::Void,
             body: Block {
                 stmts: vec![stmt(StmtKind::Let {
                     local: LocalId(0),
-                    init: Expr {
-                        ty: Type::Int,
-                        span: dummy_span(),
-                        kind: ExprKind::ListLiteral {
+                    init: Expr::new(
+                        Type::Int,
+                        dummy_span(),
+                        ExprKind::ListLiteral {
                             elements: vec![int_expr(1), int_expr(2)],
                         },
-                    },
+                    ),
                 })],
             },
             span: dummy_span(),
@@ -1078,7 +1104,12 @@ mod tests {
         let chunk = &compiled.chunks[0];
         assert_eq!(
             &chunk.code[..4],
-            &[Op::Constant(0), Op::Constant(1), Op::ConstructList(2), Op::SetLocal(0)]
+            &[
+                Op::Constant(0),
+                Op::Constant(1),
+                Op::ConstructList(2),
+                Op::SetLocal(0)
+            ]
         );
     }
 
@@ -1087,20 +1118,23 @@ mod tests {
         let func = Func {
             id: FuncId(0),
             name: dummy_ident("main"),
-            locals: vec![Local { name: None, ty: Type::Int }],
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
             params_len: 0,
             ret: Type::Void,
             body: Block {
                 stmts: vec![stmt(StmtKind::Let {
                     local: LocalId(0),
-                    init: Expr {
-                        ty: Type::Int,
-                        span: dummy_span(),
-                        kind: ExprKind::ArrayFill {
+                    init: Expr::new(
+                        Type::Int,
+                        dummy_span(),
+                        ExprKind::ArrayFill {
                             value: Box::new(int_expr(7)),
                             len: 3,
                         },
-                    },
+                    ),
                 })],
             },
             span: dummy_span(),
@@ -1118,7 +1152,10 @@ mod tests {
                 Op::SetLocal(0),
             ]
         );
-        assert_eq!(chunk.constants, vec![Value::Int(7), Value::Int(7), Value::Int(7)]);
+        assert_eq!(
+            chunk.constants,
+            vec![Value::Int(7), Value::Int(7), Value::Int(7)]
+        );
     }
 
     #[test]
@@ -1126,26 +1163,29 @@ mod tests {
         let func = Func {
             id: FuncId(0),
             name: dummy_ident("main"),
-            locals: vec![Local { name: None, ty: Type::Int }],
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
             params_len: 0,
             ret: Type::Void,
             body: Block {
-                stmts: vec![stmt(StmtKind::Expr(Expr {
-                    ty: Type::Int,
-                    span: dummy_span(),
-                    kind: ExprKind::IndexGet {
+                stmts: vec![stmt(StmtKind::Expr(Expr::new(
+                    Type::Int,
+                    dummy_span(),
+                    ExprKind::IndexGet {
                         target: Box::new(local_expr(0)),
                         index: Box::new(int_expr(1)),
                     },
-                }))],
+                )))],
             },
             span: dummy_span(),
         };
         let compiled = compile(&prog(func)).unwrap();
         let chunk = &compiled.chunks[0];
-        let has_get_local = chunk.code.iter().any(|op| *op == Op::GetLocal(0));
+        let has_get_local = chunk.code.iter().any(|op| *op == Op::CloneLocal(0));
         let has_index_get = chunk.code.iter().any(|op| *op == Op::IndexGet);
-        assert!(has_get_local, "expected GetLocal(0)");
+        assert!(has_get_local, "expected CloneLocal(0)");
         assert!(has_index_get, "expected IndexGet");
     }
 
@@ -1154,7 +1194,10 @@ mod tests {
         let func = Func {
             id: FuncId(0),
             name: dummy_ident("main"),
-            locals: vec![Local { name: None, ty: Type::Int }],
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
             params_len: 0,
             ret: Type::Void,
             body: Block {
@@ -1181,19 +1224,22 @@ mod tests {
         let func = Func {
             id: FuncId(0),
             name: dummy_ident("main"),
-            locals: vec![Local { name: None, ty: Type::Int }],
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
             params_len: 0,
             ret: Type::Void,
             body: Block {
                 stmts: vec![stmt(StmtKind::Let {
                     local: LocalId(0),
-                    init: Expr {
-                        ty: Type::Int,
-                        span: dummy_span(),
-                        kind: ExprKind::MapLiteral {
+                    init: Expr::new(
+                        Type::Int,
+                        dummy_span(),
+                        ExprKind::MapLiteral {
                             entries: vec![(int_expr(1), bool_expr(true))],
                         },
-                    },
+                    ),
                 })],
             },
             span: dummy_span(),
@@ -1202,7 +1248,12 @@ mod tests {
         let chunk = &compiled.chunks[0];
         assert_eq!(
             &chunk.code[..4],
-            &[Op::Constant(0), Op::True, Op::ConstructMap(1), Op::SetLocal(0)]
+            &[
+                Op::Constant(0),
+                Op::True,
+                Op::ConstructMap(1),
+                Op::SetLocal(0)
+            ]
         );
     }
 
@@ -1211,26 +1262,129 @@ mod tests {
         let func = Func {
             id: FuncId(0),
             name: dummy_ident("main"),
-            locals: vec![Local { name: None, ty: Type::Int }],
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
             params_len: 0,
             ret: Type::Void,
             body: Block {
                 stmts: vec![stmt(StmtKind::Let {
                     local: LocalId(0),
-                    init: Expr {
-                        ty: Type::Int,
-                        span: dummy_span(),
-                        kind: ExprKind::MapLiteral { entries: vec![] },
-                    },
+                    init: Expr::new(
+                        Type::Int,
+                        dummy_span(),
+                        ExprKind::MapLiteral { entries: vec![] },
+                    ),
                 })],
             },
             span: dummy_span(),
         };
         let compiled = compile(&prog(func)).unwrap();
         let chunk = &compiled.chunks[0];
-        assert_eq!(
-            &chunk.code[..2],
-            &[Op::ConstructMap(0), Op::SetLocal(0)]
-        );
+        assert_eq!(&chunk.code[..2], &[Op::ConstructMap(0), Op::SetLocal(0)]);
+    }
+
+    fn local_expr_with_ownership(id: u32, ownership: hir::Ownership) -> Expr {
+        let mut e = local_expr(id);
+        e.ownership = ownership;
+        e
+    }
+
+    #[test]
+    fn local_move_emits_move_local() {
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("main"),
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
+            params_len: 0,
+            ret: Type::Void,
+            body: Block {
+                stmts: vec![stmt(StmtKind::Expr(local_expr_with_ownership(
+                    0,
+                    hir::Ownership::Move,
+                )))],
+            },
+            span: dummy_span(),
+        };
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        assert_eq!(chunk.code[0], Op::MoveLocal(0));
+    }
+
+    #[test]
+    fn local_borrow_emits_get_local() {
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("main"),
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
+            params_len: 0,
+            ret: Type::Void,
+            body: Block {
+                stmts: vec![stmt(StmtKind::Expr(local_expr_with_ownership(
+                    0,
+                    hir::Ownership::Borrow,
+                )))],
+            },
+            span: dummy_span(),
+        };
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        assert_eq!(chunk.code[0], Op::GetLocal(0));
+    }
+
+    #[test]
+    fn local_own_emits_clone_local() {
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("main"),
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
+            params_len: 0,
+            ret: Type::Void,
+            body: Block {
+                stmts: vec![stmt(StmtKind::Expr(local_expr_with_ownership(
+                    0,
+                    hir::Ownership::Own,
+                )))],
+            },
+            span: dummy_span(),
+        };
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        assert_eq!(chunk.code[0], Op::CloneLocal(0));
+    }
+
+    #[test]
+    fn return_move_local_emits_move_then_return() {
+        let func = Func {
+            id: FuncId(0),
+            name: dummy_ident("main"),
+            locals: vec![Local {
+                name: None,
+                ty: Type::Int,
+            }],
+            params_len: 0,
+            ret: Type::Int,
+            body: Block {
+                stmts: vec![stmt(StmtKind::Return(Some(local_expr_with_ownership(
+                    0,
+                    hir::Ownership::Move,
+                ))))],
+            },
+            span: dummy_span(),
+        };
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        assert_eq!(chunk.code[0], Op::MoveLocal(0));
+        assert_eq!(chunk.code[1], Op::Return);
     }
 }

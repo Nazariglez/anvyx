@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+dataref Leaf {
+    value: int,
+}
+
+fn main() {
+    let x = Leaf { value: 42 };
+}

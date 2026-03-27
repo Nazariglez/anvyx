@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match: Node[42]
+
+dataref Node {
+    value: int,
+
+    fn to_string(self) -> string {
+        return "Node[{self.value}]";
+    }
+}
+
+fn main() {
+    let n = Node { value: 42 };
+    println("{n}");
+}

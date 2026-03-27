@@ -80,11 +80,7 @@ fn lower_for_range(
     let end_expr = lower_expr(&range.end, ctx, fc, out)?;
     let step_expr = match &for_node.node.step {
         Some(s) => lower_expr(s, ctx, fc, out)?,
-        None => hir::Expr {
-            ty: item_ty.clone(),
-            span,
-            kind: hir::ExprKind::Int(1),
-        },
+        None => hir::Expr::new(item_ty.clone(), span, hir::ExprKind::Int(1)),
     };
 
     let reversed = for_node.node.reversed;
@@ -99,11 +95,7 @@ fn lower_for_range(
                 span,
                 BinaryOp::Sub,
                 end_expr,
-                hir::Expr {
-                    ty: item_ty.clone(),
-                    span,
-                    kind: hir::ExprKind::Int(1),
-                },
+                hir::Expr::new(item_ty.clone(), span, hir::ExprKind::Int(1)),
             )
         };
         (start_local, i_init, BinaryOp::GreaterThanEq, BinaryOp::Sub)
@@ -157,13 +149,13 @@ fn lower_for_sequence(
 
     let xs_local = alloc_and_bind(fc, span, out, xs_ty.clone(), xs_expr);
 
-    let len_expr = hir::Expr {
-        ty: Type::Int,
+    let len_expr = hir::Expr::new(
+        Type::Int,
         span,
-        kind: hir::ExprKind::CollectionLen {
+        hir::ExprKind::CollectionLen {
             collection: Box::new(hir::Expr::local(xs_ty.clone(), span, xs_local)),
         },
-    };
+    );
     let len_local = alloc_and_bind(fc, span, out, Type::Int, len_expr);
 
     let step_expr = match &for_node.node.step {
@@ -240,14 +232,14 @@ fn lower_for_seq_body(
 ) -> Result<Vec<hir::Stmt>, LowerError> {
     let mut body_stmts = vec![];
 
-    let index_get_expr = || hir::Expr {
-        ty: elem_ty.clone(),
+    let index_get_expr = || hir::Expr::new(
+        elem_ty.clone(),
         span,
-        kind: hir::ExprKind::IndexGet {
+        hir::ExprKind::IndexGet {
             target: Box::new(hir::Expr::local(xs_ty.clone(), span, xs_local)),
             index: Box::new(hir::Expr::local(Type::Int, span, i_local)),
         },
-    };
+    );
 
     match &for_node.node.pattern.node {
         Pattern::Ident(name) => {
@@ -279,10 +271,10 @@ fn lower_for_seq_body(
                             span,
                             kind: hir::StmtKind::Let {
                                 local: local_id,
-                                init: hir::Expr {
-                                    ty: tuple_elems[k].clone(),
+                                init: hir::Expr::new(
+                                    tuple_elems[k].clone(),
                                     span,
-                                    kind: hir::ExprKind::TupleIndex {
+                                    hir::ExprKind::TupleIndex {
                                         tuple: Box::new(hir::Expr::local(
                                             elem_ty.clone(),
                                             span,
@@ -290,7 +282,7 @@ fn lower_for_seq_body(
                                         )),
                                         index: k as u16,
                                     },
-                                },
+                                ),
                             },
                         });
                     }
@@ -353,13 +345,13 @@ fn lower_for_map(
 
     let m_local = alloc_and_bind(fc, span, out, m_ty.clone(), m_expr);
 
-    let len_expr = hir::Expr {
-        ty: Type::Int,
+    let len_expr = hir::Expr::new(
+        Type::Int,
         span,
-        kind: hir::ExprKind::MapLen {
+        hir::ExprKind::MapLen {
             map: Box::new(hir::Expr::local(m_ty.clone(), span, m_local)),
         },
-    };
+    );
     let len_local = alloc_and_bind(fc, span, out, Type::Int, len_expr);
 
     let i_local = alloc_and_bind(fc, span, out, Type::Int, hir::Expr::int_lit(span, 0));
@@ -402,14 +394,14 @@ fn lower_for_map_body(
 ) -> Result<Vec<hir::Stmt>, LowerError> {
     let mut body_stmts = vec![];
 
-    let entry_at_expr = || hir::Expr {
-        ty: entry_ty.clone(),
+    let entry_at_expr = || hir::Expr::new(
+        entry_ty.clone(),
         span,
-        kind: hir::ExprKind::MapEntryAt {
+        hir::ExprKind::MapEntryAt {
             map: Box::new(hir::Expr::local(m_ty.clone(), span, m_local)),
             index: Box::new(hir::Expr::local(Type::Int, span, i_local)),
         },
-    };
+    );
 
     match &for_node.node.pattern.node {
         Pattern::Ident(name) => {
@@ -457,10 +449,10 @@ fn lower_for_map_body(
                                 span,
                                 kind: hir::StmtKind::Let {
                                     local: local_id,
-                                    init: hir::Expr {
-                                        ty: types[k].clone(),
+                                    init: hir::Expr::new(
+                                        types[k].clone(),
                                         span,
-                                        kind: hir::ExprKind::TupleIndex {
+                                        hir::ExprKind::TupleIndex {
                                             tuple: Box::new(hir::Expr::local(
                                                 entry_ty.clone(),
                                                 span,
@@ -468,7 +460,7 @@ fn lower_for_map_body(
                                             )),
                                             index: k as u16,
                                         },
-                                    },
+                                    ),
                                 },
                             });
                         }
@@ -489,10 +481,10 @@ fn lower_for_map_body(
                                 span,
                                 kind: hir::StmtKind::Let {
                                     local: local_id,
-                                    init: hir::Expr {
-                                        ty: types[k].clone(),
+                                    init: hir::Expr::new(
+                                        types[k].clone(),
                                         span,
-                                        kind: hir::ExprKind::TupleIndex {
+                                        hir::ExprKind::TupleIndex {
                                             tuple: Box::new(hir::Expr::local(
                                                 entry_ty.clone(),
                                                 span,
@@ -500,7 +492,7 @@ fn lower_for_map_body(
                                             )),
                                             index: k as u16,
                                         },
-                                    },
+                                    ),
                                 },
                             });
                         }

@@ -1,22 +1,25 @@
 mod builtins;
 mod bytecode;
 mod compiler;
+pub(crate) mod cycle_collector;
+pub mod extern_type;
 pub mod handle_store;
 pub mod managed_rc;
 pub mod meta;
 mod runtime;
 mod value;
-pub mod extern_type;
 
 use crate::hir;
 use std::collections::HashMap;
 
+pub use extern_type::{AnvyxExternType, extern_handle};
 pub use handle_store::HandleStore;
 pub use managed_rc::ManagedRc;
 pub use runtime::ExternHandler;
 pub use value::RuntimeError;
-pub use extern_type::{AnvyxExternType, extern_handle};
-pub use value::{DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData, MapStorage, StructData, Value};
+pub use value::{
+    DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData, MapStorage, StructData, Value,
+};
 
 pub fn run_with_externs(
     hir_prog: &hir::Program,
@@ -38,14 +41,37 @@ pub fn run_with_externs(
     }
 
     vm.run().map_err(|e| format!("Runtime error: {e}"))?;
-    Ok(vm.stdout)
+
+    // we need to take the stdout before dropping the VM because the VM drops the stack
+    let stdout = std::mem::take(&mut vm.stdout);
+    drop(vm);
+
+    // free any remaining suspects
+    cycle_collector::collect_cycles();
+
+    // check for memory leaks and output the details if any are found
+    // the user should be able to see this if we do thing right and the cycle detector works
+    let live = managed_rc::managed_alloc_count();
+    if live > 0 {
+        let mut msg = format!(
+            "memory leak: {live} managed object(s) still alive after final cycle collection"
+        );
+        let mut details = managed_rc::managed_alloc_details();
+        details.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, count) in details {
+            msg.push_str(&format!("\n  {name}: {count}"));
+        }
+        return Err(msg);
+    }
+
+    Ok(stdout)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ExternHandler, Value, run_with_externs};
     use super::managed_rc::ManagedRc;
     use super::value::ExternHandleData;
+    use super::{ExternHandler, Value, run_with_externs};
     use crate::test_helpers::TestCtx;
     use std::collections::HashMap;
 
@@ -1045,6 +1071,50 @@ fn main() {
 }"#;
         let out = vm_ok_with_externs(src, externs);
         assert_eq!(out, "<Window>\n");
+    }
+
+    #[test]
+    fn ownership_rc_reduction_benchmark() {
+        use super::managed_rc::{rc_dec_count, rc_inc_count, reset_rc_counts};
+
+        let source = r#"
+            struct Point { x: int, y: int }
+
+            fn make_point(x: int, y: int) -> Point {
+                Point { x: x, y: y }
+            }
+
+            fn sum_point(p: Point) -> int {
+                p.x + p.y
+            }
+
+            fn transform(p: Point) -> Point {
+                let x = p.x * 2;
+                let y = p.y + 1;
+                make_point(x, y)
+            }
+
+            fn main() {
+                var total = 0;
+                var i = 0;
+                while i < 100 {
+                    let p = make_point(i, i + 1);
+                    let q = transform(p);
+                    total = total + sum_point(q);
+                    i = i + 1;
+                }
+                println(total);
+            }
+        "#;
+
+        reset_rc_counts();
+        let out = vm_ok(source);
+        let incs = rc_inc_count();
+        let decs = rc_dec_count();
+
+        eprintln!("RC increments: {incs}, RC decrements: {decs}");
+
+        assert!(!out.is_empty());
     }
 
     #[test]

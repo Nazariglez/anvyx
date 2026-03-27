@@ -21,6 +21,15 @@ fn field_index_for_assign(
                 detail: format!("unknown field '{field_name}' on struct '{name}'"),
             })
             .map(|i| i as u16),
+        Type::DataRef { name, .. } => ctx
+            .shared
+            .tcx
+            .struct_field_index(*name, field_name)
+            .ok_or_else(|| LowerError::UnsupportedAssign {
+                span,
+                detail: format!("unknown field '{field_name}' on dataref '{name}'"),
+            })
+            .map(|i| i as u16),
         Type::NamedTuple(fields) => fields
             .iter()
             .position(|(label, _)| *label == field_name)
@@ -182,42 +191,35 @@ fn lower_assign_to_chain(
 
     for i in 0..n - 1 {
         let source_expr = if i == 0 {
-            hir::Expr {
-                ty: root_ty.clone(),
-                span,
-                kind: hir::ExprKind::Local(root_local),
-            }
+            hir::Expr::new(root_ty.clone(), span, hir::ExprKind::Local(root_local))
         } else {
-            hir::Expr {
-                ty: chain.steps[i - 1].value_type().clone(),
+            hir::Expr::new(
+                chain.steps[i - 1].value_type().clone(),
                 span,
-                kind: hir::ExprKind::Local(value_temp_ids[i - 1]),
-            }
+                hir::ExprKind::Local(value_temp_ids[i - 1]),
+            )
         };
         let init = match &chain.steps[i] {
-            AssignAccessStep::Field { field_index, .. } => hir::Expr {
-                ty: chain.steps[i].value_type().clone(),
+            AssignAccessStep::Field { field_index, .. } => hir::Expr::new(
+                chain.steps[i].value_type().clone(),
                 span,
-                kind: hir::ExprKind::FieldGet {
-                    object: Box::new(source_expr),
-                    index: *field_index,
-                },
-            },
+                hir::ExprKind::FieldGet { object: Box::new(source_expr), index: *field_index },
+            ),
             AssignAccessStep::Index { .. } => {
                 let idx_local = index_temp_ids[i].expect("index temp for non-leaf Index step");
                 let idx_ty = fc.locals[idx_local.0 as usize].ty.clone();
-                hir::Expr {
-                    ty: chain.steps[i].value_type().clone(),
+                hir::Expr::new(
+                    chain.steps[i].value_type().clone(),
                     span,
-                    kind: hir::ExprKind::IndexGet {
+                    hir::ExprKind::IndexGet {
                         target: Box::new(source_expr),
-                        index: Box::new(hir::Expr {
-                            ty: idx_ty,
+                        index: Box::new(hir::Expr::new(
+                            idx_ty,
                             span,
-                            kind: hir::ExprKind::Local(idx_local),
-                        }),
+                            hir::ExprKind::Local(idx_local),
+                        )),
                     },
-                }
+                )
             }
         };
         out.push(hir::Stmt {
@@ -257,11 +259,11 @@ fn lower_assign_to_chain(
 
     let mut write_back: Vec<hir::Stmt> = vec![];
     for k in (0..n - 1).rev() {
-        let new_value = hir::Expr {
-            ty: chain.steps[k].value_type().clone(),
+        let new_value = hir::Expr::new(
+            chain.steps[k].value_type().clone(),
             span,
-            kind: hir::ExprKind::Local(value_temp_ids[k]),
-        };
+            hir::ExprKind::Local(value_temp_ids[k]),
+        );
         let stmt = match &chain.steps[k] {
             AssignAccessStep::Field { field_index, .. } => {
                 let object = if k == 0 {
@@ -290,11 +292,11 @@ fn lower_assign_to_chain(
                     span,
                     kind: hir::StmtKind::SetIndex {
                         object,
-                        index: Box::new(hir::Expr {
-                            ty: idx_ty,
+                        index: Box::new(hir::Expr::new(
+                            idx_ty,
                             span,
-                            kind: hir::ExprKind::Local(idx_local),
-                        }),
+                            hir::ExprKind::Local(idx_local),
+                        )),
                         value: new_value,
                     },
                 }
@@ -362,14 +364,11 @@ pub(super) fn lower_assign(
                 let value = lower_expr(&assign_node.node.value, ctx, fc, out)?;
                 Ok(hir::Stmt {
                     span,
-                    kind: hir::StmtKind::Expr(hir::Expr {
-                        ty: Type::Void,
+                    kind: hir::StmtKind::Expr(hir::Expr::new(
+                        Type::Void,
                         span,
-                        kind: hir::ExprKind::CallExtern {
-                            extern_id,
-                            args: vec![receiver, value],
-                        },
-                    }),
+                        hir::ExprKind::CallExtern { extern_id, args: vec![receiver, value] },
+                    )),
                 })
             } else {
                 lower_assign_to_chain(

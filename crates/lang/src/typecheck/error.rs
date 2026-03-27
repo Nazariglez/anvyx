@@ -369,6 +369,9 @@ pub enum TypeErrKind {
     ConstTypeMismatch { expected: Type, got: Type },
     ConstAssignment { name: Ident },
     DuplicateConst { name: Ident },
+    DuplicateTypeDefinition { name: Ident },
+    ImportNameConflict { name: Ident, existing: &'static str },
+    ModuleBindingConflict { name: Ident },
 
     AmbiguousExtendMethod {
         ty: Type,

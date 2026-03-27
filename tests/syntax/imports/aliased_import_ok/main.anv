@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: success
+
+import helpers { Point as FooPoint };
+
+struct Point { a: float, b: float }
+
+fn main() {
+    let p = Point { a: 1.0, b: 2.0 };
+    let q = FooPoint { x: 1, y: 2 };
+}

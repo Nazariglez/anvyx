@@ -89,15 +89,11 @@ pub(super) fn type_references_generic(ty: &Type, type_params: &[TypeParam]) -> b
         Type::Map { key, value } => {
             type_references_generic(key, type_params) || type_references_generic(value, type_params)
         }
-        Type::Tuple(elems) => elems
-            .iter()
-            .any(|e| type_references_generic(e, type_params)),
-        Type::NamedTuple(fields) => fields
-            .iter()
-            .any(|(_, t)| type_references_generic(t, type_params)),
-        Type::Struct { type_args, .. } | Type::Enum { type_args, .. } => type_args
-            .iter()
-            .any(|a| type_references_generic(a, type_params)),
+        Type::Tuple(elems) => elems.iter().any(|e| type_references_generic(e, type_params)),
+        Type::NamedTuple(fields) => fields.iter().any(|(_, t)| type_references_generic(t, type_params)),
+        Type::Struct { type_args, .. } | Type::Enum { type_args, .. } | Type::DataRef { type_args, .. } => {
+            type_args.iter().any(|a| type_references_generic(a, type_params))
+        }
         Type::Func { params, ret } => {
             params
                 .iter()
@@ -110,6 +106,7 @@ pub(super) fn type_references_generic(ty: &Type, type_params: &[TypeParam]) -> b
 
 #[derive(Debug, Clone)]
 pub(super) struct StructDef {
+    pub is_dataref: bool,
     pub type_params: Vec<TypeParam>,
     pub fields: Vec<StructField>,
     pub methods: HashMap<Ident, MethodDef>,
@@ -117,13 +114,22 @@ pub(super) struct StructDef {
 }
 
 impl StructDef {
-    pub(super) fn from_ast(decl: &StructDecl) -> Self {
+    pub(super) fn from_ast(decl: &StructDecl, is_dataref: bool) -> Self {
         let methods = decl.methods.iter().map(MethodDef::from_ast).collect();
         Self {
+            is_dataref,
             type_params: decl.type_params.clone(),
             fields: decl.fields.clone(),
             methods,
             field_defaults: HashMap::new(),
+        }
+    }
+
+    pub(super) fn make_type(&self, name: Ident, type_args: Vec<Type>) -> Type {
+        if self.is_dataref {
+            Type::DataRef { name, type_args }
+        } else {
+            Type::Struct { name, type_args }
         }
     }
 }
@@ -217,10 +223,7 @@ impl ExtendSpecKey {
             .collect::<Vec<_>>()
             .join(", ");
         let type_str = format!("{}<{}>", self.base_name, args_str);
-        let name = format!(
-            "__extend::{}::{}::{}",
-            module_part, type_str, self.method_name
-        );
+        let name = format!("__extend::{}::{}::{}", module_part, type_str, self.method_name);
         Ident(Intern::new(name))
     }
 }
@@ -411,6 +414,9 @@ pub struct TypeChecker {
 
     /// Maps call expression ExprId to resolved extend method internal_name (for lowering)
     pub(super) extend_call_targets: HashMap<ExprId, Ident>,
+
+    /// Set of dataref type names that can form reference cycles
+    pub(super) cycle_capable_types: HashSet<Ident>,
 }
 
 impl TypeChecker {
@@ -487,6 +493,14 @@ impl TypeChecker {
 
     pub fn struct_names(&self) -> impl Iterator<Item = Ident> + '_ {
         self.struct_defs.keys().copied()
+    }
+
+    pub fn is_dataref(&self, name: Ident) -> bool {
+        self.struct_defs.get(&name).is_some_and(|d| d.is_dataref)
+    }
+
+    pub fn is_cycle_capable(&self, name: Ident) -> bool {
+        self.cycle_capable_types.contains(&name)
     }
 
     pub fn struct_field_names(&self, name: Ident) -> Option<Vec<Ident>> {
@@ -614,10 +628,10 @@ impl TypeChecker {
             Type::UnresolvedName(name) if self.extern_type_defs.contains_key(name) => {
                 Type::Extern { name: *name }
             }
-            Type::UnresolvedName(name) if self.struct_defs.contains_key(name) => Type::Struct {
-                name: *name,
-                type_args: vec![],
-            },
+            Type::UnresolvedName(name) if self.struct_defs.contains_key(name) => {
+                let def = &self.struct_defs[name];
+                def.make_type(*name, vec![])
+            }
             Type::UnresolvedName(name) if self.enum_defs.contains_key(name) => Type::Enum {
                 name: *name,
                 type_args: vec![],
@@ -627,7 +641,19 @@ impl TypeChecker {
                 name: *name,
                 type_args: type_args.iter().map(|t| self.resolve_type(t)).collect(),
             },
+            Type::Struct { name, type_args }
+                if self.struct_defs.get(name).is_some_and(|d| d.is_dataref) =>
+            {
+                Type::DataRef {
+                    name: *name,
+                    type_args: type_args.iter().map(|t| self.resolve_type(t)).collect(),
+                }
+            }
             Type::Struct { name, type_args } => Type::Struct {
+                name: *name,
+                type_args: type_args.iter().map(|t| self.resolve_type(t)).collect(),
+            },
+            Type::DataRef { name, type_args } => Type::DataRef {
                 name: *name,
                 type_args: type_args.iter().map(|t| self.resolve_type(t)).collect(),
             },
@@ -725,11 +751,7 @@ impl TypeChecker {
         &self.extend_spec_cache
     }
 
-    pub fn get_generic_extend_template(
-        &self,
-        base_name: Ident,
-        method_name: Ident,
-    ) -> Option<&GenericExtendTemplate> {
+    pub fn get_generic_extend_template(&self, base_name: Ident, method_name: Ident) -> Option<&GenericExtendTemplate> {
         self.generic_extend_templates
             .get(&(base_name, method_name))
             .and_then(|v| v.first())
@@ -950,6 +972,16 @@ impl TypeChecker {
                     name: nt,
                     type_args: at,
                 },
+            )
+            | (
+                Type::DataRef {
+                    name: nf,
+                    type_args: af,
+                },
+                Type::DataRef {
+                    name: nt,
+                    type_args: at,
+                },
             ) if nf == nt
                 && af.len() == at.len()
                 && !af.iter().any(contains_infer)
@@ -1040,6 +1072,10 @@ pub(super) fn type_field_on_base(
             Type::Infer
         }
         Type::Struct {
+            name: struct_name,
+            type_args,
+        }
+        | Type::DataRef {
             name: struct_name,
             type_args,
         } => {
@@ -1238,6 +1274,7 @@ fn check_keyable(ty: &Type, tc: &TypeChecker) -> Result<(), String> {
         Type::Struct { name, type_args } => {
             check_struct_property(*name, type_args, tc, check_keyable)
         }
+        Type::DataRef { .. } => Ok(()),
         other => Err(format!("type '{other}' is not keyable")),
     }
 }
@@ -1275,6 +1312,7 @@ fn check_equatable(ty: &Type, tc: &TypeChecker) -> Result<(), String> {
         Type::Struct { name, type_args } => {
             check_struct_property(*name, type_args, tc, check_equatable)
         }
+        Type::DataRef { .. } => Ok(()),
         Type::List { elem } | Type::Array { elem, .. } => {
             check_equatable(elem, tc).map_err(|_| format!("element type '{elem}' is not equatable"))
         }

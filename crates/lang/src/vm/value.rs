@@ -74,6 +74,13 @@ impl MapStorage {
             MapStorage::Unordered(m) => m.iter().nth(idx),
         }
     }
+
+    pub fn drain(&mut self) -> Box<dyn Iterator<Item = (Value, Value)> + '_> {
+        match self {
+            MapStorage::Unordered(m) => Box::new(m.drain()),
+            MapStorage::Ordered(m) => Box::new(m.drain(..)),
+        }
+    }
 }
 
 impl PartialEq for MapStorage {
@@ -143,7 +150,9 @@ impl Drop for ExternHandleData {
 
 impl fmt::Debug for ExternHandleData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ExternHandleData").field("id", &self.id).finish()
+        f.debug_struct("ExternHandleData")
+            .field("id", &self.id)
+            .finish()
     }
 }
 
@@ -161,7 +170,7 @@ impl Hash for ExternHandleData {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
     Float(f32),
@@ -176,6 +185,29 @@ pub enum Value {
     Tuple(ManagedRc<Vec<Value>>),
     Enum(ManagedRc<EnumData>),
     ExternHandle(ManagedRc<ExternHandleData>),
+    DataRef(ManagedRc<StructData>),
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => a == b,
+            (Value::Double(a), Value::Double(b)) => a == b,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Nil, Value::Nil) => true,
+            (Value::String(a), Value::String(b)) => a == b,
+            (Value::List(a), Value::List(b)) => a == b,
+            (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::Map(a), Value::Map(b)) => a == b,
+            (Value::Struct(a), Value::Struct(b)) => a == b,
+            (Value::Tuple(a), Value::Tuple(b)) => a == b,
+            (Value::Enum(a), Value::Enum(b)) => a == b,
+            (Value::ExternHandle(a), Value::ExternHandle(b)) => a == b,
+            (Value::DataRef(a), Value::DataRef(b)) => ManagedRc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
 }
 
 impl Eq for Value {}
@@ -199,6 +231,7 @@ impl Hash for Value {
             Value::Tuple(t) => t.hash(state),
             Value::Enum(e) => e.hash(state),
             Value::ExternHandle(data) => data.hash(state),
+            Value::DataRef(s) => (s.as_ptr() as usize).hash(state),
         }
     }
 }
@@ -278,6 +311,7 @@ impl fmt::Display for Value {
             }
             Value::Enum(e) => write!(f, "<enum:{}:{}>", e.type_id, e.variant),
             Value::ExternHandle(data) => write!(f, "<extern:{}>", data.id),
+            Value::DataRef(s) => write!(f, "<dataref:{}>", s.type_id),
         }
     }
 }
@@ -317,6 +351,7 @@ fn type_name(v: &Value) -> &'static str {
         Value::Tuple(_) => "tuple",
         Value::Enum(_) => "enum",
         Value::ExternHandle(_) => "extern handle",
+        Value::DataRef(_) => "dataref",
     }
 }
 
@@ -895,7 +930,10 @@ mod tests {
 
     #[test]
     fn negate_float() {
-        assert_eq!(value_negate(Value::Float(1.5_f32)), Ok(Value::Float(-1.5_f32)));
+        assert_eq!(
+            value_negate(Value::Float(1.5_f32)),
+            Ok(Value::Float(-1.5_f32))
+        );
     }
 
     #[test]
@@ -1058,7 +1096,9 @@ mod tests {
         let v = extern_handle(10);
         let v2 = v.clone();
         let Value::ExternHandle(rc) = v else { panic!() };
-        let Value::ExternHandle(rc2) = v2 else { panic!() };
+        let Value::ExternHandle(rc2) = v2 else {
+            panic!()
+        };
         assert_eq!(rc.strong_count(), 2);
         assert!(ManagedRc::ptr_eq(&rc, &rc2));
     }
@@ -1067,7 +1107,9 @@ mod tests {
     fn extern_handle_data_drop_calls_cleanup() {
         use std::cell::Cell;
         thread_local! { static CLEANED: Cell<u64> = Cell::new(0); }
-        fn cleanup(id: u64) { CLEANED.with(|c| c.set(id)); }
+        fn cleanup(id: u64) {
+            CLEANED.with(|c| c.set(id));
+        }
         {
             let _v = Value::ExternHandle(ManagedRc::new(ExternHandleData {
                 id: 77,
@@ -1083,7 +1125,9 @@ mod tests {
     fn extern_handle_data_shared_drop_once() {
         use std::cell::Cell;
         thread_local! { static COUNT: Cell<u32> = Cell::new(0); }
-        fn cleanup(_id: u64) { COUNT.with(|c| c.set(c.get() + 1)); }
+        fn cleanup(_id: u64) {
+            COUNT.with(|c| c.set(c.get() + 1));
+        }
         COUNT.with(|c| c.set(0));
         {
             let v = Value::ExternHandle(ManagedRc::new(ExternHandleData {
@@ -1102,7 +1146,9 @@ mod tests {
     fn extern_handle_in_list_cleanup_on_drop() {
         use std::cell::Cell;
         thread_local! { static CLEANED: Cell<u32> = Cell::new(0); }
-        fn cleanup(_id: u64) { CLEANED.with(|c| c.set(c.get() + 1)); }
+        fn cleanup(_id: u64) {
+            CLEANED.with(|c| c.set(c.get() + 1));
+        }
         CLEANED.with(|c| c.set(0));
         {
             let handle = Value::ExternHandle(ManagedRc::new(ExternHandleData {

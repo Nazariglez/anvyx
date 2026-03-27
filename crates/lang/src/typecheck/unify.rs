@@ -15,7 +15,7 @@ pub(super) fn contains_infer(ty: &Type) -> bool {
         Type::Func { params, ret } => params.iter().any(contains_infer) || contains_infer(ret),
         Type::Tuple(elems) => elems.iter().any(contains_infer),
         Type::NamedTuple(fields) => fields.iter().any(|(_, t)| contains_infer(t)),
-        Type::Struct { type_args, .. } | Type::Enum { type_args, .. } => {
+        Type::Struct { type_args, .. } | Type::Enum { type_args, .. } | Type::DataRef { type_args, .. } => {
             type_args.iter().any(contains_infer)
         }
         Type::Array { elem, .. } => contains_infer(elem),
@@ -88,6 +88,22 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
                 type_args: la,
             },
             Struct {
+                name: rn,
+                type_args: ra,
+            },
+        ) => {
+            ln == rn
+                && la.len() == ra.len()
+                && la.iter().zip(ra.iter()).all(|(a, b)| is_assignable(a, b))
+        }
+
+        // DataRef<A> -> DataRef<B> of same name is assignable if all type_args are assignable
+        (
+            DataRef {
+                name: ln,
+                type_args: la,
+            },
+            DataRef {
                 name: rn,
                 type_args: ra,
             },

@@ -3,6 +3,7 @@ mod composite;
 mod const_eval;
 mod constraint;
 mod control;
+mod cyclicity;
 mod decl;
 mod error;
 mod expr;
@@ -142,6 +143,9 @@ pub fn check_program_with_modules(
     if !errors.is_empty() {
         return Err(errors);
     }
+
+    type_checker.cycle_capable_types =
+        cyclicity::analyze_cyclicity(&type_checker.struct_defs, &type_checker.enum_defs);
 
     Ok(type_checker)
 }

@@ -33,7 +33,7 @@ fn const_value_to_hir_expr(val: &ConstValue, span: Span) -> hir::Expr {
         ConstValue::String(s) => (Type::String, hir::ExprKind::String(s.clone())),
         ConstValue::Nil => (Type::Infer, hir::ExprKind::Nil),
     };
-    hir::Expr { ty, span, kind }
+    hir::Expr::new(ty, span, kind)
 }
 
 pub(super) fn lower_expr(
@@ -269,7 +269,7 @@ pub(super) fn lower_expr(
         }
     };
 
-    Ok(hir::Expr { ty, span, kind })
+    Ok(hir::Expr::new(ty, span, kind))
 }
 
 fn try_lower_extern_binary_op(
@@ -344,11 +344,7 @@ fn try_lower_extern_binary_op(
     if wrap_not {
         Ok(Some(hir::ExprKind::Unary {
             op: UnaryOp::Not,
-            expr: Box::new(hir::Expr {
-                ty: eq_ret_ty,
-                span,
-                kind: call_expr,
-            }),
+            expr: Box::new(hir::Expr::new(eq_ret_ty, span, call_expr)),
         }))
     } else {
         Ok(Some(call_expr))
@@ -543,6 +539,14 @@ fn lower_safe_field_expr(
                 span,
                 kind: format!("unknown field '{field_name}' on struct '{name}'"),
             })? as u16,
+        Type::DataRef { name, .. } => ctx
+            .shared
+            .tcx
+            .struct_field_index(*name, field_name)
+            .ok_or_else(|| LowerError::UnsupportedExprKind {
+                span,
+                kind: format!("unknown field '{field_name}' on dataref '{name}'"),
+            })? as u16,
         Type::NamedTuple(fields) => fields
             .iter()
             .position(|(label, _)| *label == field_name)
@@ -560,25 +564,25 @@ fn lower_safe_field_expr(
 
     let field_ty = ty.option_inner().cloned().unwrap_or(ty.clone());
 
-    let field_get = hir::Expr {
-        ty: field_ty.clone(),
+    let field_get = hir::Expr::new(
+        field_ty.clone(),
         span,
-        kind: hir::ExprKind::FieldGet {
+        hir::ExprKind::FieldGet {
             object: Box::new(hir::Expr::local(inner_ty.clone(), span, inner_local)),
             index: field_index,
         },
-    };
+    );
 
     let option_type_id = resolve_enum_type_id(ctx, span, enum_name)?;
-    let wrapped = hir::Expr {
-        ty: ty.clone(),
+    let wrapped = hir::Expr::new(
+        ty.clone(),
         span,
-        kind: hir::ExprKind::EnumLiteral {
+        hir::ExprKind::EnumLiteral {
             type_id: option_type_id,
             variant: some_variant,
             fields: vec![field_get],
         },
-    };
+    );
 
     let some_arm = hir::MatchArm {
         variant: some_variant,
@@ -598,11 +602,7 @@ fn lower_safe_field_expr(
         },
     };
 
-    let none_expr = hir::Expr {
-        ty: ty.clone(),
-        span,
-        kind: hir::ExprKind::Nil,
-    };
+    let none_expr = hir::Expr::new(ty.clone(), span, hir::ExprKind::Nil);
     let none_else = hir::MatchElse {
         binding: None,
         body: hir::Block {
@@ -685,25 +685,25 @@ fn lower_safe_index_expr(
 
     let elem_ty = ty.option_inner().cloned().unwrap_or(ty.clone());
 
-    let index_get = hir::Expr {
-        ty: elem_ty,
+    let index_get = hir::Expr::new(
+        elem_ty,
         span,
-        kind: hir::ExprKind::IndexGet {
+        hir::ExprKind::IndexGet {
             target: Box::new(hir::Expr::local(inner_ty.clone(), span, inner_local)),
             index: Box::new(index_expr),
         },
-    };
+    );
 
     let option_type_id = resolve_enum_type_id(ctx, span, enum_name)?;
-    let wrapped = hir::Expr {
-        ty: ty.clone(),
+    let wrapped = hir::Expr::new(
+        ty.clone(),
         span,
-        kind: hir::ExprKind::EnumLiteral {
+        hir::ExprKind::EnumLiteral {
             type_id: option_type_id,
             variant: some_variant,
             fields: vec![index_get],
         },
-    };
+    );
 
     let some_arm = hir::MatchArm {
         variant: some_variant,
@@ -723,11 +723,7 @@ fn lower_safe_index_expr(
         },
     };
 
-    let none_expr = hir::Expr {
-        ty: ty.clone(),
-        span,
-        kind: hir::ExprKind::Nil,
-    };
+    let none_expr = hir::Expr::new(ty.clone(), span, hir::ExprKind::Nil);
     let none_else = hir::MatchElse {
         binding: None,
         body: hir::Block {
@@ -833,14 +829,11 @@ fn lower_safe_call_expr(
             let receiver = hir::Expr::local(inner_ty.clone(), span, inner_local);
             let mut args = vec![receiver];
             args.extend(pre_args);
-            hir::Expr {
-                ty: inner_result_ty,
+            hir::Expr::new(
+                inner_result_ty,
                 span,
-                kind: hir::ExprKind::Call {
-                    func: func_id,
-                    args,
-                },
-            }
+                hir::ExprKind::Call { func: func_id, args },
+            )
         } else if let Type::Extern { name: type_name } = &inner_ty {
             let qualified = Ident(Intern::new(format!("{type_name}::{method_name}")));
             let &extern_id = ctx.shared.externs.get(&qualified).ok_or_else(|| {
@@ -852,11 +845,11 @@ fn lower_safe_call_expr(
             let receiver = hir::Expr::local(inner_ty.clone(), span, inner_local);
             let mut args = vec![receiver];
             args.extend(pre_args);
-            hir::Expr {
-                ty: inner_result_ty,
+            hir::Expr::new(
+                inner_result_ty,
                 span,
-                kind: hir::ExprKind::CallExtern { extern_id, args },
-            }
+                hir::ExprKind::CallExtern { extern_id, args },
+            )
         } else if let Type::Struct {
             name: struct_name, ..
         } = &inner_ty
@@ -879,14 +872,11 @@ fn lower_safe_call_expr(
                     args.push(const_value_to_hir_expr(val, span));
                 }
             }
-            hir::Expr {
-                ty: inner_result_ty,
+            hir::Expr::new(
+                inner_result_ty,
                 span,
-                kind: hir::ExprKind::Call {
-                    func: func_id,
-                    args,
-                },
-            }
+                hir::ExprKind::Call { func: func_id, args },
+            )
         } else {
             return Err(LowerError::UnsupportedExprKind {
                 span,
@@ -896,15 +886,15 @@ fn lower_safe_call_expr(
             });
         };
 
-    let wrapped = hir::Expr {
-        ty: ty.clone(),
+    let wrapped = hir::Expr::new(
+        ty.clone(),
         span,
-        kind: hir::ExprKind::EnumLiteral {
+        hir::ExprKind::EnumLiteral {
             type_id: option_type_id,
             variant: some_variant,
             fields: vec![call_expr],
         },
-    };
+    );
 
     let some_arm = hir::MatchArm {
         variant: some_variant,
@@ -924,11 +914,7 @@ fn lower_safe_call_expr(
         },
     };
 
-    let none_expr = hir::Expr {
-        ty: ty.clone(),
-        span,
-        kind: hir::ExprKind::Nil,
-    };
+    let none_expr = hir::Expr::new(ty.clone(), span, hir::ExprKind::Nil);
     let none_else = hir::MatchElse {
         binding: None,
         body: hir::Block {
@@ -1103,7 +1089,7 @@ fn lower_call_expr(
         return Ok(expr);
     }
     let kind = lower_direct_call(c, span, ctx, fc, out)?;
-    Ok(hir::Expr { ty, span, kind })
+    Ok(hir::Expr::new(ty, span, kind))
 }
 
 fn lower_extend_call(
@@ -1142,14 +1128,7 @@ fn lower_extend_call(
         _ => lower_args(&c.node.args, ctx, fc, out)?,
     };
 
-    Ok(hir::Expr {
-        ty,
-        span,
-        kind: hir::ExprKind::Call {
-            func: func_id,
-            args,
-        },
-    })
+    Ok(hir::Expr::new(ty, span, hir::ExprKind::Call { func: func_id, args }))
 }
 
 fn try_lower_method_call(
@@ -1191,15 +1170,15 @@ fn try_lower_method_call(
                     span,
                 })?;
             let args = lower_args(&c.node.args, ctx, fc, out)?;
-            return Ok(Some(hir::Expr {
-                ty: ty.clone(),
+            return Ok(Some(hir::Expr::new(
+                ty.clone(),
                 span,
-                kind: hir::ExprKind::CollectionMut {
+                hir::ExprKind::CollectionMut {
                     object: local_id,
                     method,
                     args,
                 },
-            }));
+            )));
         }
 
         if let Type::Extern { name: type_name } = &target_ty {
@@ -1208,11 +1187,11 @@ fn try_lower_method_call(
                 let receiver = lower_expr(&field.node.target, ctx, fc, out)?;
                 let mut args = vec![receiver];
                 args.extend(lower_args(&c.node.args, ctx, fc, out)?);
-                return Ok(Some(hir::Expr {
-                    ty: ty.clone(),
+                return Ok(Some(hir::Expr::new(
+                    ty.clone(),
                     span,
-                    kind: hir::ExprKind::CallExtern { extern_id, args },
-                }));
+                    hir::ExprKind::CallExtern { extern_id, args },
+                )));
             }
         }
     }
@@ -1235,14 +1214,11 @@ fn try_lower_method_call(
                     args.push(const_value_to_hir_expr(val, span));
                 }
             }
-            return Ok(Some(hir::Expr {
-                ty: ty.clone(),
+            return Ok(Some(hir::Expr::new(
+                ty.clone(),
                 span,
-                kind: hir::ExprKind::Call {
-                    func: func_id,
-                    args,
-                },
-            }));
+                hir::ExprKind::Call { func: func_id, args },
+            )));
         }
     }
 
@@ -1275,15 +1251,11 @@ fn try_lower_enum_constructor(
     let type_id = resolve_enum_type_id(ctx, span, enum_name)?;
     let variant = resolve_variant_index(ctx, span, enum_name, variant_name)?;
     let fields = lower_args(&c.node.args, ctx, fc, out)?;
-    Ok(Some(hir::Expr {
-        ty: ty.clone(),
+    Ok(Some(hir::Expr::new(
+        ty.clone(),
         span,
-        kind: hir::ExprKind::EnumLiteral {
-            type_id,
-            variant,
-            fields,
-        },
-    }))
+        hir::ExprKind::EnumLiteral { type_id, variant, fields },
+    )))
 }
 
 fn lower_direct_call(
@@ -1406,15 +1378,11 @@ fn lower_struct_literal_expr(
                 .expect("typechecker ensures all declared fields are provided");
             fields.push(lower_expr(expr, ctx, fc, out)?);
         }
-        return Ok(hir::Expr {
+        return Ok(hir::Expr::new(
             ty,
             span,
-            kind: hir::ExprKind::EnumLiteral {
-                type_id,
-                variant,
-                fields,
-            },
-        });
+            hir::ExprKind::EnumLiteral { type_id, variant, fields },
+        ));
     }
 
     if let Type::Extern { name } = &ty {
@@ -1445,11 +1413,7 @@ fn lower_struct_literal_expr(
                 .expect("typechecker ensures all declared fields are provided");
             args.push(lower_expr(expr, ctx, fc, out)?);
         }
-        return Ok(hir::Expr {
-            ty,
-            span,
-            kind: hir::ExprKind::CallExtern { extern_id, args },
-        });
+        return Ok(hir::Expr::new(ty, span, hir::ExprKind::CallExtern { extern_id, args }));
     }
 
     let struct_name = lit.node.name;
@@ -1484,11 +1448,12 @@ fn lower_struct_literal_expr(
             }
         }
     }
-    Ok(hir::Expr {
-        ty,
-        span,
-        kind: hir::ExprKind::StructLiteral { type_id, fields },
-    })
+    let kind = if matches!(ty, Type::DataRef { .. }) {
+        hir::ExprKind::DataRefLiteral { type_id, fields }
+    } else {
+        hir::ExprKind::StructLiteral { type_id, fields }
+    };
+    Ok(hir::Expr::new(ty, span, kind))
 }
 
 fn synthesize_default_hir_expr(default: &FieldDefault, field_ty: &Type, span: Span) -> hir::Expr {
@@ -1508,11 +1473,7 @@ fn synthesize_default_hir_expr(default: &FieldDefault, field_ty: &Type, span: Sp
         },
         FieldDefault::EmptyMap => hir::ExprKind::MapLiteral { entries: vec![] },
     };
-    hir::Expr {
-        ty: field_ty.clone(),
-        span,
-        kind,
-    }
+    hir::Expr::new(field_ty.clone(), span, kind)
 }
 
 fn lower_field_expr(
@@ -1542,14 +1503,27 @@ fn lower_field_expr(
                         kind: format!("unknown field '{field_name}' on struct '{name}'"),
                     })? as u16;
                 let object = lower_expr(target, ctx, fc, out)?;
-                return Ok(hir::Expr {
+                return Ok(hir::Expr::new(
                     ty,
                     span,
-                    kind: hir::ExprKind::FieldGet {
-                        object: Box::new(object),
-                        index,
-                    },
-                });
+                    hir::ExprKind::FieldGet { object: Box::new(object), index },
+                ));
+            }
+            Type::DataRef { name, .. } => {
+                let index = ctx
+                    .shared
+                    .tcx
+                    .struct_field_index(name, field_name)
+                    .ok_or_else(|| LowerError::UnsupportedExprKind {
+                        span,
+                        kind: format!("unknown field '{field_name}' on dataref '{name}'"),
+                    })? as u16;
+                let object = lower_expr(target, ctx, fc, out)?;
+                return Ok(hir::Expr::new(
+                    ty,
+                    span,
+                    hir::ExprKind::FieldGet { object: Box::new(object), index },
+                ));
             }
             Type::NamedTuple(fields) => {
                 let index = fields
@@ -1560,14 +1534,11 @@ fn lower_field_expr(
                         kind: format!("unknown field '{field_name}' on named tuple"),
                     })? as u16;
                 let object = lower_expr(target, ctx, fc, out)?;
-                return Ok(hir::Expr {
+                return Ok(hir::Expr::new(
                     ty,
                     span,
-                    kind: hir::ExprKind::FieldGet {
-                        object: Box::new(object),
-                        index,
-                    },
-                });
+                    hir::ExprKind::FieldGet { object: Box::new(object), index },
+                ));
             }
             Type::Extern { name } => {
                 let qualified = Ident(Intern::new(format!("{name}::__get_{field_name}")));
@@ -1578,14 +1549,11 @@ fn lower_field_expr(
                     }
                 })?;
                 let object = lower_expr(target, ctx, fc, out)?;
-                return Ok(hir::Expr {
+                return Ok(hir::Expr::new(
                     ty,
                     span,
-                    kind: hir::ExprKind::CallExtern {
-                        extern_id,
-                        args: vec![object],
-                    },
-                });
+                    hir::ExprKind::CallExtern { extern_id, args: vec![object] },
+                ));
             }
             other => {
                 return Err(LowerError::UnsupportedExprKind {
@@ -1603,15 +1571,11 @@ fn lower_field_expr(
         let enum_name = *enum_name;
         let type_id = resolve_enum_type_id(ctx, span, enum_name)?;
         let variant = resolve_variant_index(ctx, span, enum_name, field_name)?;
-        return Ok(hir::Expr {
+        return Ok(hir::Expr::new(
             ty,
             span,
-            kind: hir::ExprKind::EnumLiteral {
-                type_id,
-                variant,
-                fields: vec![],
-            },
-        });
+            hir::ExprKind::EnumLiteral { type_id, variant, fields: vec![] },
+        ));
     }
 
     Err(LowerError::UnsupportedExprKind {

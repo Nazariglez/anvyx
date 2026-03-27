@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: success
+
+dataref Node {
+    value: int,
+    label: string,
+}
+
+fn main() {
+    let n = Node { value: 42, label: "root" };
+    let v: int = n.value;
+    let l: string = n.label;
+}

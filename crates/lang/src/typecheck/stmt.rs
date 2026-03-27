@@ -42,7 +42,7 @@ pub(super) fn check_block_stmts(
     let in_function = !type_checker.return_types.is_empty();
 
     type_checker.push_scope();
-    collect_scope_types(stmts, type_checker);
+    collect_scope_types(stmts, type_checker, errors);
 
     let const_snapshot = if in_function {
         type_checker.const_scope_stack.push(HashSet::new());
@@ -411,7 +411,11 @@ fn build_extern_type_def(
     }
 }
 
-pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChecker) {
+pub(super) fn collect_scope_types(
+    stmts: &[StmtNode],
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
     // register extern type names before anything else, so they can be
     // resolved when building function signatures that reference them
     for stmt in stmts {
@@ -431,13 +435,25 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
         }
     }
 
+    let mut seen: HashSet<Ident> = HashSet::new();
+    let mut imported: HashSet<Ident> = HashSet::new();
+    let mut imported_modules: HashSet<Ident> = HashSet::new();
+
     for stmt in stmts {
         match &stmt.node {
             Stmt::ExternType(node) => {
-                let def = build_extern_type_def(node.node.has_init, &node.node.members, |ty| {
-                    type_checker.resolve_type(ty)
-                });
-                type_checker.extern_type_defs.insert(node.node.name, def);
+                let name = node.node.name;
+                if !seen.insert(name) {
+                    errors.push(TypeErr::new(
+                        stmt.span,
+                        TypeErrKind::DuplicateTypeDefinition { name },
+                    ));
+                } else {
+                    let def = build_extern_type_def(node.node.has_init, &node.node.members, |ty| {
+                        type_checker.resolve_type(ty)
+                    });
+                    type_checker.extern_type_defs.insert(name, def);
+                }
             }
 
             Stmt::ExternFunc(node) => {
@@ -469,15 +485,45 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
             }
 
             Stmt::Struct(node) => {
-                type_checker
-                    .struct_defs
-                    .insert(node.node.name, StructDef::from_ast(&node.node));
+                let name = node.node.name;
+                if !seen.insert(name) {
+                    errors.push(TypeErr::new(
+                        stmt.span,
+                        TypeErrKind::DuplicateTypeDefinition { name },
+                    ));
+                } else {
+                    type_checker
+                        .struct_defs
+                        .insert(name, StructDef::from_ast(&node.node, false));
+                }
+            }
+
+            Stmt::DataRef(node) => {
+                let name = node.node.name;
+                if !seen.insert(name) {
+                    errors.push(TypeErr::new(
+                        stmt.span,
+                        TypeErrKind::DuplicateTypeDefinition { name },
+                    ));
+                } else {
+                    type_checker
+                        .struct_defs
+                        .insert(name, StructDef::from_ast(&node.node, true));
+                }
             }
 
             Stmt::Enum(node) => {
-                type_checker
-                    .enum_defs
-                    .insert(node.node.name, EnumDef::from_ast(&node.node));
+                let name = node.node.name;
+                if !seen.insert(name) {
+                    errors.push(TypeErr::new(
+                        stmt.span,
+                        TypeErrKind::DuplicateTypeDefinition { name },
+                    ));
+                } else {
+                    type_checker
+                        .enum_defs
+                        .insert(name, EnumDef::from_ast(&node.node));
+                }
             }
 
             Stmt::Import(node) => {
@@ -531,32 +577,111 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                 match &import.kind {
                     ImportKind::Module => {
                         let binding = *import.path.last().expect("import path cannot be empty");
-                        type_checker.module_defs.insert(binding, module_def);
+                        if imported_modules.contains(&binding) {
+                            errors.push(TypeErr::new(
+                                stmt.span,
+                                TypeErrKind::ModuleBindingConflict { name: binding },
+                            ));
+                        } else {
+                            imported_modules.insert(binding);
+                            type_checker.module_defs.insert(binding, module_def);
+                        }
                     }
                     ImportKind::ModuleAs(alias) => {
-                        type_checker.module_defs.insert(*alias, module_def);
+                        if imported_modules.contains(alias) {
+                            errors.push(TypeErr::new(
+                                stmt.span,
+                                TypeErrKind::ModuleBindingConflict { name: *alias },
+                            ));
+                        } else {
+                            imported_modules.insert(*alias);
+                            type_checker.module_defs.insert(*alias, module_def);
+                        }
                     }
                     ImportKind::Selective(items) => {
                         for item in items {
                             let bind_as = item.alias.unwrap_or(item.name);
-                            inject_module_item(
-                                item.name,
-                                bind_as,
-                                &module_def,
-                                &path_key,
-                                type_checker,
-                            );
+                            let existing = if imported.contains(&bind_as) {
+                                Some("a previously imported name")
+                            } else if seen.contains(&bind_as) {
+                                Some("a locally defined type")
+                            } else {
+                                None
+                            };
+                            if let Some(existing) = existing {
+                                errors.push(TypeErr::new(
+                                    stmt.span,
+                                    TypeErrKind::ImportNameConflict {
+                                        name: bind_as,
+                                        existing,
+                                    },
+                                ));
+                            } else {
+                                inject_module_item(
+                                    item.name,
+                                    bind_as,
+                                    &module_def,
+                                    &path_key,
+                                    type_checker,
+                                );
+                                imported.insert(bind_as);
+                                seen.insert(bind_as);
+                            }
                         }
                     }
                     ImportKind::Wildcard => {
                         let names: Vec<Ident> = module_def.all_public_names().collect();
                         for name in names {
-                            inject_module_item(name, name, &module_def, &path_key, type_checker);
+                            let existing = if imported.contains(&name) {
+                                Some("a previously imported name")
+                            } else if seen.contains(&name) {
+                                Some("a locally defined type")
+                            } else {
+                                None
+                            };
+                            if let Some(existing) = existing {
+                                errors.push(TypeErr::new(
+                                    stmt.span,
+                                    TypeErrKind::ImportNameConflict { name, existing },
+                                ));
+                            } else {
+                                inject_module_item(
+                                    name,
+                                    name,
+                                    &module_def,
+                                    &path_key,
+                                    type_checker,
+                                );
+                                imported.insert(name);
+                                seen.insert(name);
+                            }
                         }
                         let sub_module_names: Vec<Ident> =
                             module_def.re_exported_modules.keys().copied().collect();
                         for name in sub_module_names {
-                            inject_module_item(name, name, &module_def, &path_key, type_checker);
+                            let existing = if imported.contains(&name) {
+                                Some("a previously imported name")
+                            } else if seen.contains(&name) {
+                                Some("a locally defined type")
+                            } else {
+                                None
+                            };
+                            if let Some(existing) = existing {
+                                errors.push(TypeErr::new(
+                                    stmt.span,
+                                    TypeErrKind::ImportNameConflict { name, existing },
+                                ));
+                            } else {
+                                inject_module_item(
+                                    name,
+                                    name,
+                                    &module_def,
+                                    &path_key,
+                                    type_checker,
+                                );
+                                imported.insert(name);
+                                seen.insert(name);
+                            }
                         }
                     }
                 }
@@ -577,6 +702,7 @@ pub(super) fn collect_scope_types(stmts: &[StmtNode], type_checker: &mut TypeChe
                         | Type::Bool
                         | Type::String
                         | Type::Struct { .. }
+                        | Type::DataRef { .. }
                         | Type::Enum { .. }
                         | Type::Extern { .. }
                 );
@@ -691,7 +817,19 @@ pub(super) fn build_module_def_with_reexports(
                 }
                 module_def
                     .struct_defs
-                    .insert(decl.name, StructDef::from_ast(decl));
+                    .insert(decl.name, StructDef::from_ast(decl, false));
+
+                reexported_from.insert(decl.name, "<local>".to_string());
+            }
+            Stmt::DataRef(node) => {
+                let decl = &node.node;
+                module_def.all_names.insert(decl.name);
+                if decl.visibility != Visibility::Public {
+                    continue;
+                }
+                module_def
+                    .struct_defs
+                    .insert(decl.name, StructDef::from_ast(decl, true));
 
                 reexported_from.insert(decl.name, "<local>".to_string());
             }
@@ -848,6 +986,7 @@ pub(super) fn build_module_def_with_reexports(
                         | Type::Bool
                         | Type::String
                         | Type::Struct { .. }
+                        | Type::DataRef { .. }
                         | Type::Enum { .. }
                         | Type::Extern { .. }
                 );
@@ -935,6 +1074,7 @@ pub(super) fn check_stmt(
         Stmt::ExternType(_) => {}
         Stmt::Func(node) => check_func(node, type_checker, errors),
         Stmt::Struct(node) => check_struct(node, type_checker, errors),
+        Stmt::DataRef(node) => check_struct(node, type_checker, errors),
         Stmt::Enum(node) => {
             let decl = &node.node;
             for variant in &decl.variants {
@@ -1061,7 +1201,9 @@ fn check_extend_decl(
         | Type::Bool
         | Type::String
         | Type::Extern { .. } => true,
-        Type::Struct { type_args, .. } | Type::Enum { type_args, .. } => type_args.is_empty(),
+        Type::Struct { type_args, .. }
+        | Type::DataRef { type_args, .. }
+        | Type::Enum { type_args, .. } => type_args.is_empty(),
         _ => false,
     };
     if !valid {
@@ -1097,7 +1239,7 @@ fn check_extend_decl(
 
         // Native conflict check
         let has_native_conflict = match &resolved_ty {
-            Type::Struct { name, .. } => type_checker
+            Type::Struct { name, .. } | Type::DataRef { name, .. } => type_checker
                 .get_struct(*name)
                 .is_some_and(|def| def.methods.contains_key(&method.node.name)),
             Type::Extern { name } => type_checker
@@ -1183,7 +1325,7 @@ fn check_generic_extend_decl(
     // resolve to find the actual struct/enum definition
     let resolved_ty = type_checker.resolve_type(&decl.ty);
     let (def_type_params, resolved_base_name) = match &resolved_ty {
-        Type::Struct { name, .. } => {
+        Type::Struct { name, .. } | Type::DataRef { name, .. } => {
             let tp = type_checker
                 .get_struct(*name)
                 .map(|d| d.type_params.clone())

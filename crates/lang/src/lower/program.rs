@@ -5,11 +5,12 @@ use internment::Intern;
 use crate::ast::{self, Ident, Type, TypeVarId, VariantKind};
 use crate::hir;
 use crate::typecheck::{ExtendSpecKey, TypeChecker, resolve_type_param_names, subst_type};
+use crate::vm::cycle_collector::make_dataref_vtable;
 use crate::vm::meta::{EnumMeta, StructMeta, VariantMeta, VariantMetaKind};
 
 use super::{
-    FuncLower, LowerCtx, LowerError, SharedCtx, collect_declarations, lower_block,
-    mangle_generic_name, register_extend_declarations, register_named_local,
+    FuncLower, LowerCtx, LowerError, SharedCtx, analyze_ownership, collect_declarations,
+    lower_block, mangle_generic_name, register_extend_declarations, register_named_local,
 };
 
 pub fn lower_program(
@@ -17,6 +18,31 @@ pub fn lower_program(
     tcx: &TypeChecker,
     module_list: &[(Vec<String>, Vec<ast::StmtNode>)],
 ) -> Result<hir::Program, LowerError> {
+    let mut qualified_names: HashMap<Ident, String> = HashMap::new();
+    for (path, stmts) in module_list {
+        let prefix = path.join("::");
+        for stmt_node in stmts {
+            match &stmt_node.node {
+                ast::Stmt::Struct(s) => {
+                    qualified_names
+                        .entry(s.node.name)
+                        .or_insert_with(|| format!("{}::{}", prefix, s.node.name));
+                }
+                ast::Stmt::DataRef(s) => {
+                    qualified_names
+                        .entry(s.node.name)
+                        .or_insert_with(|| format!("{}::{}", prefix, s.node.name));
+                }
+                ast::Stmt::Enum(e) => {
+                    qualified_names
+                        .entry(e.node.name)
+                        .or_insert_with(|| format!("{}::{}", prefix, e.node.name));
+                }
+                _ => {}
+            }
+        }
+    }
+
     let mut struct_type_ids: HashMap<Ident, u32> = HashMap::new();
     let mut next_type_id = 0u32;
     for name in tcx.struct_names() {
@@ -29,6 +55,13 @@ pub fn lower_program(
     for (_path, stmts) in module_list {
         for stmt_node in stmts {
             if let ast::Stmt::Struct(s) = &stmt_node.node {
+                struct_type_ids.entry(s.node.name).or_insert_with(|| {
+                    let id = next_type_id;
+                    next_type_id += 1;
+                    id
+                });
+            }
+            if let ast::Stmt::DataRef(s) = &stmt_node.node {
                 struct_type_ids.entry(s.node.name).or_insert_with(|| {
                     let id = next_type_id;
                     next_type_id += 1;
@@ -68,10 +101,24 @@ pub fn lower_program(
             .iter()
             .map(|f| f.to_string())
             .collect();
+        let is_dataref = tcx.is_dataref(*name);
+        let cycle_capable = tcx.is_cycle_capable(*name);
+        let display = qualified_names
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string());
+        let vtable = if is_dataref {
+            Some(make_dataref_vtable(&display, cycle_capable))
+        } else {
+            None
+        };
         struct_meta_slots[type_id as usize] = Some(StructMeta {
-            name: name.to_string(),
+            name: display,
             field_names,
             to_string_fn: None,
+            is_dataref,
+            cycle_capable,
+            vtable,
         });
     }
     let mut struct_meta: Vec<StructMeta> =
@@ -99,8 +146,12 @@ pub fn lower_program(
             })
             .collect();
         let idx = type_id as usize - struct_count;
+        let display = qualified_names
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string());
         enum_meta_slots[idx] = Some(EnumMeta {
-            name: name.to_string(),
+            name: display,
             variants,
         });
     }
@@ -182,7 +233,7 @@ pub fn lower_program(
         extend_spec_registrations.push((mangled, spec_key.clone()));
     }
 
-    let mut struct_methods: Vec<(Ident, u32, &ast::Method)> = vec![];
+    let mut struct_methods: Vec<(Ident, u32, &ast::Method, bool)> = vec![];
     let to_string_name = Ident(Intern::new("to_string".to_string()));
     let self_ident = Ident(Intern::new("self".to_string()));
     for stmt_node in ast.stmts.iter() {
@@ -206,7 +257,31 @@ pub fn lower_program(
                     let id = hir::FuncId(next_func_id);
                     next_func_id += 1;
                     shared.funcs.insert(mangled, id);
-                    struct_methods.push((struct_name, type_id, method));
+                    struct_methods.push((struct_name, type_id, method, false));
+                }
+            }
+        }
+        if let ast::Stmt::DataRef(s) = &stmt_node.node {
+            let struct_name = s.node.name;
+            let Some(&type_id) = shared.struct_type_ids.get(&struct_name) else {
+                continue;
+            };
+            if !s.node.type_params.is_empty() {
+                continue;
+            }
+            for method in &s.node.methods {
+                if method.receiver.is_none() {
+                    continue;
+                }
+                if !method.type_params.is_empty() {
+                    continue;
+                }
+                let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
+                if !shared.funcs.contains_key(&mangled) {
+                    let id = hir::FuncId(next_func_id);
+                    next_func_id += 1;
+                    shared.funcs.insert(mangled, id);
+                    struct_methods.push((struct_name, type_id, method, true));
                 }
             }
         }
@@ -233,7 +308,31 @@ pub fn lower_program(
                         let id = hir::FuncId(next_func_id);
                         next_func_id += 1;
                         shared.funcs.insert(mangled, id);
-                        struct_methods.push((struct_name, type_id, method));
+                        struct_methods.push((struct_name, type_id, method, false));
+                    }
+                }
+            }
+            if let ast::Stmt::DataRef(s) = &stmt_node.node {
+                let struct_name = s.node.name;
+                let Some(&type_id) = shared.struct_type_ids.get(&struct_name) else {
+                    continue;
+                };
+                if !s.node.type_params.is_empty() {
+                    continue;
+                }
+                for method in &s.node.methods {
+                    if method.receiver.is_none() {
+                        continue;
+                    }
+                    if !method.type_params.is_empty() {
+                        continue;
+                    }
+                    let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
+                    if !shared.funcs.contains_key(&mangled) {
+                        let id = hir::FuncId(next_func_id);
+                        next_func_id += 1;
+                        shared.funcs.insert(mangled, id);
+                        struct_methods.push((struct_name, type_id, method, true));
                     }
                 }
             }
@@ -313,7 +412,7 @@ pub fn lower_program(
         });
     }
 
-    for (struct_name, type_id, method) in &struct_methods {
+    for (struct_name, type_id, method, is_dataref) in &struct_methods {
         let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
         let &id = shared
             .funcs
@@ -326,9 +425,10 @@ pub fn lower_program(
             scope_log: vec![],
         };
 
-        let self_type = Type::Struct {
-            name: *struct_name,
-            type_args: vec![],
+        let self_type = if *is_dataref {
+            Type::DataRef { name: *struct_name, type_args: vec![] }
+        } else {
+            Type::Struct { name: *struct_name, type_args: vec![] }
         };
         register_named_local(&mut fc, self_ident, self_type);
 
@@ -413,9 +513,16 @@ pub fn lower_program(
             .collect();
 
         let self_ty = if shared.struct_type_ids.contains_key(&spec_key.base_name) {
-            Type::Struct {
-                name: spec_key.base_name,
-                type_args: spec_key.type_args.clone(),
+            if shared.tcx.is_dataref(spec_key.base_name) {
+                Type::DataRef {
+                    name: spec_key.base_name,
+                    type_args: spec_key.type_args.clone(),
+                }
+            } else {
+                Type::Struct {
+                    name: spec_key.base_name,
+                    type_args: spec_key.type_args.clone(),
+                }
             }
         } else {
             Type::Enum {
@@ -479,19 +586,27 @@ pub fn lower_program(
 
     funcs.sort_by_key(|f| f.id.0);
 
-    Ok(hir::Program {
+    let mut program = hir::Program {
         funcs,
         externs: extern_decls,
         struct_meta,
         enum_meta,
-    })
+    };
+
+    analyze_ownership(&mut program);
+
+    Ok(program)
 }
 
 fn resolve_extend_ty(ty: &Type, shared: &SharedCtx) -> Option<Type> {
     match ty {
         Type::UnresolvedName(name) => {
             if shared.struct_type_ids.contains_key(name) {
-                Some(Type::Struct { name: *name, type_args: vec![] })
+                if shared.tcx.is_dataref(*name) {
+                    Some(Type::DataRef { name: *name, type_args: vec![] })
+                } else {
+                    Some(Type::Struct { name: *name, type_args: vec![] })
+                }
             } else if shared.enum_type_ids.contains_key(name) {
                 Some(Type::Enum { name: *name, type_args: vec![] })
             } else if shared.tcx.get_extern_type(*name).is_some() {

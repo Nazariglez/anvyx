@@ -261,7 +261,11 @@ pub(super) fn register_extend_declarations<'a>(
         let resolved_ty = match &node.node.ty {
             Type::UnresolvedName(name) => {
                 if ctx.struct_type_ids.contains_key(name) {
-                    Type::Struct { name: *name, type_args: vec![] }
+                    if ctx.tcx.is_dataref(*name) {
+                        Type::DataRef { name: *name, type_args: vec![] }
+                    } else {
+                        Type::Struct { name: *name, type_args: vec![] }
+                    }
                 } else if ctx.enum_type_ids.contains_key(name) {
                     Type::Enum { name: *name, type_args: vec![] }
                 } else if ctx.tcx.get_extern_type(*name).is_some() {

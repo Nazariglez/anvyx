@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: type 'Point' is already defined
+
+struct Point { x: int }
+struct Point { x: float, y: float }
+
+fn main() {}

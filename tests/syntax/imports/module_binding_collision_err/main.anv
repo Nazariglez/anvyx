@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: module binding 'helper' is already in use
+
+import helper;
+import helper;
+
+fn main() {}

@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: success
+
+dataref Node {
+    value: int,
+    next: Node?,
+}
+
+fn main() {
+    let n = Node { value: 1, next: nil };
+}

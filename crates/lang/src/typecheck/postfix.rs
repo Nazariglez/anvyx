@@ -230,7 +230,7 @@ fn try_specialize_extend(
     errors: &mut Vec<TypeErr>,
 ) -> Type {
     let base_name = match receiver_ty {
-        Type::Struct { name, .. } | Type::Enum { name, .. } => *name,
+        Type::Struct { name, .. } | Type::Enum { name, .. } | Type::DataRef { name, .. } => *name,
         _ => return Type::Infer,
     };
 
@@ -470,6 +470,7 @@ fn try_resolve_generic_extend(
     let (base_name, type_args) = match receiver_ty {
         Type::Struct { name, type_args } if !type_args.is_empty() => (*name, type_args.as_slice()),
         Type::Enum { name, type_args } if !type_args.is_empty() => (*name, type_args.as_slice()),
+        Type::DataRef { name, type_args } if !type_args.is_empty() => (*name, type_args.as_slice()),
         _ => return None,
     };
 
@@ -564,7 +565,7 @@ fn handle_method_call_if_applicable(
 
     let detection_ty = unwrap_opt_typ(current_ty);
     let struct_info = match &detection_ty {
-        Type::Struct { name, type_args } => Some((*name, type_args.clone())),
+        Type::Struct { name, type_args } | Type::DataRef { name, type_args } => Some((*name, type_args.clone())),
         _ => None,
     };
 

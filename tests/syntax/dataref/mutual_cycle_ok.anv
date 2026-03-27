@@ -1,0 +1,17 @@
+// @mode: check
+// @expect: success
+
+dataref A {
+    value: int,
+    b: B?,
+}
+
+dataref B {
+    value: int,
+    a: A?,
+}
+
+fn main() {
+    let a = A { value: 1, b: nil };
+    let b = B { value: 2, a: a };
+}

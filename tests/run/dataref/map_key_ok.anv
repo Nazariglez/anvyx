@@ -1,0 +1,23 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 10
+// 20
+// nil
+// @match-end
+
+dataref Node {
+    value: int,
+}
+
+fn main() {
+    let a = Node { value: 1 };
+    let b = Node { value: 2 };
+    var m: [Node: int] = [:];
+    m[a] = 10;
+    m[b] = 20;
+    println(m[a]);
+    println(m[b]);
+    let c = Node { value: 1 };
+    println(m[c]);
+}

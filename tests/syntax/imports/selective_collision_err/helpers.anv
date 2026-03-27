@@ -1,0 +1,4 @@
+// @helper
+
+pub struct Point { x: float, y: float }
+pub fn distance(p: Point) -> float { p.x }

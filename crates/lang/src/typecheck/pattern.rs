@@ -577,15 +577,16 @@ fn check_struct_destructure_pattern(
 ) {
     // try native struct first
     if let Some(struct_def) = type_checker.get_struct(type_name).cloned() {
-        let matches_type = matches!(value_ty, Type::Struct { name, .. } if *name == type_name);
+        let matches_type = matches!(
+            value_ty,
+            Type::Struct { name, .. } | Type::DataRef { name, .. } if *name == type_name
+        );
         if !matches_type {
+            let expected = struct_def.make_type(type_name, vec![]);
             errors.push(TypeErr::new(
                 pattern.span,
                 TypeErrKind::MismatchedTypes {
-                    expected: Type::Struct {
-                        name: type_name,
-                        type_args: vec![],
-                    },
+                    expected,
                     found: value_ty.clone(),
                 },
             ));
@@ -614,11 +615,12 @@ fn check_struct_destructure_pattern(
                 ));
                 continue;
             };
-            let resolved_ty = if let Type::Struct { type_args, .. } = value_ty {
-                let subst = build_subst(&struct_def.type_params, type_args);
-                subst_type(&field_def.ty, &subst)
-            } else {
-                field_def.ty.clone()
+            let resolved_ty = match value_ty {
+                Type::Struct { type_args, .. } | Type::DataRef { type_args, .. } => {
+                    let subst = build_subst(&struct_def.type_params, type_args);
+                    subst_type(&field_def.ty, &subst)
+                }
+                _ => field_def.ty.clone(),
             };
             check_pattern_inner(subpat, &resolved_ty, mutable, in_match, None, type_checker, errors);
         }

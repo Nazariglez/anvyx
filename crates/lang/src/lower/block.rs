@@ -160,18 +160,18 @@ fn lower_stmt(
                                     span,
                                     kind: hir::StmtKind::Let {
                                         local: local_id,
-                                        init: hir::Expr {
-                                            ty: field_ty,
+                                        init: hir::Expr::new(
+                                            field_ty,
                                             span,
-                                            kind: hir::ExprKind::FieldGet {
-                                                object: Box::new(hir::Expr {
-                                                    ty: rhs_ty.clone(),
+                                            hir::ExprKind::FieldGet {
+                                                object: Box::new(hir::Expr::new(
+                                                    rhs_ty.clone(),
                                                     span,
-                                                    kind: hir::ExprKind::Local(scrutinee_local),
-                                                }),
+                                                    hir::ExprKind::Local(scrutinee_local),
+                                                )),
                                                 index: field_index,
                                             },
-                                        },
+                                        ),
                                     },
                                 });
                             }
@@ -210,18 +210,18 @@ fn lower_stmt(
                                     span,
                                     kind: hir::StmtKind::Let {
                                         local: local_id,
-                                        init: hir::Expr {
-                                            ty: field_ty,
+                                        init: hir::Expr::new(
+                                            field_ty,
                                             span,
-                                            kind: hir::ExprKind::CallExtern {
+                                            hir::ExprKind::CallExtern {
                                                 extern_id,
-                                                args: vec![hir::Expr {
-                                                    ty: rhs_ty.clone(),
+                                                args: vec![hir::Expr::new(
+                                                    rhs_ty.clone(),
                                                     span,
-                                                    kind: hir::ExprKind::Local(scrutinee_local),
-                                                }],
+                                                    hir::ExprKind::Local(scrutinee_local),
+                                                )],
                                             },
-                                        },
+                                        ),
                                     },
                                 });
                             }
@@ -294,6 +294,8 @@ fn lower_stmt(
         }),
 
         Stmt::Struct(_) => Ok(None),
+
+        Stmt::DataRef(_) => Ok(None),
 
         Stmt::Enum(_) => Ok(None),
 
@@ -369,21 +371,15 @@ pub(super) fn lower_string_interp(
 
     for part in parts {
         let expr = match part {
-            StringPart::Text(s) => hir::Expr {
-                ty: Type::String,
-                span,
-                kind: hir::ExprKind::String(s.clone()),
-            },
+            StringPart::Text(s) => {
+                hir::Expr::new(Type::String, span, hir::ExprKind::String(s.clone()))
+            }
             StringPart::Expr(e) => {
                 let lowered = lower_expr(e, ctx, fc, out)?;
                 if lowered.ty == Type::String {
                     lowered
                 } else {
-                    hir::Expr {
-                        ty: Type::String,
-                        span,
-                        kind: hir::ExprKind::ToString(Box::new(lowered)),
-                    }
+                    hir::Expr::new(Type::String, span, hir::ExprKind::ToString(Box::new(lowered)))
                 }
             }
         };

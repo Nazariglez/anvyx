@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: success
+
+import helpers;
+
+struct Point { a: float, b: float }
+
+fn main() {
+    let p = Point { a: 1.0, b: 2.0 };
+    let _ = helpers.greet();
+}

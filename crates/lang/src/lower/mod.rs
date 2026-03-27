@@ -13,8 +13,10 @@ mod expr;
 mod for_loop;
 mod assign;
 mod match_stmt;
+mod ownership;
 
 pub use program::lower_program;
+pub use ownership::analyze_ownership;
 
 use helpers::*;
 use block::{lower_block, lower_block_to_target, lower_string_interp};

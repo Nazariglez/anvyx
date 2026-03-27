@@ -23,6 +23,7 @@ pub type TupleIndexNode = Spanned<TupleIndex>;
 pub type PatternNode = Spanned<Pattern>;
 pub type FieldAccessNode = Spanned<FieldAccess>;
 pub type StructDeclNode = Spanned<StructDecl>;
+pub type DataRefDeclNode = Spanned<StructDecl>;
 pub type StructLiteralNode = Spanned<StructLiteral>;
 pub type EnumDeclNode = Spanned<EnumDecl>;
 pub type ExtendDeclNode = Spanned<ExtendDecl>;
@@ -50,6 +51,7 @@ pub enum Stmt {
     ExternFunc(ExternFuncNode),
     ExternType(ExternTypeNode),
     Struct(StructDeclNode),
+    DataRef(DataRefDeclNode),
     Enum(EnumDeclNode),
     Extend(ExtendDeclNode),
     Const(ConstDeclNode),
@@ -196,6 +198,8 @@ pub enum Type {
     NamedTuple(Vec<(Ident, Type)>),
     /// Struct type
     Struct { name: Ident, type_args: Vec<Type> },
+    /// DataRef type
+    DataRef { name: Ident, type_args: Vec<Type> },
     /// Enum type
     Enum { name: Ident, type_args: Vec<Type> },
     /// List are dynamic arrays
@@ -321,7 +325,9 @@ impl Type {
             Type::Map { key, value } => key.contains_any() || value.contains_any(),
             Type::Tuple(elems) => elems.iter().any(|e| e.contains_any()),
             Type::NamedTuple(fields) => fields.iter().any(|(_, ty)| ty.contains_any()),
-            Type::Struct { type_args, .. } | Type::Enum { type_args, .. } => {
+            Type::Struct { type_args, .. }
+            | Type::DataRef { type_args, .. }
+            | Type::Enum { type_args, .. } => {
                 type_args.iter().any(|a| a.contains_any())
             }
             _ => false,
@@ -388,7 +394,7 @@ impl Display for Type {
                     .join(", ");
                 write!(f, "({parts})")
             }
-            Type::Struct { name, type_args } => {
+            Type::Struct { name, type_args } | Type::DataRef { name, type_args } => {
                 if type_args.is_empty() {
                     write!(f, "{name}")
                 } else {

@@ -226,10 +226,7 @@ pub(super) fn check_struct_lit(
         errors,
     );
 
-    Type::Struct {
-        name: struct_name,
-        type_args,
-    }
+    struct_def.make_type(struct_name, type_args)
 }
 
 fn check_extern_init_lit(

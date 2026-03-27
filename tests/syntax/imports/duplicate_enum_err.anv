@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: type 'Color' is already defined
+
+enum Color { Red, Green, Blue }
+enum Color { Cyan, Magenta, Yellow }
+
+fn main() {}

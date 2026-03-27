@@ -24,6 +24,8 @@ pub enum Op {
     // locals
     GetLocal(u16),
     SetLocal(u16),
+    MoveLocal(u16),
+    CloneLocal(u16),
 
     // unary
     Negate,
@@ -61,6 +63,7 @@ pub enum Op {
 
     // composite types
     ConstructStruct(u32, u16),    // (type_id, field_count)
+    ConstructDataRef(u32, u16),   // (type_id, field_count)
     ConstructTuple(u16),          // element_count
     ConstructEnum(u32, u16, u16), // (type_id, variant_index, field_count)
     GetField(u16),                // field_index
@@ -71,7 +74,7 @@ pub enum Op {
     ConstructArray(u16), // pops N values, pushes Value::Array
     ConstructList(u16),  // pops N values, pushes Value::List
     IndexGet,            // pops index, pops collection (Array|List|Map), pushes element
-    IndexSet,      // pops value, pops index, pops collection (Array|List|Map), pushes mutated collection
+    IndexSet, // pops value, pops index, pops collection (Array|List|Map), pushes mutated collection
     CollectionLen, // pops Array|List, pushes Int(len)
 
     // maps
