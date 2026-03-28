@@ -1,0 +1,22 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// has value
+// none
+// @match-end
+
+fn check(opt: int?) {
+    match opt {
+        Option.Some(_) => {
+            println("has value");
+        },
+        nil => {
+            println("none");
+        },
+    }
+}
+
+fn main() {
+    check(10);
+    check(nil);
+}

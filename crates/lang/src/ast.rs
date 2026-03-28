@@ -502,6 +502,8 @@ pub enum Pattern {
     Lit(Lit),
     VarIdent(Ident),
     Rest,
+    Nil,
+    Optional(Box<PatternNode>),
 }
 
 impl Pattern {
@@ -518,6 +520,8 @@ impl Pattern {
             Self::Lit(_) => "literal",
             Self::VarIdent(_) => "var binding",
             Self::Rest => "..",
+            Self::Nil => "nil",
+            Self::Optional(_) => "optional pattern",
         }
     }
 }

@@ -525,6 +525,21 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("scrutinee is '{expected_enum}', but pattern uses '{pattern_enum}'"),
         ),
 
+        TypeErrKind::NilPatternOnNonOptional { found } => (
+            "'nil' pattern requires an optional type".to_string(),
+            format!("found '{found}', which is not optional"),
+        ),
+
+        TypeErrKind::OptionalPatternOnNonOptional { found } => (
+            "'?' pattern requires an optional type".to_string(),
+            format!("found '{found}', which is not optional"),
+        ),
+
+        TypeErrKind::NestedOptionalPattern => (
+            "nested '?' patterns are not supported".to_string(),
+            "use 'if let' chains for nested optionals".to_string(),
+        ),
+
         TypeErrKind::ImmutableAssignment { name } => (
             format!("Cannot assign to immutable variable '{name}'"),
             format!("'{name}' is declared with 'let'; use 'var' to allow mutation"),

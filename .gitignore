@@ -7,3 +7,4 @@ examples/*/build/
 examples/**/*/target/
 /exp_info.md
 feature.py
+__pycache__

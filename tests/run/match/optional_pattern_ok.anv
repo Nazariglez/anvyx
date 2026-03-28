@@ -1,0 +1,22 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 42
+// none
+// @match-end
+
+fn check(opt: int?) {
+    match opt {
+        v? => {
+            println(v);
+        },
+        nil => {
+            println("none");
+        },
+    }
+}
+
+fn main() {
+    check(42);
+    check(nil);
+}

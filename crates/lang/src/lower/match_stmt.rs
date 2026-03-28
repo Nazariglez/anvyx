@@ -1,7 +1,8 @@
-use crate::ast::{self, BinaryOp, Lit, Pattern, Type, UnaryOp};
+use crate::ast::{self, BinaryOp, Ident, Lit, Pattern, Type, UnaryOp};
 use crate::hir;
 use crate::span::Span;
 use crate::typecheck::ConstValue;
+use internment::Intern;
 
 use super::{
     FuncLower, LowerCtx, LowerError, lower_block, lower_expr, register_named_local,
@@ -233,6 +234,60 @@ fn lower_match_enum(
                             });
                         }
                         _ => {}
+                    }
+                }
+                let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                arms.push(hir::MatchArm {
+                    variant: variant_idx,
+                    bindings,
+                    body,
+                });
+            }
+
+            Pattern::Nil => {
+                let none_ident = Ident(Intern::new("None".to_string()));
+                let variant_idx = resolve_variant_index(ctx, span, enum_name, none_ident)?;
+                let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                arms.push(hir::MatchArm {
+                    variant: variant_idx,
+                    bindings: vec![],
+                    body,
+                });
+            }
+
+            Pattern::Optional(inner) => {
+                let some_ident = Ident(Intern::new("Some".to_string()));
+                let variant_idx = resolve_variant_index(ctx, span, enum_name, some_ident)?;
+                let field_types = ctx
+                    .shared
+                    .tcx
+                    .enum_variant_field_types(enum_name, some_ident, type_args)
+                    .unwrap_or_default();
+                let field_ty = field_types.first().cloned().unwrap_or(Type::Void);
+                let mut bindings = vec![];
+                match &inner.node {
+                    Pattern::Ident(name) => {
+                        let local = register_named_local(fc, *name, field_ty);
+                        bindings.push(hir::MatchBinding {
+                            field_index: 0,
+                            local,
+                            mutable: false,
+                        });
+                    }
+                    Pattern::VarIdent(name) => {
+                        let local = register_named_local(fc, *name, field_ty);
+                        bindings.push(hir::MatchBinding {
+                            field_index: 0,
+                            local,
+                            mutable: true,
+                        });
+                    }
+                    Pattern::Wildcard => {}
+                    _ => {
+                        return Err(LowerError::UnsupportedExprKind {
+                            span,
+                            kind: "unsupported inner optional pattern".into(),
+                        });
                     }
                 }
                 let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
@@ -863,6 +918,63 @@ pub(super) fn lower_if_let(
                     }
                 }
 
+                Pattern::Nil => {
+                    let none_ident = Ident(Intern::new("None".to_string()));
+                    let variant_idx = resolve_variant_index(ctx, span, enum_name, none_ident)?;
+                    let body =
+                        lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
+                    hir::MatchArm {
+                        variant: variant_idx,
+                        bindings: vec![],
+                        body,
+                    }
+                }
+
+                Pattern::Optional(inner) => {
+                    let some_ident = Ident(Intern::new("Some".to_string()));
+                    let variant_idx = resolve_variant_index(ctx, span, enum_name, some_ident)?;
+                    let field_types = ctx
+                        .shared
+                        .tcx
+                        .enum_variant_field_types(enum_name, some_ident, type_args)
+                        .unwrap_or_default();
+                    let field_ty = field_types.first().cloned().unwrap_or(Type::Void);
+                    let mut bindings = vec![];
+                    match &inner.node {
+                        Pattern::Ident(name) => {
+                            let local = register_named_local(fc, *name, field_ty);
+                            bindings.push(hir::MatchBinding {
+                                field_index: 0,
+                                local,
+                                mutable: false,
+                            });
+                        }
+                        Pattern::VarIdent(name) => {
+                            let local = register_named_local(fc, *name, field_ty);
+                            bindings.push(hir::MatchBinding {
+                                field_index: 0,
+                                local,
+                                mutable: true,
+                            });
+                        }
+                        Pattern::Wildcard => {}
+                        _ => {
+                            fc.leave_scope(mark);
+                            return Err(LowerError::UnsupportedExprKind {
+                                span,
+                                kind: "unsupported inner optional pattern".into(),
+                            });
+                        }
+                    }
+                    let body =
+                        lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
+                    hir::MatchArm {
+                        variant: variant_idx,
+                        bindings,
+                        body,
+                    }
+                }
+
                 other => {
                     fc.leave_scope(mark);
                     return Err(LowerError::UnsupportedExprKind {
@@ -1115,6 +1227,58 @@ pub(super) fn lower_let_else(
                                 });
                             }
                             _ => {}
+                        }
+                    }
+                    hir::MatchArm {
+                        variant: variant_idx,
+                        bindings,
+                        body: hir::Block { stmts: vec![] },
+                    }
+                }
+
+                Pattern::Nil => {
+                    let none_ident = Ident(Intern::new("None".to_string()));
+                    let variant_idx = resolve_variant_index(ctx, span, enum_name, none_ident)?;
+                    hir::MatchArm {
+                        variant: variant_idx,
+                        bindings: vec![],
+                        body: hir::Block { stmts: vec![] },
+                    }
+                }
+
+                Pattern::Optional(inner) => {
+                    let some_ident = Ident(Intern::new("Some".to_string()));
+                    let variant_idx = resolve_variant_index(ctx, span, enum_name, some_ident)?;
+                    let field_types = ctx
+                        .shared
+                        .tcx
+                        .enum_variant_field_types(enum_name, some_ident, type_args)
+                        .unwrap_or_default();
+                    let field_ty = field_types.first().cloned().unwrap_or(Type::Void);
+                    let mut bindings = vec![];
+                    match &inner.node {
+                        Pattern::Ident(name) => {
+                            let local = register_named_local(fc, *name, field_ty);
+                            bindings.push(hir::MatchBinding {
+                                field_index: 0,
+                                local,
+                                mutable: false,
+                            });
+                        }
+                        Pattern::VarIdent(name) => {
+                            let local = register_named_local(fc, *name, field_ty);
+                            bindings.push(hir::MatchBinding {
+                                field_index: 0,
+                                local,
+                                mutable: true,
+                            });
+                        }
+                        Pattern::Wildcard => {}
+                        _ => {
+                            return Err(LowerError::UnsupportedExprKind {
+                                span,
+                                kind: "unsupported inner optional pattern".into(),
+                            });
                         }
                     }
                     hir::MatchArm {

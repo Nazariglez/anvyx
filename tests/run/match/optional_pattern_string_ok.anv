@@ -1,0 +1,18 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// hello
+// empty
+// @match-end
+
+fn describe(s: string?) -> string {
+    match s {
+        v? => v,
+        nil => "empty",
+    }
+}
+
+fn main() {
+    println(describe("hello"));
+    println(describe(nil));
+}

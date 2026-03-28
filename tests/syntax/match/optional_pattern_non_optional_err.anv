@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: optional
+
+fn main() {
+    let x = 42;
+    match x {
+        v? => {},
+        _ => {},
+    }
+}

@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use internment::Intern;
+
 use crate::ast::{Ident, Lit, Pattern, PatternNode, Type, VariantKind};
 
 use super::{
@@ -119,6 +121,8 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
                 is_refutable(&subpat.node, &resolved_ty, type_checker)
             })
         }
+        Pattern::Nil => true,
+        Pattern::Optional(_) => true,
         _ => true,
     }
 }
@@ -364,6 +368,57 @@ fn check_pattern_inner(
         }
         Pattern::Rest => {
             // no-op, parent checks placement
+        }
+        Pattern::Nil => {
+            if !value_ty.is_option() && !value_ty.is_infer() {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::NilPatternOnNonOptional {
+                        found: value_ty.clone(),
+                    },
+                ));
+                return;
+            }
+            if let Some((_, covered_variants, _)) = match_ctx {
+                let none_ident = Ident(Intern::new("None".to_string()));
+                covered_variants.insert(none_ident);
+            }
+        }
+        Pattern::Optional(inner) => {
+            if !value_ty.is_option() && !value_ty.is_infer() {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::OptionalPatternOnNonOptional {
+                        found: value_ty.clone(),
+                    },
+                ));
+                return;
+            }
+
+            if matches!(&inner.node, Pattern::Optional(_)) {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::NestedOptionalPattern,
+                ));
+                return;
+            }
+
+            let inner_ty = value_ty.option_inner().cloned().unwrap_or(Type::Infer);
+
+            if let Some((_, covered_variants, _)) = match_ctx {
+                let some_ident = Ident(Intern::new("Some".to_string()));
+                covered_variants.insert(some_ident);
+            }
+
+            check_pattern_inner(
+                inner,
+                &inner_ty,
+                mutable,
+                in_match,
+                None,
+                type_checker,
+                errors,
+            );
         }
     }
 }

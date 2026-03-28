@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: nested
+
+fn main() {
+    let x: int?? = 42;
+    match x {
+        v?? => {},
+        _ => {},
+    }
+}

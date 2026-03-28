@@ -294,6 +294,13 @@ pub enum TypeErrKind {
         expected_enum: Ident,
         pattern_enum: Ident,
     },
+    NilPatternOnNonOptional {
+        found: Type,
+    },
+    OptionalPatternOnNonOptional {
+        found: Type,
+    },
+    NestedOptionalPattern,
 
     ImmutableAssignment {
         name: Ident,

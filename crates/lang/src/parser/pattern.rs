@@ -34,6 +34,10 @@ pub(super) fn pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
             Spanned::new(ast::Pattern::VarIdent(name), span)
         });
 
+        let nil_pat = select! {
+            (Token::Keyword(Keyword::Nil), s) => Spanned::new(ast::Pattern::Nil, s)
+        };
+
         let lit_pat = literal().map_with(|lit, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
@@ -44,15 +48,28 @@ pub(super) fn pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
         let enum_pat = enum_pattern(pat.clone());
         let struct_pat = struct_pattern(pat);
 
+        let question = select! { (Token::Question, _) => () };
+
         choice((
             rest_pat,
             var_pat,
+            nil_pat,
             lit_pat,
             enum_pat,
             struct_pat,
             tuple_pat,
             ident_or_wildcard,
         ))
+        .then(question.or_not())
+        .map_with(|(pat, q), e| {
+            if q.is_some() {
+                let s = e.span();
+                let span = Span::new(s.start, s.end);
+                Spanned::new(ast::Pattern::Optional(Box::new(pat)), span)
+            } else {
+                pat
+            }
+        })
     })
     .labelled("pattern")
     .as_context()
