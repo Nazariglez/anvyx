@@ -14,6 +14,7 @@ use super::{
     constraint::{Constraint, TypeRef},
     error::{TypeErr, TypeErrKind},
     infer::{build_subst, subst_type},
+    range::range_element_type,
     unify::{contains_infer, is_assignable, unify_equal},
 };
 
@@ -1221,6 +1222,38 @@ pub(super) fn type_index_on_base(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
+    if let Some(range_elem) = range_element_type(index_ty) {
+        if matches!(base_ty, Type::Map { .. }) {
+            errors.push(TypeErr::new(span, TypeErrKind::RangeIndexOnMap));
+            return Type::Infer;
+        }
+
+        if !matches!(range_elem, Type::Int | Type::Infer) {
+            errors.push(TypeErr::new(
+                index_span,
+                TypeErrKind::RangeIndexNotInt {
+                    found: range_elem.clone(),
+                },
+            ));
+            return Type::Infer;
+        }
+
+        return match base_ty {
+            Type::Array { elem, .. } => Type::ArrayView { elem: elem.clone() },
+            Type::List { elem } => Type::List { elem: elem.clone() },
+            Type::ArrayView { elem } => Type::ArrayView { elem: elem.clone() },
+            _ => {
+                errors.push(TypeErr::new(
+                    span,
+                    TypeErrKind::IndexOnNonArray {
+                        found: base_ty.clone(),
+                    },
+                ));
+                Type::Infer
+            }
+        };
+    }
+
     if let Type::Map { key, value } = base_ty {
         let key_ref = TypeRef::Expr(index_expr_id);
         let expected_ref = TypeRef::concrete(key);

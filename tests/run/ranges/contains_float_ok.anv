@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// true
+// false
+// @match-end
+
+fn main() {
+    let r = 0.0..1.0;
+    println(r.contains(0.5));
+    println(r.contains(1.0));
+}

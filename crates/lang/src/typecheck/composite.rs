@@ -2,7 +2,8 @@ use super::const_eval::ConstValue;
 use crate::{
     ast::{
         ArrayFillNode, ArrayLen, ArrayLiteralNode, ExprKind, ExprNode, Ident, Lit, MapLiteralNode,
-        RangeNode, StructField, StructLiteralNode, TupleIndexNode, Type, TypeParam, VariantKind,
+        Range, RangeNode, StructField, StructLiteralNode, TupleIndexNode, Type, TypeParam,
+        VariantKind,
     },
     span::Span,
 };
@@ -13,7 +14,9 @@ use super::{
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
     infer::{build_param_ref, constrain_slots_from_type, create_inference_slots},
-    range::{range_inclusive_type, range_type},
+    range::{
+        range_from_type, range_inclusive_type, range_to_inclusive_type, range_to_type, range_type,
+    },
     types::{ExternTypeDef, InferenceSlots, TypeChecker, validate_map_key_type},
 };
 
@@ -339,25 +342,53 @@ pub(super) fn check_range(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
-    let start_expr = range.node.start.as_ref();
-    let end_expr = range.node.end.as_ref();
+    match &range.node {
+        Range::Bounded {
+            start,
+            end,
+            inclusive,
+        } => {
+            let start_expr = start.as_ref();
+            let end_expr = end.as_ref();
 
-    let start_ty = check_expr(start_expr, type_checker, errors, None);
-    let _ = check_expr(end_expr, type_checker, errors, None);
+            let start_ty = check_expr(start_expr, type_checker, errors, None);
+            let _ = check_expr(end_expr, type_checker, errors, None);
 
-    let start_ref = TypeRef::Expr(start_expr.node.id);
-    let end_ref = TypeRef::Expr(end_expr.node.id);
-    type_checker.constrain_equal(range.span, start_ref, end_ref, errors);
+            let start_ref = TypeRef::Expr(start_expr.node.id);
+            let end_ref = TypeRef::Expr(end_expr.node.id);
+            type_checker.constrain_equal(range.span, start_ref, end_ref, errors);
 
-    let elem_ty = type_checker
-        .get_type(start_expr.node.id)
-        .map(|(_, ty)| ty.clone())
-        .unwrap_or(start_ty);
+            let elem_ty = type_checker
+                .get_type(start_expr.node.id)
+                .map(|(_, ty)| ty.clone())
+                .unwrap_or(start_ty);
 
-    if range.node.inclusive {
-        range_inclusive_type(elem_ty)
-    } else {
-        range_type(elem_ty)
+            if *inclusive {
+                range_inclusive_type(elem_ty)
+            } else {
+                range_type(elem_ty)
+            }
+        }
+        Range::From { start } => {
+            let start_ty = check_expr(start, type_checker, errors, None);
+            let elem_ty = type_checker
+                .get_type(start.node.id)
+                .map(|(_, ty)| ty.clone())
+                .unwrap_or(start_ty);
+            range_from_type(elem_ty)
+        }
+        Range::To { end, inclusive } => {
+            let end_ty = check_expr(end, type_checker, errors, None);
+            let elem_ty = type_checker
+                .get_type(end.node.id)
+                .map(|(_, ty)| ty.clone())
+                .unwrap_or(end_ty);
+            if *inclusive {
+                range_to_inclusive_type(elem_ty)
+            } else {
+                range_to_type(elem_ty)
+            }
+        }
     }
 }
 

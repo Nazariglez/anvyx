@@ -171,7 +171,7 @@ pub(super) fn range_expr(start: ExprNode, inclusive: bool, end: ExprNode) -> Exp
     ExprNode {
         node: Expr::new(
             ExprKind::Range(RangeNode {
-                node: Range {
+                node: Range::Bounded {
                     start: Box::new(start),
                     end: Box::new(end),
                     inclusive,

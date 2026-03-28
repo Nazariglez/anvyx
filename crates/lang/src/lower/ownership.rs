@@ -113,6 +113,13 @@ fn collect_reassigned_expr(expr: &Expr, set: &mut HashSet<LocalId>) {
             collect_reassigned_expr(target, set);
             collect_reassigned_expr(index, set);
         }
+        ExprKind::Slice {
+            target, start, end, ..
+        } => {
+            collect_reassigned_expr(target, set);
+            collect_reassigned_expr(start, set);
+            collect_reassigned_expr(end, set);
+        }
         ExprKind::StructLiteral { fields, .. }
         | ExprKind::DataRefLiteral { fields, .. }
         | ExprKind::EnumLiteral { fields, .. } => {
@@ -380,6 +387,13 @@ fn collect_locals_in_expr(expr: &Expr, set: &mut HashSet<LocalId>) {
             collect_locals_in_expr(target, set);
             collect_locals_in_expr(index, set);
         }
+        ExprKind::Slice {
+            target, start, end, ..
+        } => {
+            collect_locals_in_expr(target, set);
+            collect_locals_in_expr(start, set);
+            collect_locals_in_expr(end, set);
+        }
         ExprKind::StructLiteral { fields, .. }
         | ExprKind::DataRefLiteral { fields, .. }
         | ExprKind::EnumLiteral { fields, .. } => {
@@ -474,6 +488,15 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut LivenessCtx) {
         }
         ExprKind::IndexGet { target, index } | ExprKind::MapEntryAt { map: target, index } => {
             analyze_expr(index, ctx);
+            analyze_expr(target, ctx);
+            expr.ownership = Ownership::Borrow;
+            return;
+        }
+        ExprKind::Slice {
+            target, start, end, ..
+        } => {
+            analyze_expr(end, ctx);
+            analyze_expr(start, ctx);
             analyze_expr(target, ctx);
             expr.ownership = Ownership::Borrow;
             return;

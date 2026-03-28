@@ -1,6 +1,6 @@
 use crate::{
     ast,
-    lexer::{Delimiter, Keyword, Token},
+    lexer::{Delimiter, Keyword, Op, Token},
     span::{Span, Spanned},
 };
 use chumsky::{error::Rich, prelude::*};
@@ -38,11 +38,78 @@ pub(super) fn pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
             (Token::Keyword(Keyword::Nil), s) => Spanned::new(ast::Pattern::Nil, s)
         };
 
-        let lit_pat = literal().map_with(|lit, e| {
-            let s = e.span();
-            let span = Span::new(s.start, s.end);
-            Spanned::new(ast::Pattern::Lit(lit), span)
-        });
+        let minus = select! { (Token::Op(Op::Sub), _) => () };
+        let num_lit =
+            minus
+                .or_not()
+                .then(literal())
+                .try_map(|(neg, lit), span| match (&neg, &lit) {
+                    (Some(_), ast::Lit::Int(n)) => Ok(ast::Lit::Int(-n)),
+                    (Some(_), ast::Lit::Float { value, suffix }) => Ok(ast::Lit::Float {
+                        value: -value,
+                        suffix: *suffix,
+                    }),
+                    (Some(_), _) => Err(Rich::custom(span, "cannot negate non-numeric literal")),
+                    (None, _) => Ok(lit),
+                });
+
+        let range_op = select! {
+            (Token::Range, _) => false,
+            (Token::RangeEq, _) => true,
+        };
+
+        let prefix_range_pat = range_op
+            .then(num_lit.clone())
+            .map_with(|(inclusive, end), e| {
+                let s = e.span();
+                let span = Span::new(s.start, s.end);
+                Spanned::new(
+                    ast::Pattern::Range {
+                        start: None,
+                        end: Some(end),
+                        inclusive,
+                    },
+                    span,
+                )
+            });
+
+        let range_suffix = choice((
+            select! { (Token::RangeEq, _) => true }
+                .then(num_lit.clone())
+                .map(|(inc, end)| (inc, Some(end))),
+            select! { (Token::Range, _) => false }
+                .then(num_lit.clone().or_not())
+                .map(|(inc, end)| (inc, end)),
+        ));
+
+        let lit_or_range_pat =
+            num_lit
+                .clone()
+                .then(range_suffix.or_not())
+                .map_with(|(start, rest), e| {
+                    let s = e.span();
+                    let span = Span::new(s.start, s.end);
+                    match rest {
+                        Some((inclusive, Some(end))) => Spanned::new(
+                            ast::Pattern::Range {
+                                start: Some(start),
+                                end: Some(end),
+                                inclusive,
+                            },
+                            span,
+                        ),
+                        Some((false, None)) => Spanned::new(
+                            ast::Pattern::Range {
+                                start: Some(start),
+                                end: None,
+                                inclusive: false,
+                            },
+                            span,
+                        ),
+                        Some((true, None)) => unreachable!(),
+                        None => Spanned::new(ast::Pattern::Lit(start), span),
+                    }
+                });
 
         let tuple_pat = tuple_pattern(pat.clone());
         let enum_pat = enum_pattern(pat.clone());
@@ -51,10 +118,11 @@ pub(super) fn pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
         let question = select! { (Token::Question, _) => () };
 
         choice((
+            prefix_range_pat,
             rest_pat,
             var_pat,
             nil_pat,
-            lit_pat,
+            lit_or_range_pat,
             enum_pat,
             struct_pat,
             tuple_pat,

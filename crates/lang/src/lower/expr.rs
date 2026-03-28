@@ -217,11 +217,66 @@ pub(super) fn lower_expr(
             if index_node.node.safe {
                 return lower_safe_index_expr(index_node, ty, span, ctx, fc, out);
             }
-            let target = lower_expr(&index_node.node.target, ctx, fc, out)?;
-            let index = lower_expr(&index_node.node.index, ctx, fc, out)?;
-            hir::ExprKind::IndexGet {
-                target: Box::new(target),
-                index: Box::new(index),
+
+            match &index_node.node.index.node.kind {
+                ast::ExprKind::Range(range_node) => match &range_node.node {
+                    ast::Range::Bounded {
+                        start,
+                        end,
+                        inclusive,
+                    } => {
+                        let target = lower_expr(&index_node.node.target, ctx, fc, out)?;
+                        let start = lower_expr(start, ctx, fc, out)?;
+                        let end = lower_expr(end, ctx, fc, out)?;
+                        hir::ExprKind::Slice {
+                            target: Box::new(target),
+                            start: Box::new(start),
+                            end: Box::new(end),
+                            inclusive: *inclusive,
+                        }
+                    }
+                    ast::Range::From { start } => {
+                        let target_expr = lower_expr(&index_node.node.target, ctx, fc, out)?;
+                        let target_ty = target_expr.ty.clone();
+                        let target_local =
+                            alloc_and_bind(fc, span, out, target_ty.clone(), target_expr);
+                        let target_ref = hir::Expr::local(target_ty.clone(), span, target_local);
+
+                        let start = lower_expr(start, ctx, fc, out)?;
+                        let end = hir::Expr::new(
+                            Type::Int,
+                            span,
+                            hir::ExprKind::CollectionLen {
+                                collection: Box::new(target_ref.clone()),
+                            },
+                        );
+                        hir::ExprKind::Slice {
+                            target: Box::new(target_ref),
+                            start: Box::new(start),
+                            end: Box::new(end),
+                            inclusive: false,
+                        }
+                    }
+                    ast::Range::To { end, inclusive } => {
+                        let target = lower_expr(&index_node.node.target, ctx, fc, out)?;
+                        let start = hir::Expr::int_lit(span, 0);
+                        let end = lower_expr(end, ctx, fc, out)?;
+                        hir::ExprKind::Slice {
+                            target: Box::new(target),
+                            start: Box::new(start),
+                            end: Box::new(end),
+                            inclusive: *inclusive,
+                        }
+                    }
+                },
+                _ => {
+                    let target = lower_expr(&index_node.node.target, ctx, fc, out)?;
+                    let index = lower_expr(&index_node.node.index, ctx, fc, out)?;
+                    hir::ExprKind::IndexGet {
+                        target: Box::new(target),
+                        index: Box::new(index),
+                    }
+                }
             }
         }
 
@@ -271,6 +326,61 @@ pub(super) fn lower_expr(
         ast::ExprKind::Lambda(lambda) => {
             return lower_lambda(lambda, ast_expr.node.id, ty, span, ctx, fc);
         }
+
+        ast::ExprKind::Range(range_node) => match &range_node.node {
+            ast::Range::Bounded {
+                start,
+                end,
+                inclusive,
+            } => {
+                let name = if *inclusive {
+                    Ident(Intern::new("RangeInclusive".to_string()))
+                } else {
+                    Ident(Intern::new("Range".to_string()))
+                };
+                let type_id = resolve_struct_type_id(ctx, span, name)?;
+                let start = lower_expr(start, ctx, fc, out)?;
+                let end = lower_expr(end, ctx, fc, out)?;
+                return Ok(hir::Expr::new(
+                    ty,
+                    span,
+                    hir::ExprKind::StructLiteral {
+                        type_id,
+                        fields: vec![start, end],
+                    },
+                ));
+            }
+            ast::Range::From { start } => {
+                let name = Ident(Intern::new("RangeFrom".to_string()));
+                let type_id = resolve_struct_type_id(ctx, span, name)?;
+                let start = lower_expr(start, ctx, fc, out)?;
+                return Ok(hir::Expr::new(
+                    ty,
+                    span,
+                    hir::ExprKind::StructLiteral {
+                        type_id,
+                        fields: vec![start],
+                    },
+                ));
+            }
+            ast::Range::To { end, inclusive } => {
+                let name = if *inclusive {
+                    Ident(Intern::new("RangeToInclusive".to_string()))
+                } else {
+                    Ident(Intern::new("RangeTo".to_string()))
+                };
+                let type_id = resolve_struct_type_id(ctx, span, name)?;
+                let end = lower_expr(end, ctx, fc, out)?;
+                return Ok(hir::Expr::new(
+                    ty,
+                    span,
+                    hir::ExprKind::StructLiteral {
+                        type_id,
+                        fields: vec![end],
+                    },
+                ));
+            }
+        },
 
         other => {
             return Err(LowerError::UnsupportedExprKind {

@@ -1,0 +1,15 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 1
+// 2
+// 3
+// @match-end
+
+fn main() {
+    let arr = [1, 2, 3, 4, 5];
+    let head = arr[..3];
+    for n in head {
+        println(n);
+    }
+}

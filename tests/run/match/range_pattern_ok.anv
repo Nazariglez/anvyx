@@ -1,0 +1,21 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// small
+// medium
+// big
+// @match-end
+
+fn classify(n: int) -> string {
+    match n {
+        0..10 => "small",
+        10..=100 => "medium",
+        _ => "big",
+    }
+}
+
+fn main() {
+    println(classify(5));
+    println(classify(50));
+    println(classify(200));
+}

@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 0
+// 1
+// 2
+// @match-end
+
+fn main() {
+    for n in (0..) {
+        println(n);
+        if n == 2 {
+            break;
+        }
+    }
+}

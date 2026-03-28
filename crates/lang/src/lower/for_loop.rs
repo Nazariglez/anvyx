@@ -17,7 +17,8 @@ fn classify_iterable(ty: &Type) -> Option<IterableKind> {
     match ty {
         Type::Struct { name, type_args } => {
             let name_str = name.0.as_ref();
-            let is_range = name_str == "Range" || name_str == "RangeInclusive";
+            let is_range =
+                name_str == "Range" || name_str == "RangeInclusive" || name_str == "RangeFrom";
             if is_range && type_args.len() == 1 {
                 Some(IterableKind::Range)
             } else {
@@ -58,6 +59,14 @@ pub(super) fn lower_for(
     }
 }
 
+fn is_inclusive_range_type(ty: &Type) -> bool {
+    matches!(ty, Type::Struct { name, .. } if name.0.as_ref() == "RangeInclusive")
+}
+
+fn is_range_from_type(ty: &Type) -> bool {
+    matches!(ty, Type::Struct { name, .. } if name.0.as_ref() == "RangeFrom")
+}
+
 fn lower_for_range(
     for_node: &ast::ForNode,
     span: Span,
@@ -65,19 +74,56 @@ fn lower_for_range(
     fc: &mut FuncLower,
     out: &mut Vec<hir::Stmt>,
 ) -> Result<Option<hir::Stmt>, LowerError> {
-    let ast::ExprKind::Range(range) = &for_node.node.iterable.node.kind else {
-        return Err(LowerError::UnsupportedStmtKind {
-            span,
-            kind: "for loop over non-range iterable".to_string(),
-        });
-    };
-    let range = &range.node;
-
-    let item_ty = ctx.expr_type(range.start.node.id, span)?;
     let mark = fc.enter_scope();
 
-    let start_expr = lower_expr(&range.start, ctx, fc, out)?;
-    let end_expr = lower_expr(&range.end, ctx, fc, out)?;
+    let iterable_ty = ctx.expr_type(for_node.node.iterable.node.id, span)?;
+    if is_range_from_type(&iterable_ty) {
+        return lower_for_range_from(for_node, span, ctx, fc, out, mark, &iterable_ty);
+    }
+
+    let (start_expr, end_expr, inclusive, item_ty);
+
+    if let ast::ExprKind::Range(range_node) = &for_node.node.iterable.node.kind
+        && let ast::Range::Bounded {
+            start,
+            end,
+            inclusive: inc,
+        } = &range_node.node
+    {
+        item_ty = ctx.expr_type(start.node.id, span)?;
+        start_expr = lower_expr(start, ctx, fc, out)?;
+        end_expr = lower_expr(end, ctx, fc, out)?;
+        inclusive = *inc;
+    } else {
+        inclusive = is_inclusive_range_type(&iterable_ty);
+        let Type::Struct { type_args, .. } = &iterable_ty else {
+            return Err(LowerError::UnsupportedStmtKind {
+                span,
+                kind: "for loop over non-range iterable".to_string(),
+            });
+        };
+        item_ty = type_args[0].clone();
+        let range_expr = lower_expr(&for_node.node.iterable, ctx, fc, out)?;
+        let range_local = alloc_and_bind(fc, span, out, iterable_ty.clone(), range_expr);
+        let range_local_expr = hir::Expr::local(iterable_ty, span, range_local);
+        start_expr = hir::Expr::new(
+            item_ty.clone(),
+            span,
+            hir::ExprKind::FieldGet {
+                object: Box::new(range_local_expr.clone()),
+                index: 0,
+            },
+        );
+        end_expr = hir::Expr::new(
+            item_ty.clone(),
+            span,
+            hir::ExprKind::FieldGet {
+                object: Box::new(range_local_expr),
+                index: 1,
+            },
+        );
+    }
+
     let step_expr = match &for_node.node.step {
         Some(s) => lower_expr(s, ctx, fc, out)?,
         None => hir::Expr::new(item_ty.clone(), span, hir::ExprKind::Int(1)),
@@ -87,7 +133,7 @@ fn lower_for_range(
 
     let (bound_local, i_init, cmp_op, inc_op) = if reversed {
         let start_local = alloc_and_bind(fc, span, out, item_ty.clone(), start_expr);
-        let i_init = if range.inclusive {
+        let i_init = if inclusive {
             end_expr
         } else {
             hir::Expr::binary(
@@ -101,7 +147,7 @@ fn lower_for_range(
         (start_local, i_init, BinaryOp::GreaterThanEq, BinaryOp::Sub)
     } else {
         let end_local = alloc_and_bind(fc, span, out, item_ty.clone(), end_expr);
-        let cmp_op = if range.inclusive {
+        let cmp_op = if inclusive {
             BinaryOp::LessThanEq
         } else {
             BinaryOp::LessThan
@@ -122,6 +168,71 @@ fn lower_for_range(
 
     let body_stmts = lower_for_body(
         for_node, span, ctx, fc, &item_ty, i_local, step_local, inc_op,
+    )?;
+
+    fc.leave_scope(mark);
+    Ok(Some(hir::Stmt {
+        span,
+        kind: hir::StmtKind::While {
+            cond,
+            body: hir::Block { stmts: body_stmts },
+        },
+    }))
+}
+
+fn lower_for_range_from(
+    for_node: &ast::ForNode,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+    mark: usize,
+    iterable_ty: &Type,
+) -> Result<Option<hir::Stmt>, LowerError> {
+    let Type::Struct { type_args, .. } = iterable_ty else {
+        return Err(LowerError::UnsupportedStmtKind {
+            span,
+            kind: "for loop over non-range iterable".to_string(),
+        });
+    };
+    let item_ty = type_args[0].clone();
+
+    let start_expr = if let ast::ExprKind::Range(range_node) = &for_node.node.iterable.node.kind
+        && let ast::Range::From { start } = &range_node.node
+    {
+        lower_expr(start, ctx, fc, out)?
+    } else {
+        let range_expr = lower_expr(&for_node.node.iterable, ctx, fc, out)?;
+        let range_local = alloc_and_bind(fc, span, out, iterable_ty.clone(), range_expr);
+        hir::Expr::new(
+            item_ty.clone(),
+            span,
+            hir::ExprKind::FieldGet {
+                object: Box::new(hir::Expr::local(iterable_ty.clone(), span, range_local)),
+                index: 0,
+            },
+        )
+    };
+
+    let step_expr = match &for_node.node.step {
+        Some(s) => lower_expr(s, ctx, fc, out)?,
+        None => hir::Expr::new(item_ty.clone(), span, hir::ExprKind::Int(1)),
+    };
+
+    let step_local = alloc_and_bind(fc, span, out, item_ty.clone(), step_expr);
+    let i_local = alloc_and_bind(fc, span, out, item_ty.clone(), start_expr);
+
+    let cond = hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(true));
+
+    let body_stmts = lower_for_body(
+        for_node,
+        span,
+        ctx,
+        fc,
+        &item_ty,
+        i_local,
+        step_local,
+        BinaryOp::Add,
     )?;
 
     fc.leave_scope(mark);

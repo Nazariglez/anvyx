@@ -263,6 +263,7 @@ pub enum TypeErrKind {
     },
     ForMapStepNotAllowed,
     ForMapRevNotAllowed,
+    ForRangeFromRevNotAllowed,
     ArrayAllNilAmbiguous,
     ArrayFillLengthNotLiteral,
     IndexOnNonArray {
@@ -271,6 +272,10 @@ pub enum TypeErrKind {
     IndexNotInt {
         found: Type,
     },
+    RangeIndexNotInt {
+        found: Type,
+    },
+    RangeIndexOnMap,
     OptionalChainingOnNonOpt {
         found: Type,
     },
@@ -301,6 +306,14 @@ pub enum TypeErrKind {
         found: Type,
     },
     NestedOptionalPattern,
+    NonNumericRangePattern {
+        found: Type,
+    },
+    RangePatternBoundTypeMismatch {
+        start: Type,
+        end: Type,
+    },
+    EmptyRangePattern,
 
     ImmutableAssignment {
         name: Ident,

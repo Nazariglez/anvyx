@@ -1,0 +1,22 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// true
+// false
+// false
+// true
+// true
+// true
+// @match-end
+
+fn main() {
+    let r = 0..10;
+    println(r.contains(5));
+    println(r.contains(10));
+    println(r.contains(-1));
+
+    let ri = 0..=10;
+    println(ri.contains(5));
+    println(ri.contains(10));
+    println(ri.contains(0));
+}

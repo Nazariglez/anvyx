@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 0
+// 3
+// 6
+// @match-end
+
+fn main() {
+    for n in (0..) step 3 {
+        println(n);
+        if n >= 6 {
+            break;
+        }
+    }
+}

@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: mismatch
+
+fn main() {
+    let x = 5;
+    match x {
+        0..10.0 => {},
+        _ => {},
+    }
+}

@@ -400,6 +400,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "rev is not supported for map iteration".to_string(),
             "map iteration order is unspecified; remove the 'rev' keyword".to_string(),
         ),
+        TypeErrKind::ForRangeFromRevNotAllowed => (
+            "cannot reverse an open-ended range (start..)".to_string(),
+            "open-ended ranges have no end to start from; remove the 'rev' keyword".to_string(),
+        ),
         TypeErrKind::ArrayAllNilAmbiguous => (
             "cannot infer element type for all-nil array literal".to_string(),
             "try adding a type annotation, e.g. `var a: [int?; _] = [nil, nil];`".to_string(),
@@ -415,6 +419,14 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
         TypeErrKind::IndexNotInt { found } => (
             "index must be an integer".to_string(),
             format!("expected 'int', found '{found}'"),
+        ),
+        TypeErrKind::RangeIndexNotInt { found } => (
+            "range index bounds must be integers".to_string(),
+            format!("range element type is '{found}', expected 'int'"),
+        ),
+        TypeErrKind::RangeIndexOnMap => (
+            "maps do not support range indexing".to_string(),
+            "range slicing is only supported on arrays, lists, and views".to_string(),
         ),
         TypeErrKind::OptionalChainingOnNonOpt { found } => (
             "optional chaining requires an optional base type".to_string(),
@@ -538,6 +550,19 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
         TypeErrKind::NestedOptionalPattern => (
             "nested '?' patterns are not supported".to_string(),
             "use 'if let' chains for nested optionals".to_string(),
+        ),
+
+        TypeErrKind::NonNumericRangePattern { found } => (
+            "non-numeric range pattern".to_string(),
+            format!("range patterns require numeric types (int, float, double), found '{found}'"),
+        ),
+        TypeErrKind::RangePatternBoundTypeMismatch { start, end } => (
+            "range pattern type mismatch".to_string(),
+            format!("range bounds must have the same type, found '{start}' and '{end}'"),
+        ),
+        TypeErrKind::EmptyRangePattern => (
+            "empty range pattern".to_string(),
+            "range start must be less than end".to_string(),
         ),
 
         TypeErrKind::ImmutableAssignment { name } => (

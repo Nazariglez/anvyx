@@ -499,6 +499,11 @@ pub enum Pattern {
         fields: Vec<(Ident, PatternNode)>,
         has_rest: bool,
     },
+    Range {
+        start: Option<Lit>,
+        end: Option<Lit>,
+        inclusive: bool,
+    },
     Lit(Lit),
     VarIdent(Ident),
     Rest,
@@ -517,6 +522,7 @@ impl Pattern {
             Self::EnumUnit { .. } => "EnumUnit",
             Self::EnumTuple { .. } => "EnumTuple",
             Self::EnumStruct { .. } => "EnumStruct",
+            Self::Range { .. } => "range",
             Self::Lit(_) => "literal",
             Self::VarIdent(_) => "var binding",
             Self::Rest => "..",
@@ -900,10 +906,19 @@ pub struct ExtendMethod {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Range {
-    pub start: Box<ExprNode>,
-    pub end: Box<ExprNode>,
-    pub inclusive: bool,
+pub enum Range {
+    Bounded {
+        start: Box<ExprNode>,
+        end: Box<ExprNode>,
+        inclusive: bool,
+    },
+    From {
+        start: Box<ExprNode>,
+    },
+    To {
+        end: Box<ExprNode>,
+        inclusive: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

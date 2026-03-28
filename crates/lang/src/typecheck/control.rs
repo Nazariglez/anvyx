@@ -101,6 +101,15 @@ pub(super) fn check_for(
         ));
     }
 
+    let is_range_from =
+        matches!(&iterable_ty, Type::Struct { name, .. } if name.0.as_ref() == "RangeFrom");
+    if is_range_from && node.reversed {
+        errors.push(TypeErr::new(
+            for_node.span,
+            TypeErrKind::ForRangeFromRevNotAllowed,
+        ));
+    }
+
     let effective_ty = infer_for_effective_type(&node.pattern, &item_ty, &iterable_ty);
 
     type_checker.push_scope();
@@ -124,7 +133,8 @@ pub(super) fn extract_iterable_item_type(ty: &Type, span: Span, errors: &mut Vec
     match ty {
         Type::Struct { name, type_args } => {
             let name_str = name.0.as_ref();
-            let is_range = name_str == "Range" || name_str == "RangeInclusive";
+            let is_range =
+                name_str == "Range" || name_str == "RangeInclusive" || name_str == "RangeFrom";
             if is_range && type_args.len() == 1 {
                 return type_args[0].clone();
             }
@@ -152,7 +162,7 @@ pub(super) fn extract_iterable_item_type(ty: &Type, span: Span, errors: &mut Vec
 fn is_range_type(ty: &Type) -> bool {
     matches!(ty, Type::Struct { name, .. } if {
         let s = name.0.as_ref();
-        s == "Range" || s == "RangeInclusive"
+        s == "Range" || s == "RangeInclusive" || s == "RangeFrom"
     })
 }
 
@@ -364,7 +374,7 @@ pub(super) fn check_match(
             name: enum_name, ..
         } => check_match_enum(match_node, &scrutinee_ty, *enum_name, type_checker, errors),
         Type::Bool => check_match_bool(match_node, &scrutinee_ty, type_checker, errors),
-        Type::Int | Type::String => {
+        Type::Int | Type::Float | Type::Double | Type::String => {
             check_match_scalar(match_node, &scrutinee_ty, type_checker, errors)
         }
         Type::Tuple(_) | Type::NamedTuple(_) => {

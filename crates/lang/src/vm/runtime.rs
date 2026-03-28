@@ -509,6 +509,16 @@ impl<'a> VM<'a> {
                             })?;
                             self.push(element);
                         }
+                        Value::ArrayView { data, offset, len } => {
+                            let idx = as_usize_index(&index_val)?;
+                            if idx >= len {
+                                return Err(RuntimeError::new(format!(
+                                    "index {idx} out of bounds for array view of length {len}"
+                                )));
+                            }
+                            let element = data[offset + idx].clone();
+                            self.push(element);
+                        }
                         other => {
                             return Err(RuntimeError::new(format!(
                                 "IndexGet on non-indexable value: {other}"
@@ -549,6 +559,11 @@ impl<'a> VM<'a> {
                             ManagedRc::make_mut(&mut l)[idx] = new_value;
                             self.push(Value::List(l));
                         }
+                        Value::ArrayView { .. } => {
+                            return Err(RuntimeError::new(
+                                "cannot mutate through an array view".to_string(),
+                            ));
+                        }
                         other => {
                             return Err(RuntimeError::new(format!(
                                 "IndexSet on non-indexable value: {other}"
@@ -562,9 +577,63 @@ impl<'a> VM<'a> {
                     match collection {
                         Value::Array(a) => self.push(Value::Int(a.len() as i64)),
                         Value::List(l) => self.push(Value::Int(l.len() as i64)),
+                        Value::ArrayView { len, .. } => self.push(Value::Int(len as i64)),
                         other => {
                             return Err(RuntimeError::new(format!(
                                 "CollectionLen: expected array or list, got {other}"
+                            )));
+                        }
+                    }
+                }
+
+                Op::Slice(inclusive) => {
+                    let end_val = self.pop();
+                    let start_val = self.pop();
+                    let collection = self.pop();
+
+                    let start = as_usize_index(&start_val)?;
+                    let raw_end = as_usize_index(&end_val)?;
+                    let end = if inclusive { raw_end + 1 } else { raw_end };
+
+                    match collection {
+                        Value::Array(a) => {
+                            let len = a.len();
+                            if start > end || end > len {
+                                return Err(RuntimeError::new(format!(
+                                    "slice {start}..{end} out of bounds for array of length {len}"
+                                )));
+                            }
+                            self.push(Value::ArrayView {
+                                data: a,
+                                offset: start,
+                                len: end - start,
+                            });
+                        }
+                        Value::ArrayView { data, offset, len } => {
+                            if start > end || end > len {
+                                return Err(RuntimeError::new(format!(
+                                    "slice {start}..{end} out of bounds for array view of length {len}"
+                                )));
+                            }
+                            self.push(Value::ArrayView {
+                                data,
+                                offset: offset + start,
+                                len: end - start,
+                            });
+                        }
+                        Value::List(l) => {
+                            let len = l.len();
+                            if start > end || end > len {
+                                return Err(RuntimeError::new(format!(
+                                    "slice {start}..{end} out of bounds for list of length {len}"
+                                )));
+                            }
+                            let sliced = l[start..end].to_vec();
+                            self.push(Value::List(ManagedRc::new(sliced)));
+                        }
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "Slice on non-sliceable value: {other}"
                             )));
                         }
                     }

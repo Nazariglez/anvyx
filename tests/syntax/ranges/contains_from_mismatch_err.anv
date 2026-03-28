@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: mismatch
+
+fn main() {
+    let r = 5..;
+    r.contains(1.0);
+}

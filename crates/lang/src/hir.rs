@@ -257,6 +257,13 @@ pub enum ExprKind {
         index: Box<Expr>,
     },
 
+    Slice {
+        target: Box<Expr>,
+        start: Box<Expr>,
+        end: Box<Expr>,
+        inclusive: bool,
+    },
+
     CollectionLen {
         collection: Box<Expr>,
     },

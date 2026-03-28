@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: reverse
+
+fn main() {
+    for n in rev (0..) {
+        break;
+    }
+}

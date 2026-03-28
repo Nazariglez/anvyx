@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 0
+// 1
+// 2
+// @match-end
+
+fn iter_range(r: Range<int>) {
+    for n in r {
+        println(n);
+    }
+}
+
+fn main() {
+    iter_range(0..3);
+}

@@ -1,0 +1,22 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// negative
+// small
+// big
+// @match-end
+
+fn classify(n: int) -> string {
+    match n {
+        ..0 => "negative",
+        0..10 => "small",
+        10.. => "big",
+        _ => "unknown",
+    }
+}
+
+fn main() {
+    println(classify(-5));
+    println(classify(5));
+    println(classify(100));
+}

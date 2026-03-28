@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: numeric
+
+fn main() {
+    let x = "hello";
+    match x {
+        "a".."z" => {},
+        _ => {},
+    }
+}

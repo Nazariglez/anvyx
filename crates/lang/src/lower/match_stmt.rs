@@ -1,4 +1,4 @@
-use crate::ast::{self, BinaryOp, Ident, Lit, Pattern, Type, UnaryOp};
+use crate::ast::{self, BinaryOp, FloatSuffix, Ident, Lit, Pattern, Type, UnaryOp};
 use crate::hir;
 use crate::span::Span;
 use crate::typecheck::ConstValue;
@@ -414,6 +414,23 @@ fn lower_match_non_enum(
                 cond_arms.push((cond, body));
             }
 
+            Pattern::Range {
+                start,
+                end,
+                inclusive,
+            } => {
+                let cond = build_range_cond(
+                    scrutinee_ty,
+                    scrutinee_local,
+                    start.as_ref(),
+                    end.as_ref(),
+                    *inclusive,
+                    span,
+                )?;
+                let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                cond_arms.push((cond, body));
+            }
+
             Pattern::Tuple(subpats) => {
                 let elem_types = match scrutinee_ty {
                     Type::Tuple(elems) => elems.clone(),
@@ -566,10 +583,18 @@ fn build_rhs_from_lit(lit: &Lit, span: Span) -> Result<hir::Expr, LowerError> {
         Lit::Int(v) => hir::Expr::int_lit(span, *v),
         Lit::Bool(v) => hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(*v)),
         Lit::String(s) => hir::Expr::new(Type::String, span, hir::ExprKind::String(s.clone())),
-        Lit::Float { .. } | Lit::Nil => {
+        Lit::Float { value, suffix } => match suffix {
+            Some(FloatSuffix::D) => {
+                hir::Expr::new(Type::Double, span, hir::ExprKind::Double(*value))
+            }
+            Some(FloatSuffix::F) | None => {
+                hir::Expr::new(Type::Float, span, hir::ExprKind::Float(*value as f32))
+            }
+        },
+        Lit::Nil => {
             return Err(LowerError::UnsupportedExprKind {
                 span,
-                kind: "float and nil literal patterns not supported in match".into(),
+                kind: "nil literal pattern not supported in match".into(),
             });
         }
     })
@@ -584,6 +609,48 @@ fn build_lit_cond(
     let lhs = hir::Expr::local(scrutinee_ty.clone(), span, scrutinee_local);
     let rhs = build_rhs_from_lit(lit, span)?;
     Ok(hir::Expr::binary(Type::Bool, span, BinaryOp::Eq, lhs, rhs))
+}
+
+fn build_range_cond(
+    scrutinee_ty: &Type,
+    scrutinee_local: hir::LocalId,
+    start: Option<&Lit>,
+    end: Option<&Lit>,
+    inclusive: bool,
+    span: Span,
+) -> Result<hir::Expr, LowerError> {
+    let scr = hir::Expr::local(scrutinee_ty.clone(), span, scrutinee_local);
+
+    let ge = if let Some(s) = start {
+        let rhs = build_rhs_from_lit(s, span)?;
+        Some(hir::Expr::binary(
+            Type::Bool,
+            span,
+            BinaryOp::GreaterThanEq,
+            scr.clone(),
+            rhs,
+        ))
+    } else {
+        None
+    };
+
+    let lt = if let Some(e) = end {
+        let rhs = build_rhs_from_lit(e, span)?;
+        let op = if inclusive {
+            BinaryOp::LessThanEq
+        } else {
+            BinaryOp::LessThan
+        };
+        Some(hir::Expr::binary(Type::Bool, span, op, scr.clone(), rhs))
+    } else {
+        None
+    };
+
+    Ok(match (ge, lt) {
+        (Some(ge), Some(lt)) => hir::Expr::binary(Type::Bool, span, BinaryOp::And, ge, lt),
+        (Some(only), None) | (None, Some(only)) => only,
+        (None, None) => unreachable!("range pattern must have at least one bound"),
+    })
 }
 
 fn build_rhs_from_const_value(cv: &ConstValue, span: Span) -> hir::Expr {
@@ -620,6 +687,22 @@ fn build_non_enum_cond_preamble(
     match pattern {
         Pattern::Lit(lit) => {
             let cond = build_lit_cond(scrutinee_ty, scrutinee_local, lit, span)?;
+            Ok((Some(cond), vec![]))
+        }
+
+        Pattern::Range {
+            start,
+            end,
+            inclusive,
+        } => {
+            let cond = build_range_cond(
+                scrutinee_ty,
+                scrutinee_local,
+                start.as_ref(),
+                end.as_ref(),
+                *inclusive,
+                span,
+            )?;
             Ok((Some(cond), vec![]))
         }
 

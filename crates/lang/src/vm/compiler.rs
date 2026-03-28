@@ -494,6 +494,18 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             fc.emit(Op::IndexGet);
         }
 
+        hir::ExprKind::Slice {
+            target,
+            start,
+            end,
+            inclusive,
+        } => {
+            compile_expr(fc, target)?;
+            compile_expr(fc, start)?;
+            compile_expr(fc, end)?;
+            fc.emit(Op::Slice(*inclusive));
+        }
+
         hir::ExprKind::CollectionLen { collection } => {
             compile_expr(fc, collection)?;
             fc.emit(Op::CollectionLen);

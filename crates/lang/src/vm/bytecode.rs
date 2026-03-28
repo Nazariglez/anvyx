@@ -78,6 +78,7 @@ pub enum Op {
     IndexGet,            // pops index, pops collection (Array|List|Map), pushes element
     IndexSet, // pops value, pops index, pops collection (Array|List|Map), pushes mutated collection
     CollectionLen, // pops Array|List, pushes Int(len)
+    Slice(bool), // pops end, start, collection; bool = inclusive; pushes sliced result
 
     // maps
     ConstructMap(u16), // pops 2*N values (key, value pairs), pushes Value::Map

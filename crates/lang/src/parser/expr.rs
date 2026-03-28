@@ -927,17 +927,43 @@ fn binary_expr<'src>(
 fn range_expr<'src>(
     lower: impl AnvParser<'src, ast::ExprNode>,
 ) -> BoxedParser<'src, ast::ExprNode> {
-    let op_rhs = select! {
+    let prefix_range = select! {
         (Token::Range, _) => false,
         (Token::RangeEq, _) => true,
     }
-    .then(lower.clone());
+    .then(lower.clone())
+    .map_with(|(inclusive, end), e| {
+        let s = e.span();
+        let span = Span::new(s.start, s.end);
+        let expr_id = e.state().new_expr_id();
+        let expr = ast::Expr::new(
+            ast::ExprKind::Range(Spanned::new(
+                ast::Range::To {
+                    end: Box::new(end),
+                    inclusive,
+                },
+                span,
+            )),
+            expr_id,
+        );
+        Spanned::new(expr, span)
+    });
 
-    lower
-        .foldl_with(op_rhs.repeated(), |start, (inclusive, end), e| {
+    let op_rhs_inclusive = select! { (Token::RangeEq, _) => () }
+        .ignore_then(lower.clone())
+        .map(|end| (true, Some(end)));
+
+    let op_rhs_exclusive = select! { (Token::Range, _) => () }
+        .ignore_then(lower.clone().or_not())
+        .map(|end| (false, end));
+
+    let op_rhs = choice((op_rhs_inclusive, op_rhs_exclusive));
+
+    let infix_range = lower.foldl_with(op_rhs.repeated(), |start, (inclusive, end), e| match end {
+        Some(end) => {
             let span = Span::new(start.span.start, end.span.end);
             let range_node = Spanned::new(
-                ast::Range {
+                ast::Range::Bounded {
                     start: Box::new(start),
                     end: Box::new(end),
                     inclusive,
@@ -947,8 +973,25 @@ fn range_expr<'src>(
             let expr_id = e.state().new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::Range(range_node), expr_id);
             Spanned::new(expr, span)
-        })
-        .boxed()
+        }
+        None => {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(
+                ast::ExprKind::Range(Spanned::new(
+                    ast::Range::From {
+                        start: Box::new(start),
+                    },
+                    span,
+                )),
+                expr_id,
+            );
+            Spanned::new(expr, span)
+        }
+    });
+
+    choice((prefix_range, infix_range)).boxed()
 }
 
 fn ternary_expr<'src>(
@@ -1007,7 +1050,7 @@ fn ternary_expr<'src>(
 
 enum LvalueSuffix {
     Field(ast::Ident),
-    Index(ast::ExprNode),
+    Index(Box<ast::ExprNode>),
 }
 
 fn lvalue_expr<'src>() -> BoxedParser<'src, ast::ExprNode> {
@@ -1043,7 +1086,7 @@ fn lvalue_expr<'src>() -> BoxedParser<'src, ast::ExprNode> {
     let index_suffix = select! { (Token::Open(Delimiter::Bracket), _) => () }
         .ignore_then(index_atom)
         .then_ignore(select! { (Token::Close(Delimiter::Bracket), _) => () })
-        .map(LvalueSuffix::Index);
+        .map(|e| LvalueSuffix::Index(Box::new(e)));
 
     let suffix = choice((field_suffix, index_suffix));
 
@@ -1068,7 +1111,7 @@ fn lvalue_expr<'src>() -> BoxedParser<'src, ast::ExprNode> {
                 let index_node = Spanned::new(
                     ast::Index {
                         target: Box::new(target),
-                        index: Box::new(index_expr),
+                        index: index_expr,
                         safe: false,
                     },
                     span,

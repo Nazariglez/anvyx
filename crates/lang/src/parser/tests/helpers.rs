@@ -87,13 +87,19 @@ pub(super) fn expect_range<'a>(
 ) -> (&'a ast::ExprNode, &'a ast::ExprNode) {
     match &expr.node().kind {
         ast::ExprKind::Range(range_node) => {
-            let range = range_node.node();
+            let ast::Range::Bounded {
+                start,
+                end,
+                inclusive: found_inclusive,
+            } = range_node.node()
+            else {
+                panic!("expected bounded range, found open-ended range");
+            };
             assert_eq!(
-                range.inclusive, inclusive,
-                "expected inclusive={inclusive}, found {}",
-                range.inclusive
+                *found_inclusive, inclusive,
+                "expected inclusive={inclusive}, found {found_inclusive}",
             );
-            (&range.start, &range.end)
+            (start, end)
         }
         other => panic!("expected range expr, found {other:?}"),
     }

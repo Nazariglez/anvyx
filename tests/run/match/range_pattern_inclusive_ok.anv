@@ -1,0 +1,20 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// yes
+// no
+// yes
+// @match-end
+
+fn in_range(n: int) -> string {
+    match n {
+        0..=10 => "yes",
+        _ => "no",
+    }
+}
+
+fn main() {
+    println(in_range(0));
+    println(in_range(11));
+    println(in_range(10));
+}

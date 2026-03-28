@@ -605,9 +605,17 @@ fn tuple_index_lowers_to_hir() {
 }
 
 #[test]
-fn rejects_range() {
-    let err = lower_err("fn main() { let x = 0..10; }");
-    assert!(matches!(err, LowerError::UnsupportedExprKind { .. }));
+fn lowers_range_to_struct_literal() {
+    let prog = lower_ok("fn main() { let x = 0..10; }");
+    let main = find_main(&prog);
+    let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+        panic!("expected Let stmt")
+    };
+    assert!(
+        matches!(init.kind, ExprKind::StructLiteral { .. }),
+        "expected StructLiteral, got {:?}",
+        init.kind
+    );
 }
 
 #[test]

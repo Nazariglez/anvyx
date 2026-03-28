@@ -193,6 +193,11 @@ pub enum Value {
     ExternHandle(ManagedRc<ExternHandleData>),
     DataRef(ManagedRc<StructData>),
     Closure(ManagedRc<ClosureData>),
+    ArrayView {
+        data: ManagedRc<Vec<Value>>,
+        offset: usize,
+        len: usize,
+    },
 }
 
 impl PartialEq for Value {
@@ -213,6 +218,18 @@ impl PartialEq for Value {
             (Value::ExternHandle(a), Value::ExternHandle(b)) => a == b,
             (Value::DataRef(a), Value::DataRef(b)) => ManagedRc::ptr_eq(a, b),
             (Value::Closure(a), Value::Closure(b)) => ManagedRc::ptr_eq(a, b),
+            (
+                Value::ArrayView {
+                    data: a,
+                    offset: ao,
+                    len: al,
+                },
+                Value::ArrayView {
+                    data: b,
+                    offset: bo,
+                    len: bl,
+                },
+            ) => al == bl && a[*ao..*ao + *al] == b[*bo..*bo + *bl],
             _ => false,
         }
     }
@@ -241,6 +258,9 @@ impl Hash for Value {
             Value::ExternHandle(data) => data.hash(state),
             Value::DataRef(s) => (s.as_ptr() as usize).hash(state),
             Value::Closure(c) => (c.as_ptr() as usize).hash(state),
+            Value::ArrayView { data, offset, len } => {
+                data[*offset..*offset + *len].hash(state);
+            }
         }
     }
 }
@@ -322,6 +342,16 @@ impl fmt::Display for Value {
             Value::ExternHandle(data) => write!(f, "<extern:{}>", data.id),
             Value::DataRef(s) => write!(f, "<dataref:{}>", s.type_id),
             Value::Closure(_) => write!(f, "<fn>"),
+            Value::ArrayView { data, offset, len } => {
+                write!(f, "[")?;
+                for (i, v) in data[*offset..*offset + *len].iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{v}")?;
+                }
+                write!(f, "]")
+            }
         }
     }
 }
@@ -363,6 +393,7 @@ pub fn type_name(v: &Value) -> &'static str {
         Value::ExternHandle(_) => "extern handle",
         Value::DataRef(_) => "dataref",
         Value::Closure(_) => "fn",
+        Value::ArrayView { .. } => "array view",
     }
 }
 

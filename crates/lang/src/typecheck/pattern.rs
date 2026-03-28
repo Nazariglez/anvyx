@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use internment::Intern;
 
-use crate::ast::{Ident, Lit, Pattern, PatternNode, Type, VariantKind};
+use crate::ast::{FloatSuffix, Ident, Lit, Pattern, PatternNode, Type, VariantKind};
 
 use super::{
     composite::validate_field_names,
@@ -11,6 +11,19 @@ use super::{
     infer::{build_subst, subst_type},
     types::{EnumDef, TypeChecker},
 };
+
+fn type_from_pattern_lit(lit: &Lit) -> Type {
+    match lit {
+        Lit::Int(_) => Type::Int,
+        Lit::Float { suffix, .. } => match suffix {
+            Some(FloatSuffix::F) | None => Type::Float,
+            Some(FloatSuffix::D) => Type::Double,
+        },
+        Lit::Bool(_) => Type::Bool,
+        Lit::String(_) => Type::String,
+        Lit::Nil => Type::Void,
+    }
+}
 
 pub(super) fn check_pattern(
     pattern: &PatternNode,
@@ -348,9 +361,19 @@ fn check_pattern_inner(
             );
         }
         Pattern::Lit(lit) => {
+            let is_valid = matches!(lit, Lit::Int(_) | Lit::Bool(_) | Lit::String(_));
+            if !is_valid {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::InvalidLiteralPattern {
+                        expected: value_ty.clone(),
+                        found: type_from_pattern_lit(lit),
+                    },
+                ));
+                return;
+            }
             let lit_ty = type_from_lit(lit);
-            let is_valid_pattern_lit = matches!(lit, Lit::Int(_) | Lit::Bool(_) | Lit::String(_));
-            if !is_valid_pattern_lit || (lit_ty != *value_ty && !value_ty.is_infer()) {
+            if lit_ty != *value_ty && !value_ty.is_infer() {
                 errors.push(TypeErr::new(
                     pattern.span,
                     TypeErrKind::InvalidLiteralPattern {
@@ -384,6 +407,84 @@ fn check_pattern_inner(
                 covered_variants.insert(none_ident);
             }
         }
+        Pattern::Range {
+            start,
+            end,
+            inclusive,
+        } => match (start.as_ref(), end.as_ref()) {
+            (Some(start_lit), Some(end_lit)) => {
+                let start_ty = type_from_pattern_lit(start_lit);
+                let end_ty = type_from_pattern_lit(end_lit);
+
+                if start_ty != end_ty {
+                    errors.push(TypeErr::new(
+                        pattern.span,
+                        TypeErrKind::RangePatternBoundTypeMismatch {
+                            start: start_ty,
+                            end: end_ty,
+                        },
+                    ));
+                    return;
+                }
+
+                if !start_ty.is_num() {
+                    errors.push(TypeErr::new(
+                        pattern.span,
+                        TypeErrKind::NonNumericRangePattern { found: start_ty },
+                    ));
+                    return;
+                }
+
+                if start_ty != *value_ty && !value_ty.is_infer() {
+                    errors.push(TypeErr::new(
+                        pattern.span,
+                        TypeErrKind::InvalidLiteralPattern {
+                            expected: value_ty.clone(),
+                            found: start_ty,
+                        },
+                    ));
+                    return;
+                }
+
+                match (start_lit, end_lit) {
+                    (Lit::Int(s), Lit::Int(e)) => {
+                        let empty = if *inclusive { s > e } else { s >= e };
+                        if empty {
+                            errors.push(TypeErr::new(pattern.span, TypeErrKind::EmptyRangePattern));
+                        }
+                    }
+                    (Lit::Float { value: s, .. }, Lit::Float { value: e, .. }) => {
+                        let empty = if *inclusive { s > e } else { s >= e };
+                        if empty {
+                            errors.push(TypeErr::new(pattern.span, TypeErrKind::EmptyRangePattern));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            (Some(bound_lit), None) | (None, Some(bound_lit)) => {
+                let bound_ty = type_from_pattern_lit(bound_lit);
+
+                if !bound_ty.is_num() {
+                    errors.push(TypeErr::new(
+                        pattern.span,
+                        TypeErrKind::NonNumericRangePattern { found: bound_ty },
+                    ));
+                    return;
+                }
+
+                if bound_ty != *value_ty && !value_ty.is_infer() {
+                    errors.push(TypeErr::new(
+                        pattern.span,
+                        TypeErrKind::InvalidLiteralPattern {
+                            expected: value_ty.clone(),
+                            found: bound_ty,
+                        },
+                    ));
+                }
+            }
+            (None, None) => {}
+        },
         Pattern::Optional(inner) => {
             if !value_ty.is_option() && !value_ty.is_infer() {
                 errors.push(TypeErr::new(

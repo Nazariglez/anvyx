@@ -138,7 +138,10 @@ fn for_parses_basic_range() {
     let ast::ExprKind::Range(range_node) = &for_inner.iterable.node.kind else {
         panic!("expected Range iterable");
     };
-    assert!(!range_node.node.inclusive);
+    let ast::Range::Bounded { inclusive, .. } = range_node.node() else {
+        panic!("expected bounded range");
+    };
+    assert!(!inclusive);
 }
 
 #[test]
@@ -183,7 +186,10 @@ fn for_parses_inclusive_range() {
     let ast::ExprKind::Range(range_node) = &for_inner.iterable.node.kind else {
         panic!("expected Range iterable");
     };
-    assert!(range_node.node.inclusive);
+    let ast::Range::Bounded { inclusive, .. } = range_node.node() else {
+        panic!("expected bounded range");
+    };
+    assert!(inclusive);
 }
 
 #[test]
