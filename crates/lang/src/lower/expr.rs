@@ -1200,7 +1200,10 @@ fn lower_lambda(
             } else {
                 hir::StmtKind::Expr(body_expr)
             };
-            body_stmts.push(hir::Stmt { span, kind: stmt_kind });
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: stmt_kind,
+            });
             hir::Block { stmts: body_stmts }
         }
     };
@@ -1353,10 +1356,19 @@ fn lower_map_desugar(
                 span,
                 out,
                 result_ty.clone(),
-                hir::Expr::new(result_ty.clone(), span, hir::ExprKind::MapLiteral { entries: vec![] }),
+                hir::Expr::new(
+                    result_ty.clone(),
+                    span,
+                    hir::ExprKind::MapLiteral { entries: vec![] },
+                ),
             );
-            let entry_local =
-                alloc_and_bind(fc, span, &mut body_stmts, entry_ty.clone(), make_entry_expr());
+            let entry_local = alloc_and_bind(
+                fc,
+                span,
+                &mut body_stmts,
+                entry_ty.clone(),
+                make_entry_expr(),
+            );
             let param_name = lambda.node.params[0].name;
             let param_local = register_named_local(fc, param_name, value_ty.clone());
             body_stmts.push(hir::Stmt {
@@ -1402,10 +1414,19 @@ fn lower_map_desugar(
                 span,
                 out,
                 result_ty.clone(),
-                hir::Expr::new(result_ty.clone(), span, hir::ExprKind::MapLiteral { entries: vec![] }),
+                hir::Expr::new(
+                    result_ty.clone(),
+                    span,
+                    hir::ExprKind::MapLiteral { entries: vec![] },
+                ),
             );
-            let entry_local =
-                alloc_and_bind(fc, span, &mut body_stmts, entry_ty.clone(), make_entry_expr());
+            let entry_local = alloc_and_bind(
+                fc,
+                span,
+                &mut body_stmts,
+                entry_ty.clone(),
+                make_entry_expr(),
+            );
             let key_param_name = lambda.node.params[0].name;
             let key_param_local = register_named_local(fc, key_param_name, key_ty.clone());
             body_stmts.push(hir::Stmt {
@@ -1458,7 +1479,9 @@ fn lower_map_desugar(
                 span,
                 kind: hir::StmtKind::If {
                     cond: pred_expr,
-                    then_block: hir::Block { stmts: vec![insert_stmt] },
+                    then_block: hir::Block {
+                        stmts: vec![insert_stmt],
+                    },
                     else_block: None,
                 },
             });
@@ -1554,13 +1577,20 @@ fn lower_list_desugar(
                 span,
                 out,
                 result_ty.clone(),
-                hir::Expr::new(result_ty.clone(), span, hir::ExprKind::ListLiteral { elements: vec![] }),
+                hir::Expr::new(
+                    result_ty.clone(),
+                    span,
+                    hir::ExprKind::ListLiteral { elements: vec![] },
+                ),
             );
             let param_name = lambda.node.params[0].name;
             let param_local = register_named_local(fc, param_name, elem_ty.clone());
             body_stmts.push(hir::Stmt {
                 span,
-                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+                kind: hir::StmtKind::Let {
+                    local: param_local,
+                    init: make_elem_expr(),
+                },
             });
             let body_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
             body_stmts.push(hir::Stmt {
@@ -1586,13 +1616,20 @@ fn lower_list_desugar(
                 span,
                 out,
                 result_ty.clone(),
-                hir::Expr::new(result_ty.clone(), span, hir::ExprKind::ListLiteral { elements: vec![] }),
+                hir::Expr::new(
+                    result_ty.clone(),
+                    span,
+                    hir::ExprKind::ListLiteral { elements: vec![] },
+                ),
             );
             let param_name = lambda.node.params[0].name;
             let param_local = register_named_local(fc, param_name, elem_ty.clone());
             body_stmts.push(hir::Stmt {
                 span,
-                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+                kind: hir::StmtKind::Let {
+                    local: param_local,
+                    init: make_elem_expr(),
+                },
             });
             let pred_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
             let push_stmt = hir::Stmt {
@@ -1611,7 +1648,9 @@ fn lower_list_desugar(
                 span,
                 kind: hir::StmtKind::If {
                     cond: pred_expr,
-                    then_block: hir::Block { stmts: vec![push_stmt] },
+                    then_block: hir::Block {
+                        stmts: vec![push_stmt],
+                    },
                     else_block: None,
                 },
             });
@@ -1625,7 +1664,10 @@ fn lower_list_desugar(
             let param_local = register_named_local(fc, param_name, elem_ty.clone());
             body_stmts.push(hir::Stmt {
                 span,
-                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+                kind: hir::StmtKind::Let {
+                    local: param_local,
+                    init: make_elem_expr(),
+                },
             });
             let body_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
             body_stmts.push(hir::Stmt {
@@ -1649,7 +1691,10 @@ fn lower_list_desugar(
             let param_local = register_named_local(fc, param_name, elem_ty.clone());
             body_stmts.push(hir::Stmt {
                 span,
-                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+                kind: hir::StmtKind::Let {
+                    local: param_local,
+                    init: make_elem_expr(),
+                },
             });
             let pred_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
             body_stmts.push(hir::Stmt {
@@ -1662,10 +1707,17 @@ fn lower_list_desugar(
                                 span,
                                 kind: hir::StmtKind::Assign {
                                     local: result_local,
-                                    value: hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(true)),
+                                    value: hir::Expr::new(
+                                        Type::Bool,
+                                        span,
+                                        hir::ExprKind::Bool(true),
+                                    ),
                                 },
                             },
-                            hir::Stmt { span, kind: hir::StmtKind::Break },
+                            hir::Stmt {
+                                span,
+                                kind: hir::StmtKind::Break,
+                            },
                         ],
                     },
                     else_block: None,
@@ -1688,13 +1740,19 @@ fn lower_list_desugar(
             let param_local = register_named_local(fc, param_name, elem_ty.clone());
             body_stmts.push(hir::Stmt {
                 span,
-                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+                kind: hir::StmtKind::Let {
+                    local: param_local,
+                    init: make_elem_expr(),
+                },
             });
             let pred_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
             let negated = hir::Expr::new(
                 Type::Bool,
                 span,
-                hir::ExprKind::Unary { op: UnaryOp::Not, expr: Box::new(pred_expr) },
+                hir::ExprKind::Unary {
+                    op: UnaryOp::Not,
+                    expr: Box::new(pred_expr),
+                },
             );
             body_stmts.push(hir::Stmt {
                 span,
@@ -1706,10 +1764,17 @@ fn lower_list_desugar(
                                 span,
                                 kind: hir::StmtKind::Assign {
                                     local: result_local,
-                                    value: hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(false)),
+                                    value: hir::Expr::new(
+                                        Type::Bool,
+                                        span,
+                                        hir::ExprKind::Bool(false),
+                                    ),
                                 },
                             },
-                            hir::Stmt { span, kind: hir::StmtKind::Break },
+                            hir::Stmt {
+                                span,
+                                kind: hir::StmtKind::Break,
+                            },
                         ],
                     },
                     else_block: None,
@@ -1733,7 +1798,10 @@ fn lower_list_desugar(
             let param_local = register_named_local(fc, param_name, elem_ty.clone());
             body_stmts.push(hir::Stmt {
                 span,
-                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+                kind: hir::StmtKind::Let {
+                    local: param_local,
+                    init: make_elem_expr(),
+                },
             });
             let pred_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
             let option_name = Ident(Intern::new("Option".to_string()));
@@ -1757,9 +1825,15 @@ fn lower_list_desugar(
                         stmts: vec![
                             hir::Stmt {
                                 span,
-                                kind: hir::StmtKind::Assign { local: result_local, value: some_expr },
+                                kind: hir::StmtKind::Assign {
+                                    local: result_local,
+                                    value: some_expr,
+                                },
                             },
-                            hir::Stmt { span, kind: hir::StmtKind::Break },
+                            hir::Stmt {
+                                span,
+                                kind: hir::StmtKind::Break,
+                            },
                         ],
                     },
                     else_block: None,
@@ -1783,7 +1857,10 @@ fn lower_list_desugar(
             let param_local = register_named_local(fc, param_name, elem_ty.clone());
             body_stmts.push(hir::Stmt {
                 span,
-                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+                kind: hir::StmtKind::Let {
+                    local: param_local,
+                    init: make_elem_expr(),
+                },
             });
             let pred_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
             let option_name = Ident(Intern::new("Option".to_string()));
@@ -1807,9 +1884,15 @@ fn lower_list_desugar(
                         stmts: vec![
                             hir::Stmt {
                                 span,
-                                kind: hir::StmtKind::Assign { local: result_local, value: some_expr },
+                                kind: hir::StmtKind::Assign {
+                                    local: result_local,
+                                    value: some_expr,
+                                },
                             },
-                            hir::Stmt { span, kind: hir::StmtKind::Break },
+                            hir::Stmt {
+                                span,
+                                kind: hir::StmtKind::Break,
+                            },
                         ],
                     },
                     else_block: None,
@@ -1821,18 +1904,16 @@ fn lower_list_desugar(
             let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
                 unreachable!()
             };
-            let result_local = alloc_and_bind(
-                fc,
-                span,
-                out,
-                Type::Int,
-                hir::Expr::int_lit(span, 0),
-            );
+            let result_local =
+                alloc_and_bind(fc, span, out, Type::Int, hir::Expr::int_lit(span, 0));
             let param_name = lambda.node.params[0].name;
             let param_local = register_named_local(fc, param_name, elem_ty.clone());
             body_stmts.push(hir::Stmt {
                 span,
-                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+                kind: hir::StmtKind::Let {
+                    local: param_local,
+                    init: make_elem_expr(),
+                },
             });
             let pred_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
             let increment = hir::Expr::binary(
@@ -1849,7 +1930,10 @@ fn lower_list_desugar(
                     then_block: hir::Block {
                         stmts: vec![hir::Stmt {
                             span,
-                            kind: hir::StmtKind::Assign { local: result_local, value: increment },
+                            kind: hir::StmtKind::Assign {
+                                local: result_local,
+                                value: increment,
+                            },
                         }],
                     },
                     else_block: None,
@@ -1869,12 +1953,18 @@ fn lower_list_desugar(
             let param_local = register_named_local(fc, elem_param_name, elem_ty.clone());
             body_stmts.push(hir::Stmt {
                 span,
-                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+                kind: hir::StmtKind::Let {
+                    local: param_local,
+                    init: make_elem_expr(),
+                },
             });
             let body_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
             body_stmts.push(hir::Stmt {
                 span,
-                kind: hir::StmtKind::Assign { local: acc_local, value: body_expr },
+                kind: hir::StmtKind::Assign {
+                    local: acc_local,
+                    value: body_expr,
+                },
             });
             hir::Expr::local(result_ty.clone(), span, acc_local)
         }

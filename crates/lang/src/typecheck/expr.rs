@@ -1,5 +1,5 @@
 use crate::ast::{
-    CastNode, ExprId, ExprKind, ExprNode, FloatSuffix, Ident, LambdaNode, Lit, StringPart, Type,
+    CastNode, ExprKind, ExprNode, FloatSuffix, Ident, LambdaNode, Lit, StringPart, Type,
 };
 use std::collections::HashMap;
 

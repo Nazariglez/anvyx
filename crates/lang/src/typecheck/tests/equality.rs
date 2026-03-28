@@ -637,11 +637,7 @@ fn test_eq_list_of_fn_errors() {
         Some(list_ty.clone()),
         array_literal(vec![ident_expr("foo")]),
     );
-    let b_binding = let_binding(
-        "b",
-        Some(list_ty),
-        array_literal(vec![ident_expr("foo")]),
-    );
+    let b_binding = let_binding("b", Some(list_ty), array_literal(vec![ident_expr("foo")]));
     let eq = binary_expr(ident_expr("a"), BinaryOp::Eq, ident_expr("b"));
     let eq_id = get_expr_id(&eq);
     let prog = program(vec![
@@ -748,11 +744,7 @@ fn test_eq_list_fn_elem_reason_note() {
         Some(list_ty.clone()),
         array_literal(vec![ident_expr("foo")]),
     );
-    let b_binding = let_binding(
-        "b",
-        Some(list_ty),
-        array_literal(vec![ident_expr("foo")]),
-    );
+    let b_binding = let_binding("b", Some(list_ty), array_literal(vec![ident_expr("foo")]));
     let eq = binary_expr(ident_expr("a"), BinaryOp::Eq, ident_expr("b"));
     let eq_id = get_expr_id(&eq);
     let prog = program(vec![

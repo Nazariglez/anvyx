@@ -85,11 +85,11 @@ pub enum Op {
     MapEntryAt,        // pops index, pops Map, pushes Tuple(key, value)
 
     // mutating collection methods
-    ListPush,          // pops value, list -> pushes Nil, modified list
-    ListPop,           // pops list -> pushes popped or Nil, modified list
-    ListSortBy(u16),   // pops list, sorts in place using comparator chunk, pushes sorted list
-    MapInsert,         // pops value, key, map -> pushes Nil, modified map
-    MapRemove,         // pops key, map -> pushes removed or Nil, modified map
+    ListPush,        // pops value, list -> pushes Nil, modified list
+    ListPop,         // pops list -> pushes popped or Nil, modified list
+    ListSortBy(u16), // pops list, sorts in place using comparator chunk, pushes sorted list
+    MapInsert,       // pops value, key, map -> pushes Nil, modified map
+    MapRemove,       // pops key, map -> pushes removed or Nil, modified map
 
     ToString,
     Cast(CastKind),

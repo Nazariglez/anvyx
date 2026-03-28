@@ -562,7 +562,10 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             fc.emit(Op::CallClosure(args.len() as u8));
         }
 
-        hir::ExprKind::SortBy { collection, comparator } => {
+        hir::ExprKind::SortBy {
+            collection,
+            comparator,
+        } => {
             fc.emit(Op::GetLocal(collection.0 as u16));
             fc.emit(Op::ListSortBy(comparator.0 as u16));
             fc.emit(Op::SetLocal(collection.0 as u16));
