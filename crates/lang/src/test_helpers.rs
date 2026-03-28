@@ -6,7 +6,11 @@ use crate::lower::LowerError;
 use crate::span::Span;
 use crate::{ast, hir, lower, typecheck, vm};
 
-const TEST_CORE_PRELUDE: &str = include_str!("../../core/src/prelude.anv");
+const TEST_CORE_PRELUDE: &str = concat!(
+    include_str!("../../core/src/option.anv"),
+    "\n",
+    include_str!("../../core/src/range.anv"),
+);
 use std::collections::HashMap;
 
 // ---- pipeline helpers ----

@@ -3,7 +3,10 @@ use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{FnArg, ImplItem, ItemImpl, LitStr, Pat, ReturnType, Token, Type};
 
-use crate::type_map::{ExternTypeInfo, ParamMode, ReturnMode, classify_param, classify_return};
+use crate::type_map::{
+    ClassifiedReturn, ExternTypeInfo, ParamMode, ReturnMode, ReturnWrapper, classify_param,
+    classify_return,
+};
 
 struct ExportMethodsArgs {
     name_override: Option<String>,
@@ -39,14 +42,6 @@ enum MethodKind {
     Static,
     Borrowing,
     Mutating,
-}
-
-struct BorrowParam {
-    param_name: Option<syn::Ident>,
-    type_ident: syn::Ident,
-    handle_ident: syn::Ident,
-    guard_ident: syn::Ident,
-    is_mut: bool,
 }
 
 enum OpKind {
@@ -261,11 +256,17 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
                 syn::Error::new_spanned(&method.sig.output, "#[init] method must return Self")
             })?;
-            let returns_self = matches!(&ret_mode, ReturnMode::ExternOwned(info) if info.type_ident == rust_type_ident);
+            let returns_self = matches!(&ret_mode.mode, ReturnMode::ExternOwned(info) if info.type_ident == rust_type_ident);
             if !returns_self {
                 return Err(syn::Error::new_spanned(
                     &method.sig.output,
                     "#[init] method must return Self",
+                ));
+            }
+            if !matches!(ret_mode.wrapper, ReturnWrapper::None) {
+                return Err(syn::Error::new_spanned(
+                    &method.sig.output,
+                    "#[init] does not support Option or Result return types",
                 ));
             }
 
@@ -326,7 +327,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             }
 
             let call = quote! { #rust_type_ident::#method_ident(#(#param_names),*) };
-            let handler_body = build_flat_call(&call, &ret_mode);
+            let handler_body = crate::codegen::build_flat_call(&call, &ret_mode);
             let _ = method_name_str; // suppress unused warning
 
             method_handler_fns.push(quote! {
@@ -367,13 +368,19 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
                 syn::Error::new_spanned(&method.sig.output, "unsupported return type in #[getter]")
             })?;
-            if matches!(ret_mode, ReturnMode::Void) {
+            if matches!(ret_mode.mode, ReturnMode::Void) {
                 return Err(syn::Error::new_spanned(
                     &method.sig.output,
                     "#[getter] method must have a non-void return type",
                 ));
             }
-            let (anvyx_type_str, wrap_result) = match ret_mode {
+            if !matches!(ret_mode.wrapper, ReturnWrapper::None) {
+                return Err(syn::Error::new_spanned(
+                    &method.sig.output,
+                    "#[getter] does not support Option or Result return types",
+                ));
+            }
+            let (anvyx_type_str, wrap_result) = match ret_mode.mode {
                 ReturnMode::Primitive(m) => (m.anvyx_type, m.wrap_result),
                 _ => {
                     return Err(syn::Error::new_spanned(
@@ -588,7 +595,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             // == must return bool
             if op_info.op_cap == "Eq" {
                 let is_bool =
-                    matches!(&ret_mode, ReturnMode::Primitive(m) if m.anvyx_type == "bool");
+                    matches!(&ret_mode.mode, ReturnMode::Primitive(m) if m.anvyx_type == "bool");
                 if !is_bool {
                     return Err(syn::Error::new_spanned(
                         &method.sig.output,
@@ -597,9 +604,17 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 }
             }
 
+            if !matches!(ret_mode.wrapper, ReturnWrapper::None) {
+                return Err(syn::Error::new_spanned(
+                    &method.sig.output,
+                    "#[op] does not support Option or Result return types",
+                ));
+            }
+
             // collect op metadata for __ANVYX_OPS_DECL_ const
-            let returns_self = matches!(&ret_mode, ReturnMode::ExternOwned(info) if info.type_ident == rust_type_ident);
-            let ret_anvyx = build_ret_anvyx_str(&ret_mode, returns_self, &type_decl_ident);
+            let returns_self = matches!(&ret_mode.mode, ReturnMode::ExternOwned(info) if info.type_ident == rust_type_ident);
+            let ret_anvyx = build_ret_anvyx_str(&ret_mode, returns_self, &type_decl_ident)
+                .map_err(|msg| syn::Error::new_spanned(&method.sig.output, msg))?;
             let op_cap_str = op_info.op_cap;
             let other_type_str = &op_info.other_type;
             if op_info.is_unary {
@@ -629,7 +644,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 let __handle_self = __ehd_self.id;
             };
 
-            let self_bp = BorrowParam {
+            let self_bp = crate::codegen::BorrowParam {
                 param_name: None,
                 type_ident: rust_type_ident.clone(),
                 handle_ident: format_ident!("__handle_self"),
@@ -639,7 +654,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
 
             let mut param_extractions = vec![];
             let mut param_names = vec![];
-            let mut borrow_params: Vec<BorrowParam> = vec![];
+            let mut borrow_params: Vec<crate::codegen::BorrowParam> = vec![];
 
             for (i, arg) in non_self_params.iter().enumerate() {
                 let FnArg::Typed(pat_type) = arg else {
@@ -707,7 +722,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                             let #handle_ident = __ehd.id;
                         });
                         let guard_ident = format_ident!("__guard_{}", i);
-                        borrow_params.push(BorrowParam {
+                        borrow_params.push(crate::codegen::BorrowParam {
                             param_name: Some(param_name.clone()),
                             type_ident: info.type_ident,
                             handle_ident,
@@ -727,7 +742,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                             let #handle_ident = __ehd.id;
                         });
                         let guard_ident = format_ident!("__guard_{}", i);
-                        borrow_params.push(BorrowParam {
+                        borrow_params.push(crate::codegen::BorrowParam {
                             param_name: Some(param_name.clone()),
                             type_ident: info.type_ident,
                             handle_ident,
@@ -780,7 +795,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             )
         })?;
 
-        let returns_self = matches!(&ret_mode, ReturnMode::ExternOwned(info) if info.type_ident == rust_type_ident);
+        let returns_self = matches!(&ret_mode.mode, ReturnMode::ExternOwned(info) if info.type_ident == rust_type_ident);
 
         let self_offset = match kind {
             MethodKind::Static => 0,
@@ -797,7 +812,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         let mut param_extractions = vec![];
         let mut param_names = vec![];
         let mut param_anvyx_types = vec![];
-        let mut borrow_params: Vec<BorrowParam> = vec![];
+        let mut borrow_params: Vec<crate::codegen::BorrowParam> = vec![];
 
         for (i, arg) in non_self_params.iter().enumerate() {
             let FnArg::Typed(pat_type) = arg else {
@@ -876,7 +891,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                     });
                     param_anvyx_types.push(quote! { (#param_name_str, #ref_decl.name) });
                     let guard_ident = format_ident!("__guard_{}", i);
-                    borrow_params.push(BorrowParam {
+                    borrow_params.push(crate::codegen::BorrowParam {
                         param_name: Some(param_name.clone()),
                         type_ident: ref_type,
                         handle_ident,
@@ -901,7 +916,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                     });
                     param_anvyx_types.push(quote! { (#param_name_str, #ref_decl.name) });
                     let guard_ident = format_ident!("__guard_{}", i);
-                    borrow_params.push(BorrowParam {
+                    borrow_params.push(crate::codegen::BorrowParam {
                         param_name: Some(param_name.clone()),
                         type_ident: ref_type,
                         handle_ident,
@@ -933,7 +948,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                     };
                     let __handle_self = __ehd_self.id;
                 };
-                let self_bp = BorrowParam {
+                let self_bp = crate::codegen::BorrowParam {
                     param_name: None,
                     type_ident: rust_type_ident.clone(),
                     handle_ident: format_ident!("__handle_self"),
@@ -960,7 +975,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                     };
                     let __handle_self = __ehd_self.id;
                 };
-                let self_bp = BorrowParam {
+                let self_bp = crate::codegen::BorrowParam {
                     param_name: None,
                     type_ident: rust_type_ident.clone(),
                     handle_ident: format_ident!("__handle_self"),
@@ -988,7 +1003,8 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         });
         method_handler_calls.push(quote! { #handler_fn_ident() });
 
-        let ret_anvyx_str = build_ret_anvyx_str(&ret_mode, returns_self, &type_decl_ident);
+        let ret_anvyx_str = build_ret_anvyx_str(&ret_mode, returns_self, &type_decl_ident)
+            .map_err(|msg| syn::Error::new_spanned(&method.sig.output, msg))?;
 
         match classify_method_kind(&method.sig)? {
             MethodKind::Static => {
@@ -1253,176 +1269,29 @@ fn resolve_self_in_type(ty: &Type, type_ident: &syn::Ident) -> Type {
 }
 
 fn build_ret_anvyx_str(
-    mode: &ReturnMode,
+    classified: &ClassifiedReturn,
     returns_self: bool,
     type_decl_ident: &syn::Ident,
-) -> TokenStream {
-    match mode {
-        ReturnMode::Void => quote! { "void" },
-        ReturnMode::Primitive(m) => {
-            let s = m.anvyx_type;
-            quote! { #s }
+) -> Result<TokenStream, &'static str> {
+    if returns_self {
+        if matches!(&classified.wrapper, ReturnWrapper::AnvyxOption) {
+            return Err("Option<Self> is not supported in #[export_methods]");
         }
-        ReturnMode::ExternOwned(_) if returns_self => {
-            quote! { #type_decl_ident.name }
-        }
-        ReturnMode::ExternOwned(info) => {
-            let di = &info.decl_ident;
-            quote! { #di.name }
-        }
-        ReturnMode::ValuePassthrough => quote! { "any" },
-    }
-}
-
-fn build_flat_call(call: &TokenStream, mode: &ReturnMode) -> TokenStream {
-    match mode {
-        ReturnMode::Void => quote! {
-            #call;
-            Ok(anvyx_lang::Value::Nil)
-        },
-        ReturnMode::Primitive(m) => {
-            let wrap = &m.wrap_result;
-            quote! {
-                let result = #call;
-                Ok(#wrap)
-            }
-        }
-        ReturnMode::ValuePassthrough => quote! {
-            let result = #call;
-            Ok(result)
-        },
-        ReturnMode::ExternOwned(info) => {
-            let ty = &info.type_ident;
-            quote! {
-                let result = #call;
-                Ok(anvyx_lang::extern_handle::<#ty>(result))
-            }
+        if let ReturnMode::ExternOwned(_) = &classified.mode {
+            return Ok(quote! { #type_decl_ident.name });
         }
     }
+    crate::codegen::ret_anvyx_type_str(classified)
 }
 
 fn build_handler_body(
     call: &TokenStream,
-    ret_mode: &ReturnMode,
+    classified: &ClassifiedReturn,
     handler_key: &str,
-    borrow_params: &[BorrowParam],
+    borrow_params: &[crate::codegen::BorrowParam],
 ) -> TokenStream {
-    if borrow_params.is_empty() {
-        return build_flat_call(call, ret_mode);
-    }
-
-    let is_void = matches!(ret_mode, ReturnMode::Void);
-    let innermost = if is_void {
-        quote! { #call; Ok(()) }
-    } else {
-        quote! { Ok(#call) }
-    };
-
-    struct StoreGroup<'a> {
-        type_ident: &'a syn::Ident,
-        params: Vec<&'a BorrowParam>,
-    }
-
-    let mut groups: Vec<StoreGroup> = vec![];
-    for bp in borrow_params {
-        match groups.iter_mut().find(|g| g.type_ident == &bp.type_ident) {
-            Some(group) => group.params.push(bp),
-            None => groups.push(StoreGroup {
-                type_ident: &bp.type_ident,
-                params: vec![bp],
-            }),
-        }
-    }
-
-    let mut current = innermost;
-    for group in groups.iter().rev() {
-        let type_ident = group.type_ident;
-
-        let borrow_stmts: Vec<TokenStream> = group
-            .params
-            .iter()
-            .map(|bp| {
-                let handle = &bp.handle_ident;
-                let guard = &bp.guard_ident;
-
-                if let Some(param_name) = &bp.param_name {
-                    let param_str = param_name.to_string();
-                    if bp.is_mut {
-                        quote! {
-                            let mut #guard = __borrow.borrow_mut(#handle).map_err(|e| {
-                                anvyx_lang::RuntimeError::new(format!(
-                                    "invalid handle for parameter '{}' in extern method '{}': {}",
-                                    #param_str, #handler_key, e.message
-                                ))
-                            })?;
-                            let #param_name = &mut *#guard;
-                        }
-                    } else {
-                        quote! {
-                            let #guard = __borrow.borrow(#handle).map_err(|e| {
-                                anvyx_lang::RuntimeError::new(format!(
-                                    "invalid handle for parameter '{}' in extern method '{}': {}",
-                                    #param_str, #handler_key, e.message
-                                ))
-                            })?;
-                            let #param_name = &*#guard;
-                        }
-                    }
-                } else if bp.is_mut {
-                    quote! {
-                        let mut #guard = __borrow.borrow_mut(#handle).map_err(|e| {
-                            anvyx_lang::RuntimeError::new(format!(
-                                "invalid handle for self in extern method '{}': {}",
-                                #handler_key, e.message
-                            ))
-                        })?;
-                    }
-                } else {
-                    quote! {
-                        let #guard = __borrow.borrow(#handle).map_err(|e| {
-                            anvyx_lang::RuntimeError::new(format!(
-                                "invalid handle for self in extern method '{}': {}",
-                                #handler_key, e.message
-                            ))
-                        })?;
-                    }
-                }
-            })
-            .collect();
-
-        current = quote! {
-            <#type_ident as anvyx_lang::AnvyxExternType>::with_store(|__store| {
-                let __borrow = __store.borrow();
-                #(#borrow_stmts)*
-                #current
-            })
-        };
-    }
-
-    match ret_mode {
-        ReturnMode::Void => quote! {
-            #current?;
-            Ok(anvyx_lang::Value::Nil)
-        },
-        ReturnMode::Primitive(m) => {
-            let wrap = &m.wrap_result;
-            quote! {
-                let result = #current?;
-                Ok(#wrap)
-            }
-        }
-        ReturnMode::ValuePassthrough => quote! {
-            let result = #current?;
-            Ok(result)
-        },
-        ReturnMode::ExternOwned(info) => {
-            let ty = &info.type_ident;
-            quote! {
-                let result = #current?;
-                Ok(anvyx_lang::extern_handle::<#ty>(result))
-            }
-        }
-    }
+    let handler_label = format!("extern method '{handler_key}'");
+    crate::codegen::build_call_with_borrows(call, classified, &handler_label, borrow_params)
 }
 
 fn op_to_capitalized(op: &str) -> &'static str {

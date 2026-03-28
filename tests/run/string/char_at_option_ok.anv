@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// Option.Some(h)
+// Option.None
+// h
+// @match-end
+
+fn main() {
+    let c = "hello".char_at(0);
+    println(c);
+    let n = "hello".char_at(10);
+    println(n);
+    let d = "hello".char_at(0) ?? "?";
+    println(d);
+}

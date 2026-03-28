@@ -1,6 +1,6 @@
 use anvyx_lang::{
-    AnvyxExternType, ExternDecl, ExternHandleData, ExternTypeDeclConst, ManagedRc, Value,
-    export_fn, export_type,
+    AnvyxExternType, ExternDecl, ExternHandleData, ExternTypeDeclConst, ManagedRc, OPTION_TYPE_ID,
+    RuntimeError, Value, export_fn, export_type,
 };
 
 fn noop_drop(_id: u64) {}
@@ -2348,4 +2348,290 @@ mod op_tests {
         assert!(eq.lhs.is_none());
         assert_eq!(eq.ret, "bool");
     }
+}
+
+// -- Fallible return tests --
+
+#[export_fn]
+pub fn checked_div(a: i64, b: i64) -> Result<i64, RuntimeError> {
+    if b == 0 {
+        return Err(RuntimeError::new("division by zero"));
+    }
+    Ok(a / b)
+}
+
+#[test]
+fn fallible_int_ok() {
+    let (_, handler) = __anvyx_export_checked_div();
+    let result = handler(vec![Value::Int(10), Value::Int(2)]).unwrap();
+    assert_eq!(result, Value::Int(5));
+}
+
+#[test]
+fn fallible_int_err() {
+    let (_, handler) = __anvyx_export_checked_div();
+    let result = handler(vec![Value::Int(10), Value::Int(0)]);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().message.contains("division by zero"));
+}
+
+#[export_fn]
+pub fn must_upper(s: String) -> Result<String, RuntimeError> {
+    if s.is_empty() {
+        return Err(RuntimeError::new("empty string"));
+    }
+    Ok(s.to_uppercase())
+}
+
+#[test]
+fn fallible_string_ok() {
+    let (_, handler) = __anvyx_export_must_upper();
+    let result = handler(vec![Value::String(ManagedRc::new("hello".to_string()))]).unwrap();
+    assert_eq!(result, Value::String(ManagedRc::new("HELLO".to_string())));
+}
+
+#[test]
+fn fallible_string_err() {
+    let (_, handler) = __anvyx_export_must_upper();
+    let result = handler(vec![Value::String(ManagedRc::new(String::new()))]);
+    assert!(result.is_err());
+}
+
+#[export_fn]
+pub fn assert_positive(n: i64) -> Result<(), RuntimeError> {
+    if n <= 0 {
+        return Err(RuntimeError::new("not positive"));
+    }
+    Ok(())
+}
+
+#[test]
+fn fallible_void_ok() {
+    let (_, handler) = __anvyx_export_assert_positive();
+    let result = handler(vec![Value::Int(1)]).unwrap();
+    assert_eq!(result, Value::Nil);
+}
+
+#[test]
+fn fallible_void_err() {
+    let (_, handler) = __anvyx_export_assert_positive();
+    let result = handler(vec![Value::Int(-1)]);
+    assert!(result.is_err());
+}
+
+#[export_fn(ret = "[int]")]
+pub fn parse_list(s: String) -> Result<Value, RuntimeError> {
+    if s.is_empty() {
+        return Err(RuntimeError::new("empty input"));
+    }
+    Ok(Value::List(ManagedRc::new(vec![
+        Value::Int(1),
+        Value::Int(2),
+    ])))
+}
+
+#[test]
+fn fallible_value_ok() {
+    let (_, handler) = __anvyx_export_parse_list();
+    let result = handler(vec![Value::String(ManagedRc::new("x".to_string()))]).unwrap();
+    let Value::List(list) = result else {
+        panic!("expected List");
+    };
+    assert_eq!(*list, vec![Value::Int(1), Value::Int(2)]);
+}
+
+#[test]
+fn fallible_value_err() {
+    let (_, handler) = __anvyx_export_parse_list();
+    let result = handler(vec![Value::String(ManagedRc::new(String::new()))]);
+    assert!(result.is_err());
+}
+
+// -- AnvyxOption return tests --
+
+#[export_fn]
+pub fn safe_div(a: i64, b: i64) -> Option<i64> {
+    if b == 0 {
+        return None;
+    }
+    Some(a / b)
+}
+
+#[test]
+fn option_int_some() {
+    let (_, handler) = __anvyx_export_safe_div();
+    let result = handler(vec![Value::Int(10), Value::Int(2)]).unwrap();
+    let Value::Enum(e) = result else {
+        panic!("expected Enum");
+    };
+    assert_eq!(e.type_id, OPTION_TYPE_ID);
+    assert_eq!(e.variant, 1);
+    assert_eq!(e.fields, vec![Value::Int(5)]);
+}
+
+#[test]
+fn option_int_none() {
+    let (_, handler) = __anvyx_export_safe_div();
+    let result = handler(vec![Value::Int(10), Value::Int(0)]).unwrap();
+    let Value::Enum(e) = result else {
+        panic!("expected Enum");
+    };
+    assert_eq!(e.type_id, OPTION_TYPE_ID);
+    assert_eq!(e.variant, 0);
+    assert!(e.fields.is_empty());
+}
+
+#[export_fn]
+pub fn char_at(s: String, idx: i64) -> Option<String> {
+    s.chars().nth(idx as usize).map(|c| c.to_string())
+}
+
+#[test]
+fn option_string_some() {
+    let (_, handler) = __anvyx_export_char_at();
+    let result = handler(vec![
+        Value::String(ManagedRc::new("hello".to_string())),
+        Value::Int(1),
+    ])
+    .unwrap();
+    let Value::Enum(e) = result else {
+        panic!("expected Enum");
+    };
+    assert_eq!(e.type_id, OPTION_TYPE_ID);
+    assert_eq!(e.variant, 1);
+    let Value::String(s) = &e.fields[0] else {
+        panic!("expected String");
+    };
+    assert_eq!(s.as_str(), "e");
+}
+
+#[test]
+fn option_string_none() {
+    let (_, handler) = __anvyx_export_char_at();
+    let result = handler(vec![
+        Value::String(ManagedRc::new("hello".to_string())),
+        Value::Int(10),
+    ])
+    .unwrap();
+    let Value::Enum(e) = result else {
+        panic!("expected Enum");
+    };
+    assert_eq!(e.type_id, OPTION_TYPE_ID);
+    assert_eq!(e.variant, 0);
+    assert!(e.fields.is_empty());
+}
+
+// -- ExternDecl metadata tests for Fallible functions --
+
+#[test]
+fn fallible_int_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_CHECKED_DIV;
+    assert_eq!(decl.ret, "int");
+    assert_eq!(decl.params, &[("a", "int"), ("b", "int")]);
+}
+
+#[test]
+fn fallible_string_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_MUST_UPPER;
+    assert_eq!(decl.ret, "string");
+    assert_eq!(decl.params, &[("s", "string")]);
+}
+
+#[test]
+fn fallible_void_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_ASSERT_POSITIVE;
+    assert_eq!(decl.ret, "void");
+    assert_eq!(decl.params, &[("n", "int")]);
+}
+
+#[test]
+fn fallible_value_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_PARSE_LIST;
+    assert_eq!(decl.ret, "[int]");
+    assert_eq!(decl.params, &[("s", "string")]);
+}
+
+// -- ExternDecl metadata tests for AnvyxOption functions --
+
+#[test]
+fn option_int_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_SAFE_DIV;
+    assert_eq!(decl.ret, "Option<int>");
+    assert_eq!(decl.params, &[("a", "int"), ("b", "int")]);
+}
+
+#[test]
+fn option_string_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_CHAR_AT;
+    assert_eq!(decl.ret, "Option<string>");
+    assert_eq!(decl.params, &[("s", "string"), ("idx", "int")]);
+}
+
+// -- Provider integration tests --
+
+mod fallible_mod {
+    use anvyx_lang::{RuntimeError, export_fn};
+
+    #[export_fn]
+    pub fn safe_div(a: i64, b: i64) -> Result<i64, RuntimeError> {
+        if b == 0 {
+            return Err(RuntimeError::new("div by zero"));
+        }
+        Ok(a / b)
+    }
+
+    anvyx_lang::provider!(safe_div);
+}
+
+#[test]
+fn provider_fallible_exports() {
+    assert_eq!(fallible_mod::ANVYX_EXPORTS[0].ret, "int");
+    assert_eq!(fallible_mod::ANVYX_EXPORTS[0].name, "safe_div");
+}
+
+#[test]
+fn provider_fallible_handler() {
+    let externs = fallible_mod::anvyx_externs();
+    let result = externs["safe_div"](vec![Value::Int(10), Value::Int(2)]).unwrap();
+    assert_eq!(result, Value::Int(5));
+    let result = externs["safe_div"](vec![Value::Int(10), Value::Int(0)]);
+    assert!(result.is_err());
+}
+
+mod option_mod {
+    use anvyx_lang::export_fn;
+
+    #[export_fn]
+    pub fn maybe_inc(n: i64) -> Option<i64> {
+        if n < 0 { None } else { Some(n + 1) }
+    }
+
+    anvyx_lang::provider!(maybe_inc);
+}
+
+#[test]
+fn provider_option_exports() {
+    assert_eq!(option_mod::ANVYX_EXPORTS[0].ret, "Option<int>");
+    assert_eq!(option_mod::ANVYX_EXPORTS[0].name, "maybe_inc");
+}
+
+#[test]
+fn provider_option_handler() {
+    let externs = option_mod::anvyx_externs();
+
+    let result = externs["maybe_inc"](vec![Value::Int(5)]).unwrap();
+    let Value::Enum(e) = result else {
+        panic!("expected Enum");
+    };
+    assert_eq!(e.type_id, OPTION_TYPE_ID);
+    assert_eq!(e.variant, 1);
+    assert_eq!(e.fields, vec![Value::Int(6)]);
+
+    let result = externs["maybe_inc"](vec![Value::Int(-1)]).unwrap();
+    let Value::Enum(e) = result else {
+        panic!("expected Enum");
+    };
+    assert_eq!(e.type_id, OPTION_TYPE_ID);
+    assert_eq!(e.variant, 0);
+    assert!(e.fields.is_empty());
 }

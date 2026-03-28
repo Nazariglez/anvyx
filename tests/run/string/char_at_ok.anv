@@ -6,6 +6,6 @@
 // @match-end
 
 fn main() {
-    println("hello".char_at(0));
-    println("hello".char_at(4));
+    println("hello".char_at(0) ?? "");
+    println("hello".char_at(4) ?? "");
 }

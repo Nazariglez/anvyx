@@ -914,9 +914,7 @@ impl<'a> VM<'a> {
             }
             Value::Enum(e) => {
                 let program = self.program;
-                let type_id = e.type_id as usize;
-                let struct_count = program.struct_meta.len();
-                let meta = &program.enum_meta[type_id - struct_count];
+                let meta = &program.enum_meta[e.type_id as usize];
                 let variant_idx = e.variant as usize;
                 let variant_name = meta.variants[variant_idx].name.clone();
                 let enum_name = meta.name.clone();

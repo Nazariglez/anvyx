@@ -688,7 +688,11 @@ pub(super) fn fn_decl_var_params(
 // ---- runner helpers ----
 
 fn with_prelude(prog: Program) -> Program {
-    const TEST_CORE_PRELUDE: &str = include_str!("../../../../core/src/prelude.anv");
+    const TEST_CORE_PRELUDE: &str = concat!(
+        include_str!("../../../../core/src/option.anv"),
+        "\n",
+        include_str!("../../../../core/src/range.anv"),
+    );
     let tokens = crate::lexer::tokenize(TEST_CORE_PRELUDE).expect("core prelude must tokenize");
     let prelude = crate::parser::parse_ast(&tokens).expect("core prelude must parse");
     let mut stmts = prelude.stmts;

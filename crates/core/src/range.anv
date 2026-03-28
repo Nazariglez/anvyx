@@ -7,8 +7,3 @@ struct RangeInclusive<T> {
     start: T,
     end: T,
 }
-
-enum Option<T> {
-    None,
-    Some(T),
-}

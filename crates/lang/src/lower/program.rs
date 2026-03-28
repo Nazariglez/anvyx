@@ -5,6 +5,7 @@ use internment::Intern;
 
 use crate::ast::{self, Ident, Type, TypeVarId, VariantKind};
 use crate::hir;
+use crate::prelude_enums::OPTION_TYPE_ID;
 use crate::typecheck::{
     ExtendSpecKey, MethodSpecKey, TypeChecker, resolve_type_param_names, subst_type,
 };
@@ -48,11 +49,11 @@ pub fn lower_program(
     }
 
     let mut struct_type_ids: HashMap<Ident, u32> = HashMap::new();
-    let mut next_type_id = 0u32;
+    let mut struct_next_id = 0u32;
     for name in tcx.struct_names() {
         struct_type_ids.entry(name).or_insert_with(|| {
-            let id = next_type_id;
-            next_type_id += 1;
+            let id = struct_next_id;
+            struct_next_id += 1;
             id
         });
     }
@@ -60,15 +61,15 @@ pub fn lower_program(
         for stmt_node in stmts {
             if let ast::Stmt::Struct(s) = &stmt_node.node {
                 struct_type_ids.entry(s.node.name).or_insert_with(|| {
-                    let id = next_type_id;
-                    next_type_id += 1;
+                    let id = struct_next_id;
+                    struct_next_id += 1;
                     id
                 });
             }
             if let ast::Stmt::DataRef(s) = &stmt_node.node {
                 struct_type_ids.entry(s.node.name).or_insert_with(|| {
-                    let id = next_type_id;
-                    next_type_id += 1;
+                    let id = struct_next_id;
+                    struct_next_id += 1;
                     id
                 });
             }
@@ -76,10 +77,16 @@ pub fn lower_program(
     }
 
     let mut enum_type_ids: HashMap<Ident, u32> = HashMap::new();
+
+    // Reserve well-known ID for Option
+    let option_ident = Ident(Intern::new("Option".to_string()));
+    enum_type_ids.insert(option_ident, OPTION_TYPE_ID);
+    let mut enum_next_id = OPTION_TYPE_ID + 1;
+
     for name in tcx.enum_names() {
         enum_type_ids.entry(name).or_insert_with(|| {
-            let id = next_type_id;
-            next_type_id += 1;
+            let id = enum_next_id;
+            enum_next_id += 1;
             id
         });
     }
@@ -87,8 +94,8 @@ pub fn lower_program(
         for stmt_node in stmts {
             if let ast::Stmt::Enum(e) = &stmt_node.node {
                 enum_type_ids.entry(e.node.name).or_insert_with(|| {
-                    let id = next_type_id;
-                    next_type_id += 1;
+                    let id = enum_next_id;
+                    enum_next_id += 1;
                     id
                 });
             }
@@ -150,7 +157,7 @@ pub fn lower_program(
                 }
             })
             .collect();
-        let idx = type_id as usize - struct_count;
+        let idx = type_id as usize;
         enum_meta_slots[idx] = Some(EnumMeta {
             name: name.to_string(),
             variants,

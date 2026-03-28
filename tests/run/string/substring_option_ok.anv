@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// Option.Some(hel)
+// Option.None
+// @match-end
+
+fn main() {
+    println("hello".substring(0, 3));
+    println("hello".substring(-1, 3));
+}

@@ -1,6 +1,6 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{ReturnType, Type};
+use syn::{GenericArgument, PathArguments, ReturnType, Type};
 
 pub struct TypeMapping {
     pub extract_variant: TokenStream,
@@ -27,6 +27,17 @@ pub enum ReturnMode {
     Primitive(TypeMapping),
     ValuePassthrough,
     ExternOwned(ExternTypeInfo),
+}
+
+pub enum ReturnWrapper {
+    None,
+    Fallible,
+    AnvyxOption,
+}
+
+pub struct ClassifiedReturn {
+    pub mode: ReturnMode,
+    pub wrapper: ReturnWrapper,
 }
 
 pub fn is_value_passthrough(ty: &Type) -> bool {
@@ -125,27 +136,74 @@ pub fn classify_param(ty: &Type) -> Option<ParamMode> {
     None
 }
 
-pub fn classify_return(output: &ReturnType) -> Option<ReturnMode> {
+fn classify_inner_type(ty: &Type) -> Option<ReturnMode> {
+    let is_unit = matches!(ty, Type::Tuple(t) if t.elems.is_empty());
+    if is_unit {
+        return Some(ReturnMode::Void);
+    }
+    if is_value_passthrough(ty) {
+        return Some(ReturnMode::ValuePassthrough);
+    }
+    if let Some(mapping) = map_type(ty) {
+        return Some(ReturnMode::Primitive(mapping));
+    }
+    if let Type::Path(path) = ty
+        && path.qself.is_none()
+        && let Some(ident) = path.path.get_ident()
+    {
+        return Some(ReturnMode::ExternOwned(extern_type_info(ident)));
+    }
+    None
+}
+
+pub fn classify_return(output: &ReturnType) -> Option<ClassifiedReturn> {
     match output {
-        ReturnType::Default => Some(ReturnMode::Void),
+        ReturnType::Default => Some(ClassifiedReturn {
+            mode: ReturnMode::Void,
+            wrapper: ReturnWrapper::None,
+        }),
         ReturnType::Type(_, ty) => {
-            let is_unit = matches!(ty.as_ref(), Type::Tuple(t) if t.elems.is_empty());
-            if is_unit {
-                return Some(ReturnMode::Void);
-            }
-            if is_value_passthrough(ty) {
-                return Some(ReturnMode::ValuePassthrough);
-            }
-            if let Some(mapping) = map_type(ty) {
-                return Some(ReturnMode::Primitive(mapping));
-            }
             if let Type::Path(path) = ty.as_ref()
                 && path.qself.is_none()
-                && let Some(ident) = path.path.get_ident()
+                && path.path.segments.len() == 1
             {
-                return Some(ReturnMode::ExternOwned(extern_type_info(ident)));
+                let seg = &path.path.segments[0];
+
+                if seg.ident == "Option"
+                    && let PathArguments::AngleBracketed(args) = &seg.arguments
+                    && args.args.len() == 1
+                    && let GenericArgument::Type(inner_ty) = &args.args[0]
+                {
+                    let inner_mode = classify_inner_type(inner_ty)?;
+                    return Some(ClassifiedReturn {
+                        mode: inner_mode,
+                        wrapper: ReturnWrapper::AnvyxOption,
+                    });
+                }
+
+                if seg.ident == "Result"
+                    && let PathArguments::AngleBracketed(args) = &seg.arguments
+                    && args.args.len() == 2
+                    && let GenericArgument::Type(ok_ty) = &args.args[0]
+                    && let GenericArgument::Type(err_ty) = &args.args[1]
+                {
+                    let is_runtime_error = matches!(err_ty, Type::Path(p)
+                        if p.path.segments.last().is_some_and(|s| s.ident == "RuntimeError"));
+                    if is_runtime_error {
+                        let inner_mode = classify_inner_type(ok_ty)?;
+                        return Some(ClassifiedReturn {
+                            mode: inner_mode,
+                            wrapper: ReturnWrapper::Fallible,
+                        });
+                    }
+                }
             }
-            None
+
+            let mode = classify_inner_type(ty)?;
+            Some(ClassifiedReturn {
+                mode,
+                wrapper: ReturnWrapper::None,
+            })
         }
     }
 }

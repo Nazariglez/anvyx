@@ -950,3 +950,49 @@ fn coalesce_desugars_to_match() {
     };
     assert!(matches!(init.kind, ExprKind::Local(_)));
 }
+
+#[test]
+fn option_enum_has_well_known_type_id() {
+    let prog = lower_ok("fn main() { let x = Option.Some(42); }");
+    let main = find_main(&prog);
+    let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+        panic!("expected Let");
+    };
+    let ExprKind::EnumLiteral {
+        type_id,
+        variant,
+        fields,
+        ..
+    } = &init.kind
+    else {
+        panic!("expected EnumLiteral, got {:?}", init.kind);
+    };
+    assert_eq!(
+        *type_id,
+        crate::prelude_enums::OPTION_TYPE_ID,
+        "Option must have the well-known OPTION_TYPE_ID"
+    );
+    assert_eq!(*variant, 1, "Some must be variant 1");
+    assert_eq!(fields.len(), 1, "Some must have 1 field");
+}
+
+#[test]
+fn option_none_has_well_known_type_id() {
+    let prog = lower_ok("fn main() { let x: int? = Option.None; }");
+    let main = find_main(&prog);
+    let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+        panic!("expected Let");
+    };
+    let ExprKind::EnumLiteral {
+        type_id, variant, ..
+    } = &init.kind
+    else {
+        panic!("expected EnumLiteral, got {:?}", init.kind);
+    };
+    assert_eq!(
+        *type_id,
+        crate::prelude_enums::OPTION_TYPE_ID,
+        "Option.None must have the well-known OPTION_TYPE_ID"
+    );
+    assert_eq!(*variant, 0, "None must be variant 0");
+}

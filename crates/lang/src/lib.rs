@@ -12,6 +12,7 @@ mod typecheck;
 mod vm;
 
 pub mod metadata;
+pub mod prelude_enums;
 
 pub use anvyx_macros::{export_fn, export_methods, export_type, provider};
 pub use metadata::{
@@ -19,6 +20,7 @@ pub use metadata::{
     ExternProviderMeta, ExternStaticMethodDecl, ExternTypeDecl, ExternTypeDeclConst,
     exports_to_json, parse_provider_json,
 };
+pub use prelude_enums::{OPTION_TYPE_ID, option_none, option_some};
 pub use vm::{
     AnvyxExternType, DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData,
     ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData, Value,

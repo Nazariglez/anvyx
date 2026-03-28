@@ -4,8 +4,8 @@ use anvyx_lang::StdModule;
 
 pub fn module() -> StdModule {
     StdModule {
-        name: "prelude",
-        anv_source: include_str!("./prelude.anv"),
+        name: "core_range",
+        anv_source: include_str!("./range.anv"),
         exports: &[],
         type_exports: || vec![],
         handlers: || HashMap::new(),

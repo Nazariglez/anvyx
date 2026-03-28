@@ -7,7 +7,7 @@ use syn::{
     parse::{Parse, ParseStream},
 };
 
-use crate::type_map::{ExternTypeInfo, ParamMode, ReturnMode, classify_param, classify_return};
+use crate::type_map::{ExternTypeInfo, ParamMode, classify_param, classify_return};
 
 struct ExportFnArgs {
     name: Option<String>,
@@ -63,14 +63,6 @@ impl Parse for ExportFnArgs {
     }
 }
 
-struct BorrowParam {
-    param_name: syn::Ident,
-    type_ident: syn::Ident,
-    handle_ident: syn::Ident,
-    guard_ident: syn::Ident,
-    is_mut: bool,
-}
-
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     match do_expand(attr, item.clone()) {
         Ok(ts) => ts,
@@ -94,7 +86,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let mut extractions = vec![];
     let mut param_names = vec![];
     let mut param_tuples = vec![];
-    let mut borrow_params = vec![];
+    let mut borrow_params: Vec<crate::codegen::BorrowParam> = vec![];
 
     for (i, arg) in func.sig.inputs.iter().enumerate() {
         let FnArg::Typed(pat_type) = arg else {
@@ -187,8 +179,8 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 });
                 param_tuples.push(quote! { (#param_name_str, #decl_ident.name) });
                 let guard_ident = format_ident!("__guard_{}", i);
-                borrow_params.push(BorrowParam {
-                    param_name: param_name.clone(),
+                borrow_params.push(crate::codegen::BorrowParam {
+                    param_name: Some(param_name.clone()),
                     type_ident,
                     handle_ident,
                     guard_ident,
@@ -212,8 +204,8 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 });
                 param_tuples.push(quote! { (#param_name_str, #decl_ident.name) });
                 let guard_ident = format_ident!("__guard_{}", i);
-                borrow_params.push(BorrowParam {
-                    param_name: param_name.clone(),
+                borrow_params.push(crate::codegen::BorrowParam {
+                    param_name: Some(param_name.clone()),
                     type_ident,
                     handle_ident,
                     guard_ident,
@@ -271,18 +263,7 @@ fn ret_anvyx_type(
         )
     })?;
 
-    match mode {
-        ReturnMode::Void => Ok(quote! { "void" }),
-        ReturnMode::Primitive(m) => {
-            let s = m.anvyx_type;
-            Ok(quote! { #s })
-        }
-        ReturnMode::ValuePassthrough => Ok(quote! { "any" }),
-        ReturnMode::ExternOwned(info) => {
-            let decl_ident = info.decl_ident;
-            Ok(quote! { #decl_ident.name })
-        }
-    }
+    crate::codegen::ret_anvyx_type_str(&mode).map_err(|msg| syn::Error::new_spanned(output, msg))
 }
 
 fn build_call_body(
@@ -290,7 +271,7 @@ fn build_call_body(
     fn_ident: &syn::Ident,
     param_names: &[syn::Ident],
     export_name: &str,
-    borrow_params: &[BorrowParam],
+    borrow_params: &[crate::codegen::BorrowParam],
 ) -> syn::Result<TokenStream> {
     let call = quote! { #fn_ident(#(#param_names),*) };
 
@@ -304,128 +285,11 @@ fn build_call_body(
         )
     })?;
 
-    if borrow_params.is_empty() {
-        return build_flat_call(&call, &mode);
-    }
-
-    let is_void = matches!(mode, ReturnMode::Void);
-    let innermost = if is_void {
-        quote! { #call; Ok(()) }
-    } else {
-        quote! { Ok(#call) }
-    };
-
-    struct StoreGroup<'a> {
-        type_ident: &'a syn::Ident,
-        params: Vec<&'a BorrowParam>,
-    }
-
-    let mut groups: Vec<StoreGroup> = vec![];
-    for bp in borrow_params {
-        match groups.iter_mut().find(|g| g.type_ident == &bp.type_ident) {
-            Some(group) => group.params.push(bp),
-            None => groups.push(StoreGroup {
-                type_ident: &bp.type_ident,
-                params: vec![bp],
-            }),
-        }
-    }
-
-    let mut current = innermost;
-    for group in groups.iter().rev() {
-        let type_ident = group.type_ident;
-
-        let borrow_stmts: Vec<TokenStream> = group
-            .params
-            .iter()
-            .map(|bp| {
-                let param_name = &bp.param_name;
-                let handle_ident = &bp.handle_ident;
-                let guard_ident = &bp.guard_ident;
-                let param_name_str = param_name.to_string();
-
-                if bp.is_mut {
-                    quote! {
-                        let mut #guard_ident = __borrow.borrow_mut(#handle_ident).map_err(|e| {
-                            anvyx_lang::RuntimeError::new(format!(
-                                "invalid handle for parameter '{}' in extern fn '{}': {}",
-                                #param_name_str, #export_name, e.message
-                            ))
-                        })?;
-                        let #param_name = &mut *#guard_ident;
-                    }
-                } else {
-                    quote! {
-                        let #guard_ident = __borrow.borrow(#handle_ident).map_err(|e| {
-                            anvyx_lang::RuntimeError::new(format!(
-                                "invalid handle for parameter '{}' in extern fn '{}': {}",
-                                #param_name_str, #export_name, e.message
-                            ))
-                        })?;
-                        let #param_name = &*#guard_ident;
-                    }
-                }
-            })
-            .collect();
-
-        current = quote! {
-            <#type_ident as anvyx_lang::AnvyxExternType>::with_store(|__store| {
-                let __borrow = __store.borrow();
-                #(#borrow_stmts)*
-                #current
-            })
-        };
-    }
-
-    match &mode {
-        ReturnMode::Void => Ok(quote! {
-            #current?;
-            Ok(anvyx_lang::Value::Nil)
-        }),
-        ReturnMode::Primitive(m) => {
-            let wrap_result = &m.wrap_result;
-            Ok(quote! {
-                let result = #current?;
-                Ok(#wrap_result)
-            })
-        }
-        ReturnMode::ValuePassthrough => Ok(quote! {
-            let result = #current?;
-            Ok(result)
-        }),
-        ReturnMode::ExternOwned(info) => {
-            let ty = &info.type_ident;
-            Ok(quote! {
-                let result = #current?;
-                Ok(anvyx_lang::extern_handle::<#ty>(result))
-            })
-        }
-    }
-}
-
-fn build_flat_call(call: &TokenStream, mode: &ReturnMode) -> syn::Result<TokenStream> {
-    match mode {
-        ReturnMode::Void => Ok(quote! {
-            #call;
-            Ok(anvyx_lang::Value::Nil)
-        }),
-        ReturnMode::Primitive(m) => {
-            let wrap_result = &m.wrap_result;
-            Ok(quote! {
-                let result = #call;
-                Ok(#wrap_result)
-            })
-        }
-        ReturnMode::ValuePassthrough => Ok(quote! {
-            let result = #call;
-            Ok(result)
-        }),
-        ReturnMode::ExternOwned(info) => {
-            let ty = &info.type_ident;
-            Ok(quote! {
-                let result = #call;
-                Ok(anvyx_lang::extern_handle::<#ty>(result))
-            })
-        }
-    }
+    let handler_label = format!("extern fn '{export_name}'");
+    Ok(crate::codegen::build_call_with_borrows(
+        &call,
+        &mode,
+        &handler_label,
+        borrow_params,
+    ))
 }

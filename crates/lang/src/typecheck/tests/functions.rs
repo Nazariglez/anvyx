@@ -350,7 +350,11 @@ fn test_nested_fn_implicit_return() {
 fn check_src(
     src: &str,
 ) -> Result<crate::typecheck::TypeChecker, Vec<crate::typecheck::error::TypeErr>> {
-    const TEST_CORE_PRELUDE: &str = include_str!("../../../../core/src/prelude.anv");
+    const TEST_CORE_PRELUDE: &str = concat!(
+        include_str!("../../../../core/src/option.anv"),
+        "\n",
+        include_str!("../../../../core/src/range.anv"),
+    );
     let tokens = crate::lexer::tokenize(TEST_CORE_PRELUDE).unwrap();
     let prelude = crate::parser::parse_ast(&tokens).unwrap();
     let user_tokens = crate::lexer::tokenize(src).unwrap();
