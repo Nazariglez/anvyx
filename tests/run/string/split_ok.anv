@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// hello
+// world
+// foo
+// @match-end
+
+fn main() {
+    let parts = "hello,world,foo".split(",");
+    for p in parts {
+        println(p);
+    }
+}

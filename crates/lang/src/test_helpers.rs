@@ -4,7 +4,7 @@ use crate::ast::{BinaryOp, Ident, Type};
 use crate::hir::{Block, Expr, Func, FuncId, Local, LocalId, Program, Stmt, StmtKind};
 use crate::lower::LowerError;
 use crate::span::Span;
-use crate::{CORE_PRELUDE, ast, hir, lower, typecheck, vm};
+use crate::{CORE_PRELUDE, CORE_STRING_SRC, ast, hir, lower, typecheck, vm};
 use std::collections::HashMap;
 
 // ---- pipeline helpers ----
@@ -44,10 +44,16 @@ impl TestCtx {
         let prelude_tokens = crate::lexer::tokenize(CORE_PRELUDE).expect("prelude must tokenize");
         let prelude_ast = crate::parser::parse_ast(&prelude_tokens).expect("prelude must parse");
 
+        let string_tokens =
+            crate::lexer::tokenize(CORE_STRING_SRC).expect("core string must tokenize");
+        let string_ast =
+            crate::parser::parse_ast(&string_tokens).expect("core string must parse");
+
         let user_tokens = crate::lexer::tokenize(source).expect("source must tokenize");
         let user_ast = crate::parser::parse_ast(&user_tokens).expect("source must parse");
 
         let mut stmts = prelude_ast.stmts;
+        stmts.extend(string_ast.stmts);
         stmts.extend(user_ast.stmts);
         let combined = ast::Program { stmts };
 

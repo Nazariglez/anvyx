@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// true
+// false
+// @match-end
+
+fn main() {
+    println("".is_empty());
+    println("hi".is_empty());
+}

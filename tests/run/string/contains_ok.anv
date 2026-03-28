@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// true
+// false
+// true
+// @match-end
+
+fn main() {
+    println("hello world".contains("world"));
+    println("hello world".contains("xyz"));
+    println("hello".contains(""));
+}

@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// h
+// o
+// @match-end
+
+fn main() {
+    println("hello".char_at(0));
+    println("hello".char_at(4));
+}

@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 5
+// 0
+// 11
+// @match-end
+
+fn main() {
+    println("hello".len());
+    println("".len());
+    println("hello world".len());
+}

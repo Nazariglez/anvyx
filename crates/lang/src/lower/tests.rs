@@ -339,7 +339,7 @@ fn assignment_emits_assign_stmt() {
 #[test]
 fn multiple_functions_have_distinct_ids() {
     let prog = lower_ok("fn foo() {} fn bar() {} fn main() {}");
-    assert_eq!(prog.funcs.len(), 3);
+    assert!(prog.funcs.len() >= 3);
     let foo = prog
         .funcs
         .iter()
@@ -791,17 +791,29 @@ fn extern_fn_emits_call_extern_node() {
 #[test]
 fn extern_fn_decl_is_in_hir_program() {
     let prog = lower_ok("extern fn tick();\nextern fn add(a: int, b: int) -> int;\nfn main() {}");
-    assert_eq!(prog.externs.len(), 2);
-    assert_eq!(prog.externs[0].name.to_string(), "tick");
-    assert_eq!(prog.externs[1].name.to_string(), "add");
-    assert_eq!(prog.externs[1].params, vec![Type::Int, Type::Int]);
-    assert_eq!(prog.externs[1].ret, Type::Int);
+    let tick = prog
+        .externs
+        .iter()
+        .find(|e| e.name.to_string() == "tick")
+        .expect("tick extern");
+    let add = prog
+        .externs
+        .iter()
+        .find(|e| e.name.to_string() == "add")
+        .expect("add extern");
+    assert_eq!(tick.params, vec![]);
+    assert_eq!(add.params, vec![Type::Int, Type::Int]);
+    assert_eq!(add.ret, Type::Int);
 }
 
 #[test]
 fn extern_fn_call_extern_has_correct_id() {
     let prog = lower_ok("extern fn add(a: int, b: int) -> int;\nfn main() { let x = add(1, 2); }");
-    assert_eq!(prog.externs[0].id, hir::ExternId(0));
+    let add_decl = prog
+        .externs
+        .iter()
+        .find(|e| e.name.to_string() == "add")
+        .expect("add extern");
     let main = find_main(&prog);
     let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
         panic!("expected Let");
@@ -809,7 +821,7 @@ fn extern_fn_call_extern_has_correct_id() {
     let ExprKind::CallExtern { extern_id, args } = &init.kind else {
         panic!("expected CallExtern");
     };
-    assert_eq!(*extern_id, hir::ExternId(0));
+    assert_eq!(*extern_id, add_decl.id);
     assert_eq!(args.len(), 2);
 }
 

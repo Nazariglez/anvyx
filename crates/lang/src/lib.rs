@@ -1,5 +1,6 @@
 mod ast;
 mod builtin;
+mod core_string;
 mod error;
 mod hir;
 mod lexer;
@@ -36,6 +37,7 @@ pub struct StdModuleSource {
 mod test_helpers;
 
 pub(crate) const CORE_PRELUDE: &str = include_str!("../core/prelude.anv");
+pub(crate) const CORE_STRING_SRC: &str = include_str!("../core/string.anv");
 
 pub(crate) fn parse_source(
     source: &str,
@@ -80,6 +82,9 @@ fn analyze_with_extern_meta(
 
     let (prelude_ast, _) = parse_source(CORE_PRELUDE, "<prelude>")
         .map_err(|_| "Failed to parse prelude (internal error)".to_string())?;
+
+    let (string_ast, _) = parse_source(CORE_STRING_SRC, "<core:string>")
+        .map_err(|_| "Failed to parse core string module (internal error)".to_string())?;
 
     let (user_ast, user_tokens) = parse_source(program, file_path)?;
 
@@ -131,6 +136,7 @@ fn analyze_with_extern_meta(
     }
 
     let mut combined_stmts = prelude_ast.stmts;
+    combined_stmts.extend(string_ast.stmts);
     combined_stmts.extend(user_ast.stmts);
     let combined = ast::Program {
         stmts: combined_stmts,
@@ -241,6 +247,11 @@ pub fn run_program_with_std(
     std_modules: std::collections::HashMap<String, StdModuleSource>,
 ) -> Result<String, String> {
     let hir = generate_hir_with_std(program, file_path, &extern_metadata, &std_modules)?;
+
+    let mut externs = externs;
+    for (name, handler) in core_string::core_handlers() {
+        externs.entry(name).or_insert(handler);
+    }
 
     let declared: std::collections::HashSet<String> =
         hir.externs.iter().map(|e| e.name.to_string()).collect();

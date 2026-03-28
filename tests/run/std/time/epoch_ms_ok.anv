@@ -1,0 +1,10 @@
+// @mode: run
+// @expect: success
+// @contains: true
+
+import std.time;
+
+fn main() {
+    let ms = time.now();
+    println(ms > 1_000_000_000_000);
+}

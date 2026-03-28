@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// hello universe
+// aXbXc
+// @match-end
+
+fn main() {
+    println("hello world".replace("world", "universe"));
+    println("a-b-c".replace("-", "X"));
+}

@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// ell
+// hel
+// o
+// @match-end
+
+fn main() {
+    println("hello".substring(1, 3));
+    println("hello".substring(0, 3));
+    println("hello".substring(4, 1));
+}

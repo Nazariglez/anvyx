@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @contains: true
+
+import std.time;
+
+fn main() {
+    let start = time.elapsed();
+    let dt = time.since(start);
+    println(dt >= 0.0d);
+}

@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// HELLO WORLD
+// hello world
+// @match-end
+
+fn main() {
+    println("hello world".to_upper());
+    println("HELLO WORLD".to_lower());
+}

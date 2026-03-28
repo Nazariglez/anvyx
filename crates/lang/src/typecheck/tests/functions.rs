@@ -352,9 +352,12 @@ fn check_src(
 ) -> Result<crate::typecheck::TypeChecker, Vec<crate::typecheck::error::TypeErr>> {
     let tokens = crate::lexer::tokenize(crate::CORE_PRELUDE).unwrap();
     let prelude = crate::parser::parse_ast(&tokens).unwrap();
+    let str_tokens = crate::lexer::tokenize(crate::CORE_STRING_SRC).unwrap();
+    let string_ast = crate::parser::parse_ast(&str_tokens).unwrap();
     let user_tokens = crate::lexer::tokenize(src).unwrap();
     let user_ast = crate::parser::parse_ast(&user_tokens).unwrap();
     let mut stmts = prelude.stmts;
+    stmts.extend(string_ast.stmts);
     stmts.extend(user_ast.stmts);
     let combined = crate::ast::Program { stmts };
     crate::typecheck::check_program_with_modules(&combined, &[])
