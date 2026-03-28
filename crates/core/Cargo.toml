@@ -1,0 +1,8 @@
+[package]
+name = "anvyx-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anvyx-lang = { path = "../lang" }
+anvyx-macros = { path = "../macros" }

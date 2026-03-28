@@ -688,13 +688,10 @@ pub(super) fn fn_decl_var_params(
 // ---- runner helpers ----
 
 fn with_prelude(prog: Program) -> Program {
-    let tokens = crate::lexer::tokenize(crate::CORE_PRELUDE).expect("core prelude must tokenize");
+    const TEST_CORE_PRELUDE: &str = include_str!("../../../../core/src/prelude.anv");
+    let tokens = crate::lexer::tokenize(TEST_CORE_PRELUDE).expect("core prelude must tokenize");
     let prelude = crate::parser::parse_ast(&tokens).expect("core prelude must parse");
-    let str_tokens =
-        crate::lexer::tokenize(crate::CORE_STRING_SRC).expect("core string must tokenize");
-    let string_ast = crate::parser::parse_ast(&str_tokens).expect("core string must parse");
     let mut stmts = prelude.stmts;
-    stmts.extend(string_ast.stmts);
     stmts.extend(prog.stmts);
     Program { stmts }
 }

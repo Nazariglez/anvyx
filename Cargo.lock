@@ -71,6 +71,7 @@ dependencies = [
 name = "anvyx"
 version = "0.1.0"
 dependencies = [
+ "anvyx-core",
  "anvyx-lang",
  "anvyx-std",
  "clap",
@@ -79,6 +80,14 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "anvyx-core"
+version = "0.1.0"
+dependencies = [
+ "anvyx-lang",
+ "anvyx-macros",
 ]
 
 [[package]]

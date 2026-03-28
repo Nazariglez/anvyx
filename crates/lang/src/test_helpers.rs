@@ -4,13 +4,15 @@ use crate::ast::{BinaryOp, Ident, Type};
 use crate::hir::{Block, Expr, Func, FuncId, Local, LocalId, Program, Stmt, StmtKind};
 use crate::lower::LowerError;
 use crate::span::Span;
-use crate::{CORE_PRELUDE, CORE_STRING_SRC, ast, hir, lower, typecheck, vm};
+use crate::{ast, hir, lower, typecheck, vm};
+
+const TEST_CORE_PRELUDE: &str = include_str!("../../core/src/prelude.anv");
 use std::collections::HashMap;
 
 // ---- pipeline helpers ----
 
 pub(crate) fn generate_hir(source: &str, file_path: &str) -> Result<hir::Program, String> {
-    crate::generate_hir_with_std(source, file_path, &HashMap::new(), &HashMap::new())
+    crate::generate_hir_with_std(source, file_path, TEST_CORE_PRELUDE, &HashMap::new(), &HashMap::new())
 }
 
 pub(crate) struct TestCtx;
@@ -41,19 +43,13 @@ impl TestCtx {
     }
 
     fn pipeline(source: &str) -> (ast::Program, typecheck::TypeChecker) {
-        let prelude_tokens = crate::lexer::tokenize(CORE_PRELUDE).expect("prelude must tokenize");
+        let prelude_tokens = crate::lexer::tokenize(TEST_CORE_PRELUDE).expect("prelude must tokenize");
         let prelude_ast = crate::parser::parse_ast(&prelude_tokens).expect("prelude must parse");
-
-        let string_tokens =
-            crate::lexer::tokenize(CORE_STRING_SRC).expect("core string must tokenize");
-        let string_ast =
-            crate::parser::parse_ast(&string_tokens).expect("core string must parse");
 
         let user_tokens = crate::lexer::tokenize(source).expect("source must tokenize");
         let user_ast = crate::parser::parse_ast(&user_tokens).expect("source must parse");
 
         let mut stmts = prelude_ast.stmts;
-        stmts.extend(string_ast.stmts);
         stmts.extend(user_ast.stmts);
         let combined = ast::Program { stmts };
 
