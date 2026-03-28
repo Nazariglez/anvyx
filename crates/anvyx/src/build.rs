@@ -236,6 +236,7 @@ fn main() {{
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
 {extend_lines}
     let std_mods = anvyx_std::std_modules();
+    anvyx_std::init_std_modules(&std_mods);
     let mut std_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
     for m in &std_mods {{
         std_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
@@ -323,6 +324,7 @@ fn main() {{
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
 {extend_lines}
     let std_mods = anvyx_std::std_modules();
+    anvyx_std::init_std_modules(&std_mods);
     let mut std_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
     for m in &std_mods {{
         std_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
@@ -362,6 +364,7 @@ fn main() {{
         .unwrap_or_else(|e| {{ eprintln!("{{e}}"); std::process::exit(1); }});
 
     let std_mods = anvyx_std::std_modules();
+    anvyx_std::init_std_modules(&std_mods);
     let mut std_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
     for m in &std_mods {{

@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @contains: true
+
+import std.time;
+
+fn main() {
+    let before = time.elapsed();
+    time.sleep(50);
+    let after = time.elapsed();
+    println(after - before >= 0.04d);
+}

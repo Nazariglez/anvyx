@@ -7,6 +7,7 @@ pub fn collect_std() -> (
     HashMap<String, ExternHandler>,
 ) {
     let modules = anvyx_std::std_modules();
+    anvyx_std::init_std_modules(&modules);
     let mut sources = HashMap::new();
     let mut handlers = HashMap::new();
 

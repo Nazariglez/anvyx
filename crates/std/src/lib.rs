@@ -2,12 +2,19 @@ use std::collections::HashMap;
 
 use anvyx_lang::{ExternDecl, ExternHandler, ExternTypeDecl};
 
+mod linalg;
+mod maps;
+mod math;
+mod mem;
+mod time;
+
 pub struct StdModule {
     pub name: &'static str,
     pub anv_source: &'static str,
     pub exports: &'static [ExternDecl],
     pub type_exports: fn() -> Vec<ExternTypeDecl>,
     pub handlers: fn() -> HashMap<String, ExternHandler>,
+    pub init: Option<fn()>,
 }
 
 impl StdModule {
@@ -154,16 +161,20 @@ impl StdModule {
     }
 }
 
+pub fn init_std_modules(modules: &[StdModule]) {
+    for module in modules {
+        if let Some(init) = module.init {
+            init();
+        }
+    }
+}
+
 pub fn std_modules() -> Vec<StdModule> {
     vec![
         math::module(),
         maps::module(),
         linalg::module(),
         mem::module(),
+        time::module(),
     ]
 }
-
-mod linalg;
-mod maps;
-mod math;
-mod mem;

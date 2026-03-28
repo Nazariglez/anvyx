@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @contains: true
+
+import std.time;
+
+fn main() {
+    let a = time.elapsed();
+    let b = time.elapsed();
+    println(b >= a);
+}

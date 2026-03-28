@@ -19,5 +19,6 @@ pub fn module() -> StdModule {
         exports: ANVYX_EXPORTS,
         type_exports: anvyx_type_exports,
         handlers: anvyx_externs,
+        init: None,
     }
 }
