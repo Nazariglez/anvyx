@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @match: 13
+
+fn main() {
+    let x = 10;
+    let outer = |a: int| -> fn(int) -> int {
+        return |b| x + a + b;
+    };
+    let inner = outer(1);
+    println(inner(2));
+}

@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let f: fn(int) -> int = |x: int| x * 2;
+    let g: fn(int) -> int = |x: int| { return x * 2; };
+    let h: fn(int) -> int = |x: int| -> int { return x + 1; };
+    let add: fn(int, int) -> int = |a: int, b: int| a + b;
+    let print_it: fn(int) -> void = |x: int| { println(x); };
+}

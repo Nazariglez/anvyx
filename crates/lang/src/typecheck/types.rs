@@ -426,6 +426,18 @@ pub struct TypeChecker {
 
     /// Set of dataref type names that can form reference cycles
     pub(super) cycle_capable_types: HashSet<Ident>,
+
+    /// Stack of scope depths marking lambda boundaries
+    /// Each entry is the scope stack length when a lambda was entered
+    pub(super) lambda_boundaries: Vec<usize>,
+
+    /// Captures being collected for each active lambda (stack for nesting)
+    /// Each entry maps captured variable names to their types
+    pub(super) current_lambda_captures: Vec<HashMap<Ident, Type>>,
+
+    /// Final capture lists, keyed by the lambda expression's ExprId
+    /// Used by the lowering pass
+    pub lambda_captures: HashMap<ExprId, Vec<(Ident, Type)>>,
 }
 
 impl TypeChecker {
@@ -795,6 +807,47 @@ impl TypeChecker {
             }
         }
         None
+    }
+
+    pub(super) fn get_var_with_scope_depth(&self, name: Ident) -> Option<(usize, &VarInfo)> {
+        for (i, scope) in self.scopes.iter().enumerate().rev() {
+            if let Some(info) = scope.get(&name) {
+                return Some((i, info));
+            }
+        }
+        None
+    }
+
+    pub(super) fn is_captured_var(&self, name: Ident) -> bool {
+        self.current_lambda_captures
+            .last()
+            .is_some_and(|captures| captures.contains_key(&name))
+    }
+
+    pub(super) fn track_capture(&mut self, name: Ident) {
+        let Some(&boundary) = self.lambda_boundaries.last() else {
+            return;
+        };
+        let Some((scope_depth, ty)) = self
+            .get_var_with_scope_depth(name)
+            .map(|(depth, info)| (depth, info.ty.clone()))
+        else {
+            return;
+        };
+        if scope_depth < boundary {
+            // We add this capture to every enclosing lambda not just the one that mentions
+            // the variable directly. Nested closures need the whole chain to carry the
+            // value so the outer closure can pass it into the inner one
+            for (i, &lambda_boundary) in self.lambda_boundaries.iter().enumerate().rev() {
+                if scope_depth < lambda_boundary {
+                    if let Some(captures) = self.current_lambda_captures.get_mut(i) {
+                        captures.entry(name).or_insert(ty.clone());
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
     }
 
     pub(super) fn push_return_type(&mut self, ty: Type, span: Option<Span>) {
@@ -1325,6 +1378,7 @@ fn check_equatable(ty: &Type, tc: &TypeChecker) -> Result<(), String> {
         Type::Struct { name, type_args } => {
             check_struct_property(*name, type_args, tc, check_equatable)
         }
+        Type::Func { .. } => Ok(()),
         Type::DataRef { .. } => Ok(()),
         Type::List { elem } | Type::Array { elem, .. } => {
             check_equatable(elem, tc).map_err(|_| format!("element type '{elem}' is not equatable"))

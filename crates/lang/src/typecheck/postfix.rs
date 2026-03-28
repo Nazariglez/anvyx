@@ -651,6 +651,13 @@ fn handle_method_call_if_applicable(
         };
 
         let method_name = field_node.node.field;
+        let is_fn_field = struct_def
+            .fields
+            .iter()
+            .any(|f| f.name == method_name && f.ty.is_func());
+        if is_fn_field {
+            return Some(MethodCallOutcome::NotMethod);
+        }
         let method_ret = if struct_def.methods.contains_key(&method_name) {
             // Native method exists — instance or static, let existing path handle it
             check_instance_method_call(

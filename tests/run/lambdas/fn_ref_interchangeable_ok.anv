@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 4
+// 3
+// @match-end
+
+fn twice(x: int) -> int {
+    return x * 2;
+}
+
+fn main() {
+    let fns: [fn(int) -> int] = [twice, |x: int| x + 1];
+    for f in fns {
+        println(f(2));
+    }
+}

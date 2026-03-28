@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     ast::{self, ArrayLen, BinaryOp, Ident, Lit, Type, UnaryOp},
     builtin::Builtin,
@@ -8,9 +10,10 @@ use crate::{
 use internment::Intern;
 
 use super::{
-    FuncLower, LowerCtx, LowerError, alloc_assign_temp, extern_binary_op_key, extern_unary_op_key,
-    lower_block_to_target, lower_if_let, lower_match_stmts, lower_string_interp,
-    mangle_generic_name, resolve_enum_type_id, resolve_struct_type_id, resolve_variant_index,
+    FuncLower, LowerCtx, LowerError, alloc_and_bind, alloc_assign_temp, emit_counter_increment,
+    extern_binary_op_key, extern_unary_op_key, lower_block, lower_block_to_target, lower_if_let,
+    lower_match_stmts, lower_string_interp, mangle_generic_name, register_named_local,
+    resolve_enum_type_id, resolve_struct_type_id, resolve_variant_index,
 };
 
 fn lower_args(
@@ -56,12 +59,15 @@ pub(super) fn lower_expr(
                     ConstValue::String(s) => hir::ExprKind::String(s.clone()),
                     ConstValue::Nil => hir::ExprKind::Nil,
                 }
-            } else {
-                let local_id = *fc
-                    .local_map
-                    .get(name)
-                    .ok_or(LowerError::UnknownLocal { name: *name, span })?;
+            } else if let Some(&local_id) = fc.local_map.get(name) {
                 hir::ExprKind::Local(local_id)
+            } else if let Some(&func_id) = ctx.shared.funcs.get(name) {
+                hir::ExprKind::CreateClosure {
+                    func: func_id,
+                    captures: vec![],
+                }
+            } else {
+                return Err(LowerError::UnknownLocal { name: *name, span });
             }
         }
 
@@ -259,6 +265,10 @@ pub(super) fn lower_expr(
                 lowered.push(lower_expr(expr, ctx, fc, out)?);
             }
             hir::ExprKind::TupleLiteral { elements: lowered }
+        }
+
+        ast::ExprKind::Lambda(lambda) => {
+            return lower_lambda(lambda, ast_expr.node.id, ty, span, ctx, fc);
         }
 
         other => {
@@ -1095,8 +1105,137 @@ fn lower_call_expr(
     if let Some(expr) = try_lower_enum_constructor(c, &ty, span, ctx, fc, out)? {
         return Ok(expr);
     }
+    let is_named_call = match &c.node.func.node.kind {
+        ast::ExprKind::Ident(name) => {
+            ctx.shared.funcs.contains_key(name)
+                || ctx.shared.externs.contains_key(name)
+                || Builtin::from_name(name.0.as_ref()).is_some()
+                || ctx.shared.tcx.call_type_args(c.node.func.node.id).is_some()
+        }
+        ast::ExprKind::Field(_) => {
+            let field_ty = ctx.expr_type(c.node.func.node.id, span)?;
+            !field_ty.is_func()
+        }
+        _ => false,
+    };
+    if !is_named_call {
+        let callee_ty = ctx.expr_type(c.node.func.node.id, span)?;
+        if callee_ty.is_func() {
+            return lower_closure_call(c, ty, span, ctx, fc, out);
+        }
+    }
     let kind = lower_direct_call(c, span, ctx, fc, out)?;
     Ok(hir::Expr::new(ty, span, kind))
+}
+
+fn lower_closure_call(
+    c: &ast::CallNode,
+    ty: Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<hir::Expr, LowerError> {
+    let callee = lower_expr(&c.node.func, ctx, fc, out)?;
+    let args = lower_args(&c.node.args, ctx, fc, out)?;
+    Ok(hir::Expr::new(
+        ty,
+        span,
+        hir::ExprKind::CallClosure {
+            callee: Box::new(callee),
+            args,
+        },
+    ))
+}
+
+fn lower_lambda(
+    lambda: &ast::LambdaNode,
+    expr_id: ast::ExprId,
+    ty: Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &FuncLower,
+) -> Result<hir::Expr, LowerError> {
+    let (func_params, func_ret) = match &ty {
+        Type::Func { params, ret } => (params.clone(), (**ret).clone()),
+        _ => unreachable!("lambda must have Type::Func"),
+    };
+
+    let captures = ctx
+        .shared
+        .tcx
+        .lambda_captures
+        .get(&expr_id)
+        .cloned()
+        .unwrap_or_default();
+
+    let lambda_func_id = ctx.shared.alloc_func_id();
+
+    let mut lambda_fc = FuncLower {
+        locals: vec![],
+        local_map: HashMap::new(),
+        scope_log: vec![],
+    };
+
+    for (name, capture_ty) in &captures {
+        register_named_local(&mut lambda_fc, *name, capture_ty.clone());
+    }
+
+    for (i, param) in lambda.node.params.iter().enumerate() {
+        let param_ty = param.ty.clone().unwrap_or_else(|| func_params[i].clone());
+        register_named_local(&mut lambda_fc, param.name, param_ty);
+    }
+
+    let params_len = lambda_fc.locals.len() as u32;
+
+    let body = match &lambda.node.body.node.kind {
+        ast::ExprKind::Block(block_node) => {
+            lower_block(block_node, ctx, &mut lambda_fc, true, &func_ret)?
+        }
+        _ => {
+            let mut body_stmts = vec![];
+            let body_expr = lower_expr(&lambda.node.body, ctx, &mut lambda_fc, &mut body_stmts)?;
+            let stmt_kind = if !func_ret.is_void() {
+                hir::StmtKind::Return(Some(body_expr))
+            } else {
+                hir::StmtKind::Expr(body_expr)
+            };
+            body_stmts.push(hir::Stmt { span, kind: stmt_kind });
+            hir::Block { stmts: body_stmts }
+        }
+    };
+
+    let lambda_name = Ident(Intern::new(format!("__lambda_{}", lambda_func_id.0)));
+
+    ctx.shared.register_lambda_func(hir::Func {
+        id: lambda_func_id,
+        name: lambda_name,
+        locals: lambda_fc.locals,
+        params_len,
+        ret: func_ret,
+        body,
+        span,
+    });
+
+    let capture_exprs: Vec<hir::Expr> = captures
+        .iter()
+        .map(|(name, capture_ty)| {
+            let local_id = *fc
+                .local_map
+                .get(name)
+                .expect("captured variable must exist in enclosing scope");
+            hir::Expr::new(capture_ty.clone(), span, hir::ExprKind::Local(local_id))
+        })
+        .collect();
+
+    Ok(hir::Expr::new(
+        ty,
+        span,
+        hir::ExprKind::CreateClosure {
+            func: lambda_func_id,
+            captures: capture_exprs,
+        },
+    ))
 }
 
 fn lower_extend_call(
@@ -1143,6 +1282,715 @@ fn lower_extend_call(
             args,
         },
     ))
+}
+
+fn lower_map_desugar(
+    c: &ast::CallNode,
+    method: &str,
+    key_ty: &Type,
+    value_ty: &Type,
+    result_ty: &Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<Option<hir::Expr>, LowerError> {
+    let ast::ExprKind::Field(field) = &c.node.func.node.kind else {
+        unreachable!()
+    };
+    let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
+        unreachable!()
+    };
+
+    let map_ty = Type::Map {
+        key: Box::new(key_ty.clone()),
+        value: Box::new(value_ty.clone()),
+    };
+
+    let mark = fc.enter_scope();
+
+    let m_expr = lower_expr(&field.node.target, ctx, fc, out)?;
+    let m_local = alloc_and_bind(fc, span, out, map_ty.clone(), m_expr);
+
+    let len_expr = hir::Expr::new(
+        Type::Int,
+        span,
+        hir::ExprKind::MapLen {
+            map: Box::new(hir::Expr::local(map_ty.clone(), span, m_local)),
+        },
+    );
+    let len_local = alloc_and_bind(fc, span, out, Type::Int, len_expr);
+    let step_local = alloc_and_bind(fc, span, out, Type::Int, hir::Expr::int_lit(span, 1));
+    let i_local = alloc_and_bind(fc, span, out, Type::Int, hir::Expr::int_lit(span, 0));
+
+    let cond = hir::Expr::binary(
+        Type::Bool,
+        span,
+        BinaryOp::LessThan,
+        hir::Expr::local(Type::Int, span, i_local),
+        hir::Expr::local(Type::Int, span, len_local),
+    );
+
+    let mut body_stmts = vec![];
+
+    let entry_ty = Type::Tuple(vec![key_ty.clone(), value_ty.clone()]);
+
+    let make_entry_expr = || {
+        hir::Expr::new(
+            entry_ty.clone(),
+            span,
+            hir::ExprKind::MapEntryAt {
+                map: Box::new(hir::Expr::local(map_ty.clone(), span, m_local)),
+                index: Box::new(hir::Expr::local(Type::Int, span, i_local)),
+            },
+        )
+    };
+
+    let result_expr = match method {
+        "map_values" => {
+            let result_local = alloc_and_bind(
+                fc,
+                span,
+                out,
+                result_ty.clone(),
+                hir::Expr::new(result_ty.clone(), span, hir::ExprKind::MapLiteral { entries: vec![] }),
+            );
+            let entry_local =
+                alloc_and_bind(fc, span, &mut body_stmts, entry_ty.clone(), make_entry_expr());
+            let param_name = lambda.node.params[0].name;
+            let param_local = register_named_local(fc, param_name, value_ty.clone());
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let {
+                    local: param_local,
+                    init: hir::Expr::new(
+                        value_ty.clone(),
+                        span,
+                        hir::ExprKind::TupleIndex {
+                            tuple: Box::new(hir::Expr::local(entry_ty.clone(), span, entry_local)),
+                            index: 1,
+                        },
+                    ),
+                },
+            });
+            let new_value_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
+            let key_expr = hir::Expr::new(
+                key_ty.clone(),
+                span,
+                hir::ExprKind::TupleIndex {
+                    tuple: Box::new(hir::Expr::local(entry_ty.clone(), span, entry_local)),
+                    index: 0,
+                },
+            );
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Expr(hir::Expr::new(
+                    Type::Void,
+                    span,
+                    hir::ExprKind::CollectionMut {
+                        object: result_local,
+                        method: hir::CollectionMethod::MapInsert,
+                        args: vec![key_expr, new_value_expr],
+                    },
+                )),
+            });
+            hir::Expr::local(result_ty.clone(), span, result_local)
+        }
+        "filter" => {
+            let result_local = alloc_and_bind(
+                fc,
+                span,
+                out,
+                result_ty.clone(),
+                hir::Expr::new(result_ty.clone(), span, hir::ExprKind::MapLiteral { entries: vec![] }),
+            );
+            let entry_local =
+                alloc_and_bind(fc, span, &mut body_stmts, entry_ty.clone(), make_entry_expr());
+            let key_param_name = lambda.node.params[0].name;
+            let key_param_local = register_named_local(fc, key_param_name, key_ty.clone());
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let {
+                    local: key_param_local,
+                    init: hir::Expr::new(
+                        key_ty.clone(),
+                        span,
+                        hir::ExprKind::TupleIndex {
+                            tuple: Box::new(hir::Expr::local(entry_ty.clone(), span, entry_local)),
+                            index: 0,
+                        },
+                    ),
+                },
+            });
+            let value_param_name = lambda.node.params[1].name;
+            let value_param_local = register_named_local(fc, value_param_name, value_ty.clone());
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let {
+                    local: value_param_local,
+                    init: hir::Expr::new(
+                        value_ty.clone(),
+                        span,
+                        hir::ExprKind::TupleIndex {
+                            tuple: Box::new(hir::Expr::local(entry_ty.clone(), span, entry_local)),
+                            index: 1,
+                        },
+                    ),
+                },
+            });
+            let pred_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
+            let insert_stmt = hir::Stmt {
+                span,
+                kind: hir::StmtKind::Expr(hir::Expr::new(
+                    Type::Void,
+                    span,
+                    hir::ExprKind::CollectionMut {
+                        object: result_local,
+                        method: hir::CollectionMethod::MapInsert,
+                        args: vec![
+                            hir::Expr::local(key_ty.clone(), span, key_param_local),
+                            hir::Expr::local(value_ty.clone(), span, value_param_local),
+                        ],
+                    },
+                )),
+            };
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::If {
+                    cond: pred_expr,
+                    then_block: hir::Block { stmts: vec![insert_stmt] },
+                    else_block: None,
+                },
+            });
+            hir::Expr::local(result_ty.clone(), span, result_local)
+        }
+        _ => unreachable!(),
+    };
+
+    emit_counter_increment(
+        &mut body_stmts,
+        span,
+        i_local,
+        &Type::Int,
+        hir::Expr::local(Type::Int, span, step_local),
+        BinaryOp::Add,
+    );
+
+    out.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::While {
+            cond,
+            body: hir::Block { stmts: body_stmts },
+        },
+    });
+
+    fc.leave_scope(mark);
+
+    Ok(Some(result_expr))
+}
+
+fn lower_list_desugar(
+    c: &ast::CallNode,
+    method: &str,
+    elem_ty: &Type,
+    result_ty: &Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<Option<hir::Expr>, LowerError> {
+    let ast::ExprKind::Field(field) = &c.node.func.node.kind else {
+        unreachable!()
+    };
+
+    let collection_ty = Type::List {
+        elem: Box::new(elem_ty.clone()),
+    };
+
+    let mark = fc.enter_scope();
+
+    let xs_expr = lower_expr(&field.node.target, ctx, fc, out)?;
+    let xs_local = alloc_and_bind(fc, span, out, collection_ty.clone(), xs_expr);
+
+    let len_expr = hir::Expr::new(
+        Type::Int,
+        span,
+        hir::ExprKind::CollectionLen {
+            collection: Box::new(hir::Expr::local(collection_ty.clone(), span, xs_local)),
+        },
+    );
+    let len_local = alloc_and_bind(fc, span, out, Type::Int, len_expr);
+    let step_local = alloc_and_bind(fc, span, out, Type::Int, hir::Expr::int_lit(span, 1));
+    let i_local = alloc_and_bind(fc, span, out, Type::Int, hir::Expr::int_lit(span, 0));
+
+    let cond = hir::Expr::binary(
+        Type::Bool,
+        span,
+        BinaryOp::LessThan,
+        hir::Expr::local(Type::Int, span, i_local),
+        hir::Expr::local(Type::Int, span, len_local),
+    );
+
+    let mut body_stmts = vec![];
+
+    let make_elem_expr = || {
+        hir::Expr::new(
+            elem_ty.clone(),
+            span,
+            hir::ExprKind::IndexGet {
+                target: Box::new(hir::Expr::local(collection_ty.clone(), span, xs_local)),
+                index: Box::new(hir::Expr::local(Type::Int, span, i_local)),
+            },
+        )
+    };
+
+    let result_expr = match method {
+        "map" => {
+            let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
+                unreachable!()
+            };
+            let result_local = alloc_and_bind(
+                fc,
+                span,
+                out,
+                result_ty.clone(),
+                hir::Expr::new(result_ty.clone(), span, hir::ExprKind::ListLiteral { elements: vec![] }),
+            );
+            let param_name = lambda.node.params[0].name;
+            let param_local = register_named_local(fc, param_name, elem_ty.clone());
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+            });
+            let body_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Expr(hir::Expr::new(
+                    Type::Void,
+                    span,
+                    hir::ExprKind::CollectionMut {
+                        object: result_local,
+                        method: hir::CollectionMethod::ListPush,
+                        args: vec![body_expr],
+                    },
+                )),
+            });
+            hir::Expr::local(result_ty.clone(), span, result_local)
+        }
+        "filter" => {
+            let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
+                unreachable!()
+            };
+            let result_local = alloc_and_bind(
+                fc,
+                span,
+                out,
+                result_ty.clone(),
+                hir::Expr::new(result_ty.clone(), span, hir::ExprKind::ListLiteral { elements: vec![] }),
+            );
+            let param_name = lambda.node.params[0].name;
+            let param_local = register_named_local(fc, param_name, elem_ty.clone());
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+            });
+            let pred_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
+            let push_stmt = hir::Stmt {
+                span,
+                kind: hir::StmtKind::Expr(hir::Expr::new(
+                    Type::Void,
+                    span,
+                    hir::ExprKind::CollectionMut {
+                        object: result_local,
+                        method: hir::CollectionMethod::ListPush,
+                        args: vec![hir::Expr::local(elem_ty.clone(), span, param_local)],
+                    },
+                )),
+            };
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::If {
+                    cond: pred_expr,
+                    then_block: hir::Block { stmts: vec![push_stmt] },
+                    else_block: None,
+                },
+            });
+            hir::Expr::local(result_ty.clone(), span, result_local)
+        }
+        "for_each" => {
+            let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
+                unreachable!()
+            };
+            let param_name = lambda.node.params[0].name;
+            let param_local = register_named_local(fc, param_name, elem_ty.clone());
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+            });
+            let body_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Expr(body_expr),
+            });
+            hir::Expr::new(Type::Void, span, hir::ExprKind::Nil)
+        }
+        "any" => {
+            let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
+                unreachable!()
+            };
+            let result_local = alloc_and_bind(
+                fc,
+                span,
+                out,
+                Type::Bool,
+                hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(false)),
+            );
+            let param_name = lambda.node.params[0].name;
+            let param_local = register_named_local(fc, param_name, elem_ty.clone());
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+            });
+            let pred_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::If {
+                    cond: pred_expr,
+                    then_block: hir::Block {
+                        stmts: vec![
+                            hir::Stmt {
+                                span,
+                                kind: hir::StmtKind::Assign {
+                                    local: result_local,
+                                    value: hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(true)),
+                                },
+                            },
+                            hir::Stmt { span, kind: hir::StmtKind::Break },
+                        ],
+                    },
+                    else_block: None,
+                },
+            });
+            hir::Expr::local(Type::Bool, span, result_local)
+        }
+        "all" => {
+            let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
+                unreachable!()
+            };
+            let result_local = alloc_and_bind(
+                fc,
+                span,
+                out,
+                Type::Bool,
+                hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(true)),
+            );
+            let param_name = lambda.node.params[0].name;
+            let param_local = register_named_local(fc, param_name, elem_ty.clone());
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+            });
+            let pred_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
+            let negated = hir::Expr::new(
+                Type::Bool,
+                span,
+                hir::ExprKind::Unary { op: UnaryOp::Not, expr: Box::new(pred_expr) },
+            );
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::If {
+                    cond: negated,
+                    then_block: hir::Block {
+                        stmts: vec![
+                            hir::Stmt {
+                                span,
+                                kind: hir::StmtKind::Assign {
+                                    local: result_local,
+                                    value: hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(false)),
+                                },
+                            },
+                            hir::Stmt { span, kind: hir::StmtKind::Break },
+                        ],
+                    },
+                    else_block: None,
+                },
+            });
+            hir::Expr::local(Type::Bool, span, result_local)
+        }
+        "find" => {
+            let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
+                unreachable!()
+            };
+            let opt_ty = result_ty.clone();
+            let result_local = alloc_and_bind(
+                fc,
+                span,
+                out,
+                opt_ty.clone(),
+                hir::Expr::new(opt_ty.clone(), span, hir::ExprKind::Nil),
+            );
+            let param_name = lambda.node.params[0].name;
+            let param_local = register_named_local(fc, param_name, elem_ty.clone());
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+            });
+            let pred_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
+            let option_name = Ident(Intern::new("Option".to_string()));
+            let some_name = Ident(Intern::new("Some".to_string()));
+            let type_id = resolve_enum_type_id(ctx, span, option_name)?;
+            let variant = resolve_variant_index(ctx, span, option_name, some_name)?;
+            let some_expr = hir::Expr::new(
+                opt_ty.clone(),
+                span,
+                hir::ExprKind::EnumLiteral {
+                    type_id,
+                    variant,
+                    fields: vec![hir::Expr::local(elem_ty.clone(), span, param_local)],
+                },
+            );
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::If {
+                    cond: pred_expr,
+                    then_block: hir::Block {
+                        stmts: vec![
+                            hir::Stmt {
+                                span,
+                                kind: hir::StmtKind::Assign { local: result_local, value: some_expr },
+                            },
+                            hir::Stmt { span, kind: hir::StmtKind::Break },
+                        ],
+                    },
+                    else_block: None,
+                },
+            });
+            hir::Expr::local(opt_ty, span, result_local)
+        }
+        "find_index" => {
+            let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
+                unreachable!()
+            };
+            let opt_ty = result_ty.clone();
+            let result_local = alloc_and_bind(
+                fc,
+                span,
+                out,
+                opt_ty.clone(),
+                hir::Expr::new(opt_ty.clone(), span, hir::ExprKind::Nil),
+            );
+            let param_name = lambda.node.params[0].name;
+            let param_local = register_named_local(fc, param_name, elem_ty.clone());
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+            });
+            let pred_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
+            let option_name = Ident(Intern::new("Option".to_string()));
+            let some_name = Ident(Intern::new("Some".to_string()));
+            let type_id = resolve_enum_type_id(ctx, span, option_name)?;
+            let variant = resolve_variant_index(ctx, span, option_name, some_name)?;
+            let some_expr = hir::Expr::new(
+                opt_ty.clone(),
+                span,
+                hir::ExprKind::EnumLiteral {
+                    type_id,
+                    variant,
+                    fields: vec![hir::Expr::local(Type::Int, span, i_local)],
+                },
+            );
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::If {
+                    cond: pred_expr,
+                    then_block: hir::Block {
+                        stmts: vec![
+                            hir::Stmt {
+                                span,
+                                kind: hir::StmtKind::Assign { local: result_local, value: some_expr },
+                            },
+                            hir::Stmt { span, kind: hir::StmtKind::Break },
+                        ],
+                    },
+                    else_block: None,
+                },
+            });
+            hir::Expr::local(opt_ty, span, result_local)
+        }
+        "count" => {
+            let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
+                unreachable!()
+            };
+            let result_local = alloc_and_bind(
+                fc,
+                span,
+                out,
+                Type::Int,
+                hir::Expr::int_lit(span, 0),
+            );
+            let param_name = lambda.node.params[0].name;
+            let param_local = register_named_local(fc, param_name, elem_ty.clone());
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+            });
+            let pred_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
+            let increment = hir::Expr::binary(
+                Type::Int,
+                span,
+                BinaryOp::Add,
+                hir::Expr::local(Type::Int, span, result_local),
+                hir::Expr::int_lit(span, 1),
+            );
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::If {
+                    cond: pred_expr,
+                    then_block: hir::Block {
+                        stmts: vec![hir::Stmt {
+                            span,
+                            kind: hir::StmtKind::Assign { local: result_local, value: increment },
+                        }],
+                    },
+                    else_block: None,
+                },
+            });
+            hir::Expr::local(Type::Int, span, result_local)
+        }
+        "fold" => {
+            let ast::ExprKind::Lambda(lambda) = &c.node.args[1].node.kind else {
+                unreachable!()
+            };
+            let init_expr = lower_expr(&c.node.args[0], ctx, fc, out)?;
+            let acc_local = alloc_and_bind(fc, span, out, result_ty.clone(), init_expr);
+            let acc_param_name = lambda.node.params[0].name;
+            fc.bind_local(acc_param_name, acc_local);
+            let elem_param_name = lambda.node.params[1].name;
+            let param_local = register_named_local(fc, elem_param_name, elem_ty.clone());
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let { local: param_local, init: make_elem_expr() },
+            });
+            let body_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Assign { local: acc_local, value: body_expr },
+            });
+            hir::Expr::local(result_ty.clone(), span, acc_local)
+        }
+        _ => unreachable!(),
+    };
+
+    emit_counter_increment(
+        &mut body_stmts,
+        span,
+        i_local,
+        &Type::Int,
+        hir::Expr::local(Type::Int, span, step_local),
+        BinaryOp::Add,
+    );
+
+    out.push(hir::Stmt {
+        span,
+        kind: hir::StmtKind::While {
+            cond,
+            body: hir::Block { stmts: body_stmts },
+        },
+    });
+
+    fc.leave_scope(mark);
+
+    Ok(Some(result_expr))
+}
+
+fn lower_sort_by(
+    c: &ast::CallNode,
+    elem_ty: &Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+) -> Result<Option<hir::Expr>, LowerError> {
+    let ast::ExprKind::Field(field) = &c.node.func.node.kind else {
+        return Ok(None);
+    };
+
+    // Receiver must be a simple local identifier for in-place mutation.
+    let ast::ExprKind::Ident(root_name) = &field.node.target.node.kind else {
+        return Ok(None);
+    };
+
+    let Some(&collection) = fc.local_map.get(root_name) else {
+        return Ok(None);
+    };
+
+    let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
+        unreachable!("sort_by desugaring requires lambda arg")
+    };
+
+    let lambda_expr_id = c.node.args[0].node.id;
+    let captures = ctx
+        .shared
+        .tcx
+        .lambda_captures
+        .get(&lambda_expr_id)
+        .cloned()
+        .unwrap_or_default();
+
+    // Captures not supported via the opcode path — no closure-based sort infrastructure.
+    if !captures.is_empty() {
+        return Ok(None);
+    }
+
+    let lambda_func_id = ctx.shared.alloc_func_id();
+
+    let mut lambda_fc = FuncLower {
+        locals: vec![],
+        local_map: HashMap::new(),
+        scope_log: vec![],
+    };
+
+    for param in &lambda.node.params {
+        let param_ty = param.ty.clone().unwrap_or_else(|| elem_ty.clone());
+        register_named_local(&mut lambda_fc, param.name, param_ty);
+    }
+
+    let params_len = lambda_fc.locals.len() as u32;
+
+    let body = match &lambda.node.body.node.kind {
+        ast::ExprKind::Block(block_node) => {
+            lower_block(block_node, ctx, &mut lambda_fc, true, &Type::Bool)?
+        }
+        _ => {
+            let mut body_stmts = vec![];
+            let body_expr = lower_expr(&lambda.node.body, ctx, &mut lambda_fc, &mut body_stmts)?;
+            body_stmts.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Return(Some(body_expr)),
+            });
+            hir::Block { stmts: body_stmts }
+        }
+    };
+
+    let lambda_name = Ident(Intern::new(format!("__sort_cmp_{}", lambda_func_id.0)));
+
+    ctx.shared.register_lambda_func(hir::Func {
+        id: lambda_func_id,
+        name: lambda_name,
+        locals: lambda_fc.locals,
+        params_len,
+        ret: Type::Bool,
+        body,
+        span,
+    });
+
+    Ok(Some(hir::Expr::new(
+        Type::Void,
+        span,
+        hir::ExprKind::SortBy {
+            collection,
+            comparator: lambda_func_id,
+        },
+    )))
 }
 
 fn try_lower_method_call(
@@ -1212,6 +2060,39 @@ fn try_lower_method_call(
 
     let method_name = field.node.field;
     let target_ty = ctx.expr_type(field.node.target.node.id, span)?;
+
+    if let Type::List { elem } = &target_ty {
+        let method_str = method_name.0.as_ref().as_str();
+
+        let sort_by_lambda = method_str == "sort_by"
+            && c.node.args.len() == 1
+            && matches!(c.node.args[0].node.kind, ast::ExprKind::Lambda(_));
+        if sort_by_lambda {
+            return lower_sort_by(c, elem, span, ctx, fc);
+        }
+
+        let single_lambda = matches!(
+            method_str,
+            "map" | "filter" | "for_each" | "any" | "all" | "find" | "find_index" | "count"
+        ) && c.node.args.len() == 1
+            && matches!(c.node.args[0].node.kind, ast::ExprKind::Lambda(_));
+        let fold_lambda = method_str == "fold"
+            && c.node.args.len() == 2
+            && matches!(c.node.args[1].node.kind, ast::ExprKind::Lambda(_));
+        if single_lambda || fold_lambda {
+            return lower_list_desugar(c, method_str, elem, ty, span, ctx, fc, out);
+        }
+    }
+
+    if let Type::Map { key, value } = &target_ty {
+        let method_str = method_name.0.as_ref().as_str();
+        if matches!(method_str, "map_values" | "filter")
+            && c.node.args.len() == 1
+            && matches!(c.node.args[0].node.kind, ast::ExprKind::Lambda(_))
+        {
+            return lower_map_desugar(c, method_str, key, value, ty, span, ctx, fc, out);
+        }
+    }
 
     if let Type::Struct {
         name: struct_name, ..

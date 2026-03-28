@@ -190,6 +190,16 @@ pub enum ExprKind {
         args: Vec<Expr>,
     },
 
+    CreateClosure {
+        func: FuncId,
+        captures: Vec<Expr>,
+    },
+
+    CallClosure {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
+
     StructLiteral {
         type_id: u32,
         fields: Vec<Expr>, // in declaration order
@@ -264,6 +274,11 @@ pub enum ExprKind {
         object: LocalId,
         method: CollectionMethod,
         args: Vec<Expr>,
+    },
+
+    SortBy {
+        collection: LocalId,
+        comparator: FuncId,
     },
 }
 

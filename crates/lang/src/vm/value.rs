@@ -117,6 +117,12 @@ pub struct EnumData {
     pub fields: Vec<Value>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ClosureData {
+    pub fn_id: u16,
+    pub captures: Vec<Value>,
+}
+
 pub struct ExternHandleData {
     pub id: u64,
     pub drop_fn: fn(u64),
@@ -186,6 +192,7 @@ pub enum Value {
     Enum(ManagedRc<EnumData>),
     ExternHandle(ManagedRc<ExternHandleData>),
     DataRef(ManagedRc<StructData>),
+    Closure(ManagedRc<ClosureData>),
 }
 
 impl PartialEq for Value {
@@ -205,6 +212,7 @@ impl PartialEq for Value {
             (Value::Enum(a), Value::Enum(b)) => a == b,
             (Value::ExternHandle(a), Value::ExternHandle(b)) => a == b,
             (Value::DataRef(a), Value::DataRef(b)) => ManagedRc::ptr_eq(a, b),
+            (Value::Closure(a), Value::Closure(b)) => ManagedRc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -232,6 +240,7 @@ impl Hash for Value {
             Value::Enum(e) => e.hash(state),
             Value::ExternHandle(data) => data.hash(state),
             Value::DataRef(s) => (s.as_ptr() as usize).hash(state),
+            Value::Closure(c) => (c.as_ptr() as usize).hash(state),
         }
     }
 }
@@ -312,6 +321,7 @@ impl fmt::Display for Value {
             Value::Enum(e) => write!(f, "<enum:{}:{}>", e.type_id, e.variant),
             Value::ExternHandle(data) => write!(f, "<extern:{}>", data.id),
             Value::DataRef(s) => write!(f, "<dataref:{}>", s.type_id),
+            Value::Closure(_) => write!(f, "<fn>"),
         }
     }
 }
@@ -336,7 +346,7 @@ impl fmt::Display for RuntimeError {
     }
 }
 
-fn type_name(v: &Value) -> &'static str {
+pub fn type_name(v: &Value) -> &'static str {
     match v {
         Value::Int(_) => "int",
         Value::Float(_) => "float",
@@ -352,6 +362,7 @@ fn type_name(v: &Value) -> &'static str {
         Value::Enum(_) => "enum",
         Value::ExternHandle(_) => "extern handle",
         Value::DataRef(_) => "dataref",
+        Value::Closure(_) => "fn",
     }
 }
 

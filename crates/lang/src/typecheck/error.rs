@@ -419,4 +419,19 @@ pub enum TypeErrKind {
     ExtendTypeParamsOnNonGeneric {
         ty_name: Ident,
     },
+
+    CannotInferLambdaParam {
+        name: Ident,
+    },
+    MutateCapturedVar {
+        name: Ident,
+    },
+    LambdaParamCountMismatch {
+        expected: usize,
+        found: usize,
+    },
+
+    NotYetSupported {
+        feature: String,
+    },
 }

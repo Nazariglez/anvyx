@@ -8,9 +8,9 @@ use super::compiler::CompiledProgram;
 use super::managed_rc::ManagedRc;
 use super::meta::VariantMetaKind;
 use super::value::{
-    EnumData, MapStorage, RuntimeError, StructData, Value, value_add, value_and, value_div,
-    value_eq, value_gt, value_gte, value_lt, value_lte, value_mul, value_negate, value_neq,
-    value_not, value_or, value_rem, value_sub, value_xor,
+    ClosureData, EnumData, MapStorage, RuntimeError, StructData, Value, type_name, value_add,
+    value_and, value_div, value_eq, value_gt, value_gte, value_lt, value_lte, value_mul,
+    value_negate, value_neq, value_not, value_or, value_rem, value_sub, value_xor,
 };
 
 pub type ExternHandler = Box<dyn Fn(Vec<Value>) -> Result<Value, RuntimeError>>;
@@ -288,6 +288,62 @@ impl<'a> VM<'a> {
                         }
                     };
                     self.push(result);
+                }
+
+                Op::CreateClosure(fn_id, capture_count) => {
+                    let count = capture_count as usize;
+                    let start = self.stack.len() - count;
+                    let captures: Vec<Value> = self.stack.drain(start..).collect();
+                    let data = ClosureData { fn_id, captures };
+                    self.push(Value::Closure(ManagedRc::new(data)));
+                }
+
+                Op::CallClosure(arg_count) => {
+                    let n_args = arg_count as usize;
+
+                    let args_start = self.stack.len() - n_args;
+                    let args: Vec<Value> = self.stack.drain(args_start..).collect();
+
+                    let closure_val = self.pop();
+                    let closure = match closure_val {
+                        Value::Closure(c) => c,
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "type error: cannot call {}",
+                                type_name(&other)
+                            )));
+                        }
+                    };
+
+                    let callee_idx = closure.fn_id as usize;
+                    let (local_count, params_count) = {
+                        let callee = &self.program.chunks[callee_idx];
+                        (callee.local_count as usize, callee.params_count as usize)
+                    };
+
+                    let new_stack_base = self.stack.len();
+
+                    let captures: Vec<Value> = closure.captures.clone();
+                    drop(closure);
+
+                    for capture in captures {
+                        self.push(capture);
+                    }
+
+                    for arg in args {
+                        self.push(arg);
+                    }
+
+                    let extra_locals = local_count - params_count;
+                    for _ in 0..extra_locals {
+                        self.push(Value::Nil);
+                    }
+
+                    self.frames.push(CallFrame {
+                        chunk_idx: callee_idx,
+                        ip: 0,
+                        stack_base: new_stack_base,
+                    });
                 }
 
                 Op::Return => {
@@ -619,6 +675,50 @@ impl<'a> VM<'a> {
                         other => {
                             return Err(RuntimeError::new(format!(
                                 "MapRemove on non-map value: {other}"
+                            )));
+                        }
+                    }
+                }
+
+                Op::ListSortBy(comparator_idx) => {
+                    let comparator_idx = comparator_idx as usize;
+                    let collection = self.pop();
+                    match collection {
+                        Value::List(mut l) => {
+                            let items = ManagedRc::make_mut(&mut l);
+                            let len = items.len();
+                            // insertion sort, stable, sequential, allows re-entrant
+                            // call_function between comparisons without borrow conflicts
+                            for i in 1..len {
+                                let mut j = i;
+                                while j > 0 {
+                                    let a = items[j - 1].clone();
+                                    let b = items[j].clone();
+                                    let result = self.call_function(comparator_idx, vec![a, b])?;
+                                    let is_ordered = match result {
+                                        Value::Bool(b) => b,
+                                        _ => {
+                                            return Err(RuntimeError::new(
+                                                "sort_by comparator must return bool",
+                                            ));
+                                        }
+                                    };
+                                    if is_ordered {
+                                        break;
+                                    }
+                                    items.swap(j - 1, j);
+                                    j -= 1;
+                                }
+                            }
+                            // push nil as void result, then the sorted list, matches the
+                            // collectionmut stack protocol, setlocal consumes the list and
+                            // stmt::expr's pop consumes the nil
+                            self.push(Value::Nil);
+                            self.push(Value::List(l));
+                        }
+                        other => {
+                            return Err(RuntimeError::new(format!(
+                                "ListSortBy on non-list value: {other}"
                             )));
                         }
                     }

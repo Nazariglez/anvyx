@@ -366,11 +366,71 @@ fn string_interp<'src>(
         .boxed()
 }
 
+fn lambda_expr<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let pipe = select! { (Token::Op(Op::Pipe), _) => () };
+    let or_op = select! { (Token::Op(Op::Or), _) => () };
+    let comma = select! { (Token::Comma, _) => () };
+    let colon = select! { (Token::Colon, _) => () };
+    let thin_arrow = select! { (Token::Op(Op::ThinArrow), _) => () };
+
+    let lambda_param = identifier()
+        .then(colon.ignore_then(type_ident()).or_not())
+        .map(|(name, ty)| ast::LambdaParam { name, ty });
+
+    // |param, param: Type| or ||
+    let with_params = pipe
+        .ignore_then(
+            lambda_param
+                .separated_by(comma)
+                .allow_trailing()
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(pipe);
+
+    let zero_params = or_op.map(|_| vec![]);
+
+    let params = choice((zero_params, with_params));
+
+    let ret_type = thin_arrow.ignore_then(type_ident()).or_not();
+
+    let block_body = block_stmt(stmt, expr.clone()).map_with(|block_node, e| {
+        let span = block_node.span;
+        let id = e.state().new_expr_id();
+        let block_expr = ast::Expr::new(ast::ExprKind::Block(block_node), id);
+        Spanned::new(block_expr, span)
+    });
+
+    let body = choice((block_body, expr));
+
+    params
+        .then(ret_type)
+        .then(body)
+        .map_with(|((params, ret_type), body), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let id = e.state().new_expr_id();
+            let lambda = ast::Lambda {
+                params,
+                ret_type,
+                body: Box::new(body),
+            };
+            let lambda_node = Spanned::new(lambda, span);
+            let expr = ast::Expr::new(ast::ExprKind::Lambda(lambda_node), id);
+            Spanned::new(expr, span)
+        })
+        .labelled("lambda")
+        .boxed()
+}
+
 fn atom_expr<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
     expr: impl AnvParser<'src, ast::ExprNode>,
 ) -> BoxedParser<'src, ast::ExprNode> {
     choice((
+        lambda_expr(stmt.clone(), expr.clone()),
         string_interp(expr.clone()),
         literal().map_with(|lit, e| {
             let s = e.span();

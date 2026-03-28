@@ -1,0 +1,26 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 4
+// 3
+// 6
+// @match-end
+
+fn twice(x: int) -> int {
+    return x * 2;
+}
+
+fn inc(x: int) -> int {
+    return x + 1;
+}
+
+fn triple(x: int) -> int {
+    return x * 3;
+}
+
+fn main() {
+    let fns: [fn(int) -> int] = [twice, inc, triple];
+    for f in fns {
+        println(f(2));
+    }
+}

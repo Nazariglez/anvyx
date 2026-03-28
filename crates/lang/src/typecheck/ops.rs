@@ -370,6 +370,24 @@ pub(super) fn check_assign(
         return Type::Infer;
     }
 
+    if let Some(root) = root_ident(&assign.node.target) {
+        type_checker.track_capture(root);
+        if type_checker.is_captured_var(root) {
+            let is_field_access = !matches!(assign.node.target.node.kind, ExprKind::Ident(_));
+            let root_is_dataref = type_checker
+                .get_var(root)
+                .is_some_and(|info| matches!(info.ty, Type::DataRef { .. }));
+
+            if !(is_field_access && root_is_dataref) {
+                errors.push(TypeErr::new(
+                    assign.span,
+                    TypeErrKind::MutateCapturedVar { name: root },
+                ));
+                return Type::Infer;
+            }
+        }
+    }
+
     if let Some(error) = immutable_assignment_error(assign, type_checker) {
         errors.push(error);
         return Type::Infer;

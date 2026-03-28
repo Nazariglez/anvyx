@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 10
+// 11
+// 10
+// @match-end
+
+fn main() {
+    let n = 10;
+    let f = || n;
+    let g = || n + 1;
+    println(f());   // 10
+    println(g());   // 11, calling g does not affect f's capture
+    println(f());   // 10
+}

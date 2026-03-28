@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @match: 10
+
+fn twice(x: int) -> int {
+    return x * 2;
+}
+
+fn main() {
+    let f = twice;
+    println(f(5));
+}

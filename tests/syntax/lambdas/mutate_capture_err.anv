@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: cannot mutate captured variable
+
+fn main() {
+    var x = 1;
+    let f = |y: int| -> void { x += y; };
+}

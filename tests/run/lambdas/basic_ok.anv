@@ -1,0 +1,8 @@
+// @mode: run
+// @expect: success
+// @match: 10
+
+fn main() {
+    let f = |x: int| x * 2;
+    println(f(5));
+}

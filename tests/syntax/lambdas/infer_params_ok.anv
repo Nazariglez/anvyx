@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+fn apply(f: fn(int) -> int, x: int) -> int {
+    return f(x);
+}
+
+fn main() {
+    apply(|x| x * 2, 5);
+    let f: fn(int) -> int = |x| x + 1;
+    let g: fn(int, int) -> int = |a, b| a + b;
+}

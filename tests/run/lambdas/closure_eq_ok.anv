@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// true
+// false
+// true
+// @match-end
+
+fn main() {
+    let f = || 1;
+    let g = f;
+    println(f == g);
+    let h = || 1;
+    println(f == h);
+    println(f != h);
+}

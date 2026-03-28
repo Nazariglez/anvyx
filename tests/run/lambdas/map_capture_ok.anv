@@ -1,0 +1,10 @@
+// @mode: run
+// @expect: success
+// @match: [3, 6, 9]
+
+fn main() {
+    let xs: [int] = [1, 2, 3];
+    let factor = 3;
+    let r = xs.map(|x| x * factor);
+    println(r);
+}

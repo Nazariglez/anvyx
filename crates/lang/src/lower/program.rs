@@ -1,3 +1,4 @@
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 use internment::Intern;
@@ -163,6 +164,8 @@ pub fn lower_program(
         externs: HashMap::new(),
         struct_type_ids,
         enum_type_ids,
+        next_func_id: Cell::new(0),
+        lambda_funcs: RefCell::new(vec![]),
     };
 
     let mut func_nodes: Vec<&ast::FuncNode> = vec![];
@@ -345,6 +348,7 @@ pub fn lower_program(
         }
     }
 
+    shared.next_func_id.set(next_func_id);
     let shared = shared;
 
     let ctx = LowerCtx {
@@ -629,6 +633,7 @@ pub fn lower_program(
         });
     }
 
+    funcs.extend(shared.lambda_funcs.borrow_mut().drain(..));
     funcs.sort_by_key(|f| f.id.0);
 
     let mut program = hir::Program {

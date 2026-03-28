@@ -61,6 +61,11 @@ fn neutralize_datarefs(val: &mut Value) {
                 neutralize_datarefs(field);
             }
         }
+        Value::Closure(c) => {
+            for capture in &mut c.force_mut().captures {
+                neutralize_datarefs(capture);
+            }
+        }
         _ => {}
     }
 }
@@ -87,6 +92,11 @@ fn visit_value_for_datarefs(val: &Value, f: &mut dyn FnMut(NonNull<RcHeader>)) {
         Value::Struct(s) => {
             for field in &s.fields {
                 visit_value_for_datarefs(field, f);
+            }
+        }
+        Value::Closure(c) => {
+            for capture in &c.captures {
+                visit_value_for_datarefs(capture, f);
             }
         }
         _ => {}

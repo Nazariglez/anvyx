@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: parameter count mismatch
+
+fn main() {
+    let f: fn(int) -> int = |a: int, b: int| a + b;
+}

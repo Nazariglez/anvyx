@@ -111,7 +111,7 @@ fn test_eq_struct_with_float_fields_ok() {
     assert_expr_type(&tcx, eq_id, Type::Bool);
 }
 
-// ---- non-equatable: function types ----
+// ---- equatable: function types (identity equality) ----
 
 #[test]
 fn test_eq_fn_type_errors() {
@@ -120,7 +120,7 @@ fn test_eq_fn_type_errors() {
     // fn foo() -> int { 0 }
     // fn bar() -> int { 1 }
     // let a = foo;  let b = bar;
-    // a == b  ->  error: NotEquatable
+    // a == b  ->  bool (identity equality)
     let foo_decl = fn_decl(
         "foo",
         vec![],
@@ -140,6 +140,7 @@ fn test_eq_fn_type_errors() {
     let a_binding = let_binding("a", Some(fn_ty.clone()), ident_expr("foo"));
     let b_binding = let_binding("b", Some(fn_ty), ident_expr("bar"));
     let eq = binary_expr(ident_expr("a"), BinaryOp::Eq, ident_expr("b"));
+    let eq_id = get_expr_id(&eq);
     let prog = program(vec![
         foo_decl,
         bar_decl,
@@ -147,15 +148,8 @@ fn test_eq_fn_type_errors() {
         b_binding,
         super::helpers::expr_stmt(eq),
     ]);
-    let errors = run_err(prog);
-    assert!(!errors.is_empty());
-    assert!(
-        errors
-            .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::NotEquatable { .. })),
-        "Expected NotEquatable, got: {:?}",
-        errors
-    );
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, eq_id, Type::Bool);
 }
 
 // ---- equatable: lists ----
@@ -217,14 +211,14 @@ fn test_eq_map_ok() {
     assert_expr_type(&tcx, eq_id, Type::Bool);
 }
 
-// ---- non-equatable: struct with non-equatable field ----
+// ---- equatable: struct with fn field (identity equality on fn fields) ----
 
 #[test]
 fn test_eq_struct_with_fn_field_errors() {
     reset_expr_ids();
 
     // struct Handler { callback: fn() -> int }
-    // Handler is not equatable because its field is a function
+    // Handler is equatable because fn fields use identity equality
     let fn_ty = Type::Func {
         params: vec![],
         ret: Type::Int.boxed(),
@@ -248,6 +242,7 @@ fn test_eq_struct_with_fn_field_errors() {
         struct_literal_expr("Handler", vec![("callback", ident_expr("foo"))]),
     );
     let eq = binary_expr(ident_expr("a"), BinaryOp::Eq, ident_expr("b"));
+    let eq_id = get_expr_id(&eq);
     let prog = program(vec![
         handler_decl,
         foo_decl,
@@ -255,15 +250,8 @@ fn test_eq_struct_with_fn_field_errors() {
         b_binding,
         super::helpers::expr_stmt(eq),
     ]);
-    let errors = run_err(prog);
-    assert!(!errors.is_empty());
-    assert!(
-        errors
-            .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::NotEquatable { .. })),
-        "Expected NotEquatable, got: {:?}",
-        errors
-    );
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, eq_id, Type::Bool);
 }
 
 // ---- enum equality ----
@@ -327,7 +315,7 @@ fn test_eq_enum_fn_payload_err() {
     reset_expr_ids();
     // fn my_fn() -> void {}
     // enum Foo { A(fn() -> void) }
-    // let a = Foo.A(my_fn); let b = Foo.A(my_fn); a == b  ->  NotEquatable
+    // let a = Foo.A(my_fn); let b = Foo.A(my_fn); a == b  ->  bool (identity equality)
     let my_fn_decl = fn_decl("my_fn", vec![], Type::Void, vec![]);
     let foo_decl = enum_decl(
         "Foo",
@@ -350,6 +338,7 @@ fn test_eq_enum_fn_payload_err() {
     let a_binding = let_binding("a", None, a_val);
     let b_binding = let_binding("b", None, b_val);
     let eq = binary_expr(ident_expr("a"), BinaryOp::Eq, ident_expr("b"));
+    let eq_id = get_expr_id(&eq);
     let prog = program(vec![
         my_fn_decl,
         foo_decl,
@@ -357,15 +346,8 @@ fn test_eq_enum_fn_payload_err() {
         b_binding,
         super::helpers::expr_stmt(eq),
     ]);
-    let errors = run_err(prog);
-    assert!(!errors.is_empty());
-    assert!(
-        errors
-            .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::NotEquatable { .. })),
-        "Expected NotEquatable, got: {:?}",
-        errors
-    );
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, eq_id, Type::Bool);
 }
 
 #[test]
@@ -407,6 +389,7 @@ fn test_eq_enum_list_payload_ok() {
 #[test]
 fn test_eq_struct_fn_field_reason_note() {
     reset_expr_ids();
+    // struct with fn field is equatable; no error expected
     let my_fn_decl = fn_decl("my_fn", vec![], Type::Void, vec![]);
     let handler_decl = struct_decl(
         "Handler",
@@ -430,6 +413,7 @@ fn test_eq_struct_fn_field_reason_note() {
         struct_literal_expr("Handler", vec![("callback", ident_expr("my_fn"))]),
     );
     let eq = binary_expr(ident_expr("a"), BinaryOp::Eq, ident_expr("b"));
+    let eq_id = get_expr_id(&eq);
     let prog = program(vec![
         my_fn_decl,
         handler_decl,
@@ -437,24 +421,14 @@ fn test_eq_struct_fn_field_reason_note() {
         b_binding,
         super::helpers::expr_stmt(eq),
     ]);
-    let errors = run_err(prog);
-    let not_eq_err = errors
-        .iter()
-        .find(|e| matches!(&e.kind, TypeErrKind::NotEquatable { .. }))
-        .expect("Expected NotEquatable error");
-    assert!(
-        not_eq_err
-            .notes
-            .iter()
-            .any(|n| n.contains("callback") && n.contains("not equatable")),
-        "Expected note mentioning 'callback' and 'not equatable', got: {:?}",
-        not_eq_err.notes
-    );
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, eq_id, Type::Bool);
 }
 
 #[test]
 fn test_eq_enum_fn_payload_reason_note() {
     reset_expr_ids();
+    // enum with fn payload is equatable; no error expected
     let my_fn_decl = fn_decl("my_fn", vec![], Type::Void, vec![]);
     let foo_decl = enum_decl(
         "Foo",
@@ -477,6 +451,7 @@ fn test_eq_enum_fn_payload_reason_note() {
     let a_binding = let_binding("a", None, a_val);
     let b_binding = let_binding("b", None, b_val);
     let eq = binary_expr(ident_expr("a"), BinaryOp::Eq, ident_expr("b"));
+    let eq_id = get_expr_id(&eq);
     let prog = program(vec![
         my_fn_decl,
         foo_decl,
@@ -484,19 +459,8 @@ fn test_eq_enum_fn_payload_reason_note() {
         b_binding,
         super::helpers::expr_stmt(eq),
     ]);
-    let errors = run_err(prog);
-    let not_eq_err = errors
-        .iter()
-        .find(|e| matches!(&e.kind, TypeErrKind::NotEquatable { .. }))
-        .expect("Expected NotEquatable error");
-    assert!(
-        not_eq_err
-            .notes
-            .iter()
-            .any(|n| n.contains("variant 'A'") && n.contains("not equatable")),
-        "Expected note mentioning variant 'A' and 'not equatable', got: {:?}",
-        not_eq_err.notes
-    );
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, eq_id, Type::Bool);
 }
 
 // ---- equatable containers: fixed arrays ----
@@ -659,7 +623,7 @@ fn test_eq_list_of_fn_errors() {
 
     // let a: [fn() -> void] = [foo];
     // let b: [fn() -> void] = [foo];
-    // a == b  ->  error: NotEquatable (fn is not equatable)
+    // a == b  ->  bool (fn is equatable via identity)
     let fn_ty = Type::Func {
         params: vec![],
         ret: Type::Void.boxed(),
@@ -668,27 +632,29 @@ fn test_eq_list_of_fn_errors() {
     let list_ty = Type::List {
         elem: fn_ty.boxed(),
     };
-    let a_binding = let_binding("a", Some(list_ty.clone()), ident_expr("foo"));
-    let b_binding = let_binding("b", Some(list_ty), ident_expr("foo"));
+    let a_binding = let_binding(
+        "a",
+        Some(list_ty.clone()),
+        array_literal(vec![ident_expr("foo")]),
+    );
+    let b_binding = let_binding(
+        "b",
+        Some(list_ty),
+        array_literal(vec![ident_expr("foo")]),
+    );
     let eq = binary_expr(ident_expr("a"), BinaryOp::Eq, ident_expr("b"));
+    let eq_id = get_expr_id(&eq);
     let prog = program(vec![
         foo_decl,
         a_binding,
         b_binding,
         super::helpers::expr_stmt(eq),
     ]);
-    let errors = run_err(prog);
-    assert!(!errors.is_empty());
-    assert!(
-        errors
-            .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::NotEquatable { .. })),
-        "Expected NotEquatable, got: {:?}",
-        errors
-    );
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, eq_id, Type::Bool);
 }
 
-// ---- non-equatable containers: map with fn value ----
+// ---- equatable containers: map with fn value (identity equality on fn values) ----
 
 #[test]
 fn test_eq_map_fn_value_errors() {
@@ -696,7 +662,7 @@ fn test_eq_map_fn_value_errors() {
 
     // let a: [int: fn() -> void] = [...];
     // let b: [int: fn() -> void] = [...];
-    // a == b  ->  error: NotEquatable
+    // a == b  ->  bool (fn is equatable via identity)
     let fn_ty = Type::Func {
         params: vec![],
         ret: Type::Void.boxed(),
@@ -717,21 +683,15 @@ fn test_eq_map_fn_value_errors() {
         map_literal_expr(vec![(lit_int(2), ident_expr("foo"))]),
     );
     let eq = binary_expr(ident_expr("a"), BinaryOp::Eq, ident_expr("b"));
+    let eq_id = get_expr_id(&eq);
     let prog = program(vec![
         foo_decl,
         a_binding,
         b_binding,
         super::helpers::expr_stmt(eq),
     ]);
-    let errors = run_err(prog);
-    assert!(!errors.is_empty());
-    assert!(
-        errors
-            .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::NotEquatable { .. })),
-        "Expected NotEquatable, got: {:?}",
-        errors
-    );
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, eq_id, Type::Bool);
 }
 
 // ---- non-equatable containers: array view stays non-equatable ----
@@ -774,6 +734,7 @@ fn test_eq_array_view_errors() {
 fn test_eq_list_fn_elem_reason_note() {
     reset_expr_ids();
 
+    // list of fn is equatable; no error expected
     let fn_ty = Type::Func {
         params: vec![],
         ret: Type::Void.boxed(),
@@ -782,34 +743,33 @@ fn test_eq_list_fn_elem_reason_note() {
     let list_ty = Type::List {
         elem: fn_ty.boxed(),
     };
-    let a_binding = let_binding("a", Some(list_ty.clone()), ident_expr("foo"));
-    let b_binding = let_binding("b", Some(list_ty), ident_expr("foo"));
+    let a_binding = let_binding(
+        "a",
+        Some(list_ty.clone()),
+        array_literal(vec![ident_expr("foo")]),
+    );
+    let b_binding = let_binding(
+        "b",
+        Some(list_ty),
+        array_literal(vec![ident_expr("foo")]),
+    );
     let eq = binary_expr(ident_expr("a"), BinaryOp::Eq, ident_expr("b"));
+    let eq_id = get_expr_id(&eq);
     let prog = program(vec![
         foo_decl,
         a_binding,
         b_binding,
         super::helpers::expr_stmt(eq),
     ]);
-    let errors = run_err(prog);
-    let not_eq_err = errors
-        .iter()
-        .find(|e| matches!(&e.kind, TypeErrKind::NotEquatable { .. }))
-        .expect("Expected NotEquatable error");
-    assert!(
-        not_eq_err
-            .notes
-            .iter()
-            .any(|n| n.contains("element type") && n.contains("not equatable")),
-        "Expected note mentioning 'element type' and 'not equatable', got: {:?}",
-        not_eq_err.notes
-    );
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, eq_id, Type::Bool);
 }
 
 #[test]
 fn test_eq_map_fn_value_reason_note() {
     reset_expr_ids();
 
+    // map with fn value is equatable; no error expected
     let fn_ty = Type::Func {
         params: vec![],
         ret: Type::Void.boxed(),
@@ -830,25 +790,15 @@ fn test_eq_map_fn_value_reason_note() {
         map_literal_expr(vec![(lit_int(2), ident_expr("foo"))]),
     );
     let eq = binary_expr(ident_expr("a"), BinaryOp::Eq, ident_expr("b"));
+    let eq_id = get_expr_id(&eq);
     let prog = program(vec![
         foo_decl,
         a_binding,
         b_binding,
         super::helpers::expr_stmt(eq),
     ]);
-    let errors = run_err(prog);
-    let not_eq_err = errors
-        .iter()
-        .find(|e| matches!(&e.kind, TypeErrKind::NotEquatable { .. }))
-        .expect("Expected NotEquatable error");
-    assert!(
-        not_eq_err
-            .notes
-            .iter()
-            .any(|n| n.contains("value type") && n.contains("not equatable")),
-        "Expected note mentioning 'value type' and 'not equatable', got: {:?}",
-        not_eq_err.notes
-    );
+    let tcx = run_ok(prog);
+    assert_expr_type(&tcx, eq_id, Type::Bool);
 }
 
 // ---- nil equality unification ----

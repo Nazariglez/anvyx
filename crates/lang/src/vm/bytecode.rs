@@ -59,6 +59,8 @@ pub enum Op {
     Call(u16, u8),
     CallBuiltin(u8, u8),
     CallExtern(u16, u8),
+    CreateClosure(u16, u8), // (fn_chunk_idx, capture_count)
+    CallClosure(u8),        // (arg_count)
     Return,
 
     // composite types
@@ -83,10 +85,11 @@ pub enum Op {
     MapEntryAt,        // pops index, pops Map, pushes Tuple(key, value)
 
     // mutating collection methods
-    ListPush,  // pops value, list -> pushes Nil, modified list
-    ListPop,   // pops list -> pushes popped or Nil, modified list
-    MapInsert, // pops value, key, map -> pushes Nil, modified map
-    MapRemove, // pops key, map -> pushes removed or Nil, modified map
+    ListPush,          // pops value, list -> pushes Nil, modified list
+    ListPop,           // pops list -> pushes popped or Nil, modified list
+    ListSortBy(u16),   // pops list, sorts in place using comparator chunk, pushes sorted list
+    MapInsert,         // pops value, key, map -> pushes Nil, modified map
+    MapRemove,         // pops key, map -> pushes removed or Nil, modified map
 
     ToString,
     Cast(CastKind),

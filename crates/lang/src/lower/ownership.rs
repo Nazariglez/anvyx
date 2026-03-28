@@ -83,6 +83,9 @@ fn collect_reassigned_expr(expr: &Expr, set: &mut HashSet<LocalId>) {
         ExprKind::CollectionMut { object, .. } => {
             set.insert(*object);
         }
+        ExprKind::SortBy { collection, .. } => {
+            set.insert(*collection);
+        }
         ExprKind::Call { args, .. }
         | ExprKind::CallBuiltin { args, .. }
         | ExprKind::CallExtern { args, .. } => {
@@ -128,6 +131,17 @@ fn collect_reassigned_expr(expr: &Expr, set: &mut HashSet<LocalId>) {
             for (k, v) in entries {
                 collect_reassigned_expr(k, set);
                 collect_reassigned_expr(v, set);
+            }
+        }
+        ExprKind::CreateClosure { captures, .. } => {
+            for c in captures {
+                collect_reassigned_expr(c, set);
+            }
+        }
+        ExprKind::CallClosure { callee, args } => {
+            collect_reassigned_expr(callee, set);
+            for a in args {
+                collect_reassigned_expr(a, set);
             }
         }
         ExprKind::Local(_)
@@ -336,6 +350,9 @@ fn collect_locals_in_expr(expr: &Expr, set: &mut HashSet<LocalId>) {
                 collect_locals_in_expr(a, set);
             }
         }
+        ExprKind::SortBy { collection, .. } => {
+            set.insert(*collection);
+        }
         ExprKind::Call { args, .. }
         | ExprKind::CallBuiltin { args, .. }
         | ExprKind::CallExtern { args, .. } => {
@@ -383,6 +400,17 @@ fn collect_locals_in_expr(expr: &Expr, set: &mut HashSet<LocalId>) {
                 collect_locals_in_expr(v, set);
             }
         }
+        ExprKind::CreateClosure { captures, .. } => {
+            for c in captures {
+                collect_locals_in_expr(c, set);
+            }
+        }
+        ExprKind::CallClosure { callee, args } => {
+            collect_locals_in_expr(callee, set);
+            for a in args {
+                collect_locals_in_expr(a, set);
+            }
+        }
         ExprKind::Int(_)
         | ExprKind::Float(_)
         | ExprKind::Double(_)
@@ -413,6 +441,11 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut LivenessCtx) {
             }
             // object is read and mutated, so already in reassigned
             ctx.seen.insert(*object);
+            expr.ownership = Ownership::Own;
+            return;
+        }
+        ExprKind::SortBy { collection, .. } => {
+            ctx.seen.insert(*collection);
             expr.ownership = Ownership::Own;
             return;
         }
@@ -466,6 +499,17 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut LivenessCtx) {
                 analyze_expr(v, ctx);
                 analyze_expr(k, ctx);
             }
+        }
+        ExprKind::CreateClosure { captures, .. } => {
+            for c in captures.iter_mut().rev() {
+                analyze_expr(c, ctx);
+            }
+        }
+        ExprKind::CallClosure { callee, args } => {
+            for a in args.iter_mut().rev() {
+                analyze_expr(a, ctx);
+            }
+            analyze_expr(callee, ctx);
         }
         ExprKind::Int(_)
         | ExprKind::Float(_)

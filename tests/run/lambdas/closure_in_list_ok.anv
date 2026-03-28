@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 4
+// 3
+// 1
+// @match-end
+
+fn main() {
+    let fns: [fn(int) -> int] = [|x: int| x * 2, |x: int| x + 1, |x: int| x - 1];
+    for f in fns {
+        println(f(2));
+    }
+}

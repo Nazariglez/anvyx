@@ -1,3 +1,4 @@
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -88,6 +89,20 @@ pub(super) struct SharedCtx<'a> {
     pub(super) externs: HashMap<Ident, hir::ExternId>,
     pub(super) struct_type_ids: HashMap<Ident, u32>,
     pub(super) enum_type_ids: HashMap<Ident, u32>,
+    pub(super) next_func_id: Cell<u32>,
+    pub(super) lambda_funcs: RefCell<Vec<hir::Func>>,
+}
+
+impl SharedCtx<'_> {
+    pub(super) fn alloc_func_id(&self) -> hir::FuncId {
+        let id = self.next_func_id.get();
+        self.next_func_id.set(id + 1);
+        hir::FuncId(id)
+    }
+
+    pub(super) fn register_lambda_func(&self, func: hir::Func) {
+        self.lambda_funcs.borrow_mut().push(func);
+    }
 }
 
 pub(super) struct LowerCtx<'a> {

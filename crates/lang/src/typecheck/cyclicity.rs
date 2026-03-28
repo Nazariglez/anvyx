@@ -69,6 +69,20 @@ pub(super) fn analyze_cyclicity(
 
     let mut cycle_capable = cycle_core.clone();
     let mut queue: VecDeque<Ident> = cycle_core.iter().copied().collect();
+
+    // any dataref with a fn(...) field is unconditionally cycle-capable, a closure stored
+    // in it might capture a reference back to the owning dataref at runtime
+    for &name in &datarefs {
+        let def = &struct_defs[&name];
+        let has_fn_field = def
+            .fields
+            .iter()
+            .any(|f| type_contains_func(&f.ty, struct_defs, enum_defs));
+        if has_fn_field && cycle_capable.insert(name) {
+            queue.push_back(name);
+        }
+    }
+
     while let Some(node) = queue.pop_front() {
         if let Some(predecessors) = reverse_adj.get(&node) {
             for &pred in predecessors {
@@ -155,6 +169,49 @@ fn extract_dataref_refs(
             }
         }
         _ => {}
+    }
+}
+
+fn type_contains_func(
+    ty: &Type,
+    struct_defs: &HashMap<Ident, StructDef>,
+    enum_defs: &HashMap<Ident, EnumDef>,
+) -> bool {
+    match ty {
+        Type::Func { .. } => true,
+        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+            type_contains_func(elem, struct_defs, enum_defs)
+        }
+        Type::Map { key, value } => {
+            type_contains_func(key, struct_defs, enum_defs)
+                || type_contains_func(value, struct_defs, enum_defs)
+        }
+        Type::Tuple(elems) => elems
+            .iter()
+            .any(|e| type_contains_func(e, struct_defs, enum_defs)),
+        Type::NamedTuple(elems) => elems
+            .iter()
+            .any(|(_, ty)| type_contains_func(ty, struct_defs, enum_defs)),
+        Type::Enum { name, type_args } => {
+            type_args
+                .iter()
+                .any(|a| type_contains_func(a, struct_defs, enum_defs))
+                || enum_defs.get(name).is_some_and(|def| {
+                    let subst = build_subst(&def.type_params, type_args);
+                    def.variants.iter().any(|v| match &v.kind {
+                        VariantKind::Unit => false,
+                        VariantKind::Tuple(tys) => tys.iter().any(|t| {
+                            let resolved = subst_type(t, &subst);
+                            type_contains_func(&resolved, struct_defs, enum_defs)
+                        }),
+                        VariantKind::Struct(fields) => fields.iter().any(|f| {
+                            let resolved = subst_type(&f.ty, &subst);
+                            type_contains_func(&resolved, struct_defs, enum_defs)
+                        }),
+                    })
+                })
+        }
+        _ => false,
     }
 }
 

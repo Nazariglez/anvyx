@@ -713,6 +713,22 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("too many arguments: expected at most {expected}, found {found}"),
             "remove the extra arguments".to_string(),
         ),
+        TypeErrKind::CannotInferLambdaParam { name } => (
+            format!("cannot infer type for lambda parameter '{name}'"),
+            "add an explicit type annotation or provide a type context".to_string(),
+        ),
+        TypeErrKind::MutateCapturedVar { name } => (
+            format!("cannot mutate captured variable '{name}'"),
+            "closures capture by value; the captured variable cannot be reassigned".to_string(),
+        ),
+        TypeErrKind::LambdaParamCountMismatch { expected, found } => (
+            "lambda parameter count mismatch".to_string(),
+            format!("expected {expected} parameter(s), found {found}"),
+        ),
+        TypeErrKind::NotYetSupported { feature } => (
+            format!("not yet supported: {feature}"),
+            "this feature is not implemented yet".to_string(),
+        ),
     }
 }
 

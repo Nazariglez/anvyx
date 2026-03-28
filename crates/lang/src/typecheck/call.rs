@@ -140,6 +140,199 @@ pub(super) fn check_list_method(
                 errors,
             )
         }
+        "map" => {
+            let func_param = Type::Func {
+                params: vec![elem.clone()],
+                ret: Box::new(Type::Infer),
+            };
+            let param_types = [func_param];
+            check_call_signature(
+                call.span,
+                &param_types,
+                param_types.len(),
+                &Type::Infer,
+                &node.args,
+                type_checker,
+                errors,
+            );
+            let result_elem = match node
+                .args
+                .first()
+                .and_then(|a| type_checker.get_type(a.node.id))
+            {
+                Some((_, Type::Func { ret, .. })) => (**ret).clone(),
+                _ => Type::Infer,
+            };
+            Type::List {
+                elem: Box::new(result_elem),
+            }
+        }
+        "filter" => {
+            let func_param = Type::Func {
+                params: vec![elem.clone()],
+                ret: Box::new(Type::Bool),
+            };
+            let param_types = [func_param];
+            let ret_type = Type::List {
+                elem: Box::new(elem.clone()),
+            };
+            check_call_signature(
+                call.span,
+                &param_types,
+                param_types.len(),
+                &ret_type,
+                &node.args,
+                type_checker,
+                errors,
+            )
+        }
+        "fold" => {
+            if node.args.len() != 2 {
+                let expected = 2;
+                let found = node.args.len();
+                if found < expected {
+                    errors.push(TypeErr::new(
+                        call.span,
+                        TypeErrKind::TooFewArguments { expected, found },
+                    ));
+                } else {
+                    errors.push(TypeErr::new(
+                        call.span,
+                        TypeErrKind::TooManyArguments { expected, found },
+                    ));
+                }
+                return Type::Infer;
+            }
+            // typecheck the init value first so we can use its concrete type
+            // for the accumulator parameter in the lambda's expected type
+            check_expr(&node.args[0], type_checker, errors, None);
+            let init_ty = match type_checker.get_type(node.args[0].node.id) {
+                Some((_, ty)) => ty.clone(),
+                None => Type::Infer,
+            };
+            let func_param = Type::Func {
+                params: vec![init_ty.clone(), elem.clone()],
+                ret: Box::new(init_ty.clone()),
+            };
+            check_expr(&node.args[1], type_checker, errors, Some(&func_param));
+            let arg_ref = TypeRef::Expr(node.args[1].node.id);
+            let param_ref = TypeRef::concrete(&func_param);
+            type_checker.constrain_assignable(node.args[1].span, arg_ref, param_ref, errors);
+            init_ty
+        }
+        "for_each" => {
+            let func_param = Type::Func {
+                params: vec![elem.clone()],
+                ret: Box::new(Type::Void),
+            };
+            let param_types = [func_param];
+            check_call_signature(
+                call.span,
+                &param_types,
+                param_types.len(),
+                &Type::Void,
+                &node.args,
+                type_checker,
+                errors,
+            )
+        }
+        "any" => {
+            let func_param = Type::Func {
+                params: vec![elem.clone()],
+                ret: Box::new(Type::Bool),
+            };
+            let param_types = [func_param];
+            check_call_signature(
+                call.span,
+                &param_types,
+                param_types.len(),
+                &Type::Bool,
+                &node.args,
+                type_checker,
+                errors,
+            )
+        }
+        "all" => {
+            let func_param = Type::Func {
+                params: vec![elem.clone()],
+                ret: Box::new(Type::Bool),
+            };
+            let param_types = [func_param];
+            check_call_signature(
+                call.span,
+                &param_types,
+                param_types.len(),
+                &Type::Bool,
+                &node.args,
+                type_checker,
+                errors,
+            )
+        }
+        "find" => {
+            let func_param = Type::Func {
+                params: vec![elem.clone()],
+                ret: Box::new(Type::Bool),
+            };
+            let param_types = [func_param];
+            check_call_signature(
+                call.span,
+                &param_types,
+                param_types.len(),
+                &Type::option_of(elem.clone()),
+                &node.args,
+                type_checker,
+                errors,
+            )
+        }
+        "find_index" => {
+            let func_param = Type::Func {
+                params: vec![elem.clone()],
+                ret: Box::new(Type::Bool),
+            };
+            let param_types = [func_param];
+            check_call_signature(
+                call.span,
+                &param_types,
+                param_types.len(),
+                &Type::option_of(Type::Int),
+                &node.args,
+                type_checker,
+                errors,
+            )
+        }
+        "count" => {
+            let func_param = Type::Func {
+                params: vec![elem.clone()],
+                ret: Box::new(Type::Bool),
+            };
+            let param_types = [func_param];
+            check_call_signature(
+                call.span,
+                &param_types,
+                param_types.len(),
+                &Type::Int,
+                &node.args,
+                type_checker,
+                errors,
+            )
+        }
+        "sort_by" => {
+            check_receiver_mutability(target, label, method_name, type_checker, errors);
+            let func_param = Type::Func {
+                params: vec![elem.clone(), elem.clone()],
+                ret: Box::new(Type::Bool),
+            };
+            let param_types = [func_param];
+            check_call_signature(
+                call.span,
+                &param_types,
+                param_types.len(),
+                &Type::Void,
+                &node.args,
+                type_checker,
+                errors,
+            )
+        }
         _ => {
             errors.push(TypeErr::new(
                 call.span,
@@ -186,6 +379,54 @@ pub(super) fn check_map_method(
                 param_types,
                 param_types.len(),
                 &Type::option_of(value.clone()),
+                &node.args,
+                type_checker,
+                errors,
+            )
+        }
+        "map_values" => {
+            let func_param = Type::Func {
+                params: vec![value.clone()],
+                ret: Box::new(Type::Infer),
+            };
+            let param_types = [func_param];
+            check_call_signature(
+                call.span,
+                &param_types,
+                param_types.len(),
+                &Type::Infer,
+                &node.args,
+                type_checker,
+                errors,
+            );
+            let result_value = match node
+                .args
+                .first()
+                .and_then(|a| type_checker.get_type(a.node.id))
+            {
+                Some((_, Type::Func { ret, .. })) => (**ret).clone(),
+                _ => Type::Infer,
+            };
+            Type::Map {
+                key: Box::new(key.clone()),
+                value: Box::new(result_value),
+            }
+        }
+        "filter" => {
+            let func_param = Type::Func {
+                params: vec![key.clone(), value.clone()],
+                ret: Box::new(Type::Bool),
+            };
+            let param_types = [func_param];
+            let ret_type = Type::Map {
+                key: Box::new(key.clone()),
+                value: Box::new(value.clone()),
+            };
+            check_call_signature(
+                call.span,
+                &param_types,
+                param_types.len(),
+                &ret_type,
                 &node.args,
                 type_checker,
                 errors,
@@ -1620,9 +1861,23 @@ pub(super) fn type_call_on_base(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
-    // check each argument
-    for arg in &call_node.node.args {
-        check_expr(arg, type_checker, errors, None);
+    // check each argument and pass expected type for lambdas so they can infer param types
+    if let Type::Func { params, .. } = base_ty {
+        for (arg, param_ty) in call_node.node.args.iter().zip(params.iter()) {
+            let needs_expected = matches!(
+                arg.node.kind,
+                ExprKind::Lambda(_) | ExprKind::Lit(Lit::Float { .. })
+            );
+            let expected = if needs_expected { Some(param_ty) } else { None };
+            check_expr(arg, type_checker, errors, expected);
+        }
+        for arg in call_node.node.args.iter().skip(params.len()) {
+            check_expr(arg, type_checker, errors, None);
+        }
+    } else {
+        for arg in &call_node.node.args {
+            check_expr(arg, type_checker, errors, None);
+        }
     }
 
     let Type::Func { params, ret } = base_ty else {
@@ -1654,9 +1909,6 @@ pub(super) fn type_call_on_base(
     }
 
     for (arg_expr, param_ty) in call_node.node.args.iter().zip(params.iter()) {
-        if matches!(arg_expr.node.kind, ExprKind::Lit(Lit::Float { .. })) {
-            check_expr(arg_expr, type_checker, errors, Some(param_ty));
-        }
         let arg_ref = TypeRef::Expr(arg_expr.node.id);
         let param_ref = TypeRef::concrete(param_ty);
         type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);

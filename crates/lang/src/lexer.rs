@@ -200,6 +200,7 @@ pub enum Op {
     DivAssign,
     ThinArrow,
     FatArrow,
+    Pipe,
 }
 
 impl Display for Op {
@@ -227,6 +228,7 @@ impl Display for Op {
             Op::DivAssign => write!(f, "/="),
             Op::ThinArrow => write!(f, "->"),
             Op::FatArrow => write!(f, "=>"),
+            Op::Pipe => write!(f, "|"),
         }
     }
 }
@@ -716,6 +718,7 @@ fn op<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
         just(">").to(Op::GreaterThan),
         just("!").to(Op::Not),
         just("=").to(Op::Assign),
+        just("|").to(Op::Pipe),
     ))
     .map(Token::Op)
 }

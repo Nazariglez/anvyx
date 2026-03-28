@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+fn main() {
+    let f: fn(int) -> int = |x: int| "hello";
+}

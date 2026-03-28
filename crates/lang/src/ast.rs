@@ -38,6 +38,7 @@ pub type MatchArmNode = Spanned<MatchArm>;
 pub type ExternFuncNode = Spanned<ExternFunc>;
 pub type ExternTypeNode = Spanned<ExternType>;
 pub type ImportNode = Spanned<Import>;
+pub type LambdaNode = Spanned<Lambda>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -104,6 +105,7 @@ pub enum ExprKind {
     Match(MatchNode),
     StringInterp(Vec<StringPart>),
     Cast(CastNode),
+    Lambda(LambdaNode),
 }
 
 impl ExprKind {
@@ -131,6 +133,7 @@ impl ExprKind {
             Self::Match(_) => "Match",
             Self::StringInterp(_) => "StringInterp",
             Self::Cast(_) => "Cast",
+            Self::Lambda(_) => "Lambda",
         }
     }
 }
@@ -600,6 +603,19 @@ pub struct Param {
     pub name: Ident,
     pub ty: Type,
     pub default: Option<ExprNode>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LambdaParam {
+    pub name: Ident,
+    pub ty: Option<Type>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lambda {
+    pub params: Vec<LambdaParam>,
+    pub ret_type: Option<Type>,
+    pub body: Box<ExprNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
