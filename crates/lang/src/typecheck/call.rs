@@ -226,7 +226,7 @@ pub(super) fn check_list_method(
                 ret: Box::new(Type::Void),
             };
             let param_types = [func_param];
-            check_call_signature(
+            let result = check_call_signature(
                 call.span,
                 &param_types,
                 param_types.len(),
@@ -234,7 +234,28 @@ pub(super) fn check_list_method(
                 &node.args,
                 type_checker,
                 errors,
-            )
+            );
+
+            if let Some(first_arg) = node.args.first()
+                && let ExprKind::Lambda(lambda) = &first_arg.node.kind
+                && let Some(first_param) = lambda.node.params.first()
+                && first_param.mutable
+                && let Some(root) = root_ident(target)
+                && let Some(info) = type_checker.get_var(root)
+                && !info.mutable
+            {
+                errors.push(
+                    TypeErr::new(
+                        first_arg.span,
+                        TypeErrKind::MutableParamRequiresVarTarget {
+                            name: first_param.name,
+                        },
+                    )
+                    .with_help("declare the collection with 'var' to allow in-place mutation"),
+                );
+            }
+
+            result
         }
         "any" => {
             let func_param = Type::Func {

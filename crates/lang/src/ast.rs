@@ -613,6 +613,7 @@ pub struct Param {
 pub struct LambdaParam {
     pub name: Ident,
     pub ty: Option<Type>,
+    pub mutable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

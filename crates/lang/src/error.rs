@@ -740,6 +740,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "lambda parameter count mismatch".to_string(),
             format!("expected {expected} parameter(s), found {found}"),
         ),
+        TypeErrKind::MutableParamRequiresVarTarget { name } => (
+            format!("'|var {name}|' requires the target to be declared with 'var'"),
+            "declare the collection with 'var' to allow in-place mutation".to_string(),
+        ),
     }
 }
 

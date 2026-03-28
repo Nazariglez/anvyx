@@ -1,4 +1,4 @@
-use crate::ast::{self, AssignOp, Ident, Type};
+use crate::ast::{self, AssignOp, BinaryOp, Ident, Type};
 use crate::hir;
 use crate::span::Span;
 use internment::Intern;
@@ -316,6 +316,16 @@ fn lower_assign_to_chain(
     Ok(last)
 }
 
+fn compound_op(op: AssignOp) -> Option<BinaryOp> {
+    match op {
+        AssignOp::Assign => None,
+        AssignOp::AddAssign => Some(BinaryOp::Add),
+        AssignOp::SubAssign => Some(BinaryOp::Sub),
+        AssignOp::MulAssign => Some(BinaryOp::Mul),
+        AssignOp::DivAssign => Some(BinaryOp::Div),
+    }
+}
+
 pub(super) fn lower_assign(
     assign_node: &ast::AssignNode,
     span: Span,
@@ -323,15 +333,8 @@ pub(super) fn lower_assign(
     fc: &mut FuncLower,
     out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::Stmt, LowerError> {
-    if assign_node.node.op != AssignOp::Assign {
-        return Err(LowerError::UnsupportedAssign {
-            span,
-            detail: format!(
-                "compound assignment '{}' is not supported in HIR v1",
-                assign_node.node.op
-            ),
-        });
-    }
+    let bin_op = compound_op(assign_node.node.op);
+    let is_compound = bin_op.is_some();
 
     match &assign_node.node.target.node.kind {
         ast::ExprKind::Ident(name) => {
@@ -339,7 +342,21 @@ pub(super) fn lower_assign(
                 .local_map
                 .get(name)
                 .ok_or(LowerError::UnknownLocal { name: *name, span })?;
-            let value = lower_expr(&assign_node.node.value, ctx, fc, out)?;
+            let rhs = lower_expr(&assign_node.node.value, ctx, fc, out)?;
+            let value = if let Some(op) = bin_op {
+                let local_ty = fc.locals[local_id.0 as usize].ty.clone();
+                hir::Expr::new(
+                    local_ty.clone(),
+                    span,
+                    hir::ExprKind::Binary {
+                        op,
+                        lhs: Box::new(hir::Expr::local(local_ty, span, local_id)),
+                        rhs: Box::new(rhs),
+                    },
+                )
+            } else {
+                rhs
+            };
             Ok(hir::Stmt {
                 span,
                 kind: hir::StmtKind::Assign {
@@ -350,6 +367,15 @@ pub(super) fn lower_assign(
         }
 
         ast::ExprKind::Field(field_access) => {
+            if is_compound {
+                return Err(LowerError::UnsupportedAssign {
+                    span,
+                    detail: format!(
+                        "compound assignment '{}' on field targets is not yet supported",
+                        assign_node.node.op
+                    ),
+                });
+            }
             let target_expr = &field_access.node.target;
             let target_ty = ctx.expr_type(target_expr.node.id, span)?;
             if let Type::Extern { name } = &target_ty {
@@ -385,14 +411,25 @@ pub(super) fn lower_assign(
                 )
             }
         }
-        ast::ExprKind::Index(_) => lower_assign_to_chain(
-            &assign_node.node.target,
-            &assign_node.node.value,
-            span,
-            ctx,
-            fc,
-            out,
-        ),
+        ast::ExprKind::Index(_) => {
+            if is_compound {
+                return Err(LowerError::UnsupportedAssign {
+                    span,
+                    detail: format!(
+                        "compound assignment '{}' on index targets is not yet supported",
+                        assign_node.node.op
+                    ),
+                });
+            }
+            lower_assign_to_chain(
+                &assign_node.node.target,
+                &assign_node.node.value,
+                span,
+                ctx,
+                fc,
+                out,
+            )
+        }
 
         _ => Err(LowerError::UnsupportedAssign {
             span,

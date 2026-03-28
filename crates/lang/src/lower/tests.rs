@@ -749,9 +749,27 @@ fn coalesce_lowers_to_match() {
 }
 
 #[test]
-fn rejects_compound_assignment() {
-    let err = lower_err("fn main() { var x = 1; x += 1; }");
-    assert!(matches!(err, LowerError::UnsupportedAssign { .. }));
+fn lowers_compound_assignment() {
+    let prog = lower_ok("fn main() { var x = 1; x += 1; }");
+    let main = find_main(&prog);
+    assert_eq!(main.body.stmts.len(), 2);
+    assert!(matches!(main.body.stmts[0].kind, StmtKind::Let { .. }));
+    assert!(
+        matches!(
+            &main.body.stmts[1].kind,
+            StmtKind::Assign {
+                value: hir::Expr {
+                    kind: ExprKind::Binary {
+                        op: crate::ast::BinaryOp::Add,
+                        ..
+                    },
+                    ..
+                },
+                ..
+            }
+        ),
+        "expected compound assign to desugar to Assign(Binary(Add, ...))"
+    );
 }
 
 #[test]

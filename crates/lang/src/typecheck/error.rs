@@ -437,4 +437,7 @@ pub enum TypeErrKind {
         expected: usize,
         found: usize,
     },
+    MutableParamRequiresVarTarget {
+        name: Ident,
+    },
 }

@@ -239,7 +239,7 @@ fn check_lambda(
     type_checker.push_scope();
 
     for (param, ty) in lambda.params.iter().zip(param_types.iter()) {
-        type_checker.set_var(param.name, ty.clone(), false);
+        type_checker.set_var(param.name, ty.clone(), param.mutable);
     }
 
     // push return type onto stack so return statements inside are checked correctly

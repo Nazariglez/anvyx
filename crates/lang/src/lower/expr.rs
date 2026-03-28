@@ -11,9 +11,10 @@ use internment::Intern;
 
 use super::{
     FuncLower, LowerCtx, LowerError, alloc_and_bind, alloc_assign_temp, emit_counter_increment,
-    extern_binary_op_key, extern_unary_op_key, lower_block, lower_block_to_target, lower_if_let,
-    lower_match_stmts, lower_string_interp, mangle_generic_name, mangle_method_spec_name,
-    register_named_local, resolve_enum_type_id, resolve_struct_type_id, resolve_variant_index,
+    extern_binary_op_key, extern_unary_op_key, lower_assign, lower_block, lower_block_to_target,
+    lower_if_let, lower_match_stmts, lower_string_interp, mangle_generic_name,
+    mangle_method_spec_name, register_named_local, resolve_enum_type_id, resolve_struct_type_id,
+    resolve_variant_index,
 };
 
 fn lower_args(
@@ -1570,6 +1571,8 @@ fn lower_list_desugar(
         )
     };
 
+    let mut original_local: Option<hir::LocalId> = None;
+
     let result_expr = match method {
         "map" => {
             let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
@@ -1663,6 +1666,15 @@ fn lower_list_desugar(
             let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
                 unreachable!()
             };
+            let is_mutable_param = lambda.node.params[0].mutable;
+            original_local = if is_mutable_param {
+                match &field.node.target.node.kind {
+                    ast::ExprKind::Ident(ident) => fc.local_map.get(ident).copied(),
+                    _ => None,
+                }
+            } else {
+                None
+            };
             let param_name = lambda.node.params[0].name;
             let param_local = register_named_local(fc, param_name, elem_ty.clone());
             body_stmts.push(hir::Stmt {
@@ -1672,11 +1684,33 @@ fn lower_list_desugar(
                     init: make_elem_expr(),
                 },
             });
-            let body_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
-            body_stmts.push(hir::Stmt {
-                span,
-                kind: hir::StmtKind::Expr(body_expr),
-            });
+            match &lambda.node.body.node.kind {
+                ast::ExprKind::Block(block_node) => {
+                    let block = lower_block(block_node, ctx, fc, false, &Type::Void)?;
+                    body_stmts.extend(block.stmts);
+                }
+                ast::ExprKind::Assign(assign_node) => {
+                    let stmt = lower_assign(assign_node, span, ctx, fc, &mut body_stmts)?;
+                    body_stmts.push(stmt);
+                }
+                _ => {
+                    let body_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
+                    body_stmts.push(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Expr(body_expr),
+                    });
+                }
+            }
+            if is_mutable_param {
+                body_stmts.push(hir::Stmt {
+                    span,
+                    kind: hir::StmtKind::SetIndex {
+                        object: xs_local,
+                        index: Box::new(hir::Expr::local(Type::Int, span, i_local)),
+                        value: hir::Expr::local(elem_ty.clone(), span, param_local),
+                    },
+                });
+            }
             hir::Expr::new(Type::Void, span, hir::ExprKind::Nil)
         }
         "any" => {
@@ -1990,6 +2024,16 @@ fn lower_list_desugar(
             body: hir::Block { stmts: body_stmts },
         },
     });
+
+    if let Some(original_id) = original_local {
+        out.push(hir::Stmt {
+            span,
+            kind: hir::StmtKind::Assign {
+                local: original_id,
+                value: hir::Expr::local(collection_ty.clone(), span, xs_local),
+            },
+        });
+    }
 
     fc.leave_scope(mark);
 

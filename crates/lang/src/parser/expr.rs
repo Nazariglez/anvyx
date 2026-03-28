@@ -376,9 +376,16 @@ fn lambda_expr<'src>(
     let colon = select! { (Token::Colon, _) => () };
     let thin_arrow = select! { (Token::Op(Op::ThinArrow), _) => () };
 
-    let lambda_param = identifier()
+    let var_kw = select! {
+        (Token::Keyword(Keyword::Var), _) => (),
+    }
+    .or_not()
+    .map(|opt| opt.is_some());
+
+    let lambda_param = var_kw
+        .then(identifier())
         .then(colon.ignore_then(type_ident()).or_not())
-        .map(|(name, ty)| ast::LambdaParam { name, ty });
+        .map(|((mutable, name), ty)| ast::LambdaParam { name, ty, mutable });
 
     // |param, param: Type| or ||
     let with_params = pipe
