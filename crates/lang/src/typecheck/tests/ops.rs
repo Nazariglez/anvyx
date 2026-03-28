@@ -520,8 +520,8 @@ fn test_binary_string_sub_err() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::MismatchedTypes { expected, found }
-        if *expected == Type::String && *found == Type::String
+        TypeErrKind::InvalidOperand { op, operand_type }
+        if op == "-" && *operand_type == Type::String
     )));
 }
 
@@ -626,8 +626,8 @@ fn test_binary_string_add_struct_err() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::MismatchedTypes { expected, .. }
-        if *expected == Type::String
+        TypeErrKind::InvalidOperand { op, .. }
+        if op == "+"
     )));
 }
 

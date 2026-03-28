@@ -237,10 +237,12 @@ fn test_template_generic_add_with_bool_err() {
 
     assert!(!errors.is_empty());
     assert!(
-        errors
-            .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
-        "Expected MismatchedTypes error, got: {:?}",
+        errors.iter().any(|e| matches!(
+            &e.kind,
+            TypeErrKind::InvalidOperand { op, operand_type }
+            if op == "+" && *operand_type == Type::Bool
+        )),
+        "Expected InvalidOperand error, got: {:?}",
         errors
     );
 }
@@ -319,10 +321,12 @@ fn test_template_generic_explicit_type_args_bool_err() {
     let errors = run_err(prog);
     assert!(!errors.is_empty());
     assert!(
-        errors
-            .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
-        "Expected MismatchedTypes error, got: {:?}",
+        errors.iter().any(|e| matches!(
+            &e.kind,
+            TypeErrKind::InvalidOperand { op, operand_type }
+            if op == "+" && *operand_type == Type::Bool
+        )),
+        "Expected InvalidOperand error, got: {:?}",
         errors
     );
 }

@@ -17,6 +17,24 @@ pub(super) fn mangle_generic_name(name: Ident, type_args: &[Type]) -> Ident {
     Ident(Intern::new(format!("{name}${suffix}")))
 }
 
+pub(super) fn mangle_method_spec_name(
+    struct_name: Ident,
+    method_name: Ident,
+    type_args: &[Type],
+) -> Ident {
+    if type_args.is_empty() {
+        return Ident(Intern::new(format!("{struct_name}::{method_name}")));
+    }
+    let suffix = type_args
+        .iter()
+        .map(|t| t.to_string())
+        .collect::<Vec<_>>()
+        .join("$");
+    Ident(Intern::new(format!(
+        "{struct_name}::{method_name}${suffix}"
+    )))
+}
+
 pub(super) fn register_extern_decl(
     name: Ident,
     params: Vec<Type>,

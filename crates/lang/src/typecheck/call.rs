@@ -1264,6 +1264,19 @@ pub(super) fn check_static_method_call(
             errors,
         );
 
+        let method = method.clone();
+        instantiate_method_body(
+            struct_name,
+            method_name,
+            &inferred_type_args,
+            &[],
+            struct_def,
+            &method,
+            call.span,
+            type_checker,
+            errors,
+        );
+
         return ret_ty;
     }
 
@@ -1467,6 +1480,21 @@ pub(super) fn check_instance_method_call(
         errors,
     );
 
+    if !struct_def.type_params.is_empty() {
+        let method = method.clone();
+        instantiate_method_body(
+            struct_name,
+            method_name,
+            type_args,
+            &[],
+            struct_def,
+            &method,
+            call.span,
+            type_checker,
+            errors,
+        );
+    }
+
     result
 }
 
@@ -1579,6 +1607,106 @@ pub(super) fn generic_context_strings(
     (label, note)
 }
 
+fn find_type_param_name(ty: &Type, type_params: &[TypeParam], type_args: &[Type]) -> Option<Ident> {
+    type_args
+        .iter()
+        .position(|arg| arg == ty)
+        .and_then(|i| type_params.get(i))
+        .map(|tp| tp.name)
+}
+
+fn generic_instantiation_help(
+    err_kind: &TypeErrKind,
+    context_name: &str,
+    type_params: &[TypeParam],
+    type_args: &[Type],
+) -> Option<String> {
+    match err_kind {
+        TypeErrKind::InvalidOperand { op, operand_type } => {
+            let param = find_type_param_name(operand_type, type_params, type_args);
+            let op_str = op.as_str();
+            match op_str {
+                "+" => {
+                    let valid = "int, float, double, or string";
+                    Some(match param {
+                        Some(p) => {
+                            format!("'{context_name}<{p}>' uses '+' on {p} — {p} must be {valid}")
+                        }
+                        None => format!("'{context_name}' uses '+' which requires {valid}"),
+                    })
+                }
+                "-" | "*" | "/" | "%" => {
+                    let valid = "int, float, or double";
+                    Some(match param {
+                        Some(p) => format!(
+                            "'{context_name}<{p}>' uses '{op_str}' on {p} — {p} must be {valid}"
+                        ),
+                        None => format!("'{context_name}' uses '{op_str}' which requires {valid}"),
+                    })
+                }
+                "<" | ">" | "<=" | ">=" => {
+                    let valid = "int, float, double, or string";
+                    Some(match param {
+                        Some(p) => format!(
+                            "'{context_name}<{p}>' uses '{op_str}' on {p} — {p} must be {valid}"
+                        ),
+                        None => format!("'{context_name}' uses '{op_str}' which requires {valid}"),
+                    })
+                }
+                "&&" | "||" | "^" => {
+                    let valid = "bool";
+                    Some(match param {
+                        Some(p) => format!(
+                            "'{context_name}<{p}>' uses '{op_str}' on {p} — {p} must be {valid}"
+                        ),
+                        None => format!("'{context_name}' uses '{op_str}' which requires {valid}"),
+                    })
+                }
+                _ => None,
+            }
+        }
+        TypeErrKind::IndexOnNonArray { found } => {
+            let param = find_type_param_name(found, type_params, type_args);
+            Some(match param {
+                Some(p) => format!(
+                    "'{context_name}<{p}>' indexes {p} — {p} must be an array, list, or view"
+                ),
+                None => {
+                    format!("'{context_name}' uses indexing which requires an array, list, or view")
+                }
+            })
+        }
+        TypeErrKind::UnknownMethod {
+            struct_name,
+            method,
+        } => {
+            let param = type_args
+                .iter()
+                .position(|arg| arg.to_string() == struct_name.to_string())
+                .and_then(|i| type_params.get(i))
+                .map(|tp| tp.name);
+            Some(match param {
+                Some(p) => format!(
+                    "'{context_name}<{p}>' calls '.{method}()' on {p} — {p} must be a type with a '{method}' method"
+                ),
+                None => format!(
+                    "'{context_name}' calls '.{method}()' which requires a type with a '{method}' method"
+                ),
+            })
+        }
+        TypeErrKind::NotEquatable { ty } => {
+            let param = find_type_param_name(ty, type_params, type_args);
+            Some(match param {
+                Some(p) => format!(
+                    "'{context_name}<{p}>' compares {p} with '==' — {p} must be an equatable type"
+                ),
+                None => format!("'{context_name}' uses '==' which requires an equatable type"),
+            })
+        }
+        _ => None,
+    }
+}
+
 pub(super) fn report_cached_spec_error(
     cached: &SpecializationResult,
     context_name: &str,
@@ -1588,12 +1716,16 @@ pub(super) fn report_cached_spec_error(
     errors: &mut Vec<TypeErr>,
 ) {
     if let Some((body_span, err_kind)) = &cached.err {
-        let (label, note) = generic_context_strings(context_name, type_params, type_args);
-        errors.push(
-            TypeErr::new(*body_span, err_kind.clone())
-                .with_secondary(call_span, label)
-                .with_note(note),
-        );
+        let (_, note) = generic_context_strings(context_name, type_params, type_args);
+        let mut err = TypeErr::new(call_span, err_kind.clone())
+            .with_secondary(*body_span, "required by this expression".to_string())
+            .with_note(note);
+        if let Some(help) =
+            generic_instantiation_help(err_kind, context_name, type_params, type_args)
+        {
+            err.help = Some(help);
+        }
+        errors.push(err);
     }
 }
 
@@ -1605,11 +1737,28 @@ pub(super) fn report_instantiation_errors(
     call_span: Span,
     errors: &mut Vec<TypeErr>,
 ) {
-    let (label, note) = generic_context_strings(context_name, type_params, type_args);
-    for mut err in body_errors {
-        err.secondary.push((call_span, label.clone()));
-        err.notes.push(note.clone());
-        errors.push(err);
+    let (_, note) = generic_context_strings(context_name, type_params, type_args);
+    for err in body_errors {
+        let body_span = err.span;
+        let mut new_err = TypeErr::new(call_span, err.kind.clone())
+            .with_secondary(body_span, "required by this expression".to_string())
+            .with_note(note.clone());
+        for (sec_span, sec_msg) in &err.secondary {
+            new_err.secondary.push((*sec_span, sec_msg.clone()));
+        }
+        for n in &err.notes {
+            new_err.notes.push(n.clone());
+        }
+        let help = generic_instantiation_help(&err.kind, context_name, type_params, type_args);
+        match help {
+            Some(h) => new_err.help = Some(h),
+            None => {
+                if let Some(h) = &err.help {
+                    new_err.help = Some(h.clone());
+                }
+            }
+        }
+        errors.push(new_err);
     }
 }
 
@@ -1816,6 +1965,9 @@ fn instantiate_method_body(
         receiver: method.receiver,
     });
 
+    let prev_snapshot = type_checker.spec_type_snapshot.take();
+    type_checker.spec_type_snapshot = Some(HashMap::new());
+
     let mut body_errors = vec![];
     check_body_common(
         &params,
@@ -1826,17 +1978,18 @@ fn instantiate_method_body(
         &mut body_errors,
     );
 
+    let body_types = type_checker.spec_type_snapshot.take().unwrap_or_default();
+    type_checker.spec_type_snapshot = prev_snapshot;
+
     type_checker.pop_method_context();
 
-    // cache the result preserving the body span of the first error
-    // method specializations don't need body_types (methods are not lowered via specialization cache)
     let cached_err = body_errors.first().map(|err| (err.span, err.kind.clone()));
     type_checker.method_spec_cache.insert(
         cache_key,
         SpecializationResult {
             ret_ty: specialized_ret.clone(),
             err: cached_err,
-            body_types: HashMap::new(),
+            body_types,
         },
     );
 

@@ -126,6 +126,10 @@ pub(super) fn check_method_body(
         return;
     }
 
+    if !struct_def.type_params.is_empty() {
+        return;
+    }
+
     let self_type = struct_def.make_type(
         struct_name,
         struct_def

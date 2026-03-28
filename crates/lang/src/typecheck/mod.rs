@@ -22,7 +22,9 @@ mod tests;
 pub use const_eval::ConstValue;
 pub use error::{TypeErr, TypeErrKind};
 pub use infer::{resolve_type_param_names, subst_type};
-pub use types::{ExtendSpecKey, ExternTypeDef, FieldDefault, SpecializationKey, TypeChecker};
+pub use types::{
+    ExtendSpecKey, ExternTypeDef, FieldDefault, MethodSpecKey, SpecializationKey, TypeChecker,
+};
 
 use crate::ast::{Program, Stmt, StmtNode, Visibility};
 use crate::builtin::Builtin;

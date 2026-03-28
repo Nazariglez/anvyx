@@ -1,11 +1,8 @@
 // @mode: check
 // @expect: error
 // @contains: Invalid operand type
-
-struct Point {
-    x: int,
-}
+// @contains: operator '-' cannot be applied to 'bool'
 
 fn main() {
-    let a = "pos: " + Point { x: 0 };
+    let x = true - false;
 }

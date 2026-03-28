@@ -12,8 +12,8 @@ use internment::Intern;
 use super::{
     FuncLower, LowerCtx, LowerError, alloc_and_bind, alloc_assign_temp, emit_counter_increment,
     extern_binary_op_key, extern_unary_op_key, lower_block, lower_block_to_target, lower_if_let,
-    lower_match_stmts, lower_string_interp, mangle_generic_name, register_named_local,
-    resolve_enum_type_id, resolve_struct_type_id, resolve_variant_index,
+    lower_match_stmts, lower_string_interp, mangle_generic_name, mangle_method_spec_name,
+    register_named_local, resolve_enum_type_id, resolve_struct_type_id, resolve_variant_index,
 };
 
 fn lower_args(
@@ -864,10 +864,11 @@ fn lower_safe_call_expr(
                 hir::ExprKind::CallExtern { extern_id, args },
             )
         } else if let Type::Struct {
-            name: struct_name, ..
+            name: struct_name,
+            type_args,
         } = &inner_ty
         {
-            let mangled = Ident(Intern::new(format!("{struct_name}::{method_name}")));
+            let mangled = mangle_method_spec_name(*struct_name, method_name, type_args);
             let &func_id =
                 ctx.shared
                     .funcs
@@ -2185,10 +2186,11 @@ fn try_lower_method_call(
     }
 
     if let Type::Struct {
-        name: struct_name, ..
+        name: struct_name,
+        type_args,
     } = &target_ty
     {
-        let mangled = Ident(Intern::new(format!("{struct_name}::{method_name}")));
+        let mangled = mangle_method_spec_name(*struct_name, method_name, type_args);
         if let Some(&func_id) = ctx.shared.funcs.get(&mangled) {
             let receiver = lower_expr(&field.node.target, ctx, fc, out)?;
             let mut args = vec![receiver];

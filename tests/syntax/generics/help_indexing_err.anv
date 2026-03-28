@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: not an array or list
+// @contains: must be an array, list, or view
+
+fn get_first<T>(a: T) -> int {
+    return a[0];
+}
+
+fn main() {
+    let x = get_first(42);
+}

@@ -5,13 +5,16 @@ use internment::Intern;
 
 use crate::ast::{self, Ident, Type, TypeVarId, VariantKind};
 use crate::hir;
-use crate::typecheck::{ExtendSpecKey, TypeChecker, resolve_type_param_names, subst_type};
+use crate::typecheck::{
+    ExtendSpecKey, MethodSpecKey, TypeChecker, resolve_type_param_names, subst_type,
+};
 use crate::vm::cycle_collector::make_dataref_vtable;
 use crate::vm::meta::{EnumMeta, StructMeta, VariantMeta, VariantMetaKind};
 
 use super::{
     FuncLower, LowerCtx, LowerError, SharedCtx, analyze_ownership, collect_declarations,
-    lower_block, mangle_generic_name, register_extend_declarations, register_named_local,
+    lower_block, mangle_generic_name, mangle_method_spec_name, register_extend_declarations,
+    register_named_local,
 };
 
 pub fn lower_program(
@@ -214,6 +217,28 @@ pub fn lower_program(
         next_func_id += 1;
         shared.funcs.insert(mangled, id);
         spec_registrations.push((mangled, spec_key.clone()));
+    }
+
+    let mut method_spec_registrations: Vec<(Ident, MethodSpecKey)> = vec![];
+    for (spec_key, spec_result) in shared.tcx.method_specializations() {
+        if spec_result.err.is_some() {
+            continue;
+        }
+        if spec_key.type_args.is_empty() {
+            continue;
+        }
+        let mangled = mangle_method_spec_name(
+            spec_key.struct_name,
+            spec_key.method_name,
+            &spec_key.type_args,
+        );
+        if shared.funcs.contains_key(&mangled) {
+            continue;
+        }
+        let id = hir::FuncId(next_func_id);
+        next_func_id += 1;
+        shared.funcs.insert(mangled, id);
+        method_spec_registrations.push((mangled, spec_key.clone()));
     }
 
     let mut extend_spec_registrations: Vec<(Ident, ExtendSpecKey)> = vec![];
@@ -419,6 +444,72 @@ pub fn lower_program(
             ret: specialized_ret,
             body,
             span: template.span,
+        });
+    }
+
+    for (mangled, spec_key) in &method_spec_registrations {
+        let spec_result = &shared.tcx.method_specializations()[spec_key];
+        let Some(struct_def) = shared.tcx.get_struct(spec_key.struct_name) else {
+            continue;
+        };
+        let Some(method) = struct_def.methods.get(&spec_key.method_name) else {
+            continue;
+        };
+
+        let &id = shared
+            .funcs
+            .get(mangled)
+            .expect("method spec func id must exist");
+
+        let n_struct = struct_def.type_params.len();
+        let struct_type_args = &spec_key.type_args[..n_struct];
+        let method_type_args = &spec_key.type_args[n_struct..];
+
+        let subst: HashMap<TypeVarId, Type> = struct_def
+            .type_params
+            .iter()
+            .zip(struct_type_args.iter())
+            .chain(method.type_params.iter().zip(method_type_args.iter()))
+            .map(|(param, arg)| (param.id, arg.clone()))
+            .collect();
+
+        let specialized_params: Vec<Type> = method
+            .params
+            .iter()
+            .map(|p| subst_type(&p.ty, &subst))
+            .collect();
+        let specialized_ret = subst_type(&method.ret, &subst);
+        let self_type = struct_def.make_type(spec_key.struct_name, struct_type_args.to_vec());
+
+        let spec_ctx = LowerCtx {
+            shared: &shared,
+            type_overrides: Some(&spec_result.body_types),
+        };
+
+        let mut fc = FuncLower {
+            locals: vec![],
+            local_map: HashMap::new(),
+            scope_log: vec![],
+        };
+
+        if method.receiver.is_some() {
+            register_named_local(&mut fc, self_ident, self_type);
+        }
+        for (param, ty) in method.params.iter().zip(specialized_params.iter()) {
+            register_named_local(&mut fc, param.name, ty.clone());
+        }
+        let params_len = fc.locals.len() as u32;
+
+        let body = lower_block(&method.body, &spec_ctx, &mut fc, true, &specialized_ret)?;
+
+        funcs.push(hir::Func {
+            id,
+            name: *mangled,
+            locals: fc.locals,
+            params_len,
+            ret: specialized_ret,
+            body,
+            span: method.body.span,
         });
     }
 

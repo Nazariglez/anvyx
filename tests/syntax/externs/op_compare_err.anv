@@ -1,6 +1,6 @@
 // @mode: check
 // @expect: error
-// @contains: Mismatched types
+// @contains: Invalid operand type
 
 extern type Vec2 {
     x: float;

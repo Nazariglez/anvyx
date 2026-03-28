@@ -32,11 +32,12 @@ pub(super) fn check_binary(
             if is_valid {
                 Type::String
             } else {
+                let operand_type = if left_ty.is_str() { right_ty } else { left_ty };
                 errors.push(TypeErr::new(
                     bin.span,
-                    TypeErrKind::MismatchedTypes {
-                        expected: left_ty.clone(),
-                        found: right_ty.clone(),
+                    TypeErrKind::InvalidOperand {
+                        op: node.op.to_string(),
+                        operand_type,
                     },
                 ));
                 Type::Infer
@@ -65,13 +66,18 @@ pub(super) fn check_binary(
                     }
                 }
             } else {
-                errors.push(TypeErr::new(
-                    bin.span,
+                let kind = if same_ty {
+                    TypeErrKind::InvalidOperand {
+                        op: node.op.to_string(),
+                        operand_type: left_ty,
+                    }
+                } else {
                     TypeErrKind::MismatchedTypes {
-                        expected: left_ty.clone(),
-                        found: right_ty.clone(),
-                    },
-                ));
+                        expected: left_ty,
+                        found: right_ty,
+                    }
+                };
+                errors.push(TypeErr::new(bin.span, kind));
                 Type::Infer
             }
         }
@@ -125,13 +131,18 @@ pub(super) fn check_binary(
             if is_comparable {
                 Type::Bool
             } else {
-                errors.push(TypeErr::new(
-                    bin.span,
+                let kind = if same_ty {
+                    TypeErrKind::InvalidOperand {
+                        op: node.op.to_string(),
+                        operand_type: left_ty,
+                    }
+                } else {
                     TypeErrKind::MismatchedTypes {
-                        expected: left_ty.clone(),
-                        found: right_ty.clone(),
-                    },
-                ));
+                        expected: left_ty,
+                        found: right_ty,
+                    }
+                };
+                errors.push(TypeErr::new(bin.span, kind));
                 Type::Infer
             }
         }

@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: operator '<' cannot be applied to 'bool'
+// @contains: must be int, float, double, or string
+
+fn cmp<T>(a: T, b: T) -> bool {
+    return a < b;
+}
+
+fn main() {
+    let x = cmp(true, false);
+}

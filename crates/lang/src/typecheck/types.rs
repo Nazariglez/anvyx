@@ -48,7 +48,7 @@ impl EnumDef {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct MethodDef {
+pub struct MethodDef {
     pub type_params: Vec<TypeParam>,
     pub receiver: Option<MethodReceiver>,
     pub params: Vec<Param>,
@@ -111,7 +111,7 @@ pub(super) fn type_references_generic(ty: &Type, type_params: &[TypeParam]) -> b
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct StructDef {
+pub struct StructDef {
     pub is_dataref: bool,
     pub type_params: Vec<TypeParam>,
     pub fields: Vec<StructField>,
@@ -131,7 +131,7 @@ impl StructDef {
         }
     }
 
-    pub(super) fn make_type(&self, name: Ident, type_args: Vec<Type>) -> Type {
+    pub fn make_type(&self, name: Ident, type_args: Vec<Type>) -> Type {
         if self.is_dataref {
             Type::DataRef { name, type_args }
         } else {
@@ -269,7 +269,7 @@ pub struct SpecializationKey {
 
 /// Key for caching specialized generic method bodies
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(super) struct MethodSpecKey {
+pub struct MethodSpecKey {
     pub struct_name: Ident,
     pub method_name: Ident,
     /// Struct type args concatenated with method type args
@@ -490,7 +490,7 @@ impl TypeChecker {
             .unwrap_or(&[])
     }
 
-    pub(super) fn get_struct(&self, name: Ident) -> Option<&StructDef> {
+    pub fn get_struct(&self, name: Ident) -> Option<&StructDef> {
         self.struct_defs.get(&name)
     }
 
@@ -754,6 +754,10 @@ impl TypeChecker {
 
     pub fn specializations(&self) -> &HashMap<SpecializationKey, SpecializationResult> {
         &self.specialization_cache
+    }
+
+    pub fn method_specializations(&self) -> &HashMap<MethodSpecKey, SpecializationResult> {
+        &self.method_spec_cache
     }
 
     pub fn generic_template(&self, name: Ident) -> Option<&FuncNode> {
