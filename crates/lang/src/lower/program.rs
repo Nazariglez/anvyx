@@ -107,17 +107,18 @@ pub fn lower_program(
             .collect();
         let is_dataref = tcx.is_dataref(*name);
         let cycle_capable = tcx.is_cycle_capable(*name);
-        let display = qualified_names
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| name.to_string());
+        let short_name = name.to_string();
         let vtable = if is_dataref {
-            Some(make_dataref_vtable(&display, cycle_capable))
+            let vtable_name = qualified_names
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| short_name.clone());
+            Some(make_dataref_vtable(&vtable_name, cycle_capable))
         } else {
             None
         };
         struct_meta_slots[type_id as usize] = Some(StructMeta {
-            name: display,
+            name: short_name,
             field_names,
             to_string_fn: None,
             is_dataref,
@@ -150,12 +151,8 @@ pub fn lower_program(
             })
             .collect();
         let idx = type_id as usize - struct_count;
-        let display = qualified_names
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| name.to_string());
         enum_meta_slots[idx] = Some(EnumMeta {
-            name: display,
+            name: name.to_string(),
             variants,
         });
     }

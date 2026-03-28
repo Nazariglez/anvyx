@@ -1,0 +1,6 @@
+// @helper
+
+pub enum Color {
+    Red,
+    Green,
+}

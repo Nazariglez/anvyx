@@ -1,0 +1,10 @@
+// @mode: run
+// @expect: success
+// @match: Color.Red
+
+import helpers { Color };
+
+fn main() {
+    let c = Color.Red;
+    println(c);
+}

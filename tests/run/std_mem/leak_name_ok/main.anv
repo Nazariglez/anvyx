@@ -3,7 +3,7 @@
 // @match-begin
 // 0
 // 1
-// helpers::Node(value: 42)
+// Node(value: 42)
 // @match-end
 
 import std.mem;
