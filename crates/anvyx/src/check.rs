@@ -9,10 +9,19 @@ pub fn cmd(file: &Path) -> Result<(), String> {
     let (std_sources, _) = collect_std();
 
     let core_mods = anvyx_core::core_modules();
-    let core_source: String = core_mods.iter().map(|m| m.full_anv_source()).collect::<Vec<_>>().join("\n");
+    let core_source: String = core_mods
+        .iter()
+        .map(|m| m.full_anv_source())
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    let _ast =
-        anvyx_lang::generate_ast_with_std(&program, &file_path, &core_source, &HashMap::new(), &std_sources)?;
+    let _ast = anvyx_lang::generate_ast_with_std(
+        &program,
+        &file_path,
+        &core_source,
+        &HashMap::new(),
+        &std_sources,
+    )?;
     Ok(())
 }
 
@@ -22,8 +31,18 @@ pub fn cmd_with_externs(file: &Path, extern_meta: &HashMap<String, String>) -> R
     let (std_sources, _) = collect_std();
 
     let core_mods = anvyx_core::core_modules();
-    let core_source: String = core_mods.iter().map(|m| m.full_anv_source()).collect::<Vec<_>>().join("\n");
+    let core_source: String = core_mods
+        .iter()
+        .map(|m| m.full_anv_source())
+        .collect::<Vec<_>>()
+        .join("\n");
 
-    let _ast = anvyx_lang::generate_ast_with_std(&program, &file_path, &core_source, extern_meta, &std_sources)?;
+    let _ast = anvyx_lang::generate_ast_with_std(
+        &program,
+        &file_path,
+        &core_source,
+        extern_meta,
+        &std_sources,
+    )?;
     Ok(())
 }

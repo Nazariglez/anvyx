@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use crate::{
     ast::{
         BinaryOp, ConstDeclNode, ExprKind, ExprNode, FloatSuffix, Ident, ImportKind, Lit, Stmt,
@@ -39,11 +41,9 @@ impl ConstValue {
 
 #[derive(Debug, Clone)]
 pub struct ConstDef {
-    pub name: Ident,
     pub ty: Type,
     pub value: ConstValue,
     pub visibility: Visibility,
-    pub span: Span,
 }
 
 pub(super) fn collect_const_decls(stmts: &[StmtNode]) -> Vec<&ConstDeclNode> {
@@ -485,11 +485,9 @@ pub(super) fn evaluate_and_export_consts(
         local_consts.insert(
             name,
             ConstDef {
-                name,
                 ty: final_ty,
                 value: const_value,
                 visibility: decl.node.visibility,
-                span: decl.span,
             },
         );
     }

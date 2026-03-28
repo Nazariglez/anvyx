@@ -79,7 +79,7 @@ pub(super) fn build_subst(
         .collect()
 }
 
-/// Instantiates a generic function type with explicit type arguments
+#[cfg(test)]
 pub(super) fn instantiate_func_type(
     type_params: &[TypeParam],
     template: &Type,

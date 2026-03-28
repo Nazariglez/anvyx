@@ -182,9 +182,7 @@ pub fn handlers() -> HashMap<String, ExternHandler> {
             let s = str_arg(&args, 0, "str_char_at")?;
             let index = int_arg(&args, 1, "str_char_at")?;
             if index < 0 {
-                return Err(RuntimeError::new(
-                    "str_char_at: index must be non-negative",
-                ));
+                return Err(RuntimeError::new("str_char_at: index must be non-negative"));
             }
             match s.chars().nth(index as usize) {
                 Some(c) => Ok(Value::String(ManagedRc::new(c.to_string()))),

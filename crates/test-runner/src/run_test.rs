@@ -3,7 +3,7 @@ use wait_timeout::ChildExt;
 use crate::directives::Directives;
 use std::{
     io::Read,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -19,7 +19,7 @@ pub struct RunTestResult {
 
 pub fn run_test_file(
     cmd: &str,
-    file: &PathBuf,
+    file: &Path,
     timeout: Duration,
     backend: Option<&'static str>,
 ) -> Result<RunTestResult, String> {
@@ -33,10 +33,10 @@ pub fn run_test_file(
             duration: Duration::from_secs(0),
         });
     }
-    if directives.skip.is_some() {
+    if let Some(reason) = &directives.skip {
         return Ok(RunTestResult {
             result: TestResult::Skip {
-                message: directives.skip.unwrap(),
+                message: reason.clone(),
             },
             mode: directives.mode,
             backend: None,
@@ -244,7 +244,7 @@ pub fn compile_lang(release: bool) -> Result<String, String> {
 
 fn spawn_test_process(
     cmd: &str,
-    file: &PathBuf,
+    file: &Path,
     timeout: Duration,
     mode: Mode,
     backend: Option<&str>,

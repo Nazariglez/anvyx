@@ -425,9 +425,7 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut LivenessCtx) {
     match &mut expr.kind {
         ExprKind::Local(id) => {
             let id = *id;
-            if ctx.reassigned.contains(&id) {
-                expr.ownership = Ownership::Borrow;
-            } else if ctx.seen.contains(&id) {
+            if ctx.reassigned.contains(&id) || ctx.seen.contains(&id) {
                 expr.ownership = Ownership::Borrow;
             } else {
                 expr.ownership = Ownership::Move;

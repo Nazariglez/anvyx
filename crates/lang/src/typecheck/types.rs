@@ -3,7 +3,6 @@ use crate::{
         ArrayLen, BinaryOp, BlockNode, CallNode, EnumDecl, ExprId, ExtendMethodNode,
         FieldAccessNode, FuncNode, Ident, IndexNode, Method, MethodReceiver, Mutability, Param,
         StmtNode, StructDecl, StructField, Type, TypeParam, TypeVarId, UnaryOp, VariantKind,
-        Visibility,
     },
     span::Span,
 };
@@ -202,7 +201,6 @@ pub struct ModuleExtendEntry {
 pub struct GenericExtendTemplate {
     pub type_params: Vec<TypeParam>,
     pub method: ExtendMethodNode,
-    pub visibility: Visibility,
     pub source_module: Vec<String>,
     pub binding: Ident,
 }

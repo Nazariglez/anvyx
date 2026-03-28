@@ -1288,6 +1288,7 @@ fn lower_extend_call(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_map_desugar(
     c: &ast::CallNode,
     method: &str,
@@ -1513,6 +1514,7 @@ fn lower_map_desugar(
     Ok(Some(result_expr))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_list_desugar(
     c: &ast::CallNode,
     method: &str,

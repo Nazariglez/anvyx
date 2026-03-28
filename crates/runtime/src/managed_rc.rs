@@ -6,6 +6,8 @@ use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::ptr::NonNull;
 
+pub type ChildrenVisitorFn = fn(NonNull<RcHeader>, &mut dyn FnMut(NonNull<RcHeader>));
+
 thread_local! {
     static RC_INC_COUNT: Cell<u64> = const { Cell::new(0) };
     static RC_DEC_COUNT: Cell<u64> = const { Cell::new(0) };
@@ -68,7 +70,7 @@ pub enum CycleColor {
 
 pub struct CycleVtable {
     pub type_name: &'static str,
-    pub children: fn(NonNull<RcHeader>, &mut dyn FnMut(NonNull<RcHeader>)),
+    pub children: ChildrenVisitorFn,
     pub clear_cycle_fields: fn(NonNull<RcHeader>),
     pub dropper: fn(NonNull<RcHeader>),
     pub buffer_on_decrement: bool,

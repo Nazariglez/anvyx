@@ -663,6 +663,7 @@ fn check_enum_struct_pattern(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn check_struct_destructure_pattern(
     pattern: &PatternNode,
     type_name: Ident,

@@ -6,7 +6,7 @@ use args::BackendArg;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use run_test::{ExpectedResult, TestResult, run_test_file};
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -188,7 +188,7 @@ fn mode_label(mode: Mode, backend: Option<&str>) -> String {
     }
 }
 
-fn pass_msg(file: &PathBuf, quiet: bool, mode: Mode, backend: Option<&str>, duration: Duration) {
+fn pass_msg(file: &Path, quiet: bool, mode: Mode, backend: Option<&str>, duration: Duration) {
     if quiet {
         return;
     }
@@ -200,7 +200,7 @@ fn pass_msg(file: &PathBuf, quiet: bool, mode: Mode, backend: Option<&str>, dura
     );
 }
 
-fn fail_msg(file: &PathBuf, quiet: bool, mode: Mode, backend: Option<&str>, duration: Duration) {
+fn fail_msg(file: &Path, quiet: bool, mode: Mode, backend: Option<&str>, duration: Duration) {
     if quiet {
         return;
     }
@@ -212,7 +212,7 @@ fn fail_msg(file: &PathBuf, quiet: bool, mode: Mode, backend: Option<&str>, dura
     );
 }
 
-fn timeout_msg(file: &PathBuf, quiet: bool, mode: Mode, backend: Option<&str>, duration: Duration) {
+fn timeout_msg(file: &Path, quiet: bool, mode: Mode, backend: Option<&str>, duration: Duration) {
     if quiet {
         return;
     }
@@ -224,7 +224,7 @@ fn timeout_msg(file: &PathBuf, quiet: bool, mode: Mode, backend: Option<&str>, d
     );
 }
 
-fn skip_msg(file: &PathBuf, quiet: bool, mode: Mode, backend: Option<&str>, duration: Duration) {
+fn skip_msg(file: &Path, quiet: bool, mode: Mode, backend: Option<&str>, duration: Duration) {
     if quiet {
         return;
     }

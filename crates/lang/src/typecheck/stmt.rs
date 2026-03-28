@@ -147,11 +147,9 @@ fn process_const_decl(
     type_checker.const_defs.insert(
         name,
         ConstDef {
-            name,
             ty: final_ty,
             value: const_value,
             visibility: decl.node.visibility,
-            span: decl.span,
         },
     );
 }
@@ -567,7 +565,6 @@ pub(super) fn collect_scope_types(
                         entries.push(GenericExtendTemplate {
                             type_params: entry.type_params.clone(),
                             method: entry.method.clone(),
-                            visibility: Visibility::Public,
                             source_module: path_key.clone(),
                             binding: binding_name,
                         });
@@ -1164,11 +1161,9 @@ pub(super) fn check_stmt(
             type_checker.const_defs.insert(
                 name,
                 ConstDef {
-                    name,
                     ty: final_ty,
                     value: const_value,
                     visibility: decl.node.visibility,
-                    span: decl.span,
                 },
             );
 
@@ -1436,7 +1431,6 @@ fn check_generic_extend_decl(
             .push(GenericExtendTemplate {
                 type_params: decl.type_params.clone(),
                 method: method.clone(),
-                visibility: decl.visibility,
                 source_module: vec![],
                 binding: Ident(Intern::new(String::new())),
             });

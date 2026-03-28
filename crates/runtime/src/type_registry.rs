@@ -2,10 +2,16 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ptr::NonNull;
 
-use crate::managed_rc::RcHeader;
+use crate::managed_rc::{ChildrenVisitorFn, RcHeader};
+
+type TypeEntryFns = (
+    ChildrenVisitorFn,
+    fn(NonNull<RcHeader>),
+    fn(NonNull<RcHeader>),
+);
 
 struct TypeEntry {
-    children: fn(NonNull<RcHeader>, &mut dyn FnMut(NonNull<RcHeader>)),
+    children: ChildrenVisitorFn,
     clear_cycle_fields: fn(NonNull<RcHeader>),
     dropper: fn(NonNull<RcHeader>),
 }
@@ -29,7 +35,7 @@ pub fn is_cycle_capable(type_id: u32) -> bool {
 /// Does not mark the type as cycle-capable, call `register_cycle_capable` separately
 pub fn register_child_traverser(
     type_id: u32,
-    children: fn(NonNull<RcHeader>, &mut dyn FnMut(NonNull<RcHeader>)),
+    children: ChildrenVisitorFn,
     clear_cycle_fields: fn(NonNull<RcHeader>),
     dropper: fn(NonNull<RcHeader>),
 ) {
@@ -45,13 +51,7 @@ pub fn register_child_traverser(
     });
 }
 
-pub fn get_type_entry(
-    type_id: u32,
-) -> Option<(
-    fn(NonNull<RcHeader>, &mut dyn FnMut(NonNull<RcHeader>)),
-    fn(NonNull<RcHeader>),
-    fn(NonNull<RcHeader>),
-)> {
+pub fn get_type_entry(type_id: u32) -> Option<TypeEntryFns> {
     TYPE_REGISTRY.with(|reg| {
         reg.borrow()
             .get(&type_id)

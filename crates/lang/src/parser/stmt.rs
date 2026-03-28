@@ -248,7 +248,7 @@ fn for_stmt<'src>(
             },
             span,
         );
-        Spanned::new(ast::Stmt::For(for_node), span)
+        Spanned::new(ast::Stmt::For(Box::new(for_node)), span)
     })
     .labelled("for statement")
     .as_context()

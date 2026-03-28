@@ -437,8 +437,4 @@ pub enum TypeErrKind {
         expected: usize,
         found: usize,
     },
-
-    NotYetSupported {
-        feature: String,
-    },
 }

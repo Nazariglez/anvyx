@@ -55,6 +55,7 @@ pub(super) fn check_named_tuple(
     Type::NamedTuple(fields)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn validate_field_names<'a>(
     provided: &[(Ident, Span)],
     container_span: Span,

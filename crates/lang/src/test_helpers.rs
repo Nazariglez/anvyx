@@ -12,7 +12,13 @@ use std::collections::HashMap;
 // ---- pipeline helpers ----
 
 pub(crate) fn generate_hir(source: &str, file_path: &str) -> Result<hir::Program, String> {
-    crate::generate_hir_with_std(source, file_path, TEST_CORE_PRELUDE, &HashMap::new(), &HashMap::new())
+    crate::generate_hir_with_std(
+        source,
+        file_path,
+        TEST_CORE_PRELUDE,
+        &HashMap::new(),
+        &HashMap::new(),
+    )
 }
 
 pub(crate) struct TestCtx;
@@ -43,7 +49,8 @@ impl TestCtx {
     }
 
     fn pipeline(source: &str) -> (ast::Program, typecheck::TypeChecker) {
-        let prelude_tokens = crate::lexer::tokenize(TEST_CORE_PRELUDE).expect("prelude must tokenize");
+        let prelude_tokens =
+            crate::lexer::tokenize(TEST_CORE_PRELUDE).expect("prelude must tokenize");
         let prelude_ast = crate::parser::parse_ast(&prelude_tokens).expect("prelude must parse");
 
         let user_tokens = crate::lexer::tokenize(source).expect("source must tokenize");

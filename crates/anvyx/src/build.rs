@@ -216,6 +216,7 @@ fn generate_main_rs(manifest: &Manifest) -> String {
         r#"use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::str::FromStr;
 
 fn main() {{
     let args: Vec<String> = env::args().collect();
@@ -316,6 +317,7 @@ fn generate_build_main_rs(manifest: &Manifest) -> String {
             r#"use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::str::FromStr;
 
 const ENTRY_POINT: &str = "{entry_point}";
 
@@ -367,6 +369,7 @@ fn main() {{
             r#"use std::collections::HashMap;
 use std::env;
 use std::fs;
+use std::str::FromStr;
 
 const ENTRY_POINT: &str = "{entry_point}";
 

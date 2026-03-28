@@ -9,6 +9,18 @@ use super::{
     resolve_variant_index,
 };
 
+struct MatchLowerCtx<'a> {
+    match_node: &'a ast::MatchNode,
+    span: Span,
+    ctx: &'a LowerCtx<'a>,
+    fc: &'a mut FuncLower,
+    is_func_body: bool,
+    ret_ty: &'a Type,
+    scrutinee_expr: hir::Expr,
+    scrutinee_local: hir::LocalId,
+    scrutinee_ty: &'a Type,
+}
+
 fn lower_arm_body(
     body_expr: &ast::ExprNode,
     ctx: &LowerCtx,
@@ -51,47 +63,53 @@ pub(super) fn lower_match_stmts(
     });
 
     match &scrutinee_ty {
-        Type::Enum { name, type_args } => lower_match_enum(
-            match_node,
-            span,
-            ctx,
-            fc,
-            is_func_body,
-            ret_ty,
-            scrutinee_expr,
-            scrutinee_local,
-            &scrutinee_ty,
-            *name,
-            type_args,
-        ),
-        _ => lower_match_non_enum(
-            match_node,
-            span,
-            ctx,
-            fc,
-            is_func_body,
-            ret_ty,
-            scrutinee_expr,
-            scrutinee_local,
-            &scrutinee_ty,
-            out,
-        ),
+        Type::Enum { name, type_args } => {
+            let mcx = MatchLowerCtx {
+                match_node,
+                span,
+                ctx,
+                fc,
+                is_func_body,
+                ret_ty,
+                scrutinee_expr,
+                scrutinee_local,
+                scrutinee_ty: &scrutinee_ty,
+            };
+            lower_match_enum(mcx, *name, type_args)
+        }
+        _ => {
+            let mcx = MatchLowerCtx {
+                match_node,
+                span,
+                ctx,
+                fc,
+                is_func_body,
+                ret_ty,
+                scrutinee_expr,
+                scrutinee_local,
+                scrutinee_ty: &scrutinee_ty,
+            };
+            lower_match_non_enum(mcx, out)
+        }
     }
 }
 
 fn lower_match_enum(
-    match_node: &ast::MatchNode,
-    span: Span,
-    ctx: &LowerCtx,
-    fc: &mut FuncLower,
-    is_func_body: bool,
-    ret_ty: &Type,
-    scrutinee_expr: hir::Expr,
-    scrutinee_local: hir::LocalId,
-    scrutinee_ty: &Type,
+    mcx: MatchLowerCtx,
     enum_name: ast::Ident,
     type_args: &[Type],
 ) -> Result<hir::Stmt, LowerError> {
+    let MatchLowerCtx {
+        match_node,
+        span,
+        ctx,
+        fc,
+        is_func_body,
+        ret_ty,
+        scrutinee_expr,
+        scrutinee_local,
+        scrutinee_ty,
+    } = mcx;
     let mut arms: Vec<hir::MatchArm> = vec![];
     let mut else_body: Option<hir::MatchElse> = None;
 
@@ -321,17 +339,20 @@ fn lower_match_enum(
 }
 
 fn lower_match_non_enum(
-    match_node: &ast::MatchNode,
-    span: Span,
-    ctx: &LowerCtx,
-    fc: &mut FuncLower,
-    is_func_body: bool,
-    ret_ty: &Type,
-    scrutinee_expr: hir::Expr,
-    scrutinee_local: hir::LocalId,
-    scrutinee_ty: &Type,
+    mcx: MatchLowerCtx,
     out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::Stmt, LowerError> {
+    let MatchLowerCtx {
+        match_node,
+        span,
+        ctx,
+        fc,
+        is_func_body,
+        ret_ty,
+        scrutinee_expr,
+        scrutinee_local,
+        scrutinee_ty,
+    } = mcx;
     out.push(hir::Stmt {
         span,
         kind: hir::StmtKind::Let {

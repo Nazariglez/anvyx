@@ -61,7 +61,7 @@ pub enum Stmt {
     LetElse(LetElseNode),
     Return(ReturnNode),
     While(WhileNode),
-    For(ForNode),
+    For(Box<ForNode>),
     Break,
     Continue,
 }

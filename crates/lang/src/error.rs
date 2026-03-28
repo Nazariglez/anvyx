@@ -740,10 +740,6 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "lambda parameter count mismatch".to_string(),
             format!("expected {expected} parameter(s), found {found}"),
         ),
-        TypeErrKind::NotYetSupported { feature } => (
-            format!("not yet supported: {feature}"),
-            "this feature is not implemented yet".to_string(),
-        ),
     }
 }
 
