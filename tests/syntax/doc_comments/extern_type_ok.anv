@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+/// A 2D point.
+extern type Point {
+    x: float;
+    y: float;
+}
+
+fn main() {}

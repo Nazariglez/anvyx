@@ -24,8 +24,8 @@ use chumsky::{
 };
 
 use decl::{
-    const_decl, dataref_declaration, enum_declaration, extend_declaration, extern_declaration,
-    function, import_declaration, struct_declaration,
+    const_decl, dataref_declaration, doc_comment_block, enum_declaration, extend_declaration,
+    extern_declaration, function, import_declaration, struct_declaration,
 };
 use stmt::statement;
 
@@ -82,6 +82,7 @@ pub(crate) fn parse_type_str(s: &str) -> Result<ast::Type, String> {
 
 fn parser<'src>() -> BoxedParser<'src, ast::Program> {
     let stmt = statement();
+
     let func_decl = function(stmt.clone()).map(|func_node| {
         let span = func_node.span;
         Spanned::new(ast::Stmt::Func(func_node), span)
@@ -105,19 +106,34 @@ fn parser<'src>() -> BoxedParser<'src, ast::Program> {
     let extern_decl = extern_declaration(stmt.clone());
     let const_decl = const_decl(stmt);
 
-    choice((
-        import_declaration(),
-        extern_decl,
-        func_decl,
-        struct_decl,
-        dataref_decl,
-        enum_decl,
-        extend_decl,
-        const_decl,
-    ))
-    .repeated()
-    .collect::<Vec<_>>()
-    .map(|stmts| ast::Program { stmts })
-    .then_ignore(end())
-    .boxed()
+    let documented_decl = doc_comment_block()
+        .then(choice((
+            func_decl,
+            struct_decl,
+            dataref_decl,
+            enum_decl,
+            const_decl,
+            extern_decl,
+        )))
+        .map(|(doc, mut stmt_node)| {
+            match &mut stmt_node.node {
+                ast::Stmt::Func(f) => f.node.doc = doc,
+                ast::Stmt::Struct(s) | ast::Stmt::DataRef(s) => s.node.doc = doc,
+                ast::Stmt::Enum(e) => e.node.doc = doc,
+                ast::Stmt::Const(c) => c.node.doc = doc,
+                ast::Stmt::ExternFunc(ef) => ef.node.doc = doc,
+                ast::Stmt::ExternType(et) => et.node.doc = doc,
+                _ => unreachable!(),
+            }
+            stmt_node
+        });
+
+    let undocumented_decl = choice((import_declaration(), extend_decl));
+
+    choice((documented_decl, undocumented_decl))
+        .repeated()
+        .collect::<Vec<_>>()
+        .map(|stmts| ast::Program { stmts })
+        .then_ignore(end())
+        .boxed()
 }

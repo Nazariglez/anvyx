@@ -2,6 +2,20 @@ use std::collections::HashMap;
 
 use crate::{ExternDecl, ExternHandler, ExternTypeDecl};
 
+fn emit_doc(out: &mut String, doc: Option<&str>) {
+    if let Some(doc) = doc {
+        for line in doc.lines() {
+            if line.is_empty() {
+                out.push_str("///\n");
+            } else {
+                out.push_str("/// ");
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+}
+
 pub struct StdModule {
     pub name: &'static str,
     pub anv_source: &'static str,
@@ -20,6 +34,7 @@ impl StdModule {
                 || !ty.methods.is_empty()
                 || !ty.statics.is_empty()
                 || !ty.operators.is_empty();
+            emit_doc(&mut out, ty.doc);
             if !has_members {
                 out.push_str("extern type ");
                 out.push_str(ty.name);
@@ -39,6 +54,7 @@ impl StdModule {
                     out.push_str(";\n");
                 }
                 for method in &ty.methods {
+                    emit_doc(&mut out, method.doc);
                     out.push_str("    fn ");
                     out.push_str(method.name);
                     out.push('(');
@@ -61,6 +77,7 @@ impl StdModule {
                     out.push_str(";\n");
                 }
                 for s in &ty.statics {
+                    emit_doc(&mut out, s.doc);
                     out.push_str("    fn ");
                     out.push_str(s.name);
                     out.push('(');
@@ -129,6 +146,7 @@ impl StdModule {
             }
         }
         for decl in self.exports {
+            emit_doc(&mut out, decl.doc);
             out.push_str("extern fn ");
             out.push_str(decl.name);
             out.push('(');

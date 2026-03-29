@@ -226,6 +226,11 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         &borrow_params,
     )?;
 
+    let doc_token = match crate::codegen::extract_doc(&func.attrs) {
+        Some(s) => quote! { Some(#s) },
+        None => quote! { None },
+    };
+
     Ok(quote! {
         #func
 
@@ -233,6 +238,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             name: #export_name,
             params: &[#(#param_tuples),*],
             ret: #ret_type_ts,
+            doc: #doc_token,
         };
 
         pub fn #companion_ident() -> (&'static str, anvyx_lang::ExternHandler) {

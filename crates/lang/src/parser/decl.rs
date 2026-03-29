@@ -12,6 +12,17 @@ use super::expr::expression;
 use super::types::type_ident;
 use super::{AnvParser, BoxedParser};
 
+pub(super) fn doc_comment_block<'src>() -> BoxedParser<'src, Option<String>> {
+    select! { (Token::DocComment(s), _) => s.to_string() }
+        .repeated()
+        .at_least(1)
+        .collect::<Vec<_>>()
+        .map(|lines| Some(lines.join("\n")))
+        .or_not()
+        .map(|opt| opt.flatten())
+        .boxed()
+}
+
 fn type_params<'src>() -> BoxedParser<'src, Vec<ast::TypeParam>> {
     select! {
         (Token::Op(Op::LessThan), _) => (),
@@ -120,6 +131,7 @@ pub(super) fn extern_declaration<'src>(
                     let resolved_ret = ret.unwrap_or(ast::Type::Void);
                     let node = Spanned::new(
                         ast::ExternFunc {
+                            doc: None,
                             name,
                             params,
                             ret: resolved_ret,
@@ -155,6 +167,7 @@ fn extern_type_declaration<'src>(
             let resolved_members = resolve_extern_members(members, &empty_map, &self_type);
             let node = Spanned::new(
                 ast::ExternType {
+                    doc: None,
                     name,
                     has_init,
                     members: resolved_members,
@@ -181,11 +194,13 @@ fn resolve_extern_members(
                 computed,
             },
             ast::ExternTypeMember::Method {
+                doc,
                 name,
                 receiver,
                 params,
                 ret,
             } => ast::ExternTypeMember::Method {
+                doc,
                 name,
                 receiver,
                 params: params
@@ -199,25 +214,25 @@ fn resolve_extern_members(
                     .collect(),
                 ret: resolve_type_params_with_self(&ret, type_param_map, Some(self_type)),
             },
-            ast::ExternTypeMember::StaticMethod { name, params, ret } => {
-                ast::ExternTypeMember::StaticMethod {
-                    name,
-                    params: params
-                        .iter()
-                        .map(|p| ast::Param {
-                            mutability: p.mutability,
-                            name: p.name,
-                            ty: resolve_type_params_with_self(
-                                &p.ty,
-                                type_param_map,
-                                Some(self_type),
-                            ),
-                            default: p.default.clone(),
-                        })
-                        .collect(),
-                    ret: resolve_type_params_with_self(&ret, type_param_map, Some(self_type)),
-                }
-            }
+            ast::ExternTypeMember::StaticMethod {
+                doc,
+                name,
+                params,
+                ret,
+            } => ast::ExternTypeMember::StaticMethod {
+                doc,
+                name,
+                params: params
+                    .iter()
+                    .map(|p| ast::Param {
+                        mutability: p.mutability,
+                        name: p.name,
+                        ty: resolve_type_params_with_self(&p.ty, type_param_map, Some(self_type)),
+                        default: p.default.clone(),
+                    })
+                    .collect(),
+                ret: resolve_type_params_with_self(&ret, type_param_map, Some(self_type)),
+            },
             ast::ExternTypeMember::Operator {
                 op,
                 other_ty,
@@ -361,20 +376,29 @@ fn extern_type_field_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> 
 fn extern_type_method_member<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::ExternTypeMember> {
-    select! { (Token::Keyword(Keyword::Fn), _) => () }
-        .ignore_then(field_name_ident())
-        .then(method_params(stmt))
-        .then(return_type())
-        .map(|((name, (receiver, _, params)), ret)| {
+    doc_comment_block()
+        .then(
+            select! { (Token::Keyword(Keyword::Fn), _) => () }
+                .ignore_then(field_name_ident())
+                .then(method_params(stmt))
+                .then(return_type()),
+        )
+        .map(|(doc, ((name, (receiver, _, params)), ret))| {
             let ret = ret.unwrap_or(ast::Type::Void);
             match receiver {
                 Some(recv) => ast::ExternTypeMember::Method {
+                    doc,
                     name,
                     receiver: recv,
                     params,
                     ret,
                 },
-                None => ast::ExternTypeMember::StaticMethod { name, params, ret },
+                None => ast::ExternTypeMember::StaticMethod {
+                    doc,
+                    name,
+                    params,
+                    ret,
+                },
             }
         })
         .boxed()
@@ -427,6 +451,7 @@ pub(super) fn function<'src>(
 
             Spanned::new(
                 ast::Func {
+                    doc: None,
                     name,
                     visibility: vis,
                     type_params,
@@ -692,6 +717,7 @@ pub(super) fn struct_declaration<'src>(
 
                 Spanned::new(
                     ast::StructDecl {
+                        doc: None,
                         name,
                         visibility: vis,
                         type_params,
@@ -802,6 +828,7 @@ pub(super) fn dataref_declaration<'src>(
 
                 Spanned::new(
                     ast::StructDecl {
+                        doc: None,
                         name,
                         visibility: vis,
                         type_params,
@@ -916,6 +943,7 @@ pub(super) fn enum_declaration<'src>(
 
             Spanned::new(
                 ast::EnumDecl {
+                    doc: None,
                     name,
                     visibility: vis,
                     type_params,
@@ -933,45 +961,51 @@ fn extend_method<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::ExtendMethodNode> {
     let tail_expr = expression(stmt.clone());
-    select! {
-        (Token::Keyword(Keyword::Fn), _) => (),
-    }
-    .ignore_then(field_name_ident())
-    .then(method_params(stmt.clone()))
-    .then(return_type())
-    .then(block_stmt(stmt, tail_expr))
-    .validate(|(((name, (receiver, self_annotation, params)), ret), body), extra, emitter| {
-        let s = extra.span();
-        if self_annotation.is_some() {
-            emitter.emit(Rich::custom(
-                s,
-                "'self' must not have a type annotation in extend methods — the type is determined by the extend block",
-            ));
-        }
-        let self_param = receiver.map(|r| ast::Param {
-            mutability: match r {
-                ast::MethodReceiver::Var => ast::Mutability::Mutable,
-                ast::MethodReceiver::Value => ast::Mutability::Immutable,
-            },
-            name: ast::Ident(internment::Intern::new("self".to_string())),
-            ty: ast::Type::Infer,
-            default: None,
-        });
-        let all_params: Vec<ast::Param> = self_param.into_iter().chain(params).collect();
-        let ret_ty = ret.unwrap_or(ast::Type::Void);
-        Spanned::new(
-            ast::ExtendMethod {
-                name,
-                params: all_params,
-                ret: ret_ty,
-                body: Spanned::new(body.node, Span::new(s.start, s.end)),
-            },
-            Span::new(s.start, s.end),
+    doc_comment_block()
+        .then(
+            select! {
+                (Token::Keyword(Keyword::Fn), _) => (),
+            }
+            .ignore_then(field_name_ident())
+            .then(method_params(stmt.clone()))
+            .then(return_type())
+            .then(block_stmt(stmt, tail_expr)),
         )
-    })
-    .labelled("extend method")
-    .as_context()
-    .boxed()
+        .validate(
+            |(doc, (((name, (receiver, self_annotation, params)), ret), body)), extra, emitter| {
+                let s = extra.span();
+                if self_annotation.is_some() {
+                    emitter.emit(Rich::custom(
+                        s,
+                        "'self' must not have a type annotation in extend methods — the type is determined by the extend block",
+                    ));
+                }
+                let self_param = receiver.map(|r| ast::Param {
+                    mutability: match r {
+                        ast::MethodReceiver::Var => ast::Mutability::Mutable,
+                        ast::MethodReceiver::Value => ast::Mutability::Immutable,
+                    },
+                    name: ast::Ident(internment::Intern::new("self".to_string())),
+                    ty: ast::Type::Infer,
+                    default: None,
+                });
+                let all_params: Vec<ast::Param> = self_param.into_iter().chain(params).collect();
+                let ret_ty = ret.unwrap_or(ast::Type::Void);
+                Spanned::new(
+                    ast::ExtendMethod {
+                        doc,
+                        name,
+                        params: all_params,
+                        ret: ret_ty,
+                        body: Spanned::new(body.node, Span::new(s.start, s.end)),
+                    },
+                    Span::new(s.start, s.end),
+                )
+            },
+        )
+        .labelled("extend method")
+        .as_context()
+        .boxed()
 }
 
 pub(super) fn extend_declaration<'src>(
@@ -1047,6 +1081,7 @@ pub(super) fn const_decl<'src>(
             let span = Span::new(s.start, s.end);
             let node = Spanned::new(
                 ast::ConstDecl {
+                    doc: None,
                     name,
                     ty,
                     value,

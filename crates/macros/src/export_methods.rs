@@ -1006,11 +1006,17 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         let ret_anvyx_str = build_ret_anvyx_str(&ret_mode, returns_self, &type_decl_ident)
             .map_err(|msg| syn::Error::new_spanned(&method.sig.output, msg))?;
 
+        let method_doc_token = match crate::codegen::extract_doc(&method.attrs) {
+            Some(s) => quote! { Some(#s) },
+            None => quote! { None },
+        };
+
         match classify_method_kind(&method.sig)? {
             MethodKind::Static => {
                 static_decls.push(quote! {
                     anvyx_lang::ExternStaticMethodDecl {
                         name: #method_name_str,
+                        doc: #method_doc_token,
                         params: &[#(#param_anvyx_types),*],
                         ret: #ret_anvyx_str,
                     }
@@ -1020,6 +1026,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 method_decls.push(quote! {
                     anvyx_lang::ExternMethodDecl {
                         name: #method_name_str,
+                        doc: #method_doc_token,
                         receiver: "self",
                         params: &[#(#param_anvyx_types),*],
                         ret: #ret_anvyx_str,
@@ -1030,6 +1037,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 method_decls.push(quote! {
                     anvyx_lang::ExternMethodDecl {
                         name: #method_name_str,
+                        doc: #method_doc_token,
                         receiver: "var",
                         params: &[#(#param_anvyx_types),*],
                         ret: #ret_anvyx_str,

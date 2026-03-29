@@ -340,6 +340,7 @@ fn build_extern_type_def(
                 receiver,
                 params,
                 ret,
+                ..
             } => {
                 methods.insert(
                     *name,
@@ -358,7 +359,9 @@ fn build_extern_type_def(
                     },
                 );
             }
-            ExternTypeMember::StaticMethod { name, params, ret } => {
+            ExternTypeMember::StaticMethod {
+                name, params, ret, ..
+            } => {
                 statics.insert(
                     *name,
                     ExternMethodDef {

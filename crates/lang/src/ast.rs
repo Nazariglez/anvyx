@@ -460,6 +460,7 @@ pub struct Binding {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDecl {
+    pub doc: Option<String>,
     pub name: Ident,
     pub ty: Option<Type>,
     pub value: ExprNode,
@@ -534,6 +535,7 @@ impl Pattern {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Func {
+    pub doc: Option<String>,
     pub name: Ident,
     pub visibility: Visibility,
     pub type_params: Vec<TypeParam>,
@@ -544,6 +546,7 @@ pub struct Func {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternFunc {
+    pub doc: Option<String>,
     pub name: Ident,
     pub params: Vec<Param>,
     pub ret: Type,
@@ -551,6 +554,7 @@ pub struct ExternFunc {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternType {
+    pub doc: Option<String>,
     pub name: Ident,
     pub has_init: bool,
     pub members: Vec<ExternTypeMember>,
@@ -564,12 +568,14 @@ pub enum ExternTypeMember {
         computed: bool,
     },
     Method {
+        doc: Option<String>,
         name: Ident,
         receiver: MethodReceiver,
         params: Vec<Param>,
         ret: Type,
     },
     StaticMethod {
+        doc: Option<String>,
         name: Ident,
         params: Vec<Param>,
         ret: Type,
@@ -836,6 +842,7 @@ pub struct StructField {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDecl {
+    pub doc: Option<String>,
     pub name: Ident,
     pub visibility: Visibility,
     pub type_params: Vec<TypeParam>,
@@ -883,6 +890,7 @@ pub struct EnumVariant {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDecl {
+    pub doc: Option<String>,
     pub name: Ident,
     pub visibility: Visibility,
     pub type_params: Vec<TypeParam>,
@@ -899,6 +907,7 @@ pub struct ExtendDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtendMethod {
+    pub doc: Option<String>,
     pub name: Ident,
     pub params: Vec<Param>,
     pub ret: Type,

@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: success
+
+fn foo() {}
+struct Point { x: int, y: int }
+enum Color { Red }
+const N: int = 1;
+
+fn main() {}

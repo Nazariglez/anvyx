@@ -816,6 +816,7 @@ fn test_view_indexing_ok() {
     let idx_id = get_expr_id(&idx);
     let func = FuncNode {
         node: Func {
+            doc: None,
             name: ident("head"),
             visibility: Visibility::Private,
             type_params: vec![],

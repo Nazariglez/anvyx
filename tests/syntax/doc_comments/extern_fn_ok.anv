@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: success
+
+/// Adds two integers.
+extern fn add(a: int, b: int) -> int;
+
+fn main() {}

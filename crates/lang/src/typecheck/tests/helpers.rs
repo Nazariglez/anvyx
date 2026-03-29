@@ -353,6 +353,7 @@ pub(super) fn fn_decl(
     StmtNode {
         node: Stmt::Func(FuncNode {
             node: Func {
+                doc: None,
                 name: dummy_ident(name),
                 visibility: Visibility::Private,
                 type_params: vec![],
@@ -388,6 +389,7 @@ pub(super) fn generic_fn_decl(
     StmtNode {
         node: Stmt::Func(FuncNode {
             node: Func {
+                doc: None,
                 name: dummy_ident(name),
                 visibility: Visibility::Private,
                 type_params,
@@ -428,6 +430,7 @@ pub(super) fn func_decl(
     StmtNode {
         node: Stmt::Func(FuncNode {
             node: Func {
+                doc: None,
                 name: dummy_ident(name),
                 visibility: Visibility::Private,
                 type_params: vec![],
@@ -612,6 +615,7 @@ pub(super) fn generic_struct_decl(
     StmtNode {
         node: Stmt::Struct(StructDeclNode {
             node: StructDecl {
+                doc: None,
                 name: dummy_ident(name),
                 visibility: Visibility::Public,
                 type_params,
@@ -635,6 +639,7 @@ pub(super) fn enum_decl(name: &str, variants: Vec<(&str, VariantKind)>) -> StmtN
     StmtNode {
         node: Stmt::Enum(EnumDeclNode {
             node: EnumDecl {
+                doc: None,
                 name: dummy_ident(name),
                 visibility: Visibility::Public,
                 type_params: vec![],
@@ -669,6 +674,7 @@ pub(super) fn fn_decl_var_params(
     StmtNode {
         node: Stmt::Func(FuncNode {
             node: Func {
+                doc: None,
                 name: dummy_ident(name),
                 visibility: Visibility::Private,
                 type_params: vec![],

@@ -5,11 +5,15 @@ pub struct ExternDecl {
     pub name: &'static str,
     pub params: &'static [(&'static str, &'static str)],
     pub ret: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ExternTypeDecl {
     pub name: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc: Option<&'static str>,
     pub has_init: bool,
     pub fields: Vec<ExternFieldDecl>,
     pub methods: Vec<ExternMethodDecl>,
@@ -20,6 +24,7 @@ pub struct ExternTypeDecl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExternTypeDeclConst {
     pub name: &'static str,
+    pub doc: Option<&'static str>,
     pub has_init: bool,
     pub fields: &'static [ExternFieldDecl],
 }
@@ -34,6 +39,8 @@ pub struct ExternFieldDecl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ExternMethodDecl {
     pub name: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc: Option<&'static str>,
     pub receiver: &'static str,
     pub params: &'static [(&'static str, &'static str)],
     pub ret: &'static str,
@@ -42,6 +49,8 @@ pub struct ExternMethodDecl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct ExternStaticMethodDecl {
     pub name: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc: Option<&'static str>,
     pub params: &'static [(&'static str, &'static str)],
     pub ret: &'static str,
 }
@@ -75,11 +84,15 @@ pub struct ExternFuncMeta {
     pub name: String,
     pub params: Vec<(String, String)>,
     pub ret: String,
+    #[serde(default)]
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ExternTypeMeta {
     pub name: String,
+    #[serde(default)]
+    pub doc: Option<String>,
     #[serde(default)]
     pub has_init: bool,
     #[serde(default)]
@@ -103,6 +116,8 @@ pub struct ExternFieldMeta {
 #[derive(Debug, Deserialize)]
 pub struct ExternMethodMeta {
     pub name: String,
+    #[serde(default)]
+    pub doc: Option<String>,
     pub receiver: String,
     pub params: Vec<(String, String)>,
     pub ret: String,
@@ -111,6 +126,8 @@ pub struct ExternMethodMeta {
 #[derive(Debug, Deserialize)]
 pub struct ExternStaticMethodMeta {
     pub name: String,
+    #[serde(default)]
+    pub doc: Option<String>,
     pub params: Vec<(String, String)>,
     pub ret: String,
 }
@@ -195,6 +212,7 @@ pub(crate) fn metadata_to_extern_stmts(
             let params = params_to_ast(&method.params)?;
             let ret = anvyx_type_from_str(&method.ret)?;
             members.push(ExternTypeMember::Method {
+                doc: method.doc.clone(),
                 name: Ident(Intern::new(method.name.clone())),
                 receiver,
                 params,
@@ -206,6 +224,7 @@ pub(crate) fn metadata_to_extern_stmts(
             let params = params_to_ast(&static_m.params)?;
             let ret = anvyx_type_from_str(&static_m.ret)?;
             members.push(ExternTypeMember::StaticMethod {
+                doc: static_m.doc.clone(),
                 name: Ident(Intern::new(static_m.name.clone())),
                 params,
                 ret,
@@ -250,6 +269,7 @@ pub(crate) fn metadata_to_extern_stmts(
 
         let node = Spanned::new(
             ExternType {
+                doc: ty.doc.clone(),
                 name,
                 has_init: ty.has_init,
                 members,
@@ -264,7 +284,15 @@ pub(crate) fn metadata_to_extern_stmts(
         let params = params_to_ast(&func.params)?;
         let ret = anvyx_type_from_str(&func.ret)?;
 
-        let node = Spanned::new(ExternFunc { name, params, ret }, span);
+        let node = Spanned::new(
+            ExternFunc {
+                doc: func.doc.clone(),
+                name,
+                params,
+                ret,
+            },
+            span,
+        );
         stmts.push(Spanned::new(Stmt::ExternFunc(node), span));
     }
 
@@ -303,6 +331,7 @@ mod tests {
             name: "add",
             params: &[("a", "int"), ("b", "int")],
             ret: "int",
+            doc: None,
         };
         let json = exports_to_json(&[decl], &[]);
         assert_eq!(
@@ -318,11 +347,13 @@ mod tests {
                 name: "add",
                 params: &[("a", "int"), ("b", "int")],
                 ret: "int",
+                doc: None,
             },
             ExternDecl {
                 name: "greet",
                 params: &[("name", "string")],
                 ret: "string",
+                doc: None,
             },
         ];
         let json = exports_to_json(&decls, &[]);
@@ -338,6 +369,7 @@ mod tests {
             name: "noop",
             params: &[],
             ret: "void",
+            doc: None,
         };
         let json = exports_to_json(&[decl], &[]);
         assert!(json.contains("\"ret\":\"void\""));
@@ -351,21 +383,25 @@ mod tests {
                 name: "f_int",
                 params: &[("x", "int")],
                 ret: "int",
+                doc: None,
             },
             ExternDecl {
                 name: "f_float",
                 params: &[("x", "float")],
                 ret: "float",
+                doc: None,
             },
             ExternDecl {
                 name: "f_bool",
                 params: &[("x", "bool")],
                 ret: "bool",
+                doc: None,
             },
             ExternDecl {
                 name: "f_string",
                 params: &[("x", "string")],
                 ret: "string",
+                doc: None,
             },
         ];
         let json = exports_to_json(&decls, &[]);
@@ -381,6 +417,7 @@ mod tests {
             name: "get_val",
             params: &[],
             ret: "int",
+            doc: None,
         };
         let json = exports_to_json(&[decl], &[]);
         assert!(json.contains("\"params\":[]"));
@@ -415,11 +452,13 @@ mod tests {
                 name: "add",
                 params: &[("a", "int"), ("b", "int")],
                 ret: "int",
+                doc: None,
             },
             ExternDecl {
                 name: "greet",
                 params: &[("name", "string")],
                 ret: "string",
+                doc: None,
             },
         ];
         let json = exports_to_json(&decls, &[]);
@@ -523,6 +562,7 @@ mod tests {
                     ("b".to_string(), "int".to_string()),
                 ],
                 ret: "int".to_string(),
+                doc: None,
             }],
         };
 
@@ -546,6 +586,7 @@ mod tests {
                 name: "make_list".to_string(),
                 params: vec![("size".to_string(), "int".to_string())],
                 ret: "[int]".to_string(),
+                doc: None,
             }],
         };
         let stmts = metadata_to_extern_stmts(&meta).unwrap();
@@ -561,6 +602,7 @@ mod tests {
         let type_decls = [
             ExternTypeDecl {
                 name: "Sprite",
+                doc: None,
                 has_init: false,
                 fields: vec![],
                 methods: vec![],
@@ -569,6 +611,7 @@ mod tests {
             },
             ExternTypeDecl {
                 name: "Texture",
+                doc: None,
                 has_init: false,
                 fields: vec![],
                 methods: vec![],
@@ -590,6 +633,7 @@ mod tests {
     fn exports_to_json_with_types_and_functions() {
         let type_decls = [ExternTypeDecl {
             name: "Sprite",
+            doc: None,
             has_init: false,
             fields: vec![],
             methods: vec![],
@@ -600,6 +644,7 @@ mod tests {
             name: "create",
             params: &[],
             ret: "Sprite",
+            doc: None,
         }];
         let json = exports_to_json(&func_decls, &type_decls);
         assert!(json.contains("\"name\":\"Sprite\""));
@@ -634,6 +679,7 @@ mod tests {
         let meta = ExternProviderMeta {
             types: vec![ExternTypeMeta {
                 name: "Sprite".to_string(),
+                doc: None,
                 has_init: false,
                 fields: vec![],
                 methods: vec![],
@@ -644,6 +690,7 @@ mod tests {
                 name: "create".to_string(),
                 params: vec![],
                 ret: "int".to_string(),
+                doc: None,
             }],
         };
 
@@ -665,6 +712,7 @@ mod tests {
 
         let type_decls = [ExternTypeDecl {
             name: "Sprite",
+            doc: None,
             has_init: false,
             fields: vec![],
             methods: vec![],
@@ -675,6 +723,7 @@ mod tests {
             name: "create",
             params: &[("x", "int")],
             ret: "int",
+            doc: None,
         }];
         let json = exports_to_json(&func_decls, &type_decls);
         let meta = parse_provider_json(&json).unwrap();
@@ -693,6 +742,7 @@ mod tests {
     fn rich_type() -> ExternTypeDecl {
         ExternTypeDecl {
             name: "Point",
+            doc: None,
             has_init: false,
             fields: vec![
                 ExternFieldDecl {
@@ -708,12 +758,14 @@ mod tests {
             ],
             methods: vec![ExternMethodDecl {
                 name: "move_by",
+                doc: None,
                 receiver: "var",
                 params: &[("dx", "float"), ("dy", "float")],
                 ret: "void",
             }],
             statics: vec![ExternStaticMethodDecl {
                 name: "new",
+                doc: None,
                 params: &[("x", "float"), ("y", "float")],
                 ret: "Point",
             }],
@@ -779,6 +831,7 @@ mod tests {
         let meta = ExternProviderMeta {
             types: vec![ExternTypeMeta {
                 name: "Point".to_string(),
+                doc: None,
                 has_init: false,
                 fields: vec![
                     ExternFieldMeta {
@@ -794,6 +847,7 @@ mod tests {
                 ],
                 methods: vec![ExternMethodMeta {
                     name: "move_by".to_string(),
+                    doc: None,
                     receiver: "var".to_string(),
                     params: vec![
                         ("dx".to_string(), "float".to_string()),
@@ -803,6 +857,7 @@ mod tests {
                 }],
                 statics: vec![ExternStaticMethodMeta {
                     name: "new".to_string(),
+                    doc: None,
                     params: vec![
                         ("x".to_string(), "float".to_string()),
                         ("y".to_string(), "float".to_string()),
@@ -845,10 +900,12 @@ mod tests {
         let make_meta = |receiver: &str| ExternProviderMeta {
             types: vec![ExternTypeMeta {
                 name: "T".to_string(),
+                doc: None,
                 has_init: false,
                 fields: vec![],
                 methods: vec![ExternMethodMeta {
                     name: "m".to_string(),
+                    doc: None,
                     receiver: receiver.to_string(),
                     params: vec![],
                     ret: "void".to_string(),
@@ -891,6 +948,7 @@ mod tests {
     fn exports_to_json_has_init() {
         let type_decls = [ExternTypeDecl {
             name: "Pt",
+            doc: None,
             has_init: true,
             fields: vec![],
             methods: vec![],
@@ -905,6 +963,7 @@ mod tests {
     fn exports_to_json_no_init() {
         let type_decls = [ExternTypeDecl {
             name: "Pt",
+            doc: None,
             has_init: false,
             fields: vec![],
             methods: vec![],
@@ -938,6 +997,7 @@ mod tests {
         let meta = ExternProviderMeta {
             types: vec![ExternTypeMeta {
                 name: "Pt".to_string(),
+                doc: None,
                 has_init: true,
                 fields: vec![],
                 methods: vec![],
@@ -957,6 +1017,7 @@ mod tests {
     fn exports_to_json_with_operators() {
         let type_decls = [ExternTypeDecl {
             name: "Vec2",
+            doc: None,
             has_init: false,
             fields: vec![],
             methods: vec![],
@@ -1036,6 +1097,7 @@ mod tests {
     fn round_trip_operators() {
         let type_decls = [ExternTypeDecl {
             name: "Vec2",
+            doc: None,
             has_init: false,
             fields: vec![],
             methods: vec![],
@@ -1083,6 +1145,7 @@ mod tests {
         let meta = ExternProviderMeta {
             types: vec![ExternTypeMeta {
                 name: "Vec2".to_string(),
+                doc: None,
                 has_init: false,
                 fields: vec![],
                 methods: vec![],
@@ -1151,6 +1214,7 @@ mod tests {
         let meta = ExternProviderMeta {
             types: vec![ExternTypeMeta {
                 name: "Vec2".to_string(),
+                doc: None,
                 has_init: false,
                 fields: vec![],
                 methods: vec![],

@@ -21,6 +21,7 @@ pub enum Token {
     Dot,
     Range,
     RangeEq,
+    DocComment(Intern<String>),
 }
 
 pub type SpannedToken = (Token, Span);
@@ -46,6 +47,7 @@ impl Display for Token {
             Token::Range => write!(f, ".."),
             Token::RangeEq => write!(f, "..="),
             Token::Interp(interp) => write!(f, "{}", interp),
+            Token::DocComment(s) => write!(f, "/// {}", s),
         }
     }
 }
@@ -242,6 +244,7 @@ type LexErr<'src> = Rich<'src, char>;
 
 fn lexer<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Extra<'src>> {
     choice((
+        doc_comment(),
         line_comment().to(vec![]),
         string_literal(),
         token().map(|t| vec![t]),
@@ -721,6 +724,23 @@ fn op<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
         just("|").to(Op::Pipe),
     ))
     .map(Token::Op)
+}
+
+fn doc_comment<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Extra<'src>> {
+    just("///")
+        .then_ignore(just("/").rewind().not())
+        .ignore_then(none_of("\n").repeated().collect::<String>())
+        .map_with(|content, e| -> Vec<SpannedToken> {
+            let span: chumsky::span::SimpleSpan<usize> = e.span();
+            let stripped = content.strip_prefix(' ').unwrap_or(&content).to_string();
+            vec![(
+                Token::DocComment(Intern::new(stripped)),
+                Span {
+                    start: span.start,
+                    end: span.end,
+                },
+            )]
+        })
 }
 
 fn line_comment<'src>() -> impl Parser<'src, &'src str, (), Extra<'src>> {

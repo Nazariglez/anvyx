@@ -2,6 +2,7 @@ use anvyx_lang::{export_fn, provider};
 
 use super::StdModule;
 
+/// Computes the sine of x.
 #[export_fn]
 pub fn sin(x: f32) -> f32 {
     x.sin()

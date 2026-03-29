@@ -1,0 +1,28 @@
+// @mode: check
+// @expect: success
+
+/// A simple function.
+fn foo() {}
+
+/// A documented struct.
+pub struct Point {
+    x: int,
+    y: int,
+}
+
+/// A documented enum.
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+/// A documented constant.
+const MAX_HP: int = 100;
+
+/// Multi-line doc comment.
+/// Second line of docs.
+/// Third line.
+fn bar() {}
+
+fn main() {}

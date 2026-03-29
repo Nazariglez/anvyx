@@ -200,12 +200,18 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
 
     let companion_fn_ident = format_ident!("__anvyx_fields_{}", struct_ident);
 
+    let type_doc_token = match crate::codegen::extract_doc(&item_struct.attrs) {
+        Some(s) => quote! { Some(#s) },
+        None => quote! { None },
+    };
+
     Ok(quote! {
         #cleaned_struct
 
         pub const #decl_ident: anvyx_lang::ExternTypeDeclConst =
             anvyx_lang::ExternTypeDeclConst {
                 name: #anvyx_name,
+                doc: #type_doc_token,
                 has_init: #auto_init,
                 fields: &[#(#field_decls),*],
             };

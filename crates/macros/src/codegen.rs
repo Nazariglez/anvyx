@@ -3,6 +3,29 @@ use quote::quote;
 
 use crate::type_map::{ClassifiedReturn, ReturnMode, ReturnWrapper};
 
+pub fn extract_doc(attrs: &[syn::Attribute]) -> Option<String> {
+    let lines: Vec<String> = attrs
+        .iter()
+        .filter_map(|attr| {
+            if attr.path().is_ident("doc")
+                && let syn::Meta::NameValue(nv) = &attr.meta
+                && let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) = &nv.value
+            {
+                return Some(s.value());
+            }
+            None
+        })
+        .collect();
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n").trim().to_string())
+    }
+}
+
 pub struct BorrowParam {
     pub param_name: Option<syn::Ident>,
     pub type_ident: syn::Ident,

@@ -108,6 +108,7 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
             type_decl_refs.push(quote! {
                 anvyx_lang::ExternTypeDecl {
                     name: #type_decl_ident.name,
+                    doc: #type_decl_ident.doc,
                     has_init: #type_decl_ident.has_init || #has_init_ident,
                     fields: {
                         let init_fields = #init_fields_fn_ident();
@@ -154,6 +155,7 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
             type_decl_refs.push(quote! {
                 anvyx_lang::ExternTypeDecl {
                     name: #(#prefix)::*::#type_decl_ident.name,
+                    doc: #(#prefix)::*::#type_decl_ident.doc,
                     has_init: #(#prefix)::*::#type_decl_ident.has_init || #(#prefix)::*::#has_init_ident,
                     fields: {
                         let init_fields = #(#prefix)::*::#init_fields_fn_ident();

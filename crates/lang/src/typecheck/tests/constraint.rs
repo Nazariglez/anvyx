@@ -940,6 +940,7 @@ fn test_constrain_generic_enum_type_arg_assignable() {
     let box_decl = StmtNode {
         node: Stmt::Enum(EnumDeclNode {
             node: EnumDecl {
+                doc: None,
                 name: dummy_ident("Box"),
                 visibility: Visibility::Public,
                 type_params: vec![TypeParam {
@@ -983,6 +984,7 @@ fn test_constrain_generic_enum_type_arg_mismatch_errors() {
     let box_decl = StmtNode {
         node: Stmt::Enum(EnumDeclNode {
             node: EnumDecl {
+                doc: None,
                 name: dummy_ident("Box"),
                 visibility: Visibility::Public,
                 type_params: vec![TypeParam {

@@ -1,5 +1,5 @@
 use super::helpers::parse_program;
-use crate::ast::{self, ExternTypeMember, MethodReceiver, Mutability, Type};
+use crate::ast::{self, MethodReceiver, Mutability, Type};
 
 #[test]
 fn while_with_binary_cond_parses() {
@@ -324,7 +324,10 @@ fn extern_type_block_with_static_parses() {
         panic!("expected ExternType");
     };
     assert_eq!(node.node.members.len(), 1);
-    let ast::ExternTypeMember::StaticMethod { name, params, ret } = &node.node.members[0] else {
+    let ast::ExternTypeMember::StaticMethod {
+        name, params, ret, ..
+    } = &node.node.members[0]
+    else {
         panic!("expected StaticMethod");
     };
     assert_eq!(name.0.as_ref(), "new");
@@ -353,6 +356,7 @@ fn extern_type_block_with_methods_parses() {
         receiver,
         params,
         ret,
+        ..
     } = &node.node.members[0]
     else {
         panic!("expected Method");
