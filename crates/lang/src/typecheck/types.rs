@@ -430,6 +430,9 @@ pub struct TypeChecker {
     /// Each entry is the scope stack length when a lambda was entered
     pub(super) lambda_boundaries: Vec<usize>,
 
+    /// Module path being re-checked
+    pub(super) current_module_path: Option<Vec<String>>,
+
     /// Captures being collected for each active lambda (stack for nesting)
     /// Each entry maps captured variable names to their types
     pub(super) current_lambda_captures: Vec<HashMap<Ident, Type>>,

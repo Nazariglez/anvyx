@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown variable 'int_abs'
+
+fn main() {
+    int_abs(-5);
+}

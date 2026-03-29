@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown variable 'float_sin'
+
+fn main() {
+    float_sin(1.0);
+}

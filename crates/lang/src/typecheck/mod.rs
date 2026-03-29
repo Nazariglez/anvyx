@@ -27,11 +27,14 @@ pub use types::{
     ExtendSpecKey, ExternTypeDef, FieldDefault, MethodSpecKey, SpecializationKey, TypeChecker,
 };
 
-use crate::ast::{Program, Stmt, StmtNode, Visibility};
+use internment::Intern;
+
+use crate::ast::{Ident, Program, Stmt, StmtNode, Visibility};
 use crate::builtin::Builtin;
 use const_eval::evaluate_and_export_consts;
 use constraint::resolve_constraints;
 use stmt::{build_module_def_with_reexports, check_block_stmts};
+use types::{ExtendEntry, GenericExtendTemplate};
 use unify::contains_infer;
 
 fn register_builtins(type_checker: &mut TypeChecker) {
@@ -44,11 +47,36 @@ fn register_builtins(type_checker: &mut TypeChecker) {
 pub fn check_program_with_modules(
     program: &Program,
     module_list: &[(Vec<String>, Vec<StmtNode>)],
+    auto_use_modules: &[Vec<String>],
 ) -> Result<TypeChecker, Vec<TypeErr>> {
     let mut type_checker = TypeChecker::default();
     let mut errors = vec![];
 
     register_builtins(&mut type_checker);
+
+    // pre register types from the main program (prelude types like Option, Range)
+    // so they're available during module def building
+    for stmt in &program.stmts {
+        match &stmt.node {
+            Stmt::Enum(node) => {
+                type_checker
+                    .enum_defs
+                    .insert(node.node.name, types::EnumDef::from_ast(&node.node));
+            }
+            Stmt::Struct(node) => {
+                type_checker.struct_defs.insert(
+                    node.node.name,
+                    types::StructDef::from_ast(&node.node, false),
+                );
+            }
+            Stmt::DataRef(node) => {
+                type_checker
+                    .struct_defs
+                    .insert(node.node.name, types::StructDef::from_ast(&node.node, true));
+            }
+            _ => {}
+        }
+    }
 
     // pre-load module stmts in DFS post-order (deepest dependencies first)
     for (path, stmts) in module_list {
@@ -100,6 +128,38 @@ pub fn check_program_with_modules(
             .insert(path.clone(), module_def);
     }
 
+    // auto activate extend methods from core modules (no import required)
+    for path in auto_use_modules {
+        if let Some(module_def) = type_checker.resolved_module_defs.get(path).cloned() {
+            let binding = Ident(Intern::new(String::new()));
+            for entry in &module_def.extend_methods {
+                let key = (entry.ty.clone(), entry.name);
+                type_checker
+                    .extend_defs
+                    .entry(key)
+                    .or_default()
+                    .push(ExtendEntry {
+                        source_module: path.clone(),
+                        binding,
+                        def: entry.def.clone(),
+                    });
+            }
+            for entry in &module_def.generic_extend_methods {
+                let key = (entry.base_name, entry.method_name);
+                type_checker
+                    .generic_extend_templates
+                    .entry(key)
+                    .or_default()
+                    .push(GenericExtendTemplate {
+                        type_params: entry.type_params.clone(),
+                        method: entry.method.clone(),
+                        source_module: path.clone(),
+                        binding,
+                    });
+            }
+        }
+    }
+
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -118,8 +178,10 @@ pub fn check_program_with_modules(
     let baseline_const_defs = type_checker.const_defs.clone();
     let baseline_extend_defs = type_checker.extend_defs.clone();
     let baseline_generic_extend_templates = type_checker.generic_extend_templates.clone();
-    for (_path, stmts) in module_list {
+    for (path, stmts) in module_list {
+        type_checker.current_module_path = Some(path.clone());
         let _ = check_block_stmts(stmts, None, &mut type_checker, &mut errors, None);
+        type_checker.current_module_path = None;
         type_checker.module_defs = baseline_module_defs.clone();
         type_checker.struct_defs = baseline_struct_defs.clone();
         type_checker.enum_defs = baseline_enum_defs.clone();

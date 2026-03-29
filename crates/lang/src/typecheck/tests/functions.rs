@@ -362,7 +362,7 @@ fn check_src(
     let mut stmts = prelude.stmts;
     stmts.extend(user_ast.stmts);
     let combined = crate::ast::Program { stmts };
-    crate::typecheck::check_program_with_modules(&combined, &[])
+    crate::typecheck::check_program_with_modules(&combined, &[], &[])
 }
 
 #[test]

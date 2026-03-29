@@ -728,15 +728,22 @@ pub(super) fn collect_scope_types(
                     }
 
                     let type_str = format!("{resolved_ty}");
+                    let module_str = type_checker
+                        .current_module_path
+                        .as_ref()
+                        .map(|p| p.join("::"))
+                        .unwrap_or_default();
                     let internal_name = Ident(Intern::new(format!(
-                        "__extend::::{}::{}",
-                        type_str, method.node.name
+                        "__extend::{}::{}::{}",
+                        module_str, type_str, method.node.name
                     )));
 
                     let mut params = method.node.params.clone();
                     params[0].ty = resolved_ty.clone();
                     let ret = type_checker.resolve_type(&method.node.ret);
 
+                    let source_module =
+                        type_checker.current_module_path.clone().unwrap_or_default();
                     let def = ExtendMethodDef {
                         params,
                         ret,
@@ -747,7 +754,7 @@ pub(super) fn collect_scope_types(
                         .entry((resolved_ty.clone(), method.node.name))
                         .or_default()
                         .push(ExtendEntry {
-                            source_module: vec![],
+                            source_module,
                             binding: Ident(Intern::new(String::new())),
                             def,
                         });

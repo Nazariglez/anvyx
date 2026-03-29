@@ -716,7 +716,7 @@ fn with_prelude(prog: Program) -> Program {
 
 #[track_caller]
 pub(super) fn run_ok(prog: Program) -> TypeChecker {
-    match check_program_with_modules(&with_prelude(prog), &[]) {
+    match check_program_with_modules(&with_prelude(prog), &[], &[]) {
         Ok(tcx) => tcx,
         Err(errors) => {
             panic!("Expected Ok, got errors: {:?}", errors);
@@ -726,7 +726,7 @@ pub(super) fn run_ok(prog: Program) -> TypeChecker {
 
 #[track_caller]
 pub(super) fn run_err(prog: Program) -> Vec<TypeErr> {
-    match check_program_with_modules(&with_prelude(prog), &[]) {
+    match check_program_with_modules(&with_prelude(prog), &[], &[]) {
         Ok(_) => panic!("Expected Err, got Ok"),
         Err(errors) => errors,
     }

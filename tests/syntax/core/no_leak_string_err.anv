@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown variable 'str_len'
+
+fn main() {
+    str_len("hello");
+}

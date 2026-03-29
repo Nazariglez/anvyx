@@ -1,4 +1,4 @@
-extend string {
+pub extend string {
     fn len(self) -> int { str_len(self) }
     fn contains(self, sub: string) -> bool { str_contains(self, sub) }
     fn starts_with(self, prefix: string) -> bool { str_starts_with(self, prefix) }

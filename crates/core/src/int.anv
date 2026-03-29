@@ -1,4 +1,4 @@
-extend int {
+pub extend int {
     /// Absolute value.
     fn abs(self) -> int { int_abs(self) }
     /// Returns the smaller of self and other.

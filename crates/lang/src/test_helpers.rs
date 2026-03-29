@@ -22,6 +22,7 @@ pub(crate) fn generate_hir(source: &str, file_path: &str) -> Result<hir::Program
         TEST_CORE_PRELUDE,
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
     )
 }
 
@@ -64,8 +65,8 @@ impl TestCtx {
         stmts.extend(user_ast.stmts);
         let combined = ast::Program { stmts };
 
-        let tcx =
-            typecheck::check_program_with_modules(&combined, &[]).expect("source must typecheck");
+        let tcx = typecheck::check_program_with_modules(&combined, &[], &[])
+            .expect("source must typecheck");
         (combined, tcx)
     }
 }

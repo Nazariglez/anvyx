@@ -1,4 +1,4 @@
-extend float {
+pub extend float {
     /// Sine (radians).
     fn sin(self) -> float { float_sin(self) }
     /// Cosine (radians).

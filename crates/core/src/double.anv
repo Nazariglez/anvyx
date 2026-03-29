@@ -1,4 +1,4 @@
-extend double {
+pub extend double {
     /// Sine (radians).
     fn sin(self) -> double { double_sin(self) }
     /// Cosine (radians).

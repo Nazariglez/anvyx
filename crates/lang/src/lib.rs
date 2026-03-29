@@ -37,6 +37,11 @@ pub struct StdModuleSource {
     pub anv_source: String,
 }
 
+pub struct CoreSource {
+    pub prelude: String,
+    pub modules: std::collections::HashMap<String, StdModuleSource>,
+}
+
 #[cfg(test)]
 mod test_helpers;
 
@@ -79,6 +84,7 @@ fn analyze_with_extern_meta(
     core_source: &str,
     extern_metadata: &std::collections::HashMap<String, String>,
     std_modules: &std::collections::HashMap<String, StdModuleSource>,
+    core_modules: &std::collections::HashMap<String, StdModuleSource>,
 ) -> AnalyzeResult {
     use std::collections::HashSet;
 
@@ -134,19 +140,31 @@ fn analyze_with_extern_meta(
         module_list.push((vec![name.clone()], stmts));
     }
 
+    // route core modules through the module system (extends auto-activated, externs scoped)
+    let mut auto_use_modules: Vec<Vec<String>> = vec![];
+    for (name, source) in core_modules {
+        let file_label = format!("<core.{name}>");
+        let (module_ast, _) = parse_source(&source.anv_source, &file_label)
+            .map_err(|_| format!("Failed to parse core module '{name}' (internal error)"))?;
+        let path_key = vec![name.clone()];
+        module_list.insert(0, (path_key.clone(), module_ast.stmts));
+        auto_use_modules.push(path_key);
+    }
+
     let mut combined_stmts = core_ast.stmts;
     combined_stmts.extend(user_ast.stmts);
     let combined = ast::Program {
         stmts: combined_stmts,
     };
 
-    let tcx = match typecheck::check_program_with_modules(&combined, &module_list) {
-        Ok(tcx) => tcx,
-        Err(errors) => {
-            error::report_typecheck_errors(program, file_path, &user_tokens, errors);
-            return Err("Failed to typecheck program".to_string());
-        }
-    };
+    let tcx =
+        match typecheck::check_program_with_modules(&combined, &module_list, &auto_use_modules) {
+            Ok(tcx) => tcx,
+            Err(errors) => {
+                error::report_typecheck_errors(program, file_path, &user_tokens, errors);
+                return Err("Failed to typecheck program".to_string());
+            }
+        };
 
     Ok((combined, tcx, user_tokens, module_list))
 }
@@ -176,6 +194,7 @@ pub fn generate_ast_with_externs(
         core_source,
         extern_metadata,
         &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
     )
 }
 
@@ -185,6 +204,7 @@ pub fn generate_ast_with_std(
     core_source: &str,
     extern_metadata: &std::collections::HashMap<String, String>,
     std_modules: &std::collections::HashMap<String, StdModuleSource>,
+    core_modules: &std::collections::HashMap<String, StdModuleSource>,
 ) -> Result<ast::Program, String> {
     let (ast, _, _, _) = analyze_with_extern_meta(
         program,
@@ -192,6 +212,7 @@ pub fn generate_ast_with_std(
         core_source,
         extern_metadata,
         std_modules,
+        core_modules,
     )?;
     Ok(ast)
 }
@@ -202,6 +223,7 @@ pub(crate) fn generate_hir_with_std(
     core_source: &str,
     extern_metadata: &std::collections::HashMap<String, String>,
     std_modules: &std::collections::HashMap<String, StdModuleSource>,
+    core_modules: &std::collections::HashMap<String, StdModuleSource>,
 ) -> Result<hir::Program, String> {
     let (ast, tcx, _, module_list) = analyze_with_extern_meta(
         program,
@@ -209,6 +231,7 @@ pub(crate) fn generate_hir_with_std(
         core_source,
         extern_metadata,
         std_modules,
+        core_modules,
     )?;
     lower::lower_program(&ast, &tcx, &module_list).map_err(|e| format!("Lowering error: {e}"))
 }
@@ -258,32 +281,37 @@ pub fn run_program_with_externs(
     externs: std::collections::HashMap<String, ExternHandler>,
     extern_metadata: std::collections::HashMap<String, String>,
 ) -> Result<String, String> {
+    let core = CoreSource {
+        prelude: core_source.to_string(),
+        modules: std::collections::HashMap::new(),
+    };
     run_program_with_std(
         program,
         file_path,
-        core_source,
         backend,
         externs,
         extern_metadata,
         std::collections::HashMap::new(),
+        core,
     )
 }
 
 pub fn run_program_with_std(
     program: &str,
     file_path: &str,
-    core_source: &str,
     backend: Backend,
     externs: std::collections::HashMap<String, ExternHandler>,
     extern_metadata: std::collections::HashMap<String, String>,
     std_modules: std::collections::HashMap<String, StdModuleSource>,
+    core: CoreSource,
 ) -> Result<String, String> {
     let hir = generate_hir_with_std(
         program,
         file_path,
-        core_source,
+        &core.prelude,
         &extern_metadata,
         &std_modules,
+        &core.modules,
     )?;
 
     let declared: std::collections::HashSet<String> =
@@ -326,6 +354,7 @@ mod extern_import_tests {
             TEST_CORE_SOURCE,
             &sample_metadata(),
             &HashMap::new(),
+            &HashMap::new(),
         );
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
@@ -338,6 +367,7 @@ mod extern_import_tests {
             "<test>",
             TEST_CORE_SOURCE,
             &sample_metadata(),
+            &HashMap::new(),
             &HashMap::new(),
         );
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
@@ -352,6 +382,7 @@ mod extern_import_tests {
             TEST_CORE_SOURCE,
             &sample_metadata(),
             &HashMap::new(),
+            &HashMap::new(),
         );
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
@@ -364,6 +395,7 @@ mod extern_import_tests {
             "<test>",
             TEST_CORE_SOURCE,
             &sample_metadata(),
+            &HashMap::new(),
             &HashMap::new(),
         );
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
@@ -378,6 +410,7 @@ mod extern_import_tests {
             TEST_CORE_SOURCE,
             &sample_metadata(),
             &HashMap::new(),
+            &HashMap::new(),
         );
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
@@ -390,6 +423,7 @@ mod extern_import_tests {
             "<test>",
             TEST_CORE_SOURCE,
             &sample_metadata(),
+            &HashMap::new(),
             &HashMap::new(),
         );
         assert!(result.is_err());
@@ -404,6 +438,7 @@ mod extern_import_tests {
             TEST_CORE_SOURCE,
             &sample_metadata(),
             &HashMap::new(),
+            &HashMap::new(),
         );
         assert!(result.is_err());
     }
@@ -416,6 +451,7 @@ mod extern_import_tests {
             "<test>",
             TEST_CORE_SOURCE,
             &sample_metadata(),
+            &HashMap::new(),
             &HashMap::new(),
         );
         assert!(hir.is_ok(), "unexpected error: {:?}", hir.err());
@@ -430,6 +466,7 @@ mod extern_import_tests {
             src,
             "<test>",
             TEST_CORE_SOURCE,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         );
@@ -462,6 +499,7 @@ mod std_import_tests {
             TEST_CORE_SOURCE,
             &HashMap::new(),
             &math_std_modules(),
+            &HashMap::new(),
         );
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
@@ -475,6 +513,7 @@ mod std_import_tests {
             TEST_CORE_SOURCE,
             &HashMap::new(),
             &math_std_modules(),
+            &HashMap::new(),
         );
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
@@ -488,6 +527,7 @@ mod std_import_tests {
             TEST_CORE_SOURCE,
             &HashMap::new(),
             &math_std_modules(),
+            &HashMap::new(),
         );
         assert!(result.is_err());
     }
@@ -501,6 +541,7 @@ mod std_import_tests {
             TEST_CORE_SOURCE,
             &HashMap::new(),
             &math_std_modules(),
+            &HashMap::new(),
         );
         assert!(result.is_err());
     }

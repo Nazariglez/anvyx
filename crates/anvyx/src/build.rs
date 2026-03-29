@@ -246,9 +246,16 @@ fn main() {{
 
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
 {extend_lines}
-    let core_mods = anvyx_core::core_modules();
-    let core_source: String = core_mods.iter().map(|m| m.full_anv_source()).collect::<Vec<_>>().join("\n");
-    for m in &core_mods {{
+    let (prelude_mods, method_mods) = anvyx_core::split_core_modules();
+    let core_source: String = prelude_mods.iter().map(|m| m.full_anv_source()).collect::<Vec<_>>().join("\n");
+    let mut core_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
+    for m in &prelude_mods {{
+        externs.extend((m.handlers)());
+    }}
+    for m in &method_mods {{
+        core_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
+            anv_source: m.full_anv_source(),
+        }});
         externs.extend((m.handlers)());
     }}
 
@@ -262,7 +269,8 @@ fn main() {{
         externs.extend((m.handlers)());
     }}
 
-    match anvyx_lang::run_program_with_std(&source, file_path, &core_source, backend, externs, extern_metadata, std_sources) {{
+    let core = anvyx_lang::CoreSource {{ prelude: core_source, modules: core_sources }};
+    match anvyx_lang::run_program_with_std(&source, file_path, backend, externs, extern_metadata, std_sources, core) {{
         Ok(output) => print!("{{output}}"),
         Err(e) => {{ eprintln!("{{e}}"); std::process::exit(1); }}
     }}
@@ -341,9 +349,16 @@ fn main() {{
 {metadata_inserts}
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
 {extend_lines}
-    let core_mods = anvyx_core::core_modules();
-    let core_source: String = core_mods.iter().map(|m| m.full_anv_source()).collect::<Vec<_>>().join("\n");
-    for m in &core_mods {{
+    let (prelude_mods, method_mods) = anvyx_core::split_core_modules();
+    let core_source: String = prelude_mods.iter().map(|m| m.full_anv_source()).collect::<Vec<_>>().join("\n");
+    let mut core_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
+    for m in &prelude_mods {{
+        externs.extend((m.handlers)());
+    }}
+    for m in &method_mods {{
+        core_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
+            anv_source: m.full_anv_source(),
+        }});
         externs.extend((m.handlers)());
     }}
 
@@ -357,7 +372,8 @@ fn main() {{
         externs.extend((m.handlers)());
     }}
 
-    match anvyx_lang::run_program_with_std(&source, &file_path, &core_source, backend, externs, extern_metadata, std_sources) {{
+    let core = anvyx_lang::CoreSource {{ prelude: core_source, modules: core_sources }};
+    match anvyx_lang::run_program_with_std(&source, &file_path, backend, externs, extern_metadata, std_sources, core) {{
         Ok(output) => print!("{{output}}"),
         Err(e) => {{ eprintln!("{{e}}"); std::process::exit(1); }}
     }}
@@ -388,10 +404,17 @@ fn main() {{
     let backend = anvyx_lang::Backend::from_str("vm")
         .unwrap_or_else(|e| {{ eprintln!("{{e}}"); std::process::exit(1); }});
 
-    let core_mods = anvyx_core::core_modules();
-    let core_source: String = core_mods.iter().map(|m| m.full_anv_source()).collect::<Vec<_>>().join("\n");
+    let (prelude_mods, method_mods) = anvyx_core::split_core_modules();
+    let core_source: String = prelude_mods.iter().map(|m| m.full_anv_source()).collect::<Vec<_>>().join("\n");
+    let mut core_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
-    for m in &core_mods {{
+    for m in &prelude_mods {{
+        externs.extend((m.handlers)());
+    }}
+    for m in &method_mods {{
+        core_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
+            anv_source: m.full_anv_source(),
+        }});
         externs.extend((m.handlers)());
     }}
 
@@ -405,7 +428,8 @@ fn main() {{
         externs.extend((m.handlers)());
     }}
 
-    match anvyx_lang::run_program_with_std(&source, &file_path, &core_source, backend, externs, HashMap::new(), std_sources) {{
+    let core = anvyx_lang::CoreSource {{ prelude: core_source, modules: core_sources }};
+    match anvyx_lang::run_program_with_std(&source, &file_path, backend, externs, HashMap::new(), std_sources, core) {{
         Ok(output) => print!("{{output}}"),
         Err(e) => {{ eprintln!("{{e}}"); std::process::exit(1); }}
     }}
