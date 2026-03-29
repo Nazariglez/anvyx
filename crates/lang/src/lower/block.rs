@@ -5,7 +5,7 @@ use internment::Intern;
 
 use super::{
     FuncLower, LowerCtx, LowerError, alloc_and_bind, lower_assign, lower_expr, lower_for,
-    lower_if_let, lower_let_else, lower_match_stmts, register_named_local,
+    lower_if_let, lower_let_else, lower_match_stmts, lower_while_let, register_named_local,
 };
 
 pub(super) fn lower_block(
@@ -306,6 +306,8 @@ fn lower_stmt(
         Stmt::LetElse(let_else_node) => lower_let_else(let_else_node, span, ctx, fc, out),
 
         Stmt::Const(_) => Ok(None),
+
+        Stmt::WhileLet(while_let_node) => lower_while_let(while_let_node, span, ctx, fc, out),
     }
 }
 

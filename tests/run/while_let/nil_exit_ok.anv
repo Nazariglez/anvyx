@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match: no iterations
+
+fn get_value() -> int? {
+    nil
+}
+
+fn main() {
+    while let v? = get_value() {
+        println(v);
+    }
+    println("no iterations");
+}

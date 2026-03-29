@@ -2,6 +2,36 @@ use super::helpers::parse_program;
 use crate::ast::{self, MethodReceiver, Mutability, Type};
 
 #[test]
+fn while_let_parses() {
+    let prog = parse_program("fn main() { while let Option.Some(x) = get() {} }");
+    assert_eq!(prog.stmts.len(), 1);
+    let ast::Stmt::Func(func_node) = &prog.stmts[0].node else {
+        panic!("expected Func");
+    };
+    let body_stmts = &func_node.node.body.node.stmts;
+    assert_eq!(body_stmts.len(), 1);
+    let ast::Stmt::WhileLet(while_let_node) = &body_stmts[0].node else {
+        panic!("expected WhileLet");
+    };
+    assert!(matches!(
+        &while_let_node.node.pattern.node,
+        ast::Pattern::EnumTuple { .. }
+    ));
+}
+
+#[test]
+fn while_still_parses_after_while_let() {
+    let prog = parse_program("fn main() { while true {} }");
+    assert_eq!(prog.stmts.len(), 1);
+    let ast::Stmt::Func(func_node) = &prog.stmts[0].node else {
+        panic!("expected Func");
+    };
+    let body_stmts = &func_node.node.body.node.stmts;
+    assert_eq!(body_stmts.len(), 1);
+    assert!(matches!(&body_stmts[0].node, ast::Stmt::While(_)));
+}
+
+#[test]
 fn while_with_binary_cond_parses() {
     let prog = parse_program("fn main() { while x < 3 {} }");
     assert_eq!(prog.stmts.len(), 1);

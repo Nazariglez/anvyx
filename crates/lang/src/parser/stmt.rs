@@ -19,6 +19,7 @@ pub(super) fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
         let bind = binding(stmt.clone());
         let const_s = const_stmt(stmt.clone());
         let ret = return_stmt(stmt.clone());
+        let while_let_s = while_let_stmt(stmt.clone(), expr.clone());
         let while_s = while_stmt(stmt.clone(), expr.clone());
         let for_s = for_stmt(stmt.clone(), expr.clone());
         let break_s = break_stmt();
@@ -75,10 +76,27 @@ pub(super) fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
             .rewind();
 
         let expr_stmt = expr
+            .clone()
             .then_ignore(
                 select! { (Token::Semicolon, _) => () }
                     .or(at_stmt_start)
                     .or(at_assign_start),
+            )
+            .map(|expr_node| {
+                let span = expr_node.span;
+                Spanned::new(ast::Stmt::Expr(expr_node), span)
+            });
+
+        let if_as_stmt = select! { (Token::Keyword(Keyword::If), _) => () }
+            .rewind()
+            .ignore_then(expr)
+            .then_ignore(
+                select! {
+                    (Token::Keyword(_), _) => (),
+                    (Token::Ident(_), _) => (),
+                    (Token::Literal(_), _) => (),
+                }
+                .rewind(),
             )
             .map(|expr_node| {
                 let span = expr_node.span;
@@ -97,10 +115,12 @@ pub(super) fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
             }),
             const_s,
             ret,
+            while_let_s,
             while_s,
             for_s,
             break_s,
             continue_s,
+            if_as_stmt,
             expr_stmt,
         ))
     })
@@ -197,6 +217,34 @@ fn while_stmt<'src>(
     .labelled("while statement")
     .as_context()
     .boxed()
+}
+
+fn while_let_stmt<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::StmtNode> {
+    select! { (Token::Keyword(Keyword::While), _) => () }
+        .ignore_then(select! { (Token::Keyword(Keyword::Let), _) => () })
+        .ignore_then(pattern())
+        .then_ignore(select! { (Token::Op(Op::Assign), _) => () })
+        .then(cond_expression())
+        .then(block_stmt(stmt, expr))
+        .map_with(|((pat, value), body), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let node = Spanned::new(
+                ast::WhileLet {
+                    pattern: pat,
+                    value,
+                    body,
+                },
+                span,
+            );
+            Spanned::new(ast::Stmt::WhileLet(node), span)
+        })
+        .labelled("while-let statement")
+        .as_context()
+        .boxed()
 }
 
 // rev key is only valid on for loops

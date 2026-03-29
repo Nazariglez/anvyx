@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::ast::{
     self, BlockNode, ExprKind, ExprNode, ForNode, Ident, IfLetNode, IfNode, Lit, MatchNode,
-    Pattern, Stmt, Type, WhileNode,
+    Pattern, Stmt, Type, WhileLetNode, WhileNode,
 };
 use crate::span::Span;
 use internment::Intern;
@@ -43,6 +43,30 @@ pub(super) fn check_while(
         None,
     );
     type_checker.exit_loop();
+}
+
+pub(super) fn check_while_let(
+    while_let_node: &WhileLetNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    let node = &while_let_node.node;
+    let value_ty = check_expr(&node.value, type_checker, errors, None);
+
+    type_checker.push_scope();
+    check_pattern(&node.pattern, &value_ty, false, type_checker, errors);
+
+    type_checker.enter_loop();
+    let _ = check_block_stmts(
+        &node.body.node.stmts,
+        node.body.node.tail.as_deref(),
+        type_checker,
+        errors,
+        None,
+    );
+    type_checker.exit_loop();
+
+    type_checker.pop_scope();
 }
 
 pub(super) fn check_for(

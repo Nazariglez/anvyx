@@ -2870,6 +2870,9 @@ fn stmt_contains_return(stmt: &ast::StmtNode) -> bool {
         ast::Stmt::While(w) => {
             expr_contains_return(&w.node.cond) || block_contains_return(&w.node.body)
         }
+        ast::Stmt::WhileLet(wl) => {
+            expr_contains_return(&wl.node.value) || block_contains_return(&wl.node.body)
+        }
         ast::Stmt::For(f) => {
             expr_contains_return(&f.node.iterable) || block_contains_return(&f.node.body)
         }

@@ -10,6 +10,7 @@ pub type FuncNode = Spanned<Func>;
 pub type BlockNode = Spanned<Block>;
 pub type BindingNode = Spanned<Binding>;
 pub type WhileNode = Spanned<While>;
+pub type WhileLetNode = Spanned<WhileLet>;
 pub type ForNode = Spanned<For>;
 pub type BinaryNode = Spanned<Binary>;
 pub type UnaryNode = Spanned<Unary>;
@@ -61,6 +62,7 @@ pub enum Stmt {
     LetElse(LetElseNode),
     Return(ReturnNode),
     While(WhileNode),
+    WhileLet(WhileLetNode),
     For(Box<ForNode>),
     Break,
     Continue,
@@ -801,6 +803,13 @@ pub struct Return {
 #[derive(Debug, Clone, PartialEq)]
 pub struct While {
     pub cond: ExprNode,
+    pub body: BlockNode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WhileLet {
+    pub pattern: PatternNode,
+    pub value: ExprNode,
     pub body: BlockNode,
 }
 

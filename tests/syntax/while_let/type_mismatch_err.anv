@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: cannot destructure non-tuple type
+
+fn main() {
+    let x = 42;
+    while let (a, b) = x {
+        break;
+    }
+}

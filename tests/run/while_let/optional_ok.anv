@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 3
+// 2
+// 1
+// @match-end
+
+fn main() {
+    var items: [int] = [1, 2, 3];
+    while let val? = items.pop() {
+        println(val);
+    }
+}

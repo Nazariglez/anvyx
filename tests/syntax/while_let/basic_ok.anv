@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+enum Opt { Some(int), None }
+
+fn get() -> Opt {
+    Opt.None
+}
+
+fn main() {
+    while let Opt.Some(x) = get() {
+        let y: int = x;
+        break;
+    }
+}
