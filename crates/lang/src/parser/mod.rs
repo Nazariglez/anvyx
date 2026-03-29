@@ -24,8 +24,8 @@ use chumsky::{
 };
 
 use decl::{
-    const_decl, dataref_declaration, doc_comment_block, enum_declaration, extend_declaration,
-    extern_declaration, function, import_declaration, struct_declaration,
+    annotations, const_decl, dataref_declaration, doc_comment_block, enum_declaration,
+    extend_declaration, extern_declaration, function, import_declaration, struct_declaration,
 };
 use stmt::statement;
 
@@ -106,7 +106,8 @@ fn parser<'src>() -> BoxedParser<'src, ast::Program> {
     let extern_decl = extern_declaration(stmt.clone());
     let const_decl = const_decl(stmt);
 
-    let documented_decl = doc_comment_block()
+    let documented_decl = annotations()
+        .then(doc_comment_block())
         .then(choice((
             func_decl,
             struct_decl,
@@ -115,11 +116,20 @@ fn parser<'src>() -> BoxedParser<'src, ast::Program> {
             const_decl,
             extern_decl,
         )))
-        .map(|(doc, mut stmt_node)| {
+        .map(|((annots, doc), mut stmt_node)| {
             match &mut stmt_node.node {
-                ast::Stmt::Func(f) => f.node.doc = doc,
-                ast::Stmt::Struct(s) | ast::Stmt::DataRef(s) => s.node.doc = doc,
-                ast::Stmt::Enum(e) => e.node.doc = doc,
+                ast::Stmt::Func(f) => {
+                    f.node.doc = doc;
+                    f.node.annotations = annots;
+                }
+                ast::Stmt::Struct(s) | ast::Stmt::DataRef(s) => {
+                    s.node.doc = doc;
+                    s.node.annotations = annots;
+                }
+                ast::Stmt::Enum(e) => {
+                    e.node.doc = doc;
+                    e.node.annotations = annots;
+                }
                 ast::Stmt::Const(c) => c.node.doc = doc,
                 ast::Stmt::ExternFunc(ef) => ef.node.doc = doc,
                 ast::Stmt::ExternType(et) => et.node.doc = doc,

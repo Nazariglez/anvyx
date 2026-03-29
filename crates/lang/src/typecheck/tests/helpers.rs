@@ -353,6 +353,7 @@ pub(super) fn fn_decl(
     StmtNode {
         node: Stmt::Func(FuncNode {
             node: Func {
+                annotations: vec![],
                 doc: None,
                 name: dummy_ident(name),
                 visibility: Visibility::Private,
@@ -389,6 +390,7 @@ pub(super) fn generic_fn_decl(
     StmtNode {
         node: Stmt::Func(FuncNode {
             node: Func {
+                annotations: vec![],
                 doc: None,
                 name: dummy_ident(name),
                 visibility: Visibility::Private,
@@ -430,6 +432,7 @@ pub(super) fn func_decl(
     StmtNode {
         node: Stmt::Func(FuncNode {
             node: Func {
+                annotations: vec![],
                 doc: None,
                 name: dummy_ident(name),
                 visibility: Visibility::Private,
@@ -607,6 +610,7 @@ pub(super) fn generic_struct_decl(
     let struct_fields = fields
         .into_iter()
         .map(|(n, ty)| StructField {
+            annotations: vec![],
             name: dummy_ident(n),
             ty,
             default: None,
@@ -615,6 +619,7 @@ pub(super) fn generic_struct_decl(
     StmtNode {
         node: Stmt::Struct(StructDeclNode {
             node: StructDecl {
+                annotations: vec![],
                 doc: None,
                 name: dummy_ident(name),
                 visibility: Visibility::Public,
@@ -632,6 +637,7 @@ pub(super) fn enum_decl(name: &str, variants: Vec<(&str, VariantKind)>) -> StmtN
     let enum_variants = variants
         .into_iter()
         .map(|(n, kind)| EnumVariant {
+            annotations: vec![],
             name: dummy_ident(n),
             kind,
         })
@@ -639,6 +645,7 @@ pub(super) fn enum_decl(name: &str, variants: Vec<(&str, VariantKind)>) -> StmtN
     StmtNode {
         node: Stmt::Enum(EnumDeclNode {
             node: EnumDecl {
+                annotations: vec![],
                 doc: None,
                 name: dummy_ident(name),
                 visibility: Visibility::Public,
@@ -674,6 +681,7 @@ pub(super) fn fn_decl_var_params(
     StmtNode {
         node: Stmt::Func(FuncNode {
             node: Func {
+                annotations: vec![],
                 doc: None,
                 name: dummy_ident(name),
                 visibility: Visibility::Private,

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     ast,
-    lexer::{Delimiter, Keyword, Op, Token},
+    lexer::{Delimiter, Keyword, LitToken, Op, Token},
     span::{Span, Spanned},
 };
 use chumsky::{error::Rich, prelude::*};
@@ -11,6 +11,67 @@ use super::common::{block_stmt, field_name_ident, identifier, param, params, ret
 use super::expr::expression;
 use super::types::type_ident;
 use super::{AnvParser, BoxedParser};
+
+fn annotation_value<'src>() -> BoxedParser<'src, ast::Lit> {
+    select! {
+        (Token::Literal(LitToken::String(s)), _) => ast::Lit::String(s.to_string()),
+        (Token::Literal(LitToken::Number(n)), _) => ast::Lit::Int(n),
+        (Token::Keyword(Keyword::True), _) => ast::Lit::Bool(true),
+        (Token::Keyword(Keyword::False), _) => ast::Lit::Bool(false),
+    }
+    .labelled("annotation value")
+    .as_context()
+    .boxed()
+}
+
+fn parse_annotation_args<'src>() -> BoxedParser<'src, ast::AnnotationArgs> {
+    let open_paren = select! { (Token::Open(Delimiter::Parent), _) => () };
+    let close_paren = select! { (Token::Close(Delimiter::Parent), _) => () };
+    let comma = select! { (Token::Comma, _) => () };
+    let eq = select! { (Token::Op(Op::Assign), _) => () };
+
+    let positional = select! {
+        (Token::Literal(LitToken::String(s)), _) => ast::Lit::String(s.to_string()),
+    }
+    .map(ast::AnnotationArgs::Positional);
+
+    let mixed_arg = identifier()
+        .then(eq.ignore_then(annotation_value()).or_not())
+        .map(|(name, value)| {
+            let lit = value.unwrap_or(ast::Lit::Bool(true));
+            (name, lit)
+        });
+
+    let mixed = mixed_arg
+        .separated_by(comma)
+        .allow_trailing()
+        .at_least(1)
+        .collect::<Vec<_>>()
+        .map(ast::AnnotationArgs::Named);
+
+    let args = open_paren
+        .ignore_then(choice((positional, mixed)))
+        .then_ignore(close_paren);
+
+    args.or_not()
+        .map(|opt| opt.unwrap_or(ast::AnnotationArgs::None))
+        .boxed()
+}
+
+fn parse_annotation<'src>() -> BoxedParser<'src, ast::AnnotationNode> {
+    select! { (Token::At, _) => () }
+        .ignore_then(identifier())
+        .then(parse_annotation_args())
+        .map_with(|(name, args), e| {
+            let s = e.span();
+            Spanned::new(ast::Annotation { name, args }, Span::new(s.start, s.end))
+        })
+        .boxed()
+}
+
+pub(super) fn annotations<'src>() -> BoxedParser<'src, Vec<ast::AnnotationNode>> {
+    parse_annotation().repeated().collect::<Vec<_>>().boxed()
+}
 
 pub(super) fn doc_comment_block<'src>() -> BoxedParser<'src, Option<String>> {
     select! { (Token::DocComment(s), _) => s.to_string() }
@@ -451,6 +512,7 @@ pub(super) fn function<'src>(
 
             Spanned::new(
                 ast::Func {
+                    annotations: vec![],
                     doc: None,
                     name,
                     visibility: vis,
@@ -470,7 +532,8 @@ pub(super) fn function<'src>(
 fn struct_field<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::StructField> {
-    identifier()
+    annotations()
+        .then(identifier())
         .then_ignore(select! {
             (Token::Colon, _) => (),
         })
@@ -480,7 +543,12 @@ fn struct_field<'src>(
                 .ignore_then(expression(stmt))
                 .or_not(),
         )
-        .map(|((name, ty), default)| ast::StructField { name, ty, default })
+        .map(|(((annotations, name), ty), default)| ast::StructField {
+            annotations,
+            name,
+            ty,
+            default,
+        })
         .labelled("struct field")
         .as_context()
         .boxed()
@@ -667,6 +735,7 @@ pub(super) fn struct_declaration<'src>(
                             Some(&self_type),
                         );
                         ast::StructField {
+                            annotations: f.annotations,
                             name: f.name,
                             ty,
                             default: f.default,
@@ -717,6 +786,7 @@ pub(super) fn struct_declaration<'src>(
 
                 Spanned::new(
                     ast::StructDecl {
+                        annotations: vec![],
                         doc: None,
                         name,
                         visibility: vis,
@@ -778,6 +848,7 @@ pub(super) fn dataref_declaration<'src>(
                             Some(&self_type),
                         );
                         ast::StructField {
+                            annotations: f.annotations,
                             name: f.name,
                             ty,
                             default: f.default,
@@ -828,6 +899,7 @@ pub(super) fn dataref_declaration<'src>(
 
                 Spanned::new(
                     ast::StructDecl {
+                        annotations: vec![],
                         doc: None,
                         name,
                         visibility: vis,
@@ -875,13 +947,18 @@ fn enum_variant_struct_payload<'src>(
 fn enum_variant<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::EnumVariant> {
-    identifier()
+    annotations()
+        .then(identifier())
         .then(choice((
             enum_variant_tuple_payload(),
             enum_variant_struct_payload(stmt),
             empty().to(ast::VariantKind::Unit),
         )))
-        .map(|(name, kind)| ast::EnumVariant { name, kind })
+        .map(|((annotations, name), kind)| ast::EnumVariant {
+            annotations,
+            name,
+            kind,
+        })
         .labelled("enum variant")
         .as_context()
         .boxed()
@@ -926,6 +1003,7 @@ pub(super) fn enum_declaration<'src>(
                             let resolved = fields
                                 .iter()
                                 .map(|f| ast::StructField {
+                                    annotations: f.annotations.clone(),
                                     name: f.name,
                                     ty: resolve_type_params(&f.ty, &type_param_map),
                                     default: None,
@@ -935,6 +1013,7 @@ pub(super) fn enum_declaration<'src>(
                         }
                     };
                     ast::EnumVariant {
+                        annotations: v.annotations,
                         name: v.name,
                         kind: resolved_kind,
                     }
@@ -943,6 +1022,7 @@ pub(super) fn enum_declaration<'src>(
 
             Spanned::new(
                 ast::EnumDecl {
+                    annotations: vec![],
                     doc: None,
                     name,
                     visibility: vis,

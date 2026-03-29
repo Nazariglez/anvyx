@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use internment::Intern;
 
 use super::{
+    annotations::{AnnotationTarget, validate_annotations},
     composite::{is_all_nil_array_literal, is_empty_map_literal},
     const_eval::{
         ConstDef, build_const_dependency_graph, collect_const_decls, eval_const_expr,
@@ -1079,12 +1080,23 @@ pub(super) fn check_stmt(
         }
         Stmt::ExternFunc(_) => {}
         Stmt::ExternType(_) => {}
-        Stmt::Func(node) => check_func(node, type_checker, errors),
-        Stmt::Struct(node) => check_struct(node, type_checker, errors),
-        Stmt::DataRef(node) => check_struct(node, type_checker, errors),
+        Stmt::Func(node) => {
+            validate_annotations(&node.node.annotations, AnnotationTarget::Func, errors);
+            check_func(node, type_checker, errors);
+        }
+        Stmt::Struct(node) => {
+            validate_annotations(&node.node.annotations, AnnotationTarget::Struct, errors);
+            check_struct(node, type_checker, errors);
+        }
+        Stmt::DataRef(node) => {
+            validate_annotations(&node.node.annotations, AnnotationTarget::Struct, errors);
+            check_struct(node, type_checker, errors);
+        }
         Stmt::Enum(node) => {
+            validate_annotations(&node.node.annotations, AnnotationTarget::Enum, errors);
             let decl = &node.node;
             for variant in &decl.variants {
+                validate_annotations(&variant.annotations, AnnotationTarget::Variant, errors);
                 let has_any = match &variant.kind {
                     VariantKind::Unit => false,
                     VariantKind::Tuple(types) => types.iter().any(|t| t.contains_any()),
@@ -1092,6 +1104,11 @@ pub(super) fn check_stmt(
                 };
                 if has_any {
                     errors.push(TypeErr::new(node.span, TypeErrKind::AnyTypeNotAllowed));
+                }
+                if let VariantKind::Struct(fields) = &variant.kind {
+                    for field in fields {
+                        validate_annotations(&field.annotations, AnnotationTarget::Field, errors);
+                    }
                 }
             }
         }

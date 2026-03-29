@@ -40,6 +40,7 @@ pub type ExternFuncNode = Spanned<ExternFunc>;
 pub type ExternTypeNode = Spanned<ExternType>;
 pub type ImportNode = Spanned<Import>;
 pub type LambdaNode = Spanned<Lambda>;
+pub type AnnotationNode = Spanned<Annotation>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -561,7 +562,21 @@ impl Pattern {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Annotation {
+    pub name: Ident,
+    pub args: AnnotationArgs,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AnnotationArgs {
+    None,
+    Positional(Lit),
+    Named(Vec<(Ident, Lit)>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Func {
+    pub annotations: Vec<AnnotationNode>,
     pub doc: Option<String>,
     pub name: Ident,
     pub visibility: Visibility,
@@ -869,6 +884,7 @@ pub type CastNode = Spanned<Cast>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructField {
+    pub annotations: Vec<AnnotationNode>,
     pub name: Ident,
     pub ty: Type,
     pub default: Option<ExprNode>,
@@ -876,6 +892,7 @@ pub struct StructField {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDecl {
+    pub annotations: Vec<AnnotationNode>,
     pub doc: Option<String>,
     pub name: Ident,
     pub visibility: Visibility,
@@ -918,12 +935,14 @@ pub enum VariantKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumVariant {
+    pub annotations: Vec<AnnotationNode>,
     pub name: Ident,
     pub kind: VariantKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDecl {
+    pub annotations: Vec<AnnotationNode>,
     pub doc: Option<String>,
     pub name: Ident,
     pub visibility: Visibility,

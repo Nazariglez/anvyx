@@ -21,6 +21,7 @@ pub enum Token {
     Dot,
     Range,
     RangeEq,
+    At,
     DocComment(Intern<String>),
 }
 
@@ -46,6 +47,7 @@ impl Display for Token {
             Token::Dot => write!(f, "."),
             Token::Range => write!(f, ".."),
             Token::RangeEq => write!(f, "..="),
+            Token::At => write!(f, "@"),
             Token::Interp(interp) => write!(f, "{}", interp),
             Token::DocComment(s) => write!(f, "/// {}", s),
         }
@@ -756,6 +758,7 @@ fn punctuation<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
         just(",").to(Token::Comma),
         just("?").to(Token::Question),
         just(".").to(Token::Dot),
+        just("@").to(Token::At),
     ))
 }
 

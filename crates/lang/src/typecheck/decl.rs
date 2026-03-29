@@ -9,6 +9,7 @@ use internment::Intern;
 use std::collections::HashSet;
 
 use super::{
+    annotations::{AnnotationTarget, validate_annotations},
     const_eval::{ConstValue, eval_const_expr, validate_const_expr},
     constraint::TypeRef,
     error::{TypeErr, TypeErrKind},
@@ -368,6 +369,7 @@ pub(super) fn check_struct(
     let struct_name = decl.name;
 
     for field in &decl.fields {
+        validate_annotations(&field.annotations, AnnotationTarget::Field, errors);
         if field.ty.contains_any() {
             errors.push(TypeErr::new(
                 struct_node.span,

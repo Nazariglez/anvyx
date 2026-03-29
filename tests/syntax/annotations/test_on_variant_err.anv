@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: not valid on variant
+
+enum Color {
+    @test
+    Red,
+    Green,
+}
+
+fn main() {}

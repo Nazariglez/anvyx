@@ -940,6 +940,7 @@ fn test_constrain_generic_enum_type_arg_assignable() {
     let box_decl = StmtNode {
         node: Stmt::Enum(EnumDeclNode {
             node: EnumDecl {
+                annotations: vec![],
                 doc: None,
                 name: dummy_ident("Box"),
                 visibility: Visibility::Public,
@@ -948,6 +949,7 @@ fn test_constrain_generic_enum_type_arg_assignable() {
                     id: t_id,
                 }],
                 variants: vec![EnumVariant {
+                    annotations: vec![],
                     name: dummy_ident("Wrap"),
                     kind: VariantKind::Tuple(vec![Type::Var(t_id)]),
                 }],
@@ -984,6 +986,7 @@ fn test_constrain_generic_enum_type_arg_mismatch_errors() {
     let box_decl = StmtNode {
         node: Stmt::Enum(EnumDeclNode {
             node: EnumDecl {
+                annotations: vec![],
                 doc: None,
                 name: dummy_ident("Box"),
                 visibility: Visibility::Public,
@@ -992,6 +995,7 @@ fn test_constrain_generic_enum_type_arg_mismatch_errors() {
                     id: t_id,
                 }],
                 variants: vec![EnumVariant {
+                    annotations: vec![],
                     name: dummy_ident("Wrap"),
                     kind: VariantKind::Tuple(vec![Type::Var(t_id)]),
                 }],

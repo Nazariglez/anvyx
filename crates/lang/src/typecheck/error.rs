@@ -461,4 +461,19 @@ pub enum TypeErrKind {
         name: Ident,
     },
     MutableFnParamRequiresVarTarget,
+    UnknownAnnotation {
+        name: Ident,
+    },
+    InvalidAnnotationTarget {
+        name: Ident,
+        target: String,
+        valid_targets: String,
+    },
+    DuplicateAnnotation {
+        name: Ident,
+    },
+    InvalidAnnotationArgs {
+        name: Ident,
+        message: String,
+    },
 }

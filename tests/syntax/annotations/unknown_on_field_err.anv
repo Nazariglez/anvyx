@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: unknown annotation
+
+struct Point {
+    @foo
+    x: int,
+    y: int,
+}
+
+fn main() {}

@@ -782,6 +782,22 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "function with 'var' parameter requires the target to be declared with 'var'".to_string(),
             "declare the collection with 'var' to allow in-place mutation".to_string(),
         ),
+        TypeErrKind::UnknownAnnotation { name } => (
+            format!("unknown annotation `@{name}`"),
+            "unknown annotation".to_string(),
+        ),
+        TypeErrKind::InvalidAnnotationTarget { name, target, .. } => (
+            format!("`@{name}` is not valid on {target} declarations"),
+            format!("`@{name}` cannot be applied here"),
+        ),
+        TypeErrKind::DuplicateAnnotation { name } => (
+            format!("duplicate annotation `@{name}`"),
+            "annotation already applied".to_string(),
+        ),
+        TypeErrKind::InvalidAnnotationArgs { name, message } => (
+            format!("invalid arguments for `@{name}`"),
+            message.clone(),
+        ),
     }
 }
 

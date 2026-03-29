@@ -264,6 +264,7 @@ fn check_extern_init_lit(
         .map(|name| {
             let def = &extern_def.fields[name];
             StructField {
+                annotations: vec![],
                 name: *name,
                 ty: def.ty.clone(),
                 default: None,

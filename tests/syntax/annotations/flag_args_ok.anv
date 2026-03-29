@@ -1,0 +1,6 @@
+// @mode: check
+// @expect: error
+// @contains: unknown annotation
+
+@baz(flag1, key = "value")
+fn main() {}

@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: does not accept arguments
+
+@test("foo")
+fn foo() {}
+
+fn main() {}

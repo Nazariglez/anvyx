@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: not valid on field
+
+struct Foo {
+    @test
+    x: int,
+}
+
+fn main() {}

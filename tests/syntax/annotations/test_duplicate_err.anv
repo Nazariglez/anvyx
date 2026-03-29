@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: duplicate annotation
+
+@test
+@test
+fn foo() {}
+
+fn main() {}
