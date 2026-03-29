@@ -1,5 +1,5 @@
 use super::helpers::{opt_type, type_var};
-use crate::ast::Type;
+use crate::ast::{FuncParam, Type};
 
 // ---- type variable display tests ----
 
@@ -24,7 +24,7 @@ fn test_func_type_var_display() {
     let t = type_var(0);
     let u = type_var(1);
     let func_type = Type::Func {
-        params: vec![t],
+        params: vec![FuncParam::immut(t)],
         ret: u.boxed(),
     };
     assert_eq!(format!("{}", func_type), "fn($0) -> $1");

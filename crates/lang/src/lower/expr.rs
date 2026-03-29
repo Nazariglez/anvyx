@@ -1269,7 +1269,10 @@ fn lower_lambda(
     fc: &FuncLower,
 ) -> Result<hir::Expr, LowerError> {
     let (func_params, func_ret) = match &ty {
-        Type::Func { params, ret } => (params.clone(), (**ret).clone()),
+        Type::Func { params, ret } => (
+            params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>(),
+            (**ret).clone(),
+        ),
         _ => unreachable!("lambda must have Type::Func"),
     };
 
@@ -1773,55 +1776,143 @@ fn lower_list_desugar(
             hir::Expr::local(result_ty.clone(), span, result_local)
         }
         "for_each" => {
-            let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
-                unreachable!()
-            };
-            let is_mutable_param = lambda.node.params[0].mutable;
-            original_local = if is_mutable_param {
-                match &field.node.target.node.kind {
-                    ast::ExprKind::Ident(ident) => fc.local_map.get(ident).copied(),
-                    _ => None,
-                }
-            } else {
-                None
-            };
-            let param_name = lambda.node.params[0].name;
-            let param_local = register_named_local(fc, param_name, elem_ty.clone());
-            body_stmts.push(hir::Stmt {
-                span,
-                kind: hir::StmtKind::Let {
-                    local: param_local,
-                    init: make_elem_expr(),
-                },
-            });
-            match &lambda.node.body.node.kind {
-                ast::ExprKind::Block(block_node) => {
-                    let block = lower_block(block_node, ctx, fc, false, &Type::Void)?;
-                    body_stmts.extend(block.stmts);
-                }
-                ast::ExprKind::Assign(assign_node) => {
-                    let stmt = lower_assign(assign_node, span, ctx, fc, &mut body_stmts)?;
-                    body_stmts.push(stmt);
-                }
-                _ => {
-                    let body_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
-                    body_stmts.push(hir::Stmt {
-                        span,
-                        kind: hir::StmtKind::Expr(body_expr),
-                    });
-                }
-            }
-            if is_mutable_param {
+            if let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind {
+                let is_mutable_param = lambda.node.params[0].mutable;
+                original_local = if is_mutable_param {
+                    match &field.node.target.node.kind {
+                        ast::ExprKind::Ident(ident) => fc.local_map.get(ident).copied(),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let param_name = lambda.node.params[0].name;
+                let param_local = register_named_local(fc, param_name, elem_ty.clone());
                 body_stmts.push(hir::Stmt {
                     span,
-                    kind: hir::StmtKind::SetIndex {
-                        object: xs_local,
-                        index: Box::new(hir::Expr::local(Type::Int, span, i_local)),
-                        value: hir::Expr::local(elem_ty.clone(), span, param_local),
+                    kind: hir::StmtKind::Let {
+                        local: param_local,
+                        init: make_elem_expr(),
                     },
                 });
+                match &lambda.node.body.node.kind {
+                    ast::ExprKind::Block(block_node) => {
+                        let block = lower_block(block_node, ctx, fc, false, &Type::Void)?;
+                        body_stmts.extend(block.stmts);
+                    }
+                    ast::ExprKind::Assign(assign_node) => {
+                        let stmt = lower_assign(assign_node, span, ctx, fc, &mut body_stmts)?;
+                        body_stmts.push(stmt);
+                    }
+                    _ => {
+                        let body_expr = lower_expr(&lambda.node.body, ctx, fc, &mut body_stmts)?;
+                        body_stmts.push(hir::Stmt {
+                            span,
+                            kind: hir::StmtKind::Expr(body_expr),
+                        });
+                    }
+                }
+                if is_mutable_param {
+                    body_stmts.push(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::SetIndex {
+                            object: xs_local,
+                            index: Box::new(hir::Expr::local(Type::Int, span, i_local)),
+                            value: hir::Expr::local(elem_ty.clone(), span, param_local),
+                        },
+                    });
+                }
+                hir::Expr::new(Type::Void, span, hir::ExprKind::Nil)
+            } else {
+                let arg_ty = ctx.expr_type(c.node.args[0].node.id, span)?;
+                let is_mutable = matches!(&arg_ty, Type::Func { params, .. }
+                    if params.first().is_some_and(|p| p.mutable));
+
+                if is_mutable {
+                    let ast::ExprKind::Ident(fn_name) = &c.node.args[0].node.kind else {
+                        return Err(LowerError::UnsupportedExprKind {
+                            span,
+                            kind: "var-param for_each requires a simple function name, not an expression".into(),
+                        });
+                    };
+
+                    let func_node = ctx.shared.get_func_ast(*fn_name).ok_or_else(|| {
+                        LowerError::UnsupportedExprKind {
+                            span,
+                            kind: format!(
+                                "cannot find function '{fn_name}' for inlining into for_each; \
+                                 use an inline lambda instead"
+                            ),
+                        }
+                    })?;
+
+                    if block_contains_return(&func_node.node.body) {
+                        return Err(LowerError::UnsupportedExprKind {
+                            span,
+                            kind: format!(
+                                "function '{fn_name}' contains 'return' and cannot be inlined \
+                                 into for_each; use an inline lambda instead"
+                            ),
+                        });
+                    }
+
+                    original_local = match &field.node.target.node.kind {
+                        ast::ExprKind::Ident(ident) => fc.local_map.get(ident).copied(),
+                        _ => None,
+                    };
+
+                    let param_name = func_node.node.params[0].name;
+                    let param_local = register_named_local(fc, param_name, elem_ty.clone());
+                    body_stmts.push(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Let {
+                            local: param_local,
+                            init: make_elem_expr(),
+                        },
+                    });
+
+                    let block = lower_block(&func_node.node.body, ctx, fc, false, &Type::Void)?;
+                    body_stmts.extend(block.stmts);
+
+                    body_stmts.push(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::SetIndex {
+                            object: xs_local,
+                            index: Box::new(hir::Expr::local(Type::Int, span, i_local)),
+                            value: hir::Expr::local(elem_ty.clone(), span, param_local),
+                        },
+                    });
+
+                    hir::Expr::new(Type::Void, span, hir::ExprKind::Nil)
+                } else {
+                    let fn_expr = lower_expr(&c.node.args[0], ctx, fc, out)?;
+
+                    let param_local = hir::LocalId(fc.locals.len() as u32);
+                    fc.locals.push(hir::Local {
+                        name: None,
+                        ty: elem_ty.clone(),
+                    });
+                    body_stmts.push(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Let {
+                            local: param_local,
+                            init: make_elem_expr(),
+                        },
+                    });
+                    body_stmts.push(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Expr(hir::Expr::new(
+                            Type::Void,
+                            span,
+                            hir::ExprKind::CallClosure {
+                                callee: Box::new(fn_expr),
+                                args: vec![hir::Expr::local(elem_ty.clone(), span, param_local)],
+                            },
+                        )),
+                    });
+                    hir::Expr::new(Type::Void, span, hir::ExprKind::Nil)
+                }
             }
-            hir::Expr::new(Type::Void, span, hir::ExprKind::Nil)
         }
         "any" => {
             let ast::ExprKind::Lambda(lambda) = &c.node.args[0].node.kind else {
@@ -2326,7 +2417,10 @@ fn try_lower_method_call(
         let fold_lambda = method_str == "fold"
             && c.node.args.len() == 2
             && matches!(c.node.args[1].node.kind, ast::ExprKind::Lambda(_));
-        if single_lambda || fold_lambda {
+        let for_each_fn_ref = method_str == "for_each"
+            && c.node.args.len() == 1
+            && !matches!(c.node.args[0].node.kind, ast::ExprKind::Lambda(_));
+        if single_lambda || fold_lambda || for_each_fn_ref {
             return lower_list_desugar(c, method_str, elem, ty, span, ctx, fc, out);
         }
     }
@@ -2758,4 +2852,56 @@ fn lower_field_expr(
         span,
         kind: "field access on type with no type information".to_string(),
     })
+}
+
+fn block_contains_return(block: &ast::BlockNode) -> bool {
+    block.node.stmts.iter().any(stmt_contains_return)
+        || block.node.tail.as_deref().is_some_and(expr_contains_return)
+}
+
+fn stmt_contains_return(stmt: &ast::StmtNode) -> bool {
+    match &stmt.node {
+        ast::Stmt::Return(_) => true,
+        ast::Stmt::Expr(e) => expr_contains_return(e),
+        ast::Stmt::Binding(b) => expr_contains_return(&b.node.value),
+        ast::Stmt::LetElse(le) => {
+            expr_contains_return(&le.node.value) || block_contains_return(&le.node.else_block)
+        }
+        ast::Stmt::While(w) => {
+            expr_contains_return(&w.node.cond) || block_contains_return(&w.node.body)
+        }
+        ast::Stmt::For(f) => {
+            expr_contains_return(&f.node.iterable) || block_contains_return(&f.node.body)
+        }
+        _ => false,
+    }
+}
+
+fn expr_contains_return(expr: &ast::ExprNode) -> bool {
+    match &expr.node.kind {
+        ast::ExprKind::Block(b) => block_contains_return(b),
+        ast::ExprKind::If(if_node) => {
+            block_contains_return(&if_node.node.then_block)
+                || if_node
+                    .node
+                    .else_block
+                    .as_ref()
+                    .is_some_and(block_contains_return)
+        }
+        ast::ExprKind::IfLet(if_let) => {
+            block_contains_return(&if_let.node.then_block)
+                || if_let
+                    .node
+                    .else_block
+                    .as_ref()
+                    .is_some_and(block_contains_return)
+        }
+        ast::ExprKind::Match(m) => m
+            .node
+            .arms
+            .iter()
+            .any(|arm| expr_contains_return(&arm.node.body)),
+        ast::ExprKind::Lambda(_) => false,
+        _ => false,
+    }
 }

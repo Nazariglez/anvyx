@@ -1,5 +1,5 @@
 use crate::{
-    ast::{ArrayLen, Type},
+    ast::{ArrayLen, FuncParam, Type},
     span::Span,
 };
 
@@ -12,7 +12,9 @@ use super::{
 pub(super) fn contains_infer(ty: &Type) -> bool {
     match ty {
         Type::Infer => true,
-        Type::Func { params, ret } => params.iter().any(contains_infer) || contains_infer(ret),
+        Type::Func { params, ret } => {
+            params.iter().any(|p| contains_infer(&p.ty)) || contains_infer(ret)
+        }
         Type::Tuple(elems) => elems.iter().any(contains_infer),
         Type::NamedTuple(fields) => fields.iter().any(|(_, t)| contains_infer(t)),
         Type::Struct { type_args, .. }
@@ -128,7 +130,7 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
                 && params_from
                     .iter()
                     .zip(params_to.iter())
-                    .all(|(pf, pt)| is_assignable(pf, pt))
+                    .all(|(pf, pt)| is_assignable(&pf.ty, &pt.ty))
                 && is_assignable(ret_from, ret_to)
         }
 
@@ -283,7 +285,11 @@ pub(super) fn unify_types(
 
             let mut new_params = Vec::with_capacity(lp.len());
             for (lpi, rpi) in lp.iter().zip(rp.iter()) {
-                unify_types(lpi, rpi, span, errors).map(|p| new_params.push(p))?;
+                let unified_ty = unify_types(&lpi.ty, &rpi.ty, span, errors)?;
+                new_params.push(FuncParam {
+                    ty: unified_ty,
+                    mutable: lpi.mutable,
+                });
             }
 
             unify_types(lr, rr, span, errors).map(|new_ret| Func {

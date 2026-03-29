@@ -172,6 +172,22 @@ pub enum ArrayLen {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FuncParam {
+    pub ty: Type,
+    pub mutable: bool,
+}
+
+impl FuncParam {
+    pub fn new(ty: Type, mutable: bool) -> Self {
+        Self { ty, mutable }
+    }
+
+    pub fn immut(ty: Type) -> Self {
+        Self { ty, mutable: false }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     /// Unknown type that needs to be inferred
     Infer,
@@ -190,7 +206,10 @@ pub enum Type {
     /// Void type
     Void,
     /// Function type
-    Func { params: Vec<Type>, ret: Box<Type> },
+    Func {
+        params: Vec<FuncParam>,
+        ret: Box<Type>,
+    },
     /// Generic type variable (T, U)
     Var(TypeVarId),
     /// Unresolved type name reference (T before being resolved to Var)
@@ -320,7 +339,7 @@ impl Type {
         match self {
             Type::Any => true,
             Type::Func { params, ret } => {
-                params.iter().any(|p| p.contains_any()) || ret.contains_any()
+                params.iter().any(|p| p.ty.contains_any()) || ret.contains_any()
             }
             Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
                 elem.contains_any()
@@ -370,7 +389,11 @@ impl Display for Type {
                 "fn({}) -> {}",
                 params
                     .iter()
-                    .map(|p| p.to_string())
+                    .map(|p| if p.mutable {
+                        format!("var {}", p.ty)
+                    } else {
+                        p.ty.to_string()
+                    })
                     .collect::<Vec<_>>()
                     .join(", "),
                 ret

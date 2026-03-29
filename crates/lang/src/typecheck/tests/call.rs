@@ -3,7 +3,7 @@ use super::helpers::{
     fn_decl, generic_fn_decl, get_expr_id, ident_expr, let_binding, lit_bool, lit_float, lit_int,
     lit_string, program, reset_expr_ids, return_stmt, run_err, run_ok,
 };
-use crate::ast::{BinaryOp, Type, TypeParam, TypeVarId};
+use crate::ast::{BinaryOp, FuncParam, Type, TypeParam, TypeVarId};
 use crate::typecheck::error::TypeErrKind;
 
 #[test]
@@ -122,7 +122,7 @@ fn test_function_call_through_variable() {
         vec![return_stmt(Some(ident_expr("a")))],
     );
     let fn_type = Type::Func {
-        params: vec![Type::Int],
+        params: vec![FuncParam::immut(Type::Int)],
         ret: Box::new(Type::Int),
     };
     let g_binding = let_binding("g", Some(fn_type), ident_expr("f"));

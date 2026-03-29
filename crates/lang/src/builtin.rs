@@ -1,4 +1,4 @@
-use crate::ast::{Ident, Type};
+use crate::ast::{FuncParam, Ident, Type};
 use internment::Intern;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,7 +41,7 @@ impl Builtin {
 
     pub fn func_type(&self) -> Type {
         Type::Func {
-            params: self.params(),
+            params: self.params().into_iter().map(FuncParam::immut).collect(),
             ret: Box::new(self.ret()),
         }
     }
@@ -79,7 +79,7 @@ mod tests {
         assert_eq!(
             Builtin::Println.func_type(),
             Type::Func {
-                params: vec![Type::Any],
+                params: vec![FuncParam::immut(Type::Any)],
                 ret: Box::new(Type::Void),
             }
         );

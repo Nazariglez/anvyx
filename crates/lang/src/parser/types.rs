@@ -120,11 +120,19 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
 
         let bracketed_type = choice((view_type, choice((array_type, choice((map_type, list_type))))));
 
+        let var_kw = select! { (Token::Keyword(Keyword::Var), _) => () }
+            .or_not()
+            .map(|opt| opt.is_some());
+
+        let fn_param = var_kw
+            .then(param_type_parser)
+            .map(|(mutable, ty)| ast::FuncParam::new(ty, mutable));
+
         let fn_type = select! { (Token::Keyword(Keyword::Fn), _) => () }
             .ignore_then(
                 open_paren
                     .ignore_then(
-                        param_type_parser
+                        fn_param
                             .separated_by(comma)
                             .allow_trailing()
                             .collect::<Vec<_>>()

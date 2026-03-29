@@ -1,8 +1,8 @@
 use crate::{
     ast::{
         ArrayLen, BlockNode, ConstDeclNode, ExprId, ExprKind, ExprNode, ExternFunc,
-        ExternTypeMember, Func, FuncNode, Ident, ImportKind, Mutability, Param, ReturnNode, Stmt,
-        StmtNode, Type, TypeParam, VariantKind, Visibility,
+        ExternTypeMember, Func, FuncNode, FuncParam, Ident, ImportKind, Mutability, Param,
+        ReturnNode, Stmt, StmtNode, Type, TypeParam, VariantKind, Visibility,
     },
     span::Span,
 };
@@ -209,7 +209,11 @@ fn build_extern_func_registration(
     resolve: impl Fn(&Type) -> Type,
 ) -> (Type, Vec<(Ident, Mutability)>) {
     let func_ty = Type::Func {
-        params: extern_func.params.iter().map(|p| resolve(&p.ty)).collect(),
+        params: extern_func
+            .params
+            .iter()
+            .map(|p| FuncParam::new(resolve(&p.ty), matches!(p.mutability, Mutability::Mutable)))
+            .collect(),
         ret: Box::new(resolve(&extern_func.ret)),
     };
     let param_info = build_param_info(&extern_func.params);
@@ -773,7 +777,10 @@ pub(super) fn build_module_def_with_reexports(
             match ty {
                 Type::UnresolvedName(name) if local.contains(name) => Type::Extern { name: *name },
                 Type::Func { params, ret } => Type::Func {
-                    params: params.iter().map(|t| pre_resolve(t, local)).collect(),
+                    params: params
+                        .iter()
+                        .map(|p| FuncParam::new(pre_resolve(&p.ty, local), p.mutable))
+                        .collect(),
                     ret: Box::new(pre_resolve(ret, local)),
                 },
                 _ => ty.clone(),

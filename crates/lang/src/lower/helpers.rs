@@ -221,6 +221,7 @@ pub(super) fn collect_declarations<'a>(
                 let id = hir::FuncId(*next_func_id);
                 *next_func_id += 1;
                 ctx.funcs.insert(func_node.node.name, id);
+                ctx.func_asts.insert(func_node.node.name, func_node.clone());
                 func_nodes.push(func_node);
             }
             Stmt::ExternFunc(extern_node) => {

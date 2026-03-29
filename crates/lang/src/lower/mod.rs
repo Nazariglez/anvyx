@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::ast::{ExprId, Ident, Type};
+use crate::ast::{self, ExprId, Ident, Type};
 use crate::hir;
 use crate::span::Span;
 use crate::typecheck::TypeChecker;
@@ -91,9 +91,14 @@ pub(super) struct SharedCtx<'a> {
     pub(super) enum_type_ids: HashMap<Ident, u32>,
     pub(super) next_func_id: Cell<u32>,
     pub(super) lambda_funcs: RefCell<Vec<hir::Func>>,
+    pub(super) func_asts: HashMap<Ident, ast::FuncNode>,
 }
 
 impl SharedCtx<'_> {
+    pub(super) fn get_func_ast(&self, name: Ident) -> Option<&ast::FuncNode> {
+        self.func_asts.get(&name)
+    }
+
     pub(super) fn alloc_func_id(&self) -> hir::FuncId {
         let id = self.next_func_id.get();
         self.next_func_id.set(id + 1);

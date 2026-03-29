@@ -173,6 +173,7 @@ pub fn lower_program(
         enum_type_ids,
         next_func_id: Cell::new(0),
         lambda_funcs: RefCell::new(vec![]),
+        func_asts: HashMap::new(),
     };
 
     let mut func_nodes: Vec<&ast::FuncNode> = vec![];

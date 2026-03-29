@@ -1,8 +1,8 @@
 use crate::{
     ast::{
         ArrayLen, BinaryOp, BlockNode, CallNode, EnumDecl, ExprId, ExtendMethodNode,
-        FieldAccessNode, FuncNode, Ident, IndexNode, Method, MethodReceiver, Mutability, Param,
-        StmtNode, StructDecl, StructField, Type, TypeParam, TypeVarId, UnaryOp, VariantKind,
+        FieldAccessNode, FuncNode, FuncParam, Ident, IndexNode, Method, MethodReceiver, Mutability,
+        Param, StmtNode, StructDecl, StructField, Type, TypeParam, TypeVarId, UnaryOp, VariantKind,
     },
     span::Span,
 };
@@ -103,7 +103,7 @@ pub(super) fn type_references_generic(ty: &Type, type_params: &[TypeParam]) -> b
         Type::Func { params, ret } => {
             params
                 .iter()
-                .any(|t| type_references_generic(t, type_params))
+                .any(|p| type_references_generic(&p.ty, type_params))
                 || type_references_generic(ret, type_params)
         }
         _ => false,
@@ -689,7 +689,10 @@ impl TypeChecker {
                     .collect(),
             ),
             Type::Func { params, ret } => Type::Func {
-                params: params.iter().map(|t| self.resolve_type(t)).collect(),
+                params: params
+                    .iter()
+                    .map(|p| FuncParam::new(self.resolve_type(&p.ty), p.mutable))
+                    .collect(),
                 ret: Box::new(self.resolve_type(ret)),
             },
             Type::Array { elem, len } => {

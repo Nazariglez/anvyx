@@ -769,6 +769,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("'|var {name}|' requires the target to be declared with 'var'"),
             "declare the collection with 'var' to allow in-place mutation".to_string(),
         ),
+        TypeErrKind::MutableFnParamRequiresVarTarget => (
+            "function with 'var' parameter requires the target to be declared with 'var'".to_string(),
+            "declare the collection with 'var' to allow in-place mutation".to_string(),
+        ),
     }
 }
 

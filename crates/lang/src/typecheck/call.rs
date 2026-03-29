@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        CallNode, ExprKind, ExprNode, FieldAccessNode, FuncNode, Ident, Lit, MethodReceiver,
-        Mutability, Type, TypeParam, VariantKind,
+        CallNode, ExprKind, ExprNode, FieldAccessNode, FuncNode, FuncParam, Ident, Lit,
+        MethodReceiver, Mutability, Type, TypeParam, VariantKind,
     },
     span::Span,
 };
@@ -142,7 +142,7 @@ pub(super) fn check_list_method(
         }
         "map" => {
             let func_param = Type::Func {
-                params: vec![elem.clone()],
+                params: vec![FuncParam::immut(elem.clone())],
                 ret: Box::new(Type::Infer),
             };
             let param_types = [func_param];
@@ -169,7 +169,7 @@ pub(super) fn check_list_method(
         }
         "filter" => {
             let func_param = Type::Func {
-                params: vec![elem.clone()],
+                params: vec![FuncParam::immut(elem.clone())],
                 ret: Box::new(Type::Bool),
             };
             let param_types = [func_param];
@@ -211,7 +211,10 @@ pub(super) fn check_list_method(
                 None => Type::Infer,
             };
             let func_param = Type::Func {
-                params: vec![init_ty.clone(), elem.clone()],
+                params: vec![
+                    FuncParam::immut(init_ty.clone()),
+                    FuncParam::immut(elem.clone()),
+                ],
                 ret: Box::new(init_ty.clone()),
             };
             check_expr(&node.args[1], type_checker, errors, Some(&func_param));
@@ -222,7 +225,7 @@ pub(super) fn check_list_method(
         }
         "for_each" => {
             let func_param = Type::Func {
-                params: vec![elem.clone()],
+                params: vec![FuncParam::immut(elem.clone())],
                 ret: Box::new(Type::Void),
             };
             let param_types = [func_param];
@@ -255,11 +258,32 @@ pub(super) fn check_list_method(
                 );
             }
 
+            if let Some(first_arg) = node.args.first()
+                && !matches!(first_arg.node.kind, ExprKind::Lambda(_))
+                && let Some((_, arg_ty)) = type_checker.get_type(first_arg.node.id)
+            {
+                let arg_ty = arg_ty.clone();
+                if let Type::Func { params, .. } = &arg_ty
+                    && let Some(first_fp) = params.first()
+                    && first_fp.mutable
+                    && let Some(root) = root_ident(target)
+                    && let Some(info) = type_checker.get_var(root)
+                    && !info.mutable
+                {
+                    errors.push(
+                        TypeErr::new(first_arg.span, TypeErrKind::MutableFnParamRequiresVarTarget)
+                            .with_help(
+                                "declare the collection with 'var' to allow in-place mutation",
+                            ),
+                    );
+                }
+            }
+
             result
         }
         "any" => {
             let func_param = Type::Func {
-                params: vec![elem.clone()],
+                params: vec![FuncParam::immut(elem.clone())],
                 ret: Box::new(Type::Bool),
             };
             let param_types = [func_param];
@@ -275,7 +299,7 @@ pub(super) fn check_list_method(
         }
         "all" => {
             let func_param = Type::Func {
-                params: vec![elem.clone()],
+                params: vec![FuncParam::immut(elem.clone())],
                 ret: Box::new(Type::Bool),
             };
             let param_types = [func_param];
@@ -291,7 +315,7 @@ pub(super) fn check_list_method(
         }
         "find" => {
             let func_param = Type::Func {
-                params: vec![elem.clone()],
+                params: vec![FuncParam::immut(elem.clone())],
                 ret: Box::new(Type::Bool),
             };
             let param_types = [func_param];
@@ -307,7 +331,7 @@ pub(super) fn check_list_method(
         }
         "find_index" => {
             let func_param = Type::Func {
-                params: vec![elem.clone()],
+                params: vec![FuncParam::immut(elem.clone())],
                 ret: Box::new(Type::Bool),
             };
             let param_types = [func_param];
@@ -323,7 +347,7 @@ pub(super) fn check_list_method(
         }
         "count" => {
             let func_param = Type::Func {
-                params: vec![elem.clone()],
+                params: vec![FuncParam::immut(elem.clone())],
                 ret: Box::new(Type::Bool),
             };
             let param_types = [func_param];
@@ -340,7 +364,10 @@ pub(super) fn check_list_method(
         "sort_by" => {
             check_receiver_mutability(target, label, method_name, type_checker, errors);
             let func_param = Type::Func {
-                params: vec![elem.clone(), elem.clone()],
+                params: vec![
+                    FuncParam::immut(elem.clone()),
+                    FuncParam::immut(elem.clone()),
+                ],
                 ret: Box::new(Type::Bool),
             };
             let param_types = [func_param];
@@ -407,7 +434,7 @@ pub(super) fn check_map_method(
         }
         "map_values" => {
             let func_param = Type::Func {
-                params: vec![value.clone()],
+                params: vec![FuncParam::immut(value.clone())],
                 ret: Box::new(Type::Infer),
             };
             let param_types = [func_param];
@@ -435,7 +462,10 @@ pub(super) fn check_map_method(
         }
         "filter" => {
             let func_param = Type::Func {
-                params: vec![key.clone(), value.clone()],
+                params: vec![
+                    FuncParam::immut(key.clone()),
+                    FuncParam::immut(value.clone()),
+                ],
                 ret: Box::new(Type::Bool),
             };
             let param_types = [func_param];
@@ -527,7 +557,7 @@ fn check_generic_call(
         let subst = build_subst(type_params, &node.type_args);
 
         for (arg_expr, param_ty) in node.args.iter().zip(params.iter()) {
-            let instantiated = subst_type(param_ty, &subst);
+            let instantiated = subst_type(&param_ty.ty, &subst);
             check_and_constrain_arg(arg_expr, &instantiated, type_checker, errors);
         }
 
@@ -543,10 +573,11 @@ fn check_generic_call(
             return Type::Infer;
         };
 
+        let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
         let Some(inferred) = infer_type_args_from_call(
             call.span,
             type_params,
-            params,
+            &param_tys,
             &node.args,
             func_ty.clone(),
             ret,
@@ -728,15 +759,18 @@ fn check_call_with_type(
     let node = &call.node;
 
     match &func_ty {
-        Type::Func { params, ret } => check_call_signature(
-            call.span,
-            params,
-            required_count,
-            ret,
-            &node.args,
-            type_checker,
-            errors,
-        ),
+        Type::Func { params, ret } => {
+            let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
+            check_call_signature(
+                call.span,
+                &param_tys,
+                required_count,
+                ret,
+                &node.args,
+                type_checker,
+                errors,
+            )
+        }
         _ => {
             errors.push(TypeErr::new(
                 call.span,
@@ -825,10 +859,11 @@ pub(super) fn check_module_func_call(
                 return Type::Infer;
             };
 
+            let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
             let Some(inferred) = infer_type_args_from_call(
                 call.span,
                 &type_params,
-                params,
+                &param_tys,
                 &node.args,
                 func_ty.clone(),
                 ret,
@@ -1131,7 +1166,10 @@ fn check_generic_static_method(
         let struct_type_args = if is_struct_generic {
             let param_templates: Vec<Type> = method.params.iter().map(|p| p.ty.clone()).collect();
             let expected_ty = Type::Func {
-                params: param_templates.clone(),
+                params: param_templates
+                    .iter()
+                    .map(|t| FuncParam::immut(t.clone()))
+                    .collect(),
                 ret: Box::new(method.ret.clone()),
             };
             let Some(inferred) = infer_type_args_from_call(
@@ -1163,7 +1201,10 @@ fn check_generic_static_method(
 
         let param_templates: Vec<Type> = method.params.iter().map(|p| p.ty.clone()).collect();
         let expected_ty = Type::Func {
-            params: param_templates.clone(),
+            params: param_templates
+                .iter()
+                .map(|t| FuncParam::immut(t.clone()))
+                .collect(),
             ret: Box::new(method.ret.clone()),
         };
 
@@ -1257,7 +1298,10 @@ pub(super) fn check_static_method_call(
     if is_struct_generic {
         let param_templates: Vec<Type> = method.params.iter().map(|p| p.ty.clone()).collect();
         let expected_ty = Type::Func {
-            params: param_templates.clone(),
+            params: param_templates
+                .iter()
+                .map(|t| FuncParam::immut(t.clone()))
+                .collect(),
             ret: Box::new(method.ret.clone()),
         };
         let Some(inferred_type_args) = infer_type_args_from_call(
@@ -1377,7 +1421,10 @@ fn check_generic_instance_method(
     } else {
         let partially_subst_ret = subst_type(&method.ret, &struct_subst);
         let expected_ty = Type::Func {
-            params: partially_subst_params.clone(),
+            params: partially_subst_params
+                .iter()
+                .map(|t| FuncParam::immut(t.clone()))
+                .collect(),
             ret: Box::new(partially_subst_ret.clone()),
         };
 
@@ -2037,12 +2084,16 @@ pub(super) fn type_call_on_base(
 ) -> Type {
     // check each argument and pass expected type for lambdas so they can infer param types
     if let Type::Func { params, .. } = base_ty {
-        for (arg, param_ty) in call_node.node.args.iter().zip(params.iter()) {
+        for (arg, param_fp) in call_node.node.args.iter().zip(params.iter()) {
             let needs_expected = matches!(
                 arg.node.kind,
                 ExprKind::Lambda(_) | ExprKind::Lit(Lit::Float { .. })
             );
-            let expected = if needs_expected { Some(param_ty) } else { None };
+            let expected = if needs_expected {
+                Some(&param_fp.ty)
+            } else {
+                None
+            };
             check_expr(arg, type_checker, errors, expected);
         }
         for arg in call_node.node.args.iter().skip(params.len()) {
@@ -2074,7 +2125,7 @@ pub(super) fn type_call_on_base(
             TypeErrKind::MismatchedTypes {
                 expected: base_ty.clone(),
                 found: Type::Func {
-                    params: vec![Type::Infer; args_len],
+                    params: vec![FuncParam::immut(Type::Infer); args_len],
                     ret: Box::new(Type::Infer),
                 },
             },
@@ -2082,9 +2133,9 @@ pub(super) fn type_call_on_base(
         return Type::Infer;
     }
 
-    for (arg_expr, param_ty) in call_node.node.args.iter().zip(params.iter()) {
+    for (arg_expr, param_fp) in call_node.node.args.iter().zip(params.iter()) {
         let arg_ref = TypeRef::Expr(arg_expr.node.id);
-        let param_ref = TypeRef::concrete(param_ty);
+        let param_ref = TypeRef::concrete(&param_fp.ty);
         type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
     }
 

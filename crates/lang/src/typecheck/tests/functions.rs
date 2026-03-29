@@ -2,7 +2,7 @@ use super::helpers::{
     assert_expr_type, call_expr, expr_stmt, fn_decl, get_expr_id, ident_expr, let_binding,
     lit_bool, lit_int, program, reset_expr_ids, return_stmt, run_err, run_ok,
 };
-use crate::ast::Type;
+use crate::ast::{FuncParam, Type};
 use crate::typecheck::error::TypeErrKind;
 
 // ---- return tests ----
@@ -123,7 +123,7 @@ fn test_function_as_value() {
     let g_val = ident_expr("f");
     let g_val_id = get_expr_id(&g_val);
     let expected_fn_type = Type::Func {
-        params: vec![Type::Int],
+        params: vec![FuncParam::immut(Type::Int)],
         ret: Box::new(Type::Int),
     };
     let prog = program(vec![

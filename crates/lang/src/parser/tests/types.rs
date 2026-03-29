@@ -84,7 +84,13 @@ fn function_type_parses() {
     let ty = parse_type("fn(int, string) -> bool");
     match ty {
         ast::Type::Func { params, ret } => {
-            assert_eq!(params, vec![ast::Type::Int, ast::Type::String]);
+            assert_eq!(
+                params,
+                vec![
+                    ast::FuncParam::immut(ast::Type::Int),
+                    ast::FuncParam::immut(ast::Type::String),
+                ]
+            );
             assert_eq!(*ret, ast::Type::Bool);
         }
         other => panic!("expected function type, found {other:?}"),
@@ -101,7 +107,7 @@ fn optional_function_type_parses() {
     let inner = ty.option_inner().expect("is_option guarantees inner");
     match inner {
         ast::Type::Func { params, ret } => {
-            assert_eq!(*params, vec![ast::Type::Float]);
+            assert_eq!(*params, vec![ast::FuncParam::immut(ast::Type::Float)]);
             assert_eq!(**ret, ast::Type::Int);
         }
         other => panic!("expected function type inside optional, found {other:?}"),
@@ -257,5 +263,35 @@ fn view_type_optional_parses() {
             assert_eq!(**elem, ast::Type::Int);
         }
         other => panic!("expected View(Int), found {other:?}"),
+    }
+}
+
+#[test]
+fn function_type_with_var_param_parses() {
+    let ty = parse_type("fn(var int) -> void");
+    match ty {
+        ast::Type::Func { params, ret } => {
+            assert_eq!(params, vec![ast::FuncParam::new(ast::Type::Int, true)]);
+            assert_eq!(*ret, ast::Type::Void);
+        }
+        other => panic!("expected function type with var param, found {other:?}"),
+    }
+}
+
+#[test]
+fn function_type_with_mixed_var_params_parses() {
+    let ty = parse_type("fn(var int, string) -> bool");
+    match ty {
+        ast::Type::Func { params, ret } => {
+            assert_eq!(
+                params,
+                vec![
+                    ast::FuncParam::new(ast::Type::Int, true),
+                    ast::FuncParam::immut(ast::Type::String),
+                ]
+            );
+            assert_eq!(*ret, ast::Type::Bool);
+        }
+        other => panic!("expected function type with mixed params, found {other:?}"),
     }
 }

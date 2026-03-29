@@ -1126,7 +1126,12 @@ fn resolve_type_params_with_self(
         Func { params, ret } => {
             let resolved_params = params
                 .iter()
-                .map(|p| resolve_type_params_with_self(p, type_param_map, self_type))
+                .map(|p| {
+                    ast::FuncParam::new(
+                        resolve_type_params_with_self(&p.ty, type_param_map, self_type),
+                        p.mutable,
+                    )
+                })
                 .collect::<Vec<_>>();
             Func {
                 params: resolved_params,

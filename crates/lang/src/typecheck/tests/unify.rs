@@ -1,5 +1,5 @@
 use super::helpers::{dummy_span, opt_type, type_var};
-use crate::ast::Type;
+use crate::ast::{FuncParam, Type};
 use crate::typecheck::error::TypeErrKind;
 use crate::typecheck::unify::{contains_infer, is_assignable, unify_types};
 
@@ -111,7 +111,7 @@ fn test_unify_function_types() {
 
     // fn(int, bool) -> float unifies with identical signature
     let func_type = Type::Func {
-        params: vec![Type::Int, Type::Bool],
+        params: vec![FuncParam::immut(Type::Int), FuncParam::immut(Type::Bool)],
         ret: Box::new(Type::Float),
     };
     let result = unify_types(&func_type, &func_type, span, &mut errors);
@@ -120,11 +120,11 @@ fn test_unify_function_types() {
 
     // parameter length mismatch produces error
     let func1 = Type::Func {
-        params: vec![Type::Int],
+        params: vec![FuncParam::immut(Type::Int)],
         ret: Box::new(Type::Void),
     };
     let func2 = Type::Func {
-        params: vec![Type::Int, Type::Bool],
+        params: vec![FuncParam::immut(Type::Int), FuncParam::immut(Type::Bool)],
         ret: Box::new(Type::Void),
     };
     let result = unify_types(&func1, &func2, span, &mut errors);
@@ -226,7 +226,7 @@ fn test_unify_func_with_same_type_vars() {
     // fn(T) -> T unifies with itself
     let t = type_var(0);
     let func_type = Type::Func {
-        params: vec![t.clone()],
+        params: vec![FuncParam::immut(t.clone())],
         ret: Box::new(t.clone()),
     };
     let result = unify_types(&func_type, &func_type, span, &mut errors);
@@ -243,11 +243,11 @@ fn test_unify_func_with_different_type_vars_error() {
     let t = type_var(0);
     let u = type_var(1);
     let func_t = Type::Func {
-        params: vec![t.clone()],
+        params: vec![FuncParam::immut(t.clone())],
         ret: Box::new(t.clone()),
     };
     let func_u = Type::Func {
-        params: vec![u.clone()],
+        params: vec![FuncParam::immut(u.clone())],
         ret: Box::new(u.clone()),
     };
     let result = unify_types(&func_t, &func_u, span, &mut errors);
@@ -320,7 +320,7 @@ fn test_assignable_func_with_same_type_vars() {
     let t = type_var(0);
     let u = type_var(1);
     let func_type = Type::Func {
-        params: vec![t.clone()],
+        params: vec![FuncParam::immut(t.clone())],
         ret: Box::new(u.clone()),
     };
     assert!(is_assignable(&func_type, &func_type));
@@ -332,11 +332,11 @@ fn test_assignable_func_with_different_type_vars() {
     let t = type_var(0);
     let u = type_var(1);
     let func_t = Type::Func {
-        params: vec![t.clone()],
+        params: vec![FuncParam::immut(t.clone())],
         ret: Box::new(t.clone()),
     };
     let func_u = Type::Func {
-        params: vec![u.clone()],
+        params: vec![FuncParam::immut(u.clone())],
         ret: Box::new(u.clone()),
     };
     assert!(!is_assignable(&func_t, &func_u));
@@ -383,7 +383,7 @@ fn test_contains_infer_func_with_type_var_is_false() {
     let t = type_var(0);
     let u = type_var(1);
     let func_type = Type::Func {
-        params: vec![t],
+        params: vec![FuncParam::immut(t)],
         ret: Box::new(u),
     };
     assert!(!contains_infer(&func_type));
@@ -400,7 +400,7 @@ fn test_contains_infer_optional_infer() {
 fn test_contains_infer_func_with_infer() {
     // fn(Infer) -> int returns true
     let func_type = Type::Func {
-        params: vec![Type::Infer],
+        params: vec![FuncParam::immut(Type::Infer)],
         ret: Box::new(Type::Int),
     };
     assert!(contains_infer(&func_type));

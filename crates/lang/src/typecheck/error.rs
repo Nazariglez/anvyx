@@ -453,4 +453,5 @@ pub enum TypeErrKind {
     MutableParamRequiresVarTarget {
         name: Ident,
     },
+    MutableFnParamRequiresVarTarget,
 }

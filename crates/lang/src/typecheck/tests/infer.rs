@@ -1,5 +1,5 @@
 use super::helpers::{dummy_span, opt_type, type_param, type_var};
-use crate::ast::{Type, TypeVarId};
+use crate::ast::{FuncParam, Type, TypeVarId};
 use crate::typecheck::error::TypeErrKind;
 use crate::typecheck::infer::{instantiate_func_type, subst_type};
 use std::collections::HashMap;
@@ -35,7 +35,7 @@ fn test_subst_type_func() {
     let t_var = type_var(0);
     let u_var = type_var(1);
     let func_ty = Type::Func {
-        params: vec![t_var],
+        params: vec![FuncParam::immut(t_var)],
         ret: Box::new(u_var),
     };
     let mut subst = HashMap::new();
@@ -46,7 +46,7 @@ fn test_subst_type_func() {
     assert_eq!(
         result,
         Type::Func {
-            params: vec![Type::Int],
+            params: vec![FuncParam::immut(Type::Int)],
             ret: Box::new(Type::Bool),
         }
     );
@@ -57,7 +57,10 @@ fn test_subst_type_repeated_var() {
     // substitute T -> int in fn(T, T) -> T
     let t_var = type_var(0);
     let func_ty = Type::Func {
-        params: vec![t_var.clone(), t_var.clone()],
+        params: vec![
+            FuncParam::immut(t_var.clone()),
+            FuncParam::immut(t_var.clone()),
+        ],
         ret: Box::new(t_var),
     };
     let mut subst = HashMap::new();
@@ -67,7 +70,7 @@ fn test_subst_type_repeated_var() {
     assert_eq!(
         result,
         Type::Func {
-            params: vec![Type::Int, Type::Int],
+            params: vec![FuncParam::immut(Type::Int), FuncParam::immut(Type::Int)],
             ret: Box::new(Type::Int),
         }
     );
@@ -94,7 +97,7 @@ fn test_instantiate_identity() {
     let type_params = vec![type_param("T", 0)];
     let t_var = type_var(0);
     let template = Type::Func {
-        params: vec![t_var.clone()],
+        params: vec![FuncParam::immut(t_var.clone())],
         ret: Box::new(t_var),
     };
     let type_args = vec![Type::Int];
@@ -104,7 +107,7 @@ fn test_instantiate_identity() {
     assert_eq!(
         result,
         Some(Type::Func {
-            params: vec![Type::Int],
+            params: vec![FuncParam::immut(Type::Int)],
             ret: Box::new(Type::Int),
         })
     );
@@ -120,7 +123,7 @@ fn test_instantiate_two_params() {
     let t_var = type_var(0);
     let u_var = type_var(1);
     let template = Type::Func {
-        params: vec![t_var.clone(), u_var],
+        params: vec![FuncParam::immut(t_var.clone()), FuncParam::immut(u_var)],
         ret: Box::new(opt_type(t_var)),
     };
     let type_args = vec![Type::Int, Type::Bool];
@@ -130,7 +133,7 @@ fn test_instantiate_two_params() {
     assert_eq!(
         result,
         Some(Type::Func {
-            params: vec![Type::Int, Type::Bool],
+            params: vec![FuncParam::immut(Type::Int), FuncParam::immut(Type::Bool)],
             ret: Box::new(opt_type(Type::Int)),
         })
     );
@@ -144,7 +147,7 @@ fn test_instantiate_arity_mismatch_too_few() {
     // fn<T, U> instantiated with <int> (too few)
     let type_params = vec![type_param("T", 0), type_param("U", 1)];
     let template = Type::Func {
-        params: vec![type_var(0), type_var(1)],
+        params: vec![FuncParam::immut(type_var(0)), FuncParam::immut(type_var(1))],
         ret: Box::new(Type::Void),
     };
     let type_args = vec![Type::Int];
@@ -169,7 +172,7 @@ fn test_instantiate_arity_mismatch_too_many() {
     // fn<T> instantiated with <int, bool, string> (too many)
     let type_params = vec![type_param("T", 0)];
     let template = Type::Func {
-        params: vec![type_var(0)],
+        params: vec![FuncParam::immut(type_var(0))],
         ret: Box::new(Type::Void),
     };
     let type_args = vec![Type::Int, Type::Bool, Type::String];

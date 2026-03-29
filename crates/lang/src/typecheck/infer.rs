@@ -1,5 +1,5 @@
 use crate::{
-    ast::{ExprNode, Func, Ident, Type, TypeParam, TypeVarId},
+    ast::{ExprNode, Func, FuncParam, Ident, Mutability, Type, TypeParam, TypeVarId},
     span::Span,
 };
 use internment::Intern;
@@ -16,7 +16,16 @@ use super::{
 /// Builds a fucntion type from the AST node
 pub(super) fn type_from_fn(func: &Func) -> Type {
     Type::Func {
-        params: func.params.iter().map(|param| param.ty.clone()).collect(),
+        params: func
+            .params
+            .iter()
+            .map(|param| {
+                FuncParam::new(
+                    param.ty.clone(),
+                    matches!(param.mutability, Mutability::Mutable),
+                )
+            })
+            .collect(),
         ret: Box::new(func.ret.clone()),
     }
 }
@@ -28,7 +37,10 @@ pub fn subst_type(ty: &Type, subst: &HashMap<TypeVarId, Type>) -> Type {
     match ty {
         Var(id) => subst.get(id).cloned().unwrap_or_else(|| ty.clone()),
         Func { params, ret } => Func {
-            params: params.iter().map(|p| subst_type(p, subst)).collect(),
+            params: params
+                .iter()
+                .map(|p| FuncParam::new(subst_type(&p.ty, subst), p.mutable))
+                .collect(),
             ret: subst_type(ret, subst).boxed(),
         },
         Tuple(elems) => Tuple(elems.iter().map(|e| subst_type(e, subst)).collect()),
@@ -174,7 +186,7 @@ pub(super) fn infer_type_args_from_call(
             TypeErrKind::MismatchedTypes {
                 expected: expected_on_mismatch,
                 found: Type::Func {
-                    params: vec![Type::Infer; args.len()],
+                    params: vec![FuncParam::immut(Type::Infer); args.len()],
                     ret: Box::new(Type::Infer),
                 },
             },
@@ -289,7 +301,7 @@ pub(super) fn constrain_slots_from_type(
             },
         ) => {
             for (t, e) in tp.iter().zip(ep.iter()) {
-                constrain_slots_from_type(t, e, slots, span, type_checker, errors);
+                constrain_slots_from_type(&t.ty, &e.ty, slots, span, type_checker, errors);
             }
             constrain_slots_from_type(tr, er, slots, span, type_checker, errors);
         }
@@ -388,7 +400,7 @@ pub fn resolve_type_param_names(ty: &Type, type_params: &[TypeParam]) -> Type {
         Type::Func { params, ret } => Type::Func {
             params: params
                 .iter()
-                .map(|p| resolve_type_param_names(p, type_params))
+                .map(|p| FuncParam::new(resolve_type_param_names(&p.ty, type_params), p.mutable))
                 .collect(),
             ret: resolve_type_param_names(ret, type_params).boxed(),
         },

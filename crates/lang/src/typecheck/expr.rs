@@ -1,5 +1,5 @@
 use crate::ast::{
-    CastNode, ExprKind, ExprNode, FloatSuffix, Ident, LambdaNode, Lit, StringPart, Type,
+    CastNode, ExprKind, ExprNode, FloatSuffix, FuncParam, Ident, LambdaNode, Lit, StringPart, Type,
 };
 use std::collections::HashMap;
 
@@ -173,7 +173,7 @@ fn check_lambda(
     let lambda = &lambda_node.node;
 
     // extract expected param/return types from context
-    let (expected_params, expected_ret): (Option<&[Type]>, Option<&Type>) = match expected {
+    let (expected_params, expected_ret): (Option<&[FuncParam]>, Option<&Type>) = match expected {
         Some(Type::Func { params, ret }) => (Some(params.as_slice()), Some(ret.as_ref())),
         _ => (None, None),
     };
@@ -191,22 +191,22 @@ fn check_lambda(
             ));
             return Type::Infer;
         }
-        for (param, expected_param_ty) in lambda.params.iter().zip(ep.iter()) {
+        for (param, expected_param_fp) in lambda.params.iter().zip(ep.iter()) {
             let ty = match &param.ty {
                 Some(annotated) => {
                     let resolved = type_checker.resolve_type(annotated);
-                    if resolved != *expected_param_ty {
+                    if resolved != expected_param_fp.ty {
                         errors.push(TypeErr::new(
                             expr_node.span,
                             TypeErrKind::MismatchedTypes {
-                                expected: expected_param_ty.clone(),
+                                expected: expected_param_fp.ty.clone(),
                                 found: resolved.clone(),
                             },
                         ));
                     }
                     resolved
                 }
-                None => expected_param_ty.clone(),
+                None => expected_param_fp.ty.clone(),
             };
             param_types.push(ty);
         }
@@ -318,7 +318,11 @@ fn check_lambda(
         .insert(expr_node.node.id, capture_list);
 
     Type::Func {
-        params: param_types,
+        params: param_types
+            .into_iter()
+            .zip(lambda.params.iter())
+            .map(|(ty, lp)| FuncParam::new(ty, lp.mutable))
+            .collect(),
         ret: Box::new(actual_ret),
     }
 }
