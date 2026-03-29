@@ -2635,3 +2635,978 @@ fn provider_option_handler() {
     assert_eq!(e.variant, 0);
     assert!(e.fields.is_empty());
 }
+
+// -- Getter/setter pair returning/accepting an extern type --
+
+mod getter_extern_type_tests {
+    use super::extern_handle;
+    use anvyx_lang::{Value, export_methods, export_type};
+
+    #[export_type(name = "Inner")]
+    pub struct Inner {
+        pub val: f32,
+    }
+
+    #[export_methods]
+    impl Inner {}
+
+    #[export_type(name = "Container")]
+    pub struct Container {
+        pub inner_val: f32,
+    }
+
+    #[export_methods(name = "Container")]
+    impl Container {
+        pub fn new(inner_val: f32) -> Container {
+            Container { inner_val }
+        }
+
+        #[getter]
+        pub fn inner(&self) -> Inner {
+            Inner {
+                val: self.inner_val,
+            }
+        }
+
+        #[setter]
+        pub fn set_inner(&mut self, v: Inner) {
+            self.inner_val = v.val;
+        }
+    }
+
+    anvyx_lang::provider!(types: [Inner, Container]);
+
+    #[test]
+    fn getter_extern_type_returns_handle() {
+        let externs = anvyx_externs();
+        let container = externs["Container::new"](vec![Value::Float(3.5)]).unwrap();
+        let Value::ExternHandle(ref container_ehd) = container else {
+            panic!("expected ExternHandle for Container");
+        };
+        let result =
+            externs["Container::__get_inner"](vec![Value::ExternHandle(container_ehd.clone())])
+                .unwrap();
+        let Value::ExternHandle(ref inner_ehd) = result else {
+            panic!("expected ExternHandle for Inner");
+        };
+        let inner_id = inner_ehd.id;
+        __ANVYX_STORE_INNER.with(|s| {
+            let store = s.borrow();
+            let inner = store.borrow(inner_id).unwrap();
+            assert_eq!(inner.val, 3.5);
+        });
+        // container and result drop here, auto-cleaning up via real drop_fn
+    }
+
+    #[test]
+    fn setter_extern_type_consumes_handle() {
+        let externs = anvyx_externs();
+        let container = externs["Container::new"](vec![Value::Float(1.0)]).unwrap();
+        let Value::ExternHandle(ref container_ehd) = container else {
+            panic!("expected ExternHandle for Container");
+        };
+
+        // Manually insert an Inner to pass to the setter
+        let inner_id = __ANVYX_STORE_INNER.with(|s| s.borrow_mut().insert(Inner { val: 9.0 }));
+
+        // Set inner — this consumes the Inner from its store via from_anvyx
+        externs["Container::__set_inner"](vec![
+            Value::ExternHandle(container_ehd.clone()),
+            extern_handle(inner_id), // noop drop — from_anvyx removes from store
+        ])
+        .unwrap();
+
+        // Verify the Inner was consumed
+        __ANVYX_STORE_INNER.with(|s| {
+            assert!(s.borrow().borrow(inner_id).is_err());
+        });
+
+        // Verify the container now reflects the new inner_val
+        let new_inner =
+            externs["Container::__get_inner"](vec![Value::ExternHandle(container_ehd.clone())])
+                .unwrap();
+        let Value::ExternHandle(ref new_ehd) = new_inner else {
+            panic!("expected ExternHandle");
+        };
+        __ANVYX_STORE_INNER.with(|s| {
+            let store = s.borrow();
+            let inner = store.borrow(new_ehd.id).unwrap();
+            assert_eq!(inner.val, 9.0);
+        });
+        // container and new_inner auto-cleanup on drop
+    }
+
+    #[test]
+    fn getter_setter_extern_round_trip() {
+        let externs = anvyx_externs();
+
+        // Create container A with inner_val 7.0
+        let container_a = externs["Container::new"](vec![Value::Float(7.0)]).unwrap();
+        let Value::ExternHandle(ref ehd_a) = container_a else {
+            panic!("expected ExternHandle");
+        };
+
+        // Get inner from A (creates a new Inner {val: 7.0} inserted into Inner store)
+        let inner_from_a =
+            externs["Container::__get_inner"](vec![Value::ExternHandle(ehd_a.clone())]).unwrap();
+
+        // Create container B with inner_val 0.0
+        let container_b = externs["Container::new"](vec![Value::Float(0.0)]).unwrap();
+        let Value::ExternHandle(ref ehd_b) = container_b else {
+            panic!("expected ExternHandle");
+        };
+
+        // Set B's inner to the value from A — inner_from_a is consumed by the setter
+        externs["Container::__set_inner"](vec![Value::ExternHandle(ehd_b.clone()), inner_from_a])
+            .unwrap();
+
+        // Verify B now returns an inner with val 7.0
+        let b_inner =
+            externs["Container::__get_inner"](vec![Value::ExternHandle(ehd_b.clone())]).unwrap();
+        let Value::ExternHandle(ref b_inner_ehd) = b_inner else {
+            panic!("expected ExternHandle");
+        };
+        __ANVYX_STORE_INNER.with(|s| {
+            let store = s.borrow();
+            let inner = store.borrow(b_inner_ehd.id).unwrap();
+            assert_eq!(inner.val, 7.0);
+        });
+        // All handles auto-cleanup on drop
+    }
+
+    #[test]
+    fn getter_extern_type_metadata() {
+        let types = anvyx_type_exports();
+        let container_ty = types.iter().find(|t| t.name == "Container").unwrap();
+        assert_eq!(container_ty.fields.len(), 1);
+        assert_eq!(container_ty.fields[0].name, "inner");
+        assert_eq!(container_ty.fields[0].ty, "Inner");
+        assert!(container_ty.fields[0].computed);
+    }
+
+    #[test]
+    fn getter_extern_handler_keys() {
+        let externs = anvyx_externs();
+        assert!(externs.contains_key("Container::__get_inner"));
+        assert!(externs.contains_key("Container::__set_inner"));
+        assert!(externs.contains_key("Container::new"));
+    }
+}
+
+// -- #[init] accepting an extern type param --
+
+mod init_extern_param_tests {
+    use super::extern_handle;
+    use anvyx_lang::{Value, export_methods, export_type};
+
+    #[export_type(name = "Pos")]
+    pub struct Pos {
+        pub x: f32,
+        pub y: f32,
+    }
+
+    #[export_methods]
+    impl Pos {}
+
+    #[export_type(name = "Entity")]
+    pub struct Entity {
+        pub px: f32,
+        pub py: f32,
+        pub hp: f32,
+    }
+
+    #[export_methods(name = "Entity")]
+    impl Entity {
+        #[init]
+        pub fn create(pos: Pos, hp: f32) -> Entity {
+            Entity {
+                px: pos.x,
+                py: pos.y,
+                hp,
+            }
+        }
+
+        #[getter]
+        pub fn hp(&self) -> f32 {
+            self.hp
+        }
+
+        #[setter]
+        pub fn set_hp(&mut self, v: f32) {
+            self.hp = v;
+        }
+    }
+
+    anvyx_lang::provider!(types: [Pos, Entity]);
+
+    #[test]
+    fn init_extern_param_creates_entity() {
+        let externs = anvyx_externs();
+        let pos_id = __ANVYX_STORE_POS.with(|s| s.borrow_mut().insert(Pos { x: 10.0, y: 20.0 }));
+        let entity =
+            externs["Entity::__init__"](vec![extern_handle(pos_id), Value::Float(100.0)]).unwrap();
+        let Value::ExternHandle(ref entity_ehd) = entity else {
+            panic!("expected ExternHandle for Entity");
+        };
+        __ANVYX_STORE_ENTITY.with(|s| {
+            let store = s.borrow();
+            let e = store.borrow(entity_ehd.id).unwrap();
+            assert_eq!(e.px, 10.0);
+            assert_eq!(e.py, 20.0);
+            assert_eq!(e.hp, 100.0);
+        });
+        // entity auto-cleanup on drop; pos was consumed by from_anvyx
+    }
+
+    #[test]
+    fn init_extern_param_consumes_pos() {
+        let externs = anvyx_externs();
+        let pos_id = __ANVYX_STORE_POS.with(|s| s.borrow_mut().insert(Pos { x: 1.0, y: 2.0 }));
+        externs["Entity::__init__"](vec![extern_handle(pos_id), Value::Float(50.0)]).unwrap();
+        // Pos was consumed by from_anvyx inside the init handler
+        __ANVYX_STORE_POS.with(|s| {
+            assert!(s.borrow().borrow(pos_id).is_err());
+        });
+        // entity handle auto-cleanup on drop
+    }
+
+    #[test]
+    fn init_extern_param_metadata() {
+        let types = anvyx_type_exports();
+        let entity_ty = types.iter().find(|t| t.name == "Entity").unwrap();
+        assert!(entity_ty.has_init);
+        let fields = &entity_ty.fields;
+        // fields = init_fields [("pos", "Pos"), ("hp", "float")];
+        // getter "hp" is filtered because "hp" is already in init_names
+        assert_eq!(fields.len(), 2);
+        let pos_field = fields.iter().find(|f| f.name == "pos").unwrap();
+        assert_eq!(pos_field.ty, "Pos");
+        assert!(!pos_field.computed);
+        let hp_field = fields.iter().find(|f| f.name == "hp").unwrap();
+        assert_eq!(hp_field.ty, "float");
+        assert!(!hp_field.computed);
+    }
+
+    #[test]
+    fn init_extern_param_wrong_type_fails() {
+        let externs = anvyx_externs();
+        // Pass float instead of ExternHandle for the Pos param
+        let result = externs["Entity::__init__"](vec![Value::Float(1.0), Value::Float(50.0)]);
+        assert!(result.is_err());
+    }
+}
+
+// -- #[init] with a String param --
+
+mod init_string_param_tests {
+    use anvyx_lang::{ManagedRc, Value, export_methods, export_type};
+
+    #[export_type(name = "Label")]
+    pub struct Label {
+        pub text: String,
+        pub size: f32,
+    }
+
+    #[export_methods(name = "Label")]
+    impl Label {
+        #[init]
+        pub fn create(text: String, size: f32) -> Label {
+            Label { text, size }
+        }
+    }
+
+    anvyx_lang::provider!(types: [Label]);
+
+    #[test]
+    fn init_string_param_creates_label() {
+        let externs = anvyx_externs();
+        let label = externs["Label::__init__"](vec![
+            Value::String(ManagedRc::new("hello".to_string())),
+            Value::Float(16.0),
+        ])
+        .unwrap();
+        let Value::ExternHandle(ref label_ehd) = label else {
+            panic!("expected ExternHandle for Label");
+        };
+        let label_id = label_ehd.id;
+        __ANVYX_STORE_LABEL.with(|s| {
+            let store = s.borrow();
+            let v = store.borrow(label_id).unwrap();
+            assert_eq!(v.text, "hello");
+            assert_eq!(v.size, 16.0);
+        });
+        // label auto-cleanup on drop
+    }
+
+    #[test]
+    fn init_string_param_metadata() {
+        let types = anvyx_type_exports();
+        let label_ty = types.iter().find(|t| t.name == "Label").unwrap();
+        assert!(label_ty.has_init);
+        let fields = &label_ty.fields;
+        assert_eq!(fields.len(), 2);
+        assert!(fields.iter().any(|f| f.name == "text" && f.ty == "string"));
+        assert!(fields.iter().any(|f| f.name == "size" && f.ty == "float"));
+    }
+}
+
+// -- #[init] returning Result<Self, RuntimeError> --
+
+mod fallible_init_tests {
+    use anvyx_lang::{RuntimeError, Value, export_methods, export_type};
+
+    #[export_type(name = "Ratio")]
+    pub struct Ratio {
+        pub num: f32,
+        pub den: f32,
+    }
+
+    #[export_methods(name = "Ratio")]
+    impl Ratio {
+        #[init]
+        pub fn create(num: f32, den: f32) -> Result<Ratio, RuntimeError> {
+            if den == 0.0 {
+                return Err(RuntimeError::new("denominator cannot be zero"));
+            }
+            Ok(Ratio { num, den })
+        }
+
+        #[getter]
+        pub fn num(&self) -> f32 {
+            self.num
+        }
+
+        #[setter]
+        pub fn set_num(&mut self, v: f32) {
+            self.num = v;
+        }
+
+        #[getter]
+        pub fn den(&self) -> f32 {
+            self.den
+        }
+
+        #[setter]
+        pub fn set_den(&mut self, v: f32) {
+            self.den = v;
+        }
+    }
+
+    anvyx_lang::provider!(types: [Ratio]);
+
+    #[test]
+    fn fallible_init_ok() {
+        let externs = anvyx_externs();
+        let result = externs["Ratio::__init__"](vec![Value::Float(3.0), Value::Float(4.0)]);
+        assert!(result.is_ok());
+        let ratio = result.unwrap();
+        let Value::ExternHandle(ref ratio_ehd) = ratio else {
+            panic!("expected ExternHandle for Ratio");
+        };
+        __ANVYX_STORE_RATIO.with(|s| {
+            let store = s.borrow();
+            let v = store.borrow(ratio_ehd.id).unwrap();
+            assert_eq!(v.num, 3.0);
+            assert_eq!(v.den, 4.0);
+        });
+        // ratio auto-cleanup on drop
+    }
+
+    #[test]
+    fn fallible_init_err() {
+        let externs = anvyx_externs();
+        let result = externs["Ratio::__init__"](vec![Value::Float(1.0), Value::Float(0.0)]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("denominator"));
+    }
+
+    #[test]
+    fn fallible_init_has_init_flag() {
+        let types = anvyx_type_exports();
+        let ratio_ty = types.iter().find(|t| t.name == "Ratio").unwrap();
+        assert!(ratio_ty.has_init);
+    }
+
+    #[test]
+    fn fallible_init_handler_key() {
+        let externs = anvyx_externs();
+        assert!(externs.contains_key("Ratio::__init__"));
+    }
+}
+
+// -- #[op] returning Option<f32> --
+
+mod op_option_return_tests {
+    use super::extern_handle;
+    use anvyx_lang::{ExternOpDecl, OPTION_TYPE_ID, Value, export_methods, export_type};
+
+    #[export_type(name = "Num")]
+    pub struct Num {
+        pub val: f32,
+    }
+
+    #[export_methods(name = "Num")]
+    impl Num {
+        #[init]
+        pub fn create(val: f32) -> Num {
+            Num { val }
+        }
+
+        #[getter]
+        pub fn val(&self) -> f32 {
+            self.val
+        }
+
+        #[setter]
+        pub fn set_val(&mut self, v: f32) {
+            self.val = v;
+        }
+
+        #[op(Self / Self)]
+        pub fn div(&self, other: &Num) -> Option<f32> {
+            if other.val == 0.0 {
+                None
+            } else {
+                Some(self.val / other.val)
+            }
+        }
+    }
+
+    anvyx_lang::provider!(types: [Num]);
+
+    #[test]
+    fn op_option_some() {
+        let id_a = __ANVYX_STORE_NUM.with(|s| s.borrow_mut().insert(Num { val: 10.0 }));
+        let id_b = __ANVYX_STORE_NUM.with(|s| s.borrow_mut().insert(Num { val: 2.0 }));
+        let (_, handler) = __anvyx_method_Num___op_div__Num();
+        let result = handler(vec![extern_handle(id_a), extern_handle(id_b)]).unwrap();
+        let Value::Enum(ref e) = result else {
+            panic!("expected Enum");
+        };
+        assert_eq!(e.type_id, OPTION_TYPE_ID);
+        assert_eq!(e.variant, 1);
+        assert_eq!(e.fields, vec![Value::Float(5.0)]);
+        __ANVYX_STORE_NUM.with(|s| {
+            s.borrow_mut().remove(id_a).unwrap();
+            s.borrow_mut().remove(id_b).unwrap();
+        });
+    }
+
+    #[test]
+    fn op_option_none() {
+        let id_a = __ANVYX_STORE_NUM.with(|s| s.borrow_mut().insert(Num { val: 10.0 }));
+        let id_b = __ANVYX_STORE_NUM.with(|s| s.borrow_mut().insert(Num { val: 0.0 }));
+        let (_, handler) = __anvyx_method_Num___op_div__Num();
+        let result = handler(vec![extern_handle(id_a), extern_handle(id_b)]).unwrap();
+        let Value::Enum(ref e) = result else {
+            panic!("expected Enum");
+        };
+        assert_eq!(e.type_id, OPTION_TYPE_ID);
+        assert_eq!(e.variant, 0);
+        assert!(e.fields.is_empty());
+        __ANVYX_STORE_NUM.with(|s| {
+            s.borrow_mut().remove(id_a).unwrap();
+            s.borrow_mut().remove(id_b).unwrap();
+        });
+    }
+
+    #[test]
+    fn op_option_metadata() {
+        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_NUM;
+        let div = ops.iter().find(|o| o.op == "Div").unwrap();
+        assert_eq!(div.ret, "Option<float>");
+        assert_eq!(div.rhs, Some("Num"));
+        assert!(div.lhs.is_none());
+    }
+
+    #[test]
+    fn op_option_handler_key() {
+        let (key, _) = __anvyx_method_Num___op_div__Num();
+        assert_eq!(key, "Num::__op_div__Num");
+    }
+}
+
+// -- #[op] returning Result<f32, RuntimeError> --
+
+mod op_result_return_tests {
+    use super::extern_handle;
+    use anvyx_lang::{ExternOpDecl, RuntimeError, Value, export_methods, export_type};
+
+    #[export_type(name = "SafeNum")]
+    pub struct SafeNum {
+        pub val: f32,
+    }
+
+    #[export_methods(name = "SafeNum")]
+    impl SafeNum {
+        #[init]
+        pub fn create(val: f32) -> SafeNum {
+            SafeNum { val }
+        }
+
+        #[getter]
+        pub fn val(&self) -> f32 {
+            self.val
+        }
+
+        #[setter]
+        pub fn set_val(&mut self, v: f32) {
+            self.val = v;
+        }
+
+        #[op(Self / Self)]
+        pub fn div(&self, other: &SafeNum) -> Result<f32, RuntimeError> {
+            if other.val == 0.0 {
+                Err(RuntimeError::new("division by zero"))
+            } else {
+                Ok(self.val / other.val)
+            }
+        }
+    }
+
+    anvyx_lang::provider!(types: [SafeNum]);
+
+    #[test]
+    fn op_result_ok() {
+        let id_a = __ANVYX_STORE_SAFENUM.with(|s| s.borrow_mut().insert(SafeNum { val: 10.0 }));
+        let id_b = __ANVYX_STORE_SAFENUM.with(|s| s.borrow_mut().insert(SafeNum { val: 4.0 }));
+        let (_, handler) = __anvyx_method_SafeNum___op_div__SafeNum();
+        let result = handler(vec![extern_handle(id_a), extern_handle(id_b)]).unwrap();
+        assert_eq!(result, Value::Float(2.5));
+        __ANVYX_STORE_SAFENUM.with(|s| {
+            s.borrow_mut().remove(id_a).unwrap();
+            s.borrow_mut().remove(id_b).unwrap();
+        });
+    }
+
+    #[test]
+    fn op_result_err() {
+        let id_a = __ANVYX_STORE_SAFENUM.with(|s| s.borrow_mut().insert(SafeNum { val: 10.0 }));
+        let id_b = __ANVYX_STORE_SAFENUM.with(|s| s.borrow_mut().insert(SafeNum { val: 0.0 }));
+        let (_, handler) = __anvyx_method_SafeNum___op_div__SafeNum();
+        let result = handler(vec![extern_handle(id_a), extern_handle(id_b)]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("division by zero"));
+        __ANVYX_STORE_SAFENUM.with(|s| {
+            s.borrow_mut().remove(id_a).unwrap();
+            s.borrow_mut().remove(id_b).unwrap();
+        });
+    }
+
+    #[test]
+    fn op_result_metadata() {
+        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_SAFENUM;
+        let div = ops.iter().find(|o| o.op == "Div").unwrap();
+        // Result wrapper unwraps in metadata — ret is the Ok inner type
+        assert_eq!(div.ret, "float");
+        assert_eq!(div.rhs, Some("SafeNum"));
+        assert!(div.lhs.is_none());
+    }
+}
+
+// -- Method returning Option<ExternType> --
+
+mod method_option_extern_return_tests {
+    use anvyx_lang::{ExternMethodDecl, OPTION_TYPE_ID, Value, export_methods, export_type};
+
+    #[export_type(name = "Item")]
+    pub struct Item {
+        pub val: f32,
+    }
+
+    #[export_methods]
+    impl Item {}
+
+    #[export_type(name = "Bag")]
+    pub struct Bag {
+        pub item_val: f32,
+        pub has_item: bool,
+    }
+
+    #[export_methods(name = "Bag")]
+    impl Bag {
+        #[init]
+        pub fn create(item_val: f32, has_item: bool) -> Bag {
+            Bag { item_val, has_item }
+        }
+
+        #[getter]
+        pub fn item_val(&self) -> f32 {
+            self.item_val
+        }
+
+        #[setter]
+        pub fn set_item_val(&mut self, v: f32) {
+            self.item_val = v;
+        }
+
+        pub fn take_item(&self) -> Option<Item> {
+            if self.has_item {
+                Some(Item { val: self.item_val })
+            } else {
+                None
+            }
+        }
+    }
+
+    anvyx_lang::provider!(types: [Item, Bag]);
+
+    #[test]
+    fn method_option_extern_some() {
+        let externs = anvyx_externs();
+        let bag = externs["Bag::__init__"](vec![Value::Float(42.0), Value::Bool(true)]).unwrap();
+        let Value::ExternHandle(ref bag_ehd) = bag else {
+            panic!("expected ExternHandle for Bag");
+        };
+        let result = externs["Bag::take_item"](vec![Value::ExternHandle(bag_ehd.clone())]).unwrap();
+        let Value::Enum(ref e) = result else {
+            panic!("expected Enum");
+        };
+        assert_eq!(e.type_id, OPTION_TYPE_ID);
+        assert_eq!(e.variant, 1);
+        let Value::ExternHandle(ref item_ehd) = e.fields[0] else {
+            panic!("expected ExternHandle inside Option");
+        };
+        __ANVYX_STORE_ITEM.with(|s| {
+            let store = s.borrow();
+            let item = store.borrow(item_ehd.id).unwrap();
+            assert_eq!(item.val, 42.0);
+        });
+        // bag and result (containing item handle) auto-cleanup on drop
+    }
+
+    #[test]
+    fn method_option_extern_none() {
+        let externs = anvyx_externs();
+        let bag = externs["Bag::__init__"](vec![Value::Float(0.0), Value::Bool(false)]).unwrap();
+        let Value::ExternHandle(ref bag_ehd) = bag else {
+            panic!("expected ExternHandle for Bag");
+        };
+        let result = externs["Bag::take_item"](vec![Value::ExternHandle(bag_ehd.clone())]).unwrap();
+        let Value::Enum(ref e) = result else {
+            panic!("expected Enum");
+        };
+        assert_eq!(e.type_id, OPTION_TYPE_ID);
+        assert_eq!(e.variant, 0);
+        assert!(e.fields.is_empty());
+        // bag auto-cleanup on drop
+    }
+
+    #[test]
+    fn method_option_extern_metadata() {
+        let methods: &[ExternMethodDecl] = __ANVYX_METHODS_DECL_BAG;
+        let take_item = methods.iter().find(|m| m.name == "take_item").unwrap();
+        assert_eq!(take_item.ret, "Option<Item>");
+        assert_eq!(take_item.receiver, "self");
+        assert_eq!(take_item.params, &[]);
+    }
+}
+
+// -- Method returning Result<ExternType, RuntimeError> --
+
+mod method_result_extern_return_tests {
+    use anvyx_lang::{ExternMethodDecl, RuntimeError, Value, export_methods, export_type};
+
+    #[export_type(name = "Product")]
+    pub struct Product {
+        pub val: f32,
+    }
+
+    #[export_methods]
+    impl Product {}
+
+    #[export_type(name = "Factory")]
+    pub struct Factory {
+        pub rate: f32,
+    }
+
+    #[export_methods(name = "Factory")]
+    impl Factory {
+        #[init]
+        pub fn create(rate: f32) -> Factory {
+            Factory { rate }
+        }
+
+        #[getter]
+        pub fn rate(&self) -> f32 {
+            self.rate
+        }
+
+        #[setter]
+        pub fn set_rate(&mut self, v: f32) {
+            self.rate = v;
+        }
+
+        pub fn produce(&self, quantity: f32) -> Result<Product, RuntimeError> {
+            if quantity <= 0.0 {
+                Err(RuntimeError::new("quantity must be positive"))
+            } else {
+                Ok(Product {
+                    val: self.rate * quantity,
+                })
+            }
+        }
+    }
+
+    anvyx_lang::provider!(types: [Product, Factory]);
+
+    #[test]
+    fn method_result_extern_ok() {
+        let externs = anvyx_externs();
+        let factory = externs["Factory::__init__"](vec![Value::Float(2.5)]).unwrap();
+        let Value::ExternHandle(ref factory_ehd) = factory else {
+            panic!("expected ExternHandle for Factory");
+        };
+        let result = externs["Factory::produce"](vec![
+            Value::ExternHandle(factory_ehd.clone()),
+            Value::Float(4.0),
+        ])
+        .unwrap();
+        let Value::ExternHandle(ref product_ehd) = result else {
+            panic!("expected ExternHandle for Product");
+        };
+        __ANVYX_STORE_PRODUCT.with(|s| {
+            let store = s.borrow();
+            let p = store.borrow(product_ehd.id).unwrap();
+            assert_eq!(p.val, 10.0);
+        });
+        // factory and result auto-cleanup on drop
+    }
+
+    #[test]
+    fn method_result_extern_err() {
+        let externs = anvyx_externs();
+        let factory = externs["Factory::__init__"](vec![Value::Float(1.0)]).unwrap();
+        let Value::ExternHandle(ref factory_ehd) = factory else {
+            panic!("expected ExternHandle for Factory");
+        };
+        let result = externs["Factory::produce"](vec![
+            Value::ExternHandle(factory_ehd.clone()),
+            Value::Float(-1.0),
+        ]);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .message
+                .contains("quantity must be positive")
+        );
+        // factory still valid after error — auto-cleanup on drop
+    }
+
+    #[test]
+    fn method_result_extern_metadata() {
+        let methods: &[ExternMethodDecl] = __ANVYX_METHODS_DECL_FACTORY;
+        let produce = methods.iter().find(|m| m.name == "produce").unwrap();
+        // Result wrapper unwraps in metadata — ret is the Ok inner type
+        assert_eq!(produce.ret, "Product");
+        assert_eq!(produce.receiver, "self");
+        assert_eq!(produce.params, &[("quantity", "float")]);
+    }
+}
+
+// -- #[op] returning Option<ExternType> --
+
+mod op_option_extern_return_tests {
+    use super::extern_handle;
+    use anvyx_lang::{ExternOpDecl, OPTION_TYPE_ID, Value, export_methods, export_type};
+
+    #[export_type(name = "Vec2")]
+    pub struct OptVec2 {
+        pub x: f32,
+        pub y: f32,
+    }
+
+    #[export_methods(name = "Vec2")]
+    impl OptVec2 {
+        #[init]
+        pub fn create(x: f32, y: f32) -> OptVec2 {
+            OptVec2 { x, y }
+        }
+
+        #[getter]
+        pub fn x(&self) -> f32 {
+            self.x
+        }
+
+        #[setter]
+        pub fn set_x(&mut self, v: f32) {
+            self.x = v;
+        }
+
+        #[getter]
+        pub fn y(&self) -> f32 {
+            self.y
+        }
+
+        #[setter]
+        pub fn set_y(&mut self, v: f32) {
+            self.y = v;
+        }
+
+        #[op(Self / float)]
+        pub fn div_scalar(&self, s: f32) -> Option<OptVec2> {
+            if s == 0.0 {
+                None
+            } else {
+                Some(OptVec2 {
+                    x: self.x / s,
+                    y: self.y / s,
+                })
+            }
+        }
+    }
+
+    anvyx_lang::provider!(types: [OptVec2]);
+
+    #[test]
+    fn op_option_extern_some() {
+        let id =
+            __ANVYX_STORE_OPTVEC2.with(|s| s.borrow_mut().insert(OptVec2 { x: 10.0, y: 20.0 }));
+        let (_, handler) = __anvyx_method_OptVec2___op_div__float();
+        let result = handler(vec![extern_handle(id), Value::Float(2.0)]).unwrap();
+        let Value::Enum(ref e) = result else {
+            panic!("expected Enum");
+        };
+        assert_eq!(e.type_id, OPTION_TYPE_ID);
+        assert_eq!(e.variant, 1);
+        let Value::ExternHandle(ref inner_ehd) = e.fields[0] else {
+            panic!("expected ExternHandle inside Option");
+        };
+        __ANVYX_STORE_OPTVEC2.with(|s| {
+            let store = s.borrow();
+            let v = store.borrow(inner_ehd.id).unwrap();
+            assert_eq!(v.x, 5.0);
+            assert_eq!(v.y, 10.0);
+        });
+        __ANVYX_STORE_OPTVEC2.with(|s| s.borrow_mut().remove(id).unwrap());
+        // result (containing inner_ehd) auto-cleanup on drop
+    }
+
+    #[test]
+    fn op_option_extern_none() {
+        let id =
+            __ANVYX_STORE_OPTVEC2.with(|s| s.borrow_mut().insert(OptVec2 { x: 10.0, y: 20.0 }));
+        let (_, handler) = __anvyx_method_OptVec2___op_div__float();
+        let result = handler(vec![extern_handle(id), Value::Float(0.0)]).unwrap();
+        let Value::Enum(ref e) = result else {
+            panic!("expected Enum");
+        };
+        assert_eq!(e.type_id, OPTION_TYPE_ID);
+        assert_eq!(e.variant, 0);
+        assert!(e.fields.is_empty());
+        __ANVYX_STORE_OPTVEC2.with(|s| s.borrow_mut().remove(id).unwrap());
+    }
+
+    #[test]
+    fn op_option_extern_metadata() {
+        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPTVEC2;
+        let div = ops.iter().find(|o| o.op == "Div").unwrap();
+        assert_eq!(div.ret, "Option<Vec2>");
+        assert_eq!(div.rhs, Some("float"));
+        assert!(div.lhs.is_none());
+    }
+}
+
+// -- #[op] returning Result<ExternType, RuntimeError> --
+
+mod op_result_extern_return_tests {
+    use super::extern_handle;
+    use anvyx_lang::{ExternOpDecl, RuntimeError, Value, export_methods, export_type};
+
+    #[export_type(name = "Frac")]
+    pub struct Frac {
+        pub num: f32,
+        pub den: f32,
+    }
+
+    #[export_methods(name = "Frac")]
+    impl Frac {
+        #[init]
+        pub fn create(num: f32, den: f32) -> Frac {
+            Frac { num, den }
+        }
+
+        #[getter]
+        pub fn num(&self) -> f32 {
+            self.num
+        }
+
+        #[setter]
+        pub fn set_num(&mut self, v: f32) {
+            self.num = v;
+        }
+
+        #[getter]
+        pub fn den(&self) -> f32 {
+            self.den
+        }
+
+        #[setter]
+        pub fn set_den(&mut self, v: f32) {
+            self.den = v;
+        }
+
+        #[op(Self + Self)]
+        pub fn add(&self, other: &Frac) -> Result<Frac, RuntimeError> {
+            let new_den = self.den * other.den;
+            if new_den == 0.0 {
+                return Err(RuntimeError::new("zero denominator in addition"));
+            }
+            Ok(Frac {
+                num: self.num * other.den + other.num * self.den,
+                den: new_den,
+            })
+        }
+    }
+
+    anvyx_lang::provider!(types: [Frac]);
+
+    #[test]
+    fn op_result_extern_ok() {
+        // 1/2 + 1/3 = (1*3 + 1*2) / (2*3) = 5/6
+        let id_a = __ANVYX_STORE_FRAC.with(|s| s.borrow_mut().insert(Frac { num: 1.0, den: 2.0 }));
+        let id_b = __ANVYX_STORE_FRAC.with(|s| s.borrow_mut().insert(Frac { num: 1.0, den: 3.0 }));
+        let (_, handler) = __anvyx_method_Frac___op_add__Frac();
+        let result = handler(vec![extern_handle(id_a), extern_handle(id_b)]).unwrap();
+        let Value::ExternHandle(ref frac_ehd) = result else {
+            panic!("expected ExternHandle for Frac result");
+        };
+        __ANVYX_STORE_FRAC.with(|s| {
+            let store = s.borrow();
+            let v = store.borrow(frac_ehd.id).unwrap();
+            assert_eq!(v.num, 5.0);
+            assert_eq!(v.den, 6.0);
+        });
+        __ANVYX_STORE_FRAC.with(|s| {
+            s.borrow_mut().remove(id_a).unwrap();
+            s.borrow_mut().remove(id_b).unwrap();
+        });
+        // result auto-cleanup on drop
+    }
+
+    #[test]
+    fn op_result_extern_err() {
+        let id_a = __ANVYX_STORE_FRAC.with(|s| s.borrow_mut().insert(Frac { num: 1.0, den: 0.0 }));
+        let id_b = __ANVYX_STORE_FRAC.with(|s| s.borrow_mut().insert(Frac { num: 1.0, den: 1.0 }));
+        let (_, handler) = __anvyx_method_Frac___op_add__Frac();
+        let result = handler(vec![extern_handle(id_a), extern_handle(id_b)]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("zero denominator"));
+        // inputs are borrows — they remain in the store after error
+        __ANVYX_STORE_FRAC.with(|s| {
+            s.borrow_mut().remove(id_a).unwrap();
+            s.borrow_mut().remove(id_b).unwrap();
+        });
+    }
+
+    #[test]
+    fn op_result_extern_metadata() {
+        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_FRAC;
+        let add = ops.iter().find(|o| o.op == "Add").unwrap();
+        // Result wrapper unwraps in metadata — ret is the Ok inner type
+        assert_eq!(add.ret, "Frac");
+        assert_eq!(add.rhs, Some("Frac"));
+        assert!(add.lhs.is_none());
+    }
+}

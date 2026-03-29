@@ -12,7 +12,7 @@ mod value;
 use crate::hir;
 use std::collections::HashMap;
 
-pub use extern_type::{AnvyxExternType, extern_handle};
+pub use extern_type::{AnvyxConvert, AnvyxExternType, extern_handle};
 pub use handle_store::HandleStore;
 pub use managed_rc::ManagedRc;
 pub use runtime::ExternHandler;

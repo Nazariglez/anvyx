@@ -34,28 +34,17 @@ pub struct BorrowParam {
     pub is_mut: bool,
 }
 
-pub fn ret_anvyx_type_str(classified: &ClassifiedReturn) -> Result<TokenStream, &'static str> {
+pub fn ret_anvyx_type_str(classified: &ClassifiedReturn) -> TokenStream {
     match &classified.wrapper {
-        ReturnWrapper::None | ReturnWrapper::Fallible => Ok(match &classified.mode {
+        ReturnWrapper::None | ReturnWrapper::Fallible => match &classified.mode {
             ReturnMode::Void => quote! { "void" },
-            ReturnMode::Primitive(m) => {
-                let s = m.anvyx_type;
-                quote! { #s }
-            }
-            ReturnMode::ValuePassthrough => quote! { "any" },
-            ReturnMode::ExternOwned(info) => {
-                let di = &info.decl_ident;
-                quote! { #di.name }
-            }
-        }),
+            ReturnMode::Valued(ty) => quote! { <#ty as anvyx_lang::AnvyxConvert>::ANVYX_TYPE },
+        },
         ReturnWrapper::AnvyxOption => match &classified.mode {
-            ReturnMode::Primitive(m) => {
-                let option_type = format!("Option<{}>", m.anvyx_type);
-                Ok(quote! { #option_type })
+            ReturnMode::Void => quote! { "void" },
+            ReturnMode::Valued(ty) => {
+                quote! { <#ty as anvyx_lang::AnvyxConvert>::ANVYX_OPTION_TYPE }
             }
-            ReturnMode::Void => Err("Option<()> is not supported"),
-            ReturnMode::ValuePassthrough => Err("Option<Value> requires a `ret` override"),
-            ReturnMode::ExternOwned(_) => Err("Option<ExternType> requires a `ret` override"),
         },
     }
 }
@@ -74,24 +63,10 @@ fn build_flat_call_inner(call: &TokenStream, mode: &ReturnMode) -> TokenStream {
             #call;
             Ok(anvyx_lang::Value::Nil)
         },
-        ReturnMode::Primitive(m) => {
-            let wrap = &m.wrap_result;
-            quote! {
-                let result = #call;
-                Ok(#wrap)
-            }
-        }
-        ReturnMode::ValuePassthrough => quote! {
+        ReturnMode::Valued(_) => quote! {
             let result = #call;
-            Ok(result)
+            Ok(anvyx_lang::AnvyxConvert::into_anvyx(result))
         },
-        ReturnMode::ExternOwned(info) => {
-            let ty = &info.type_ident;
-            quote! {
-                let result = #call;
-                Ok(anvyx_lang::extern_handle::<#ty>(result))
-            }
-        }
     }
 }
 
@@ -101,24 +76,10 @@ fn build_flat_call_fallible(call: &TokenStream, mode: &ReturnMode) -> TokenStrea
             #call?;
             Ok(anvyx_lang::Value::Nil)
         },
-        ReturnMode::Primitive(m) => {
-            let wrap = &m.wrap_result;
-            quote! {
-                let result = #call?;
-                Ok(#wrap)
-            }
-        }
-        ReturnMode::ValuePassthrough => quote! {
+        ReturnMode::Valued(_) => quote! {
             let result = #call?;
-            Ok(result)
+            Ok(anvyx_lang::AnvyxConvert::into_anvyx(result))
         },
-        ReturnMode::ExternOwned(info) => {
-            let ty = &info.type_ident;
-            quote! {
-                let result = #call?;
-                Ok(anvyx_lang::extern_handle::<#ty>(result))
-            }
-        }
     }
 }
 
@@ -128,30 +89,14 @@ fn build_flat_call_option(call: &TokenStream, mode: &ReturnMode) -> TokenStream 
             #call;
             Ok(anvyx_lang::Value::Nil)
         },
-        ReturnMode::Primitive(m) => {
-            let wrap = &m.wrap_result;
-            quote! {
-                match #call {
-                    Some(result) => Ok(anvyx_lang::option_some(#wrap)),
-                    None => Ok(anvyx_lang::option_none()),
-                }
-            }
-        }
-        ReturnMode::ValuePassthrough => quote! {
+        ReturnMode::Valued(_) => quote! {
             match #call {
-                Some(result) => Ok(anvyx_lang::option_some(result)),
+                Some(result) => Ok(anvyx_lang::option_some(
+                    anvyx_lang::AnvyxConvert::into_anvyx(result)
+                )),
                 None => Ok(anvyx_lang::option_none()),
             }
         },
-        ReturnMode::ExternOwned(info) => {
-            let ty = &info.type_ident;
-            quote! {
-                match #call {
-                    Some(result) => Ok(anvyx_lang::option_some(anvyx_lang::extern_handle::<#ty>(result))),
-                    None => Ok(anvyx_lang::option_none()),
-                }
-            }
-        }
     }
 }
 
@@ -266,57 +211,25 @@ pub fn build_call_with_borrows(
                 #current?;
                 Ok(anvyx_lang::Value::Nil)
             },
-            ReturnMode::Primitive(m) => {
-                let wrap = &m.wrap_result;
-                quote! {
-                    let result = #current?;
-                    Ok(#wrap)
-                }
-            }
-            ReturnMode::ValuePassthrough => quote! {
+            ReturnMode::Valued(_) => quote! {
                 let result = #current?;
-                Ok(result)
+                Ok(anvyx_lang::AnvyxConvert::into_anvyx(result))
             },
-            ReturnMode::ExternOwned(info) => {
-                let ty = &info.type_ident;
-                quote! {
-                    let result = #current?;
-                    Ok(anvyx_lang::extern_handle::<#ty>(result))
-                }
-            }
         },
         ReturnWrapper::AnvyxOption => match &classified.mode {
             ReturnMode::Void => quote! {
                 #current?;
                 Ok(anvyx_lang::Value::Nil)
             },
-            ReturnMode::Primitive(m) => {
-                let wrap = &m.wrap_result;
-                quote! {
-                    let __opt = #current?;
-                    match __opt {
-                        Some(result) => Ok(anvyx_lang::option_some(#wrap)),
-                        None => Ok(anvyx_lang::option_none()),
-                    }
-                }
-            }
-            ReturnMode::ValuePassthrough => quote! {
+            ReturnMode::Valued(_) => quote! {
                 let __opt = #current?;
                 match __opt {
-                    Some(result) => Ok(anvyx_lang::option_some(result)),
+                    Some(result) => Ok(anvyx_lang::option_some(
+                        anvyx_lang::AnvyxConvert::into_anvyx(result)
+                    )),
                     None => Ok(anvyx_lang::option_none()),
                 }
             },
-            ReturnMode::ExternOwned(info) => {
-                let ty = &info.type_ident;
-                quote! {
-                    let __opt = #current?;
-                    match __opt {
-                        Some(result) => Ok(anvyx_lang::option_some(anvyx_lang::extern_handle::<#ty>(result))),
-                        None => Ok(anvyx_lang::option_none()),
-                    }
-                }
-            }
         },
     }
 }

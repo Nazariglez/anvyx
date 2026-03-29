@@ -114,53 +114,15 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         })?;
 
         match mode {
-            ParamMode::ValuePassthrough => {
-                let anvyx_type = args
-                    .params
-                    .get(&param_name_str)
-                    .cloned()
-                    .unwrap_or_else(|| "any".to_string());
-
+            ParamMode::Owned(ty) => {
+                let anvyx_type_tokens = match args.params.get(&param_name_str) {
+                    Some(s) => quote! { #s },
+                    None => quote! { <#ty as anvyx_lang::AnvyxConvert>::ANVYX_TYPE },
+                };
                 extractions.push(quote! {
-                    let #param_name = args[#i].clone();
+                    let #param_name = <#ty as anvyx_lang::AnvyxConvert>::from_anvyx(&args[#i])?;
                 });
-                param_tuples.push(quote! { (#param_name_str, #anvyx_type) });
-            }
-            ParamMode::Primitive(mapping) => {
-                let extract_variant = &mapping.extract_variant;
-                let convert_extracted = &mapping.convert_extracted;
-                let anvyx_type_str = args
-                    .params
-                    .get(&param_name_str)
-                    .cloned()
-                    .unwrap_or_else(|| mapping.anvyx_type.to_string());
-
-                extractions.push(quote! {
-                    let #extract_variant = args[#i].clone() else {
-                        return Err(anvyx_lang::RuntimeError::new(format!(
-                            "expected correct type for parameter '{}' in extern fn '{}'",
-                            #param_name_str, #export_name
-                        )));
-                    };
-                    let #param_name = #convert_extracted;
-                });
-                param_tuples.push(quote! { (#param_name_str, #anvyx_type_str) });
-            }
-            ParamMode::ExternOwned(info) => {
-                let ty = &info.type_ident;
-                let type_decl_ident = &info.decl_ident;
-
-                extractions.push(quote! {
-                    let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#i] else {
-                        return Err(anvyx_lang::RuntimeError::new(format!(
-                            "expected extern handle for parameter '{}' in extern fn '{}'",
-                            #param_name_str, #export_name
-                        )));
-                    };
-                    let #handle_ident = __ehd.id;
-                    let #param_name = <#ty as anvyx_lang::AnvyxExternType>::with_store(|__s| __s.borrow_mut().remove(#handle_ident))?;
-                });
-                param_tuples.push(quote! { (#param_name_str, #type_decl_ident.name) });
+                param_tuples.push(quote! { (#param_name_str, #anvyx_type_tokens) });
             }
             ParamMode::ExternRef(info) => {
                 let ExternTypeInfo {
@@ -269,7 +231,7 @@ fn ret_anvyx_type(
         )
     })?;
 
-    crate::codegen::ret_anvyx_type_str(&mode).map_err(|msg| syn::Error::new_spanned(output, msg))
+    Ok(crate::codegen::ret_anvyx_type_str(&mode))
 }
 
 fn build_call_body(

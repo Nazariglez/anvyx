@@ -1,4 +1,3 @@
-use crate::type_map::map_type;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
@@ -49,6 +48,8 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
         args.name
     };
 
+    let option_name = format!("Option<{}>", anvyx_name);
+
     let name_upper = struct_ident.to_string().to_uppercase();
     let decl_ident = format_ident!("__ANVYX_TYPE_DECL_{}", name_upper);
     let store_ident = format_ident!("__ANVYX_STORE_{}", name_upper);
@@ -65,17 +66,8 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
             .named
             .iter()
             .filter(|f| f.attrs.iter().any(|a| a.path().is_ident("field")))
-            .map(|f| {
-                let ident = f.ident.as_ref().unwrap();
-                let mapping = map_type(&f.ty).ok_or_else(|| {
-                    syn::Error::new_spanned(
-                        &f.ty,
-                        "unsupported type for #[field]; only f64, i64, bool, and String are supported",
-                    )
-                })?;
-                Ok((ident.clone(), mapping))
-            })
-            .collect::<Result<Vec<_>>>()?,
+            .map(|f| (f.ident.as_ref().unwrap().clone(), f.ty.clone()))
+            .collect(),
         _ => vec![],
     };
 
@@ -87,26 +79,21 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
 
     let field_decls: Vec<_> = field_infos
         .iter()
-        .map(|(ident, mapping)| {
+        .map(|(ident, ty)| {
             let name_str = ident.to_string();
-            let ty_str = mapping.anvyx_type;
-            quote! { anvyx_lang::ExternFieldDecl { name: #name_str, ty: #ty_str, computed: false } }
+            quote! { anvyx_lang::ExternFieldDecl { name: #name_str, ty: <#ty as anvyx_lang::AnvyxConvert>::ANVYX_TYPE, computed: false } }
         })
         .collect();
 
     let mut getter_setter_fns = vec![];
     let mut companion_entries = vec![];
 
-    for (field_ident, mapping) in &field_infos {
+    for (field_ident, field_ty) in &field_infos {
         let field_str = field_ident.to_string();
         let get_key = format!("{}::__get_{}", anvyx_name, field_str);
         let set_key = format!("{}::__set_{}", anvyx_name, field_str);
         let get_fn_ident = format_ident!("__anvyx_field_get_{}_{}", struct_ident, field_ident);
         let set_fn_ident = format_ident!("__anvyx_field_set_{}_{}", struct_ident, field_ident);
-
-        let wrap_result = &mapping.wrap_result;
-        let extract_variant = &mapping.extract_variant;
-        let convert_extracted = &mapping.convert_extracted;
 
         getter_setter_fns.push(quote! {
             #[allow(non_snake_case)]
@@ -126,7 +113,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
                             ))
                         })?;
                         let result = __guard.#field_ident.clone();
-                        Ok(#wrap_result)
+                        Ok(anvyx_lang::AnvyxConvert::into_anvyx(result))
                     })
                 }))
             }
@@ -140,12 +127,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
                         ));
                     };
                     let handle = __ehd.id;
-                    let #extract_variant = args[1].clone() else {
-                        return Err(anvyx_lang::RuntimeError::new(
-                            format!("invalid argument type for '{}'", #set_key)
-                        ));
-                    };
-                    let val = #convert_extracted;
+                    let val = <#field_ty as anvyx_lang::AnvyxConvert>::from_anvyx(&args[1])?;
                     <#struct_ident as anvyx_lang::AnvyxExternType>::with_store(|__store| {
                         let __borrow = __store.borrow();
                         let mut __guard = __borrow.borrow_mut(handle).map_err(|e| {
@@ -170,17 +152,10 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
 
         let mut init_extractions = vec![];
         let mut init_field_assigns = vec![];
-        for (i, (field_ident, mapping)) in field_infos.iter().enumerate() {
-            let extract_variant = &mapping.extract_variant;
-            let convert_extracted = &mapping.convert_extracted;
+        for (i, (field_ident, field_ty)) in field_infos.iter().enumerate() {
             let val_ident = format_ident!("__val_{}", i);
             init_extractions.push(quote! {
-                let #extract_variant = args[#i].clone() else {
-                    return Err(anvyx_lang::RuntimeError::new(
-                        format!("invalid argument type for '{}'", #init_key)
-                    ));
-                };
-                let #val_ident = #convert_extracted;
+                let #val_ident = <#field_ty as anvyx_lang::AnvyxConvert>::from_anvyx(&args[#i])?;
             });
             init_field_assigns.push(quote! { #field_ident: #val_ident });
         }
@@ -247,6 +222,25 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
                         Err(_) => format!("<{}>", Self::TYPE_NAME),
                     }
                 })
+            }
+        }
+
+        impl anvyx_lang::AnvyxConvert for #struct_ident {
+            const ANVYX_TYPE: &'static str = #anvyx_name;
+            const ANVYX_OPTION_TYPE: &'static str = #option_name;
+
+            fn into_anvyx(self) -> anvyx_lang::Value {
+                anvyx_lang::extern_handle(self)
+            }
+
+            fn from_anvyx(v: &anvyx_lang::Value) -> Result<Self, anvyx_lang::RuntimeError> {
+                let anvyx_lang::Value::ExternHandle(ehd) = v else {
+                    return Err(anvyx_lang::RuntimeError::new(
+                        format!("expected {}", #anvyx_name)
+                    ));
+                };
+                let id = ehd.id;
+                <#struct_ident as anvyx_lang::AnvyxExternType>::with_store(|s| s.borrow_mut().remove(id))
             }
         }
 

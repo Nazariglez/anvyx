@@ -22,9 +22,9 @@ pub use metadata::{
 };
 pub use prelude_enums::{OPTION_TYPE_ID, option_none, option_some};
 pub use vm::{
-    AnvyxExternType, DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData,
-    ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData, Value,
-    extern_handle,
+    AnvyxConvert, AnvyxExternType, DisplayDetect, DisplayDetectFallback, EnumData,
+    ExternHandleData, ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData,
+    Value, extern_handle,
 };
 
 pub mod cycle_collector {
