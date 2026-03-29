@@ -491,6 +491,21 @@ fn check_match_bool(
                 }
             }
             Pattern::Wildcard | Pattern::VarIdent(_) => has_wildcard = true,
+            Pattern::Or(alternatives) => {
+                for alt in alternatives {
+                    match &alt.node {
+                        Pattern::Lit(Lit::Bool(true)) => has_true = true,
+                        Pattern::Lit(Lit::Bool(false)) => has_false = true,
+                        Pattern::Wildcard | Pattern::VarIdent(_) => has_wildcard = true,
+                        Pattern::Ident(name) => {
+                            if type_checker.get_const(*name).is_none() {
+                                has_wildcard = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
 

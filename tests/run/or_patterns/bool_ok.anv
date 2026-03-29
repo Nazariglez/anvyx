@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match: always
+
+fn check(b: bool) -> string {
+    match b {
+        true | false => "always",
+    }
+}
+
+fn main() {
+    println(check(true));
+}

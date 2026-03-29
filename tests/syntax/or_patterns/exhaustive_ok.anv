@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+enum Dir { North, South, East, West }
+
+fn main() {
+    let d = Dir.North;
+    match d {
+        Dir.North | Dir.South => {},
+        Dir.East | Dir.West => {},
+    }
+}

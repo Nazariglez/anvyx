@@ -2,7 +2,10 @@ use std::collections::HashSet;
 
 use internment::Intern;
 
-use crate::ast::{FloatSuffix, Ident, Lit, Pattern, PatternNode, Type, VariantKind};
+use crate::{
+    ast::{FloatSuffix, Ident, Lit, Pattern, PatternNode, Type, VariantKind},
+    span::Span,
+};
 
 use super::{
     composite::validate_field_names,
@@ -136,6 +139,9 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
         }
         Pattern::Nil => true,
         Pattern::Optional(_) => true,
+        Pattern::Or(subs) => subs
+            .iter()
+            .all(|s| is_refutable(&s.node, value_ty, type_checker)),
         _ => true,
     }
 }
@@ -158,6 +164,37 @@ pub(super) fn check_match_pattern(
         type_checker,
         errors,
     );
+}
+
+fn validate_or_bindings(
+    first: &[(Ident, Type, bool)],
+    current: &[(Ident, Type, bool)],
+    span: Span,
+    errors: &mut Vec<TypeErr>,
+) {
+    let first_names: HashSet<Ident> = first.iter().map(|(name, _, _)| *name).collect();
+    let current_names: HashSet<Ident> = current.iter().map(|(name, _, _)| *name).collect();
+
+    if first_names != current_names {
+        errors.push(TypeErr::new(span, TypeErrKind::OrPatternBindingMismatch));
+        return;
+    }
+
+    for (name, ty, _) in current {
+        let Some((_, expected_ty, _)) = first.iter().find(|(n, _, _)| n == name) else {
+            continue;
+        };
+        if ty != expected_ty {
+            errors.push(TypeErr::new(
+                span,
+                TypeErrKind::OrPatternTypeMismatch {
+                    name: *name,
+                    expected: expected_ty.clone(),
+                    found: ty.clone(),
+                },
+            ));
+        }
+    }
 }
 
 fn check_pattern_inner(
@@ -520,6 +557,59 @@ fn check_pattern_inner(
                 type_checker,
                 errors,
             );
+        }
+        Pattern::Or(alternatives) => {
+            let mut first_bindings: Option<Vec<(Ident, Type, bool)>> = None;
+
+            if let Some((enum_def, covered, wildcard)) = match_ctx {
+                for alt in alternatives {
+                    type_checker.push_scope();
+                    check_pattern_inner(
+                        alt,
+                        value_ty,
+                        mutable,
+                        in_match,
+                        Some((enum_def, &mut *covered, &mut *wildcard)),
+                        type_checker,
+                        errors,
+                    );
+                    let scope_bindings = type_checker.collect_current_scope_bindings();
+                    type_checker.pop_scope();
+                    match &first_bindings {
+                        None => first_bindings = Some(scope_bindings),
+                        Some(first) => {
+                            validate_or_bindings(first, &scope_bindings, alt.span, errors);
+                        }
+                    }
+                }
+            } else {
+                for alt in alternatives {
+                    type_checker.push_scope();
+                    check_pattern_inner(
+                        alt,
+                        value_ty,
+                        mutable,
+                        in_match,
+                        None,
+                        type_checker,
+                        errors,
+                    );
+                    let scope_bindings = type_checker.collect_current_scope_bindings();
+                    type_checker.pop_scope();
+                    match &first_bindings {
+                        None => first_bindings = Some(scope_bindings),
+                        Some(first) => {
+                            validate_or_bindings(first, &scope_bindings, alt.span, errors);
+                        }
+                    }
+                }
+            }
+
+            if let Some(bindings) = first_bindings {
+                for (name, ty, is_mutable) in bindings {
+                    type_checker.set_var(name, ty, is_mutable);
+                }
+            }
         }
     }
 }

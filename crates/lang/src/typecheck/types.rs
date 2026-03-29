@@ -733,6 +733,16 @@ impl TypeChecker {
         self.scopes.pop();
     }
 
+    pub(super) fn collect_current_scope_bindings(&self) -> Vec<(Ident, Type, bool)> {
+        let Some(scope) = self.scopes.last() else {
+            return vec![];
+        };
+        scope
+            .iter()
+            .map(|(name, info)| (*name, info.ty.clone(), info.mutable))
+            .collect()
+    }
+
     pub fn set_type(&mut self, id: ExprId, ty: Type, span: Span) {
         if let Some(snapshot) = &mut self.spec_type_snapshot {
             snapshot.insert(id, (span, ty));

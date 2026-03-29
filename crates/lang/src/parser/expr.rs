@@ -11,7 +11,7 @@ use super::common::{
 use super::ops::{
     add_sub_op, and_op, assign_op, cmp_op, coalesce_op, eq_op, infix_left, mul_div_op, or_op,
 };
-use super::pattern::pattern;
+use super::pattern::{or_pattern, pattern};
 use super::types::type_ident;
 use super::{AnvParser, BoxedParser};
 
@@ -139,14 +139,15 @@ fn match_expr<'src>(
         expr.clone(),
     ));
 
-    let match_arm = pattern()
-        .then_ignore(fat_arrow)
-        .then(arm_body)
-        .map_with(|(pat, body), e| {
-            let s = e.span();
-            let span = Span::new(s.start, s.end);
-            Spanned::new(ast::MatchArm { pattern: pat, body }, span)
-        });
+    let match_arm =
+        or_pattern()
+            .then_ignore(fat_arrow)
+            .then(arm_body)
+            .map_with(|(pat, body), e| {
+                let s = e.span();
+                let span = Span::new(s.start, s.end);
+                Spanned::new(ast::MatchArm { pattern: pat, body }, span)
+            });
 
     let cond_expr = cond_expression();
 

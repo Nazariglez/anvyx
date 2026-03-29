@@ -535,6 +535,7 @@ pub enum Pattern {
     Rest,
     Nil,
     Optional(Box<PatternNode>),
+    Or(Vec<PatternNode>),
 }
 
 impl Pattern {
@@ -554,6 +555,7 @@ impl Pattern {
             Self::Rest => "..",
             Self::Nil => "nil",
             Self::Optional(_) => "optional pattern",
+            Self::Or(_) => "or pattern",
         }
     }
 }

@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: or-pattern alternatives must bind the same variables
+
+enum E { A(int), B }
+
+fn main() {
+    let e = E.A(1);
+    match e {
+        E.A(x) | E.B => {},
+    }
+}

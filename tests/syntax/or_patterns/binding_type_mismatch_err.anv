@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: or-pattern binding
+
+enum E { A(int), B(string) }
+
+fn main() {
+    let e = E.A(1);
+    match e {
+        E.A(x) | E.B(x) => {},
+    }
+}

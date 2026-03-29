@@ -565,6 +565,15 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "range start must be less than end".to_string(),
         ),
 
+        TypeErrKind::OrPatternBindingMismatch => (
+            "or-pattern binding mismatch".to_string(),
+            "or-pattern alternatives must bind the same variables".to_string(),
+        ),
+        TypeErrKind::OrPatternTypeMismatch { name, expected, found } => (
+            "or-pattern type mismatch".to_string(),
+            format!("or-pattern binding '{name}' has type '{found}' in one alternative but '{expected}' in another"),
+        ),
+
         TypeErrKind::ImmutableAssignment { name } => (
             format!("Cannot assign to immutable variable '{name}'"),
             format!("'{name}' is declared with 'let'; use 'var' to allow mutation"),

@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: non-exhaustive
+
+enum Dir { North, South, East, West }
+
+fn main() {
+    let d = Dir.North;
+    match d {
+        Dir.North | Dir.South => {},
+    }
+}

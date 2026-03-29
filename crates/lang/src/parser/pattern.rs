@@ -144,6 +144,26 @@ pub(super) fn pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
     .boxed()
 }
 
+pub(super) fn or_pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
+    let pipe = select! { (Token::Op(Op::Pipe), _) => () };
+    pattern()
+        .separated_by(pipe)
+        .at_least(1)
+        .collect::<Vec<_>>()
+        .map_with(|mut patterns, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            if patterns.len() == 1 {
+                patterns.remove(0)
+            } else {
+                Spanned::new(ast::Pattern::Or(patterns), span)
+            }
+        })
+        .labelled("pattern")
+        .as_context()
+        .boxed()
+}
+
 fn struct_pattern<'src>(
     pat: impl AnvParser<'src, ast::PatternNode>,
 ) -> BoxedParser<'src, ast::PatternNode> {

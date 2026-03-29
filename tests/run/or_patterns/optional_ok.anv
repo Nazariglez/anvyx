@@ -1,0 +1,21 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// nothing
+// nothing
+// got 42
+// @match-end
+
+fn describe(v: int?) -> string {
+    match v {
+        nil => "nothing",
+        x? => "got {x}",
+    }
+}
+
+fn main() {
+    let a: int? = nil;
+    println(describe(a));
+    println(describe(nil));
+    println(describe(42));
+}

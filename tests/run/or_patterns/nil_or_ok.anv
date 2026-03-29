@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @skip: literal inner optional patterns (e.g. 0?) in or-patterns require HIR guard support
+
+fn describe(v: int?) -> string {
+    match v {
+        nil | 0? => "empty-ish",
+        _? => "has value",
+    }
+}
+
+fn main() {
+    let a: int? = nil;
+    println(describe(a));
+    println(describe(0));
+    println(describe(42));
+}

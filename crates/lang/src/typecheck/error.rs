@@ -315,6 +315,13 @@ pub enum TypeErrKind {
     },
     EmptyRangePattern,
 
+    OrPatternBindingMismatch,
+    OrPatternTypeMismatch {
+        name: Ident,
+        expected: Type,
+        found: Type,
+    },
+
     ImmutableAssignment {
         name: Ident,
     },

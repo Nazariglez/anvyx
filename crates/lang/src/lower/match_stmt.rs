@@ -316,6 +316,236 @@ fn lower_match_enum(
                 });
             }
 
+            Pattern::Or(alternatives) => {
+                for alt in alternatives {
+                    let alt_mark = fc.enter_scope();
+                    match &alt.node {
+                        Pattern::Wildcard => {
+                            let body =
+                                lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                            else_body = Some(hir::MatchElse {
+                                binding: None,
+                                body,
+                            });
+                        }
+                        Pattern::Ident(name) => {
+                            let binding_local =
+                                register_named_local(fc, *name, scrutinee_ty.clone());
+                            let body =
+                                lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                            else_body = Some(hir::MatchElse {
+                                binding: Some((binding_local, false)),
+                                body,
+                            });
+                        }
+                        Pattern::VarIdent(name) => {
+                            let binding_local =
+                                register_named_local(fc, *name, scrutinee_ty.clone());
+                            let body =
+                                lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                            else_body = Some(hir::MatchElse {
+                                binding: Some((binding_local, true)),
+                                body,
+                            });
+                        }
+                        Pattern::EnumUnit { variant, .. } => {
+                            let variant_idx =
+                                resolve_variant_index(ctx, span, enum_name, *variant)?;
+                            let body =
+                                lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                            arms.push(hir::MatchArm {
+                                variant: variant_idx,
+                                bindings: vec![],
+                                body,
+                            });
+                        }
+                        Pattern::EnumTuple {
+                            variant,
+                            fields: subpatterns,
+                            ..
+                        } => {
+                            let variant_idx =
+                                resolve_variant_index(ctx, span, enum_name, *variant)?;
+                            let field_types = ctx
+                                .shared
+                                .tcx
+                                .enum_variant_field_types(enum_name, *variant, type_args)
+                                .unwrap_or_default();
+                            let mut bindings = vec![];
+                            for (field_idx, subpat) in subpatterns.iter().enumerate() {
+                                match &subpat.node {
+                                    Pattern::Ident(binding_name) => {
+                                        let field_ty = field_types
+                                            .get(field_idx)
+                                            .cloned()
+                                            .unwrap_or(Type::Void);
+                                        let local =
+                                            register_named_local(fc, *binding_name, field_ty);
+                                        bindings.push(hir::MatchBinding {
+                                            field_index: field_idx as u16,
+                                            local,
+                                            mutable: false,
+                                        });
+                                    }
+                                    Pattern::VarIdent(binding_name) => {
+                                        let field_ty = field_types
+                                            .get(field_idx)
+                                            .cloned()
+                                            .unwrap_or(Type::Void);
+                                        let local =
+                                            register_named_local(fc, *binding_name, field_ty);
+                                        bindings.push(hir::MatchBinding {
+                                            field_index: field_idx as u16,
+                                            local,
+                                            mutable: true,
+                                        });
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            let body =
+                                lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                            arms.push(hir::MatchArm {
+                                variant: variant_idx,
+                                bindings,
+                                body,
+                            });
+                        }
+                        Pattern::EnumStruct {
+                            variant,
+                            fields: field_patterns,
+                            ..
+                        } => {
+                            let variant_idx =
+                                resolve_variant_index(ctx, span, enum_name, *variant)?;
+                            let field_names = ctx
+                                .shared
+                                .tcx
+                                .enum_variant_field_names(enum_name, *variant)
+                                .unwrap_or_default();
+                            let field_types = ctx
+                                .shared
+                                .tcx
+                                .enum_variant_field_types(enum_name, *variant, type_args)
+                                .unwrap_or_default();
+                            let mut bindings = vec![];
+                            for (pat_field_name, subpat) in field_patterns {
+                                match &subpat.node {
+                                    Pattern::Ident(binding_name) => {
+                                        let field_idx = field_names
+                                            .iter()
+                                            .position(|n| n == pat_field_name)
+                                            .unwrap_or(0);
+                                        let field_ty = field_types
+                                            .get(field_idx)
+                                            .cloned()
+                                            .unwrap_or(Type::Void);
+                                        let local =
+                                            register_named_local(fc, *binding_name, field_ty);
+                                        bindings.push(hir::MatchBinding {
+                                            field_index: field_idx as u16,
+                                            local,
+                                            mutable: false,
+                                        });
+                                    }
+                                    Pattern::VarIdent(binding_name) => {
+                                        let field_idx = field_names
+                                            .iter()
+                                            .position(|n| n == pat_field_name)
+                                            .unwrap_or(0);
+                                        let field_ty = field_types
+                                            .get(field_idx)
+                                            .cloned()
+                                            .unwrap_or(Type::Void);
+                                        let local =
+                                            register_named_local(fc, *binding_name, field_ty);
+                                        bindings.push(hir::MatchBinding {
+                                            field_index: field_idx as u16,
+                                            local,
+                                            mutable: true,
+                                        });
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            let body =
+                                lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                            arms.push(hir::MatchArm {
+                                variant: variant_idx,
+                                bindings,
+                                body,
+                            });
+                        }
+                        Pattern::Nil => {
+                            let none_ident = Ident(Intern::new("None".to_string()));
+                            let variant_idx =
+                                resolve_variant_index(ctx, span, enum_name, none_ident)?;
+                            let body =
+                                lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                            arms.push(hir::MatchArm {
+                                variant: variant_idx,
+                                bindings: vec![],
+                                body,
+                            });
+                        }
+                        Pattern::Optional(inner) => {
+                            let some_ident = Ident(Intern::new("Some".to_string()));
+                            let variant_idx =
+                                resolve_variant_index(ctx, span, enum_name, some_ident)?;
+                            let field_types = ctx
+                                .shared
+                                .tcx
+                                .enum_variant_field_types(enum_name, some_ident, type_args)
+                                .unwrap_or_default();
+                            let field_ty = field_types.first().cloned().unwrap_or(Type::Void);
+                            let mut bindings = vec![];
+                            match &inner.node {
+                                Pattern::Ident(name) => {
+                                    let local = register_named_local(fc, *name, field_ty);
+                                    bindings.push(hir::MatchBinding {
+                                        field_index: 0,
+                                        local,
+                                        mutable: false,
+                                    });
+                                }
+                                Pattern::VarIdent(name) => {
+                                    let local = register_named_local(fc, *name, field_ty);
+                                    bindings.push(hir::MatchBinding {
+                                        field_index: 0,
+                                        local,
+                                        mutable: true,
+                                    });
+                                }
+                                Pattern::Wildcard => {}
+                                _ => {
+                                    return Err(LowerError::UnsupportedExprKind {
+                                        span,
+                                        kind: "unsupported inner optional pattern".into(),
+                                    });
+                                }
+                            }
+                            let body =
+                                lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                            arms.push(hir::MatchArm {
+                                variant: variant_idx,
+                                bindings,
+                                body,
+                            });
+                        }
+                        other => {
+                            return Err(LowerError::UnsupportedExprKind {
+                                span,
+                                kind: format!(
+                                    "unsupported pattern '{}' in or-pattern",
+                                    other.variant_name()
+                                ),
+                            });
+                        }
+                    }
+                    fc.leave_scope(alt_mark);
+                }
+            }
+
             other => {
                 return Err(LowerError::UnsupportedExprKind {
                     span,
@@ -525,6 +755,100 @@ fn lower_match_non_enum(
                     let cond = conditions
                         .into_iter()
                         .reduce(|acc, c| hir::Expr::binary(Type::Bool, span, BinaryOp::And, acc, c))
+                        .unwrap();
+                    cond_arms.push((cond, body));
+                }
+            }
+
+            Pattern::Or(alternatives) => {
+                let mut or_conditions: Vec<hir::Expr> = vec![];
+                let mut is_catchall = false;
+                let mut preamble: Vec<hir::Stmt> = vec![];
+
+                for alt in alternatives {
+                    match &alt.node {
+                        Pattern::Lit(lit) => {
+                            let cond = build_lit_cond(scrutinee_ty, scrutinee_local, lit, span)?;
+                            or_conditions.push(cond);
+                        }
+                        Pattern::Range {
+                            start,
+                            end,
+                            inclusive,
+                        } => {
+                            let cond = build_range_cond(
+                                scrutinee_ty,
+                                scrutinee_local,
+                                start.as_ref(),
+                                end.as_ref(),
+                                *inclusive,
+                                span,
+                            )?;
+                            or_conditions.push(cond);
+                        }
+                        Pattern::Ident(name) => {
+                            let span_key = (alt.span.start, alt.span.end);
+                            if let Some(cv) = ctx.shared.tcx.const_pattern_values.get(&span_key) {
+                                let cond =
+                                    build_const_cond(scrutinee_ty, scrutinee_local, cv, span);
+                                or_conditions.push(cond);
+                            } else {
+                                is_catchall = true;
+                                let local = register_named_local(fc, *name, scrutinee_ty.clone());
+                                preamble.push(hir::Stmt {
+                                    span,
+                                    kind: hir::StmtKind::Let {
+                                        local,
+                                        init: hir::Expr::local(
+                                            scrutinee_ty.clone(),
+                                            span,
+                                            scrutinee_local,
+                                        ),
+                                    },
+                                });
+                            }
+                        }
+                        Pattern::VarIdent(name) => {
+                            is_catchall = true;
+                            let local = register_named_local(fc, *name, scrutinee_ty.clone());
+                            preamble.push(hir::Stmt {
+                                span,
+                                kind: hir::StmtKind::Let {
+                                    local,
+                                    init: hir::Expr::local(
+                                        scrutinee_ty.clone(),
+                                        span,
+                                        scrutinee_local,
+                                    ),
+                                },
+                            });
+                        }
+                        Pattern::Wildcard => {
+                            is_catchall = true;
+                        }
+                        other => {
+                            return Err(LowerError::UnsupportedExprKind {
+                                span,
+                                kind: format!(
+                                    "unsupported pattern '{}' in or-pattern",
+                                    other.variant_name()
+                                ),
+                            });
+                        }
+                    }
+                }
+
+                let mut body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
+                for (i, stmt) in preamble.into_iter().enumerate() {
+                    body.stmts.insert(i, stmt);
+                }
+
+                if is_catchall {
+                    else_block = Some(body);
+                } else if !or_conditions.is_empty() {
+                    let cond = or_conditions
+                        .into_iter()
+                        .reduce(|acc, c| hir::Expr::binary(Type::Bool, span, BinaryOp::Or, acc, c))
                         .unwrap();
                     cond_arms.push((cond, body));
                 }
