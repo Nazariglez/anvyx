@@ -5,14 +5,12 @@
 // (3, 4)
 // @match-end
 
-import std.math { sqrt };
-
 struct Vec2 {
     x: float,
     y: float,
 
     fn length(self) -> float {
-        sqrt(self.x * self.x + self.y * self.y)
+        (self.x * self.x + self.y * self.y).sqrt()
     }
 }
 

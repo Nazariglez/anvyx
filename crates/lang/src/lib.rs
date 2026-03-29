@@ -447,9 +447,7 @@ mod std_import_tests {
         m.insert(
             "math".to_string(),
             StdModuleSource {
-                anv_source:
-                    "extern fn sin(x: float) -> float;\nextern fn cos(x: float) -> float;\n"
-                        .to_string(),
+                anv_source: "pub const PI = 3.14159265358979323846;\n".to_string(),
             },
         );
         m
@@ -457,7 +455,7 @@ mod std_import_tests {
 
     #[test]
     fn std_qualified_import_typechecks() {
-        let src = "import std.math;\nfn main() { let x = math.sin(1.0); }";
+        let src = "import std.math;\nfn main() { let x = math.PI; }";
         let result = analyze_with_extern_meta(
             src,
             "<test>",
@@ -470,7 +468,7 @@ mod std_import_tests {
 
     #[test]
     fn std_selective_import_typechecks() {
-        let src = "import std.math { sin };\nfn main() { let x = sin(1.0); }";
+        let src = "import std.math { PI };\nfn main() { let x = PI; }";
         let result = analyze_with_extern_meta(
             src,
             "<test>",

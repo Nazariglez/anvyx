@@ -7,14 +7,13 @@
 // @match-end
 
 import std.linalg { Quat, Vec3 };
-import std.math { round, deg_to_rad };
 
 fn main() {
-    let q1 = Quat.from_rotation_z(deg_to_rad(90.0));
-    let q2 = Quat.from_rotation_z(deg_to_rad(90.0));
+    let q1 = Quat.from_rotation_z(90.0.to_radians());
+    let q2 = Quat.from_rotation_z(90.0.to_radians());
     let q = q1 * q2;
     let v = q * Vec3 { x: 1.0, y: 0.0, z: 0.0 };
-    println(round(v.x));
-    println(round(v.y));
-    println(round(v.z));
+    println(v.x.round());
+    println(v.y.round());
+    println(v.z.round());
 }

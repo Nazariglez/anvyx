@@ -1,33 +1,11 @@
 pub const EPSILON = 1.1920929e-7;
 pub const EPSILON_D = 2.220446049250313e-16d;
 
-pub fn abs<T>(x: T) -> T {
-    let zero = x - x;
-    if x < zero { -x } else { x }
-}
+pub const PI = 3.14159265358979323846;
+pub const PI_D = 3.14159265358979323846d;
 
-pub fn min<T>(a: T, b: T) -> T {
-    if a < b { a } else { b }
-}
+pub const TAU = 6.28318530717958647692;
+pub const TAU_D = 6.28318530717958647692d;
 
-pub fn max<T>(a: T, b: T) -> T {
-    if a > b { a } else { b }
-}
-
-pub fn clamp<T>(val: T, lo: T, hi: T) -> T {
-    if val < lo { lo } 
-    else if val > hi { hi } 
-    else { val }
-}
-
-pub fn deg_to_rad(deg: float) -> float {
-    deg * 3.14159265358979323846 / 180.0
-}
-
-pub fn rad_to_deg(rad: float) -> float {
-    rad * 180.0 / 3.14159265358979323846
-}
-
-pub fn lerp(a: float, b: float, t: float) -> float {
-    a + (b - a) * t
-}
+pub const E = 2.71828182845904523536;
+pub const E_D = 2.71828182845904523536d;

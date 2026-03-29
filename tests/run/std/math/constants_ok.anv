@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @contains: 3.14159
+// @contains: 6.28318
+// @contains: 2.71828
+
+import std.math { PI, TAU, E };
+
+fn main() {
+    println(PI);
+    println(TAU);
+    println(E);
+}

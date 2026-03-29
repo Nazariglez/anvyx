@@ -1,3 +1,6 @@
+mod double;
+mod float;
+mod int;
 mod option;
 mod range;
 mod string;
@@ -5,5 +8,12 @@ mod string;
 use anvyx_lang::StdModule;
 
 pub fn core_modules() -> Vec<StdModule> {
-    vec![option::module(), range::module(), string::module()]
+    vec![
+        option::module(),
+        range::module(),
+        string::module(),
+        float::module(),
+        double::module(),
+        int::module(),
+    ]
 }
