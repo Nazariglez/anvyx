@@ -1,3 +1,6 @@
+pub const EPSILON = 1.1920929e-7;
+pub const EPSILON_D = 2.220446049250313e-16d;
+
 pub fn abs<T>(x: T) -> T {
     let zero = x - x;
     if x < zero { -x } else { x }

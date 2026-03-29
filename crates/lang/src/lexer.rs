@@ -491,11 +491,57 @@ fn close_delimiter<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
 }
 
 fn validate_numeric_underscores(s: &str) -> bool {
-    !s.contains("__") && !s.contains("_.") && !s.contains("._") && !s.ends_with('_')
+    !s.contains("__")
+        && !s.contains("_.")
+        && !s.contains("._")
+        && !s.contains("_+")
+        && !s.contains("+_")
+        && !s.contains("_-")
+        && !s.contains("-_")
+        && !s.ends_with('_')
 }
 
 fn strip_underscores(s: &str) -> String {
     s.chars().filter(|c| *c != '_').collect()
+}
+
+fn try_consume_exponent<'src, 'p>(
+    input: &mut InputRef<'src, 'p, &'src str, Extra<'src>>,
+    buf: &mut String,
+) {
+    if !matches!(input.peek(), Some('e' | 'E')) {
+        return;
+    }
+
+    let checkpoint = input.save();
+    let e = input.next().unwrap();
+    let mut exp_buf = String::new();
+    exp_buf.push(e);
+
+    if matches!(input.peek(), Some('+' | '-')) {
+        exp_buf.push(input.next().unwrap());
+    }
+
+    let mut has_digit = false;
+    loop {
+        match input.peek() {
+            Some(c) if c.is_ascii_digit() => {
+                has_digit = true;
+                exp_buf.push(input.next().unwrap());
+            }
+            Some('_') => {
+                exp_buf.push(input.next().unwrap());
+            }
+            _ => break,
+        }
+    }
+
+    if !has_digit {
+        input.rewind(checkpoint);
+        return;
+    }
+
+    buf.push_str(&exp_buf);
 }
 
 fn float_suffix<'src>() -> impl Parser<'src, &'src str, FloatSuffix, Extra<'src>> {
@@ -611,6 +657,8 @@ fn lit_float<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
             }
         }
 
+        try_consume_exponent(input, &mut buf);
+
         if !validate_numeric_underscores(&buf) {
             return Err(Rich::custom(
                 input.span_since(&start),
@@ -642,6 +690,8 @@ fn lit_int_suffixed<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src
                 _ => break,
             }
         }
+
+        try_consume_exponent(input, &mut buf);
 
         if !validate_numeric_underscores(&buf) {
             return Err(Rich::custom(
@@ -1129,5 +1179,127 @@ mod tests {
             Token::Literal(LitToken::Float(Intern::new("1.5".to_string()), None))
         );
         assert_eq!(tokens.len(), 2);
+    }
+
+    #[test]
+    fn test_float_scientific() {
+        assert_eq!(
+            tokenize_lit("1.5e3").unwrap(),
+            LitToken::Float(Intern::new("1.5e3".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn test_float_scientific_negative_exp() {
+        assert_eq!(
+            tokenize_lit("1.5e-3").unwrap(),
+            LitToken::Float(Intern::new("1.5e-3".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn test_float_scientific_positive_exp() {
+        assert_eq!(
+            tokenize_lit("1.5e+3").unwrap(),
+            LitToken::Float(Intern::new("1.5e+3".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn test_float_scientific_uppercase() {
+        assert_eq!(
+            tokenize_lit("1.5E3").unwrap(),
+            LitToken::Float(Intern::new("1.5E3".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn test_float_scientific_suffix_f() {
+        assert_eq!(
+            tokenize_lit("1.5e3f").unwrap(),
+            LitToken::Float(Intern::new("1.5e3".to_string()), Some(FloatSuffix::F))
+        );
+    }
+
+    #[test]
+    fn test_float_scientific_negative_suffix_d() {
+        assert_eq!(
+            tokenize_lit("1.5e-3d").unwrap(),
+            LitToken::Float(Intern::new("1.5e-3".to_string()), Some(FloatSuffix::D))
+        );
+    }
+
+    #[test]
+    fn test_float_scientific_underscore_in_exp() {
+        assert_eq!(
+            tokenize_lit("1.5e1_0").unwrap(),
+            LitToken::Float(Intern::new("1.5e10".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn test_float_scientific_underscore_before_e() {
+        assert_eq!(
+            tokenize_lit("1_000.5e3").unwrap(),
+            LitToken::Float(Intern::new("1000.5e3".to_string()), None)
+        );
+    }
+
+    #[test]
+    fn test_int_suffixed_scientific_f() {
+        assert_eq!(
+            tokenize_lit("2e3f").unwrap(),
+            LitToken::Float(Intern::new("2e3".to_string()), Some(FloatSuffix::F))
+        );
+    }
+
+    #[test]
+    fn test_int_suffixed_scientific_d() {
+        assert_eq!(
+            tokenize_lit("2e3d").unwrap(),
+            LitToken::Float(Intern::new("2e3".to_string()), Some(FloatSuffix::D))
+        );
+    }
+
+    #[test]
+    fn test_int_suffixed_scientific_negative_exp() {
+        assert_eq!(
+            tokenize_lit("5e-2f").unwrap(),
+            LitToken::Float(Intern::new("5e-2".to_string()), Some(FloatSuffix::F))
+        );
+    }
+
+    #[test]
+    fn test_float_e_not_consumed_no_digit() {
+        // 1.5e should lex as float 1.5 + ident e
+        let tokens = all_tokens("1.5e").unwrap();
+        assert_eq!(
+            tokens[0],
+            Token::Literal(LitToken::Float(Intern::new("1.5".to_string()), None))
+        );
+        assert_eq!(tokens[1], ident_tok("e"));
+    }
+
+    #[test]
+    fn test_float_e_not_consumed_sign_no_digit() {
+        // 1.5e- should lex as float 1.5 + ident e + op -
+        let tokens = all_tokens("1.5e-").unwrap();
+        assert_eq!(
+            tokens[0],
+            Token::Literal(LitToken::Float(Intern::new("1.5".to_string()), None))
+        );
+        assert_eq!(tokens[1], ident_tok("e"));
+        assert_eq!(tokens[2], Token::Op(Op::Sub));
+    }
+
+    #[test]
+    fn test_float_e_followed_by_ident() {
+        // 1.5efoo should lex as float 1.5 + ident efoo
+        let tokens = all_tokens("1.5efoo").unwrap();
+        assert_eq!(
+            tokens[0],
+            Token::Literal(LitToken::Float(Intern::new("1.5".to_string()), None))
+        );
+        assert_eq!(tokens[1], ident_tok("efoo"));
     }
 }
