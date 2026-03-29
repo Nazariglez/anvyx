@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: hello world
+
+struct Msg { text: string }
+
+fn main() {
+    var m = Msg { text: "hello" };
+    m.text += " world";
+    println(m.text);
+}

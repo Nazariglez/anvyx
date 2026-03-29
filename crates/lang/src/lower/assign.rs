@@ -122,6 +122,7 @@ fn extract_assign_access_chain<'a>(
 fn lower_assign_to_chain(
     target: &ast::ExprNode,
     value_ast: &ast::ExprNode,
+    bin_op: Option<BinaryOp>,
     span: Span,
     ctx: &LowerCtx,
     fc: &mut FuncLower,
@@ -140,8 +141,24 @@ fn lower_assign_to_chain(
 
     if n == 1 {
         return match &chain.steps[0] {
-            AssignAccessStep::Field { field_index, .. } => {
-                let value = lower_expr(value_ast, ctx, fc, out)?;
+            AssignAccessStep::Field {
+                field_index,
+                value_type,
+            } => {
+                let rhs = lower_expr(value_ast, ctx, fc, out)?;
+                let value = apply_compound_op(
+                    bin_op,
+                    hir::Expr::new(
+                        value_type.clone(),
+                        span,
+                        hir::ExprKind::FieldGet {
+                            object: Box::new(hir::Expr::local(root_ty.clone(), span, root_local)),
+                            index: *field_index,
+                        },
+                    ),
+                    rhs,
+                    span,
+                );
                 Ok(hir::Stmt {
                     span,
                     kind: hir::StmtKind::SetField {
@@ -151,17 +168,52 @@ fn lower_assign_to_chain(
                     },
                 })
             }
-            AssignAccessStep::Index { index_expr, .. } => {
-                let index = lower_expr(index_expr, ctx, fc, out)?;
-                let value = lower_expr(value_ast, ctx, fc, out)?;
-                Ok(hir::Stmt {
-                    span,
-                    kind: hir::StmtKind::SetIndex {
-                        object: root_local,
-                        index: Box::new(index),
-                        value,
-                    },
-                })
+            AssignAccessStep::Index {
+                index_expr,
+                value_type,
+            } => {
+                if bin_op.is_some() {
+                    let idx_ty = ctx.expr_type(index_expr.node.id, span)?;
+                    let idx_local = alloc_assign_temp(fc, idx_ty.clone());
+                    let hir_idx = lower_expr(index_expr, ctx, fc, out)?;
+                    out.push(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Let {
+                            local: idx_local,
+                            init: hir_idx,
+                        },
+                    });
+                    let idx_expr_hir = || hir::Expr::local(idx_ty.clone(), span, idx_local);
+                    let rhs = lower_expr(value_ast, ctx, fc, out)?;
+                    let current = hir::Expr::new(
+                        value_type.clone(),
+                        span,
+                        hir::ExprKind::IndexGet {
+                            target: Box::new(hir::Expr::local(root_ty.clone(), span, root_local)),
+                            index: Box::new(idx_expr_hir()),
+                        },
+                    );
+                    let value = apply_compound_op(bin_op, current, rhs, span);
+                    Ok(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::SetIndex {
+                            object: root_local,
+                            index: Box::new(idx_expr_hir()),
+                            value,
+                        },
+                    })
+                } else {
+                    let index = lower_expr(index_expr, ctx, fc, out)?;
+                    let value = lower_expr(value_ast, ctx, fc, out)?;
+                    Ok(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::SetIndex {
+                            object: root_local,
+                            index: Box::new(index),
+                            value,
+                        },
+                    })
+                }
             }
         };
     }
@@ -234,27 +286,80 @@ fn lower_assign_to_chain(
         });
     }
 
-    let value = lower_expr(value_ast, ctx, fc, out)?;
+    let rhs = lower_expr(value_ast, ctx, fc, out)?;
 
     let parent = value_temp_ids[n - 2];
+    let parent_ty = chain.steps[n - 2].value_type().clone();
     let leaf_stmt = match &chain.steps[n - 1] {
-        AssignAccessStep::Field { field_index, .. } => hir::Stmt {
-            span,
-            kind: hir::StmtKind::SetField {
-                object: parent,
-                field_index: *field_index,
-                value,
-            },
-        },
-        AssignAccessStep::Index { index_expr, .. } => {
-            let index = lower_expr(index_expr, ctx, fc, out)?;
+        AssignAccessStep::Field {
+            field_index,
+            value_type,
+        } => {
+            let value = apply_compound_op(
+                bin_op,
+                hir::Expr::new(
+                    value_type.clone(),
+                    span,
+                    hir::ExprKind::FieldGet {
+                        object: Box::new(hir::Expr::local(parent_ty, span, parent)),
+                        index: *field_index,
+                    },
+                ),
+                rhs,
+                span,
+            );
             hir::Stmt {
                 span,
-                kind: hir::StmtKind::SetIndex {
+                kind: hir::StmtKind::SetField {
                     object: parent,
-                    index: Box::new(index),
+                    field_index: *field_index,
                     value,
                 },
+            }
+        }
+        AssignAccessStep::Index {
+            index_expr,
+            value_type,
+        } => {
+            if bin_op.is_some() {
+                let idx_ty = ctx.expr_type(index_expr.node.id, span)?;
+                let idx_local = alloc_assign_temp(fc, idx_ty.clone());
+                let hir_idx = lower_expr(index_expr, ctx, fc, out)?;
+                out.push(hir::Stmt {
+                    span,
+                    kind: hir::StmtKind::Let {
+                        local: idx_local,
+                        init: hir_idx,
+                    },
+                });
+                let idx_hir = || hir::Expr::local(idx_ty.clone(), span, idx_local);
+                let current = hir::Expr::new(
+                    value_type.clone(),
+                    span,
+                    hir::ExprKind::IndexGet {
+                        target: Box::new(hir::Expr::local(parent_ty, span, parent)),
+                        index: Box::new(idx_hir()),
+                    },
+                );
+                let value = apply_compound_op(bin_op, current, rhs, span);
+                hir::Stmt {
+                    span,
+                    kind: hir::StmtKind::SetIndex {
+                        object: parent,
+                        index: Box::new(idx_hir()),
+                        value,
+                    },
+                }
+            } else {
+                let index = lower_expr(index_expr, ctx, fc, out)?;
+                hir::Stmt {
+                    span,
+                    kind: hir::StmtKind::SetIndex {
+                        object: parent,
+                        index: Box::new(index),
+                        value: rhs,
+                    },
+                }
             }
         }
     };
@@ -326,6 +431,29 @@ fn compound_op(op: AssignOp) -> Option<BinaryOp> {
     }
 }
 
+fn apply_compound_op(
+    bin_op: Option<BinaryOp>,
+    current: hir::Expr,
+    rhs: hir::Expr,
+    span: Span,
+) -> hir::Expr {
+    match bin_op {
+        Some(op) => {
+            let ty = current.ty.clone();
+            hir::Expr::new(
+                ty,
+                span,
+                hir::ExprKind::Binary {
+                    op,
+                    lhs: Box::new(current),
+                    rhs: Box::new(rhs),
+                },
+            )
+        }
+        None => rhs,
+    }
+}
+
 pub(super) fn lower_assign(
     assign_node: &ast::AssignNode,
     span: Span,
@@ -334,7 +462,6 @@ pub(super) fn lower_assign(
     out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::Stmt, LowerError> {
     let bin_op = compound_op(assign_node.node.op);
-    let is_compound = bin_op.is_some();
 
     match &assign_node.node.target.node.kind {
         ast::ExprKind::Ident(name) => {
@@ -367,35 +494,83 @@ pub(super) fn lower_assign(
         }
 
         ast::ExprKind::Field(field_access) => {
-            if is_compound {
-                return Err(LowerError::UnsupportedAssign {
-                    span,
-                    detail: format!(
-                        "compound assignment '{}' on field targets is not yet supported",
-                        assign_node.node.op
-                    ),
-                });
-            }
             let target_expr = &field_access.node.target;
             let target_ty = ctx.expr_type(target_expr.node.id, span)?;
             if let Type::Extern { name } = &target_ty {
                 let field_name = field_access.node.field;
-                let qualified = Ident(Intern::new(format!("{name}::__set_{field_name}")));
-                let extern_id = *ctx.shared.externs.get(&qualified).ok_or_else(|| {
+                let setter_qualified = Ident(Intern::new(format!("{name}::__set_{field_name}")));
+                let setter_id = *ctx.shared.externs.get(&setter_qualified).ok_or_else(|| {
                     LowerError::UnsupportedAssign {
                         span,
-                        detail: format!("unknown extern field setter '{qualified}'"),
+                        detail: format!("unknown extern field setter '{setter_qualified}'"),
                     }
                 })?;
+
                 let receiver = lower_expr(target_expr, ctx, fc, out)?;
-                let value = lower_expr(&assign_node.node.value, ctx, fc, out)?;
+
+                let value = if let Some(op) = bin_op {
+                    let getter_qualified =
+                        Ident(Intern::new(format!("{name}::__get_{field_name}")));
+                    let getter_id =
+                        *ctx.shared.externs.get(&getter_qualified).ok_or_else(|| {
+                            LowerError::UnsupportedAssign {
+                                span,
+                                detail: format!("unknown extern field getter '{getter_qualified}'"),
+                            }
+                        })?;
+
+                    let recv_ty = ctx.expr_type(target_expr.node.id, span)?;
+                    let recv_local = alloc_assign_temp(fc, recv_ty.clone());
+                    out.push(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Let {
+                            local: recv_local,
+                            init: receiver,
+                        },
+                    });
+
+                    let field_ty = ctx.expr_type(assign_node.node.target.node.id, span)?;
+                    let current = hir::Expr::new(
+                        field_ty.clone(),
+                        span,
+                        hir::ExprKind::CallExtern {
+                            extern_id: getter_id,
+                            args: vec![hir::Expr::local(recv_ty.clone(), span, recv_local)],
+                        },
+                    );
+                    let rhs = lower_expr(&assign_node.node.value, ctx, fc, out)?;
+                    let new_value = hir::Expr::new(
+                        field_ty,
+                        span,
+                        hir::ExprKind::Binary {
+                            op,
+                            lhs: Box::new(current),
+                            rhs: Box::new(rhs),
+                        },
+                    );
+
+                    return Ok(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Expr(hir::Expr::new(
+                            Type::Void,
+                            span,
+                            hir::ExprKind::CallExtern {
+                                extern_id: setter_id,
+                                args: vec![hir::Expr::local(recv_ty, span, recv_local), new_value],
+                            },
+                        )),
+                    });
+                } else {
+                    lower_expr(&assign_node.node.value, ctx, fc, out)?
+                };
+
                 Ok(hir::Stmt {
                     span,
                     kind: hir::StmtKind::Expr(hir::Expr::new(
                         Type::Void,
                         span,
                         hir::ExprKind::CallExtern {
-                            extern_id,
+                            extern_id: setter_id,
                             args: vec![receiver, value],
                         },
                     )),
@@ -404,6 +579,7 @@ pub(super) fn lower_assign(
                 lower_assign_to_chain(
                     &assign_node.node.target,
                     &assign_node.node.value,
+                    bin_op,
                     span,
                     ctx,
                     fc,
@@ -411,25 +587,15 @@ pub(super) fn lower_assign(
                 )
             }
         }
-        ast::ExprKind::Index(_) => {
-            if is_compound {
-                return Err(LowerError::UnsupportedAssign {
-                    span,
-                    detail: format!(
-                        "compound assignment '{}' on index targets is not yet supported",
-                        assign_node.node.op
-                    ),
-                });
-            }
-            lower_assign_to_chain(
-                &assign_node.node.target,
-                &assign_node.node.value,
-                span,
-                ctx,
-                fc,
-                out,
-            )
-        }
+        ast::ExprKind::Index(_) => lower_assign_to_chain(
+            &assign_node.node.target,
+            &assign_node.node.value,
+            bin_op,
+            span,
+            ctx,
+            fc,
+            out,
+        ),
 
         _ => Err(LowerError::UnsupportedAssign {
             span,
