@@ -476,4 +476,7 @@ pub enum TypeErrKind {
         name: Ident,
         message: String,
     },
+    InvalidFormatSpec {
+        reason: String,
+    },
 }

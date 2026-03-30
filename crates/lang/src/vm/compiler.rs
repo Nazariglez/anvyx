@@ -546,6 +546,11 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             fc.emit(Op::ToString);
         }
 
+        hir::ExprKind::Format(inner, spec) => {
+            compile_expr(fc, inner)?;
+            fc.emit(Op::Format(*spec));
+        }
+
         hir::ExprKind::CollectionMut {
             object,
             method,

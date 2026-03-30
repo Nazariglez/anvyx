@@ -1,0 +1,18 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// ff
+// FF
+// 11111111
+// 000000ff
+// 11111111
+// @match-end
+
+fn main() {
+    let x = 255;
+    println("{x:x}");
+    println("{x:X}");
+    println("{x:b}");
+    println("{x:08x}");
+    println("{x:08b}");
+}

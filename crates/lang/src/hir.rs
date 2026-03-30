@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Ident, Type, UnaryOp};
+use crate::ast::{BinaryOp, FormatSpec, Ident, Type, UnaryOp};
 use crate::builtin::Builtin;
 use crate::span::Span;
 use crate::vm::meta::{EnumMeta, StructMeta};
@@ -163,6 +163,8 @@ pub enum ExprKind {
     Cast(Box<Expr>),
 
     ToString(Box<Expr>),
+
+    Format(Box<Expr>, FormatSpec),
 
     Unary {
         op: UnaryOp,

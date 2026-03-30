@@ -1,5 +1,6 @@
 use std::fmt::Write;
 
+use crate::ast::{FormatKind, FormatSpec};
 use crate::builtin::Builtin;
 
 use super::builtins;
@@ -863,6 +864,12 @@ impl<'a> VM<'a> {
                     let s = self.format_value(&val)?;
                     self.push(Value::String(ManagedRc::new(s)));
                 }
+
+                Op::Format(spec) => {
+                    let val = self.pop();
+                    let s = self.format_value_with_spec(&val, &spec)?;
+                    self.push(Value::String(ManagedRc::new(s)));
+                }
             }
         }
     }
@@ -1040,6 +1047,65 @@ impl<'a> VM<'a> {
             }
             Value::ExternHandle(data) => Ok((data.to_string_fn)(data.id)),
             _ => Ok(format!("{value}")),
+        }
+    }
+
+    fn format_value_with_spec(
+        &mut self,
+        value: &Value,
+        spec: &FormatSpec,
+    ) -> Result<String, RuntimeError> {
+        let raw = self.format_raw(value, spec)?;
+        let is_numeric = matches!(value, Value::Int(_) | Value::Float(_) | Value::Double(_));
+        let is_string = matches!(value, Value::String(_));
+        let signed = spec.apply_sign(&raw, is_numeric);
+        Ok(spec.apply_padding(&signed, is_string))
+    }
+
+    fn format_raw(&mut self, value: &Value, spec: &FormatSpec) -> Result<String, RuntimeError> {
+        match spec.kind {
+            FormatKind::Default => match (value, spec.precision) {
+                (Value::Float(v), Some(prec)) => Ok(format!("{:.prec$}", v, prec = prec as usize)),
+                (Value::Double(v), Some(prec)) => Ok(format!("{:.prec$}", v, prec = prec as usize)),
+                (Value::String(s), Some(prec)) => Ok(s.chars().take(prec as usize).collect()),
+                _ => self.format_value(value),
+            },
+            FormatKind::Hex => {
+                let Value::Int(n) = value else {
+                    unreachable!("typechecker validated")
+                };
+                Ok(format!("{:x}", n))
+            }
+            FormatKind::HexUpper => {
+                let Value::Int(n) = value else {
+                    unreachable!("typechecker validated")
+                };
+                Ok(format!("{:X}", n))
+            }
+            FormatKind::Binary => {
+                let Value::Int(n) = value else {
+                    unreachable!("typechecker validated")
+                };
+                Ok(format!("{:b}", n))
+            }
+            FormatKind::Exp => match (value, spec.precision) {
+                (Value::Float(v), Some(prec)) => Ok(format!("{:.prec$e}", v, prec = prec as usize)),
+                (Value::Float(v), None) => Ok(format!("{:e}", v)),
+                (Value::Double(v), Some(prec)) => {
+                    Ok(format!("{:.prec$e}", v, prec = prec as usize))
+                }
+                (Value::Double(v), None) => Ok(format!("{:e}", v)),
+                _ => unreachable!("typechecker validated"),
+            },
+            FormatKind::ExpUpper => match (value, spec.precision) {
+                (Value::Float(v), Some(prec)) => Ok(format!("{:.prec$E}", v, prec = prec as usize)),
+                (Value::Float(v), None) => Ok(format!("{:E}", v)),
+                (Value::Double(v), Some(prec)) => {
+                    Ok(format!("{:.prec$E}", v, prec = prec as usize))
+                }
+                (Value::Double(v), None) => Ok(format!("{:E}", v)),
+                _ => unreachable!("typechecker validated"),
+            },
         }
     }
 }

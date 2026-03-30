@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 3.14e4
+// 3.14E4
+// @match-end
+
+fn main() {
+    let x = 31400.0;
+    println("{x:e}");
+    println("{x:.2E}");
+}

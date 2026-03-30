@@ -381,16 +381,25 @@ pub(super) fn lower_string_interp(
             StringPart::Text(s) => {
                 hir::Expr::new(Type::String, span, hir::ExprKind::String(s.clone()))
             }
-            StringPart::Expr(e) => {
+            StringPart::Expr(e, fmt) => {
                 let lowered = lower_expr(e, ctx, fc, out)?;
-                if lowered.ty == Type::String {
-                    lowered
-                } else {
-                    hir::Expr::new(
+                match fmt {
+                    Some(spec) => hir::Expr::new(
                         Type::String,
                         span,
-                        hir::ExprKind::ToString(Box::new(lowered)),
-                    )
+                        hir::ExprKind::Format(Box::new(lowered), spec.node),
+                    ),
+                    None => {
+                        if lowered.ty == Type::String {
+                            lowered
+                        } else {
+                            hir::Expr::new(
+                                Type::String,
+                                span,
+                                hir::ExprKind::ToString(Box::new(lowered)),
+                            )
+                        }
+                    }
                 }
             }
         };

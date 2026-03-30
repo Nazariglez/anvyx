@@ -83,6 +83,7 @@ pub enum InterpToken {
     Text(Intern<String>),
     ExprStart,
     ExprEnd,
+    FormatSpec(String),
     End,
 }
 
@@ -93,6 +94,7 @@ impl Display for InterpToken {
             InterpToken::Text(s) => write!(f, "{}", s),
             InterpToken::ExprStart => write!(f, "{{"),
             InterpToken::ExprEnd => write!(f, "}}"),
+            InterpToken::FormatSpec(s) => write!(f, ":{}", s),
             InterpToken::End => write!(f, "...\""),
         }
     }
@@ -308,10 +310,13 @@ fn scan_escape<'src, 'p>(
 fn scan_interp_body<'src, 'p>(
     input: &mut InputRef<'src, 'p, &'src str, Extra<'src>>,
     str_open: &Cursor<'src, 'p, &'src str>,
-) -> Result<String, LexErr<'src>> {
+) -> Result<(String, Option<String>), LexErr<'src>> {
     let mut expr_str = String::new();
     let mut depth = 1usize;
-    loop {
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+
+    let has_spec = loop {
         match input.next() {
             None => {
                 return Err(Rich::custom(
@@ -326,14 +331,62 @@ fn scan_interp_body<'src, 'p>(
             Some('}') => {
                 depth -= 1;
                 if depth == 0 {
-                    break;
+                    break false;
                 }
                 expr_str.push('}');
             }
+            Some('(') => {
+                paren_depth += 1;
+                expr_str.push('(');
+            }
+            Some(')') => {
+                paren_depth = paren_depth.saturating_sub(1);
+                expr_str.push(')');
+            }
+            Some('[') => {
+                bracket_depth += 1;
+                expr_str.push('[');
+            }
+            Some(']') => {
+                bracket_depth = bracket_depth.saturating_sub(1);
+                expr_str.push(']');
+            }
+            Some(':') if depth == 1 && paren_depth == 0 && bracket_depth == 0 => {
+                break true;
+            }
             Some(c) => expr_str.push(c),
         }
+    };
+
+    if !has_spec {
+        return Ok((expr_str, None));
     }
-    Ok(expr_str)
+
+    let mut spec_str = String::new();
+    loop {
+        match input.next() {
+            None => {
+                return Err(Rich::custom(
+                    input.span_since(str_open),
+                    "unterminated string interpolation",
+                ));
+            }
+            Some('}') => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+                spec_str.push('}');
+            }
+            Some('{') => {
+                depth += 1;
+                spec_str.push('{');
+            }
+            Some(c) => spec_str.push(c),
+        }
+    }
+
+    Ok((expr_str, Some(spec_str)))
 }
 
 fn tokenize_interp_expr<'src, 'p>(
@@ -416,7 +469,7 @@ fn string_literal<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Ext
                     ));
 
                     let expr_start_offset = after_brace.end;
-                    let expr_str = scan_interp_body(input, &str_open)?;
+                    let (expr_str, fmt_spec) = scan_interp_body(input, &str_open)?;
 
                     let after_close = input.span_since(&str_open);
                     let close_pos = after_close.end - 1;
@@ -424,13 +477,26 @@ fn string_literal<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Ext
                     let expr_tokens =
                         tokenize_interp_expr(input, &str_open, &expr_str, expr_start_offset)?;
                     tokens.extend(expr_tokens);
+
+                    let expr_end_pos = expr_start_offset + expr_str.len();
                     tokens.push((
                         Token::Interp(InterpToken::ExprEnd),
                         Span {
-                            start: close_pos,
-                            end: close_pos + 1,
+                            start: expr_end_pos,
+                            end: expr_end_pos + 1,
                         },
                     ));
+
+                    if let Some(spec) = fmt_spec {
+                        let spec_start = expr_end_pos + 1;
+                        tokens.push((
+                            Token::Interp(InterpToken::FormatSpec(spec)),
+                            Span {
+                                start: spec_start,
+                                end: close_pos,
+                            },
+                        ));
+                    }
 
                     text_src_start = after_close.end;
                 }
@@ -1110,6 +1176,125 @@ mod tests {
     #[test]
     fn test_interp_string_unterminated_expr_err() {
         assert!(tokenize(r#""hello {oops""#).is_err());
+    }
+
+    fn fmt_spec(s: &str) -> Token {
+        Token::Interp(InterpToken::FormatSpec(s.to_string()))
+    }
+
+    #[test]
+    fn test_interp_format_spec_basic() {
+        let tokens = tokenize_tokens(r#""{x:04}""#);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Interp(InterpToken::Start),
+                Token::Interp(InterpToken::ExprStart),
+                ident_tok("x"),
+                Token::Interp(InterpToken::ExprEnd),
+                fmt_spec("04"),
+                Token::Interp(InterpToken::End),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_interp_format_spec_precision() {
+        let tokens = tokenize_tokens(r#""{x:.2f}""#);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Interp(InterpToken::Start),
+                Token::Interp(InterpToken::ExprStart),
+                ident_tok("x"),
+                Token::Interp(InterpToken::ExprEnd),
+                fmt_spec(".2f"),
+                Token::Interp(InterpToken::End),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_interp_format_spec_align() {
+        let tokens = tokenize_tokens(r#""{x:>10}""#);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Interp(InterpToken::Start),
+                Token::Interp(InterpToken::ExprStart),
+                ident_tok("x"),
+                Token::Interp(InterpToken::ExprEnd),
+                fmt_spec(">10"),
+                Token::Interp(InterpToken::End),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_interp_no_format_spec_unchanged() {
+        let tokens = tokenize_tokens(r#""{x}""#);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Interp(InterpToken::Start),
+                Token::Interp(InterpToken::ExprStart),
+                ident_tok("x"),
+                Token::Interp(InterpToken::ExprEnd),
+                Token::Interp(InterpToken::End),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_interp_format_spec_ternary_with_parens() {
+        // ':' inside parens is not the split; ':04' after ')' is
+        let tokens = tokenize_tokens(r#""{(a ? b : c):04}""#);
+        assert!(tokens.contains(&fmt_spec("04")));
+        assert!(tokens.contains(&Token::Question));
+        assert!(tokens.contains(&Token::Colon));
+    }
+
+    #[test]
+    fn test_interp_format_spec_ternary_no_parens_splits() {
+        // "{a ? b : c}" splits on ':' at paren_depth 0
+        let tokens = tokenize_tokens(r#""{a ? b : c}""#);
+        assert!(tokens.contains(&fmt_spec(" c")));
+        // ':' was consumed as the separator, no Token::Colon in expr tokens
+        assert!(!tokens.contains(&Token::Colon));
+    }
+
+    #[test]
+    fn test_interp_format_spec_with_surrounding_text() {
+        let tokens = tokenize_tokens(r#""val={x:04} done""#);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Interp(InterpToken::Start),
+                str_text("val="),
+                Token::Interp(InterpToken::ExprStart),
+                ident_tok("x"),
+                Token::Interp(InterpToken::ExprEnd),
+                fmt_spec("04"),
+                str_text(" done"),
+                Token::Interp(InterpToken::End),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_interp_format_spec_composed() {
+        let tokens = tokenize_tokens(r#""{x:+08x}""#);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Interp(InterpToken::Start),
+                Token::Interp(InterpToken::ExprStart),
+                ident_tok("x"),
+                Token::Interp(InterpToken::ExprEnd),
+                fmt_spec("+08x"),
+                Token::Interp(InterpToken::End),
+            ]
+        );
     }
 
     fn tokenize_lit(src: &str) -> Result<LitToken, ()> {

@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 0005
+// 0005
+// *******5
+// 5.......
+// @match-end
+
+fn main() {
+    let x = 5;
+    println("{x:0>4}");
+    println("{x:04}");
+    println("{x:*>8}");
+    println("{x:.<8}");
+}

@@ -396,7 +396,7 @@ fn string_interp_single_var_parses() {
         other => panic!("expected Text, found {other:?}"),
     }
     match &parts[1] {
-        ast::StringPart::Expr(e) => expect_ident(e, "hp"),
+        ast::StringPart::Expr(e, _) => expect_ident(e, "hp"),
         other => panic!("expected Expr, found {other:?}"),
     }
 }
@@ -411,7 +411,7 @@ fn string_interp_expression_parses() {
         other => panic!("expected Text, found {other:?}"),
     }
     match &parts[1] {
-        ast::StringPart::Expr(e) => {
+        ast::StringPart::Expr(e, _) => {
             let (left, right) = expect_binary(e, ast::BinaryOp::Add);
             expect_ident(left, "x");
             expect_ident(right, "y");
@@ -430,7 +430,7 @@ fn string_interp_multiple_exprs_parses() {
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 3);
     match &parts[0] {
-        ast::StringPart::Expr(e) => expect_ident(e, "a"),
+        ast::StringPart::Expr(e, _) => expect_ident(e, "a"),
         other => panic!("expected Expr, found {other:?}"),
     }
     match &parts[1] {
@@ -438,7 +438,7 @@ fn string_interp_multiple_exprs_parses() {
         other => panic!("expected Text, found {other:?}"),
     }
     match &parts[2] {
-        ast::StringPart::Expr(e) => expect_ident(e, "b"),
+        ast::StringPart::Expr(e, _) => expect_ident(e, "b"),
         other => panic!("expected Expr, found {other:?}"),
     }
 }
@@ -449,7 +449,7 @@ fn string_interp_only_expr_parses() {
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 1);
     match &parts[0] {
-        ast::StringPart::Expr(e) => expect_ident(e, "x"),
+        ast::StringPart::Expr(e, _) => expect_ident(e, "x"),
         other => panic!("expected Expr, found {other:?}"),
     }
 }
@@ -464,6 +464,133 @@ fn string_interp_plain_string_still_lit() {
 fn string_interp_escaped_brace_still_plain() {
     let expr = parse_expr(r#""\{not_interp}""#);
     expect_string(&expr, "{not_interp}");
+}
+
+#[test]
+fn string_interp_no_format_spec_is_none() {
+    let expr = parse_expr(r#""{x}""#);
+    let parts = expect_string_interp(&expr);
+    assert_eq!(parts.len(), 1);
+    match &parts[0] {
+        ast::StringPart::Expr(_, None) => {}
+        other => panic!("expected Expr without FormatSpec, found {other:?}"),
+    }
+}
+
+#[test]
+fn string_interp_format_spec_width() {
+    let expr = parse_expr(r#""{x:04}""#);
+    let parts = expect_string_interp(&expr);
+    assert_eq!(parts.len(), 1);
+    match &parts[0] {
+        ast::StringPart::Expr(_, Some(spec)) => {
+            assert!(spec.node.zero_pad);
+            assert_eq!(spec.node.width, Some(4));
+            assert_eq!(spec.node.fill, '0');
+            assert_eq!(spec.node.align, Some(ast::FormatAlign::Right));
+            assert_eq!(spec.node.kind, ast::FormatKind::Default);
+        }
+        other => panic!("expected Expr with FormatSpec, found {other:?}"),
+    }
+}
+
+#[test]
+fn string_interp_format_spec_precision() {
+    let expr = parse_expr(r#""{x:.2}""#);
+    let parts = expect_string_interp(&expr);
+    assert_eq!(parts.len(), 1);
+    match &parts[0] {
+        ast::StringPart::Expr(_, Some(spec)) => {
+            assert_eq!(spec.node.precision, Some(2));
+            assert_eq!(spec.node.kind, ast::FormatKind::Default);
+        }
+        other => panic!("expected Expr with FormatSpec, found {other:?}"),
+    }
+}
+
+#[test]
+fn string_interp_format_spec_align_width() {
+    let expr = parse_expr(r#""{x:>10}""#);
+    let parts = expect_string_interp(&expr);
+    assert_eq!(parts.len(), 1);
+    match &parts[0] {
+        ast::StringPart::Expr(_, Some(spec)) => {
+            assert_eq!(spec.node.align, Some(ast::FormatAlign::Right));
+            assert_eq!(spec.node.width, Some(10));
+        }
+        other => panic!("expected Expr with FormatSpec, found {other:?}"),
+    }
+}
+
+#[test]
+fn string_interp_format_spec_fill_align() {
+    let expr = parse_expr(r#""{x:*>10}""#);
+    let parts = expect_string_interp(&expr);
+    assert_eq!(parts.len(), 1);
+    match &parts[0] {
+        ast::StringPart::Expr(_, Some(spec)) => {
+            assert_eq!(spec.node.fill, '*');
+            assert_eq!(spec.node.align, Some(ast::FormatAlign::Right));
+            assert_eq!(spec.node.width, Some(10));
+        }
+        other => panic!("expected Expr with FormatSpec, found {other:?}"),
+    }
+}
+
+#[test]
+fn string_interp_format_spec_hex() {
+    let expr = parse_expr(r#""{x:08x}""#);
+    let parts = expect_string_interp(&expr);
+    assert_eq!(parts.len(), 1);
+    match &parts[0] {
+        ast::StringPart::Expr(_, Some(spec)) => {
+            assert!(spec.node.zero_pad);
+            assert_eq!(spec.node.width, Some(8));
+            assert_eq!(spec.node.kind, ast::FormatKind::Hex);
+        }
+        other => panic!("expected Expr with FormatSpec, found {other:?}"),
+    }
+}
+
+#[test]
+fn string_interp_format_spec_sign_precision() {
+    let expr = parse_expr(r#""{x:+.2}""#);
+    let parts = expect_string_interp(&expr);
+    assert_eq!(parts.len(), 1);
+    match &parts[0] {
+        ast::StringPart::Expr(_, Some(spec)) => {
+            assert_eq!(spec.node.sign, ast::FormatSign::Always);
+            assert_eq!(spec.node.precision, Some(2));
+        }
+        other => panic!("expected Expr with FormatSpec, found {other:?}"),
+    }
+}
+
+#[test]
+fn string_interp_format_spec_composed() {
+    let expr = parse_expr(r#""{x:0>+8x}""#);
+    let parts = expect_string_interp(&expr);
+    assert_eq!(parts.len(), 1);
+    match &parts[0] {
+        ast::StringPart::Expr(_, Some(spec)) => {
+            assert_eq!(spec.node.fill, '0');
+            assert_eq!(spec.node.align, Some(ast::FormatAlign::Right));
+            assert_eq!(spec.node.sign, ast::FormatSign::Always);
+            assert_eq!(spec.node.width, Some(8));
+            assert_eq!(spec.node.kind, ast::FormatKind::Hex);
+        }
+        other => panic!("expected Expr with FormatSpec, found {other:?}"),
+    }
+}
+
+#[test]
+fn string_interp_format_spec_invalid_type_err() {
+    parse_program_err(r#"fn main() { let s = "{x:q}"; }"#);
+}
+
+#[test]
+fn string_interp_format_spec_empty_err() {
+    parse_program_err(r#"fn main() { let s = "{x:}"; }"#);
 }
 
 #[test]

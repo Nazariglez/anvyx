@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// +42
+// -42
+// +3.14
+// @match-end
+
+fn main() {
+    let pos = 42;
+    let neg = -42;
+    println("{pos:+}");
+    println("{neg:+}");
+    let f = 3.14;
+    println("{f:+.2}");
+}

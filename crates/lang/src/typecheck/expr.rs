@@ -1,5 +1,9 @@
-use crate::ast::{
-    CastNode, ExprKind, ExprNode, FloatSuffix, FuncParam, Ident, LambdaNode, Lit, StringPart, Type,
+use crate::{
+    ast::{
+        CastNode, ExprKind, ExprNode, FloatSuffix, FormatKind, FormatSign, FormatSpec, FuncParam,
+        Ident, LambdaNode, Lit, StringPart, Type,
+    },
+    span::Span,
 };
 use std::collections::HashMap;
 
@@ -155,12 +159,90 @@ fn check_string_interp(
     errors: &mut Vec<TypeErr>,
 ) -> Type {
     for part in parts {
-        let StringPart::Expr(expr_node) = part else {
+        let StringPart::Expr(expr_node, fmt) = part else {
             continue;
         };
-        check_expr(expr_node, type_checker, errors, None);
+        let ty = check_expr(expr_node, type_checker, errors, None);
+        if let Some(spec) = fmt {
+            validate_format_spec(&spec.node, &ty, spec.span, errors);
+        }
     }
     Type::String
+}
+
+fn validate_format_spec(
+    spec: &FormatSpec,
+    expr_type: &Type,
+    span: Span,
+    errors: &mut Vec<TypeErr>,
+) {
+    if matches!(expr_type, Type::Infer | Type::Void) {
+        return;
+    }
+
+    match spec.kind {
+        FormatKind::Hex | FormatKind::HexUpper | FormatKind::Binary => {
+            if !matches!(expr_type, Type::Int) {
+                let label = match spec.kind {
+                    FormatKind::Hex => "x",
+                    FormatKind::HexUpper => "X",
+                    FormatKind::Binary => "b",
+                    _ => unreachable!(),
+                };
+                errors.push(TypeErr::new(
+                    span,
+                    TypeErrKind::InvalidFormatSpec {
+                        reason: format!(
+                            "format type '{}' requires int, found '{}'",
+                            label, expr_type
+                        ),
+                    },
+                ));
+                return;
+            }
+        }
+        FormatKind::Exp | FormatKind::ExpUpper => {
+            if !matches!(expr_type, Type::Float | Type::Double) {
+                let label = match spec.kind {
+                    FormatKind::Exp => "e",
+                    FormatKind::ExpUpper => "E",
+                    _ => unreachable!(),
+                };
+                errors.push(TypeErr::new(
+                    span,
+                    TypeErrKind::InvalidFormatSpec {
+                        reason: format!(
+                            "format type '{}' requires float or double, found '{}'",
+                            label, expr_type
+                        ),
+                    },
+                ));
+                return;
+            }
+        }
+        FormatKind::Default => {}
+    }
+
+    if spec.precision.is_some() && !matches!(expr_type, Type::Float | Type::Double | Type::String) {
+        errors.push(TypeErr::new(
+            span,
+            TypeErrKind::InvalidFormatSpec {
+                reason: format!("precision not supported for '{}'", expr_type),
+            },
+        ));
+        return;
+    }
+
+    if matches!(spec.sign, FormatSign::Always)
+        && !matches!(expr_type, Type::Int | Type::Float | Type::Double)
+    {
+        errors.push(TypeErr::new(
+            span,
+            TypeErrKind::InvalidFormatSpec {
+                reason: format!("sign format requires a numeric type, found '{}'", expr_type),
+            },
+        ));
+    }
 }
 
 fn check_lambda(

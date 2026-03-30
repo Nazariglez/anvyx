@@ -705,10 +705,123 @@ pub enum Lit {
     Nil,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FormatAlign {
+    Left,
+    Right,
+    Center,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FormatSign {
+    Default,
+    Always,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FormatKind {
+    Default,
+    Hex,
+    HexUpper,
+    Binary,
+    Exp,
+    ExpUpper,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FormatSpec {
+    pub fill: char,
+    pub align: Option<FormatAlign>,
+    pub sign: FormatSign,
+    pub zero_pad: bool,
+    pub width: Option<u32>,
+    pub precision: Option<u32>,
+    pub kind: FormatKind,
+}
+
+impl Default for FormatSpec {
+    fn default() -> Self {
+        Self {
+            fill: ' ',
+            align: None,
+            sign: FormatSign::Default,
+            zero_pad: false,
+            width: None,
+            precision: None,
+            kind: FormatKind::Default,
+        }
+    }
+}
+
+impl FormatSpec {
+    pub fn apply_sign(&self, raw: &str, is_numeric: bool) -> String {
+        if self.sign != FormatSign::Always {
+            return raw.to_string();
+        }
+        if is_numeric && !raw.starts_with('-') {
+            format!("+{raw}")
+        } else {
+            raw.to_string()
+        }
+    }
+
+    pub fn apply_padding(&self, raw: &str, is_string: bool) -> String {
+        let Some(width) = self.width else {
+            return raw.to_string();
+        };
+        let width = width as usize;
+        let len = raw.chars().count();
+        if len >= width {
+            return raw.to_string();
+        }
+
+        let pad_count = width - len;
+        let fill = self.fill;
+        // The parser resolves zero_pad into fill='0' + align=Some(Right),
+        // so we just read fill and align directly.
+        let align = self.align.unwrap_or(if is_string {
+            FormatAlign::Left
+        } else {
+            FormatAlign::Right
+        });
+
+        match align {
+            FormatAlign::Left => {
+                let mut out = raw.to_string();
+                for _ in 0..pad_count {
+                    out.push(fill);
+                }
+                out
+            }
+            FormatAlign::Right => {
+                let mut out = String::with_capacity(width);
+                for _ in 0..pad_count {
+                    out.push(fill);
+                }
+                out.push_str(raw);
+                out
+            }
+            FormatAlign::Center => {
+                let left_pad = pad_count / 2;
+                let right_pad = pad_count - left_pad;
+                let mut out = String::with_capacity(width);
+                for _ in 0..left_pad {
+                    out.push(fill);
+                }
+                out.push_str(raw);
+                for _ in 0..right_pad {
+                    out.push(fill);
+                }
+                out
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum StringPart {
     Text(String),
-    Expr(ExprNode),
+    Expr(Box<ExprNode>, Option<Spanned<FormatSpec>>),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

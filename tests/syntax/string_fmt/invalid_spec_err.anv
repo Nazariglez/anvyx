@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: format
+
+fn main() {
+    let x = 5;
+    let _s = "{x:q}";
+}

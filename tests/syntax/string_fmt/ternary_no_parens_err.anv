@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: Unexpected
+
+fn main() {
+    let a = 1;
+    let b = 2;
+    let _s = "{true ? a : b}";
+}

@@ -762,7 +762,7 @@ pub(super) fn text_part(s: &str) -> StringPart {
 }
 
 pub(super) fn expr_part(expr: ExprNode) -> StringPart {
-    StringPart::Expr(expr)
+    StringPart::Expr(Box::new(expr), None)
 }
 
 pub(super) fn cast_expr_node(expr: ExprNode, target: Type) -> ExprNode {

@@ -1,0 +1,28 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// pi is 3.14
+// ff
+// 00ff
+// +42
+// 11111111
+//      hello
+// @match-end
+
+const PI = 3.14159;
+const FORMATTED = "pi is {PI:.2}";
+const HEX = "{255:x}";
+const HEX_PAD = "{255:04x}";
+const SIGNED = "{42:+}";
+const BIN = "{255:b}";
+const NAME = "hello";
+const PADDED = "{NAME:>10}";
+
+fn main() {
+    println(FORMATTED);
+    println(HEX);
+    println(HEX_PAD);
+    println(SIGNED);
+    println(BIN);
+    println(PADDED);
+}

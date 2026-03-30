@@ -100,6 +100,7 @@ fn collect_reassigned_expr(expr: &Expr, set: &mut HashSet<LocalId>) {
         ExprKind::Unary { expr, .. }
         | ExprKind::Cast(expr)
         | ExprKind::ToString(expr)
+        | ExprKind::Format(expr, _)
         | ExprKind::CollectionLen { collection: expr }
         | ExprKind::MapLen { map: expr }
         | ExprKind::ArrayFill { value: expr, .. }
@@ -374,6 +375,7 @@ fn collect_locals_in_expr(expr: &Expr, set: &mut HashSet<LocalId>) {
         ExprKind::Unary { expr, .. }
         | ExprKind::Cast(expr)
         | ExprKind::ToString(expr)
+        | ExprKind::Format(expr, _)
         | ExprKind::CollectionLen { collection: expr }
         | ExprKind::MapLen { map: expr }
         | ExprKind::ArrayFill { value: expr, .. }
@@ -475,6 +477,7 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut LivenessCtx) {
         ExprKind::Unary { expr: inner, .. }
         | ExprKind::Cast(inner)
         | ExprKind::ToString(inner)
+        | ExprKind::Format(inner, _)
         | ExprKind::CollectionLen { collection: inner }
         | ExprKind::MapLen { map: inner }
         | ExprKind::ArrayFill { value: inner, .. }

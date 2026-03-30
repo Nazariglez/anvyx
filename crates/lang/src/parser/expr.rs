@@ -336,6 +336,110 @@ fn array_literal<'src>(
         .boxed()
 }
 
+fn is_align_char(c: char) -> bool {
+    matches!(c, '<' | '>' | '^')
+}
+
+fn parse_align_char(c: char) -> ast::FormatAlign {
+    match c {
+        '<' => ast::FormatAlign::Left,
+        '>' => ast::FormatAlign::Right,
+        '^' => ast::FormatAlign::Center,
+        _ => unreachable!(),
+    }
+}
+
+fn parse_format_spec(raw: &str) -> Result<ast::FormatSpec, String> {
+    if raw.is_empty() {
+        return Err("empty format specifier after ':'".to_string());
+    }
+
+    let chars: Vec<char> = raw.chars().collect();
+    let len = chars.len();
+    let mut pos = 0;
+    let mut spec = ast::FormatSpec::default();
+
+    // fill + align
+    if pos + 1 < len && is_align_char(chars[pos + 1]) {
+        spec.fill = chars[pos];
+        spec.align = Some(parse_align_char(chars[pos + 1]));
+        pos += 2;
+    } else if pos < len && is_align_char(chars[pos]) {
+        spec.align = Some(parse_align_char(chars[pos]));
+        pos += 1;
+    }
+
+    // sign
+    if pos < len && chars[pos] == '+' {
+        spec.sign = ast::FormatSign::Always;
+        pos += 1;
+    }
+
+    // zero-pad
+    if pos < len && chars[pos] == '0' {
+        spec.zero_pad = true;
+        if spec.align.is_none() {
+            spec.fill = '0';
+            spec.align = Some(ast::FormatAlign::Right);
+        }
+        pos += 1;
+    }
+
+    // width
+    let width_start = pos;
+    while pos < len && chars[pos].is_ascii_digit() {
+        pos += 1;
+    }
+    if pos > width_start {
+        let width_str: String = chars[width_start..pos].iter().collect();
+        spec.width = Some(
+            width_str
+                .parse::<u32>()
+                .map_err(|_| "invalid width".to_string())?,
+        );
+    }
+
+    // precision
+    if pos < len && chars[pos] == '.' {
+        pos += 1;
+        let prec_start = pos;
+        while pos < len && chars[pos].is_ascii_digit() {
+            pos += 1;
+        }
+        if pos == prec_start {
+            return Err("expected precision value after '.'".to_string());
+        }
+        let prec_str: String = chars[prec_start..pos].iter().collect();
+        spec.precision = Some(
+            prec_str
+                .parse::<u32>()
+                .map_err(|_| "invalid precision".to_string())?,
+        );
+    }
+
+    // type
+    if pos < len {
+        spec.kind = match chars[pos] {
+            'x' => ast::FormatKind::Hex,
+            'X' => ast::FormatKind::HexUpper,
+            'b' => ast::FormatKind::Binary,
+            'e' => ast::FormatKind::Exp,
+            'E' => ast::FormatKind::ExpUpper,
+            c => return Err(format!("unknown format type '{c}'")),
+        };
+        pos += 1;
+    }
+
+    if pos < len {
+        return Err(format!(
+            "unexpected character '{}' in format specifier",
+            chars[pos]
+        ));
+    }
+
+    Ok(spec)
+}
+
 fn string_interp<'src>(
     expr: impl AnvParser<'src, ast::ExprNode>,
 ) -> BoxedParser<'src, ast::ExprNode> {
@@ -346,10 +450,28 @@ fn string_interp<'src>(
     let text_part = select! {
         (Token::Interp(InterpToken::Text(s)), _) => ast::StringPart::Text(s.to_string()),
     };
+    let fmt_spec = select! {
+        (Token::Interp(InterpToken::FormatSpec(s)), _) => s.to_string(),
+    }
+    .map_with(|s, e| (s, e.span()))
+    .or_not();
     let expr_part = expr_start
         .ignore_then(expr)
         .then_ignore(expr_end)
-        .map(ast::StringPart::Expr);
+        .then(fmt_spec)
+        .validate(|(expr, fmt), _extra, emitter| {
+            let parsed_spec = fmt.and_then(|(raw, span)| match parse_format_spec(&raw) {
+                Ok(spec) => Some(Spanned::new(spec, Span::new(span.start, span.end))),
+                Err(mut msg) => {
+                    if raw.contains(' ') {
+                        msg.push_str(" (if this is a ternary expression, wrap it in parentheses)");
+                    }
+                    emitter.emit(Rich::custom(span, msg));
+                    None
+                }
+            });
+            ast::StringPart::Expr(Box::new(expr), parsed_spec)
+        });
 
     interp_start
         .ignore_then(

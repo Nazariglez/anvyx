@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: requires float
+
+fn main() {
+    let x = 42;
+    let _r = "{x:e}";
+}

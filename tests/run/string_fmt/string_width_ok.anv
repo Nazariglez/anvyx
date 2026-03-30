@@ -1,0 +1,16 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// [     Alice]
+// [Alice     ]
+// [  Alice   ]
+// Ali
+// @match-end
+
+fn main() {
+    let name = "Alice";
+    println("[{name:>10}]");
+    println("[{name:<10}]");
+    println("[{name:^10}]");
+    println("{name:.3}");
+}

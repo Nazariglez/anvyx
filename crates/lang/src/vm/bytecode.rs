@@ -1,4 +1,5 @@
 use super::value::Value;
+use crate::ast::FormatSpec;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CastKind {
@@ -98,6 +99,7 @@ pub enum Op {
     MapRemove,       // pops key, map -> pushes removed or Nil, modified map
 
     ToString,
+    Format(FormatSpec),
     Cast(CastKind),
 }
 

@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 3.14
+// 3
+// 3.14159
+// 3.14
+// @match-end
+
+fn main() {
+    let pi = 3.14159;
+    println("{pi:.2}");
+    println("{pi:.0}");
+    println("{pi:.5}");
+    let d = 3.14159d;
+    println("{d:.2}");
+}

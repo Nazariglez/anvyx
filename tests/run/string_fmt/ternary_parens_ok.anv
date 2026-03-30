@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 0005
+// 0010
+// @match-end
+
+fn main() {
+    let a = 5;
+    let b = 10;
+    println("{(true ? a : b):04}");
+    println("{(false ? a : b):04}");
+}

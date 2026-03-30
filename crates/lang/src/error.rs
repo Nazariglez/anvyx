@@ -798,6 +798,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("invalid arguments for `@{name}`"),
             message.clone(),
         ),
+        TypeErrKind::InvalidFormatSpec { reason } => (
+            "invalid format specifier".to_string(),
+            reason.clone(),
+        ),
     }
 }
 

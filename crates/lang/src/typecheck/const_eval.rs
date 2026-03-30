@@ -2,8 +2,8 @@
 
 use crate::{
     ast::{
-        BinaryOp, ConstDeclNode, ExprKind, ExprNode, FloatSuffix, Ident, ImportKind, Lit, Stmt,
-        StmtNode, StringPart, Type, UnaryOp, Visibility,
+        BinaryOp, ConstDeclNode, ExprKind, ExprNode, FloatSuffix, FormatKind, FormatSpec, Ident,
+        ImportKind, Lit, Stmt, StmtNode, StringPart, Type, UnaryOp, Visibility,
     },
     span::Span,
 };
@@ -152,7 +152,7 @@ fn collect_expr_ident_refs(
         }
         ExprKind::StringInterp(parts) => {
             for part in parts {
-                if let StringPart::Expr(e) = part {
+                if let StringPart::Expr(e, _) = part {
                     collect_expr_ident_refs(e, const_names, deps);
                 }
             }
@@ -189,7 +189,7 @@ pub(super) fn validate_const_expr(
         }
         ExprKind::StringInterp(parts) => {
             for part in parts {
-                if let StringPart::Expr(e) = part {
+                if let StringPart::Expr(e, _) = part {
                     validate_const_expr(e, known_consts)?;
                 }
             }
@@ -230,9 +230,13 @@ pub(super) fn eval_const_expr(
             for part in parts {
                 match part {
                     StringPart::Text(s) => result.push_str(s),
-                    StringPart::Expr(e) => {
+                    StringPart::Expr(e, fmt) => {
                         let val = eval_const_expr(e, const_defs)?;
-                        result.push_str(&const_value_to_string(&val));
+                        let s = match fmt {
+                            Some(spanned_spec) => const_format_value(&val, &spanned_spec.node),
+                            None => const_value_to_string(&val),
+                        };
+                        result.push_str(&s);
                     }
                 }
             }
@@ -384,6 +388,60 @@ fn const_value_to_string(val: &ConstValue) -> String {
         ConstValue::Bool(b) => b.to_string(),
         ConstValue::String(s) => s.clone(),
         ConstValue::Nil => "None".to_string(),
+    }
+}
+
+fn const_format_value(val: &ConstValue, spec: &FormatSpec) -> String {
+    let raw = const_format_raw(val, spec);
+    let is_numeric = matches!(
+        val,
+        ConstValue::Int(_) | ConstValue::Float(_) | ConstValue::Double(_)
+    );
+    let signed = spec.apply_sign(&raw, is_numeric);
+    let is_string = matches!(val, ConstValue::String(_));
+    spec.apply_padding(&signed, is_string)
+}
+
+fn const_format_raw(val: &ConstValue, spec: &FormatSpec) -> String {
+    match spec.kind {
+        FormatKind::Default => match (val, spec.precision) {
+            (ConstValue::Float(v), Some(prec)) => format!("{:.prec$}", v, prec = prec as usize),
+            (ConstValue::Double(v), Some(prec)) => format!("{:.prec$}", v, prec = prec as usize),
+            (ConstValue::String(s), Some(prec)) => s.chars().take(prec as usize).collect(),
+            _ => const_value_to_string(val),
+        },
+        FormatKind::Hex => {
+            let ConstValue::Int(n) = val else {
+                unreachable!("typechecker validated")
+            };
+            format!("{:x}", n)
+        }
+        FormatKind::HexUpper => {
+            let ConstValue::Int(n) = val else {
+                unreachable!("typechecker validated")
+            };
+            format!("{:X}", n)
+        }
+        FormatKind::Binary => {
+            let ConstValue::Int(n) = val else {
+                unreachable!("typechecker validated")
+            };
+            format!("{:b}", n)
+        }
+        FormatKind::Exp => match (val, spec.precision) {
+            (ConstValue::Float(v), Some(prec)) => format!("{:.prec$e}", v, prec = prec as usize),
+            (ConstValue::Float(v), None) => format!("{:e}", v),
+            (ConstValue::Double(v), Some(prec)) => format!("{:.prec$e}", v, prec = prec as usize),
+            (ConstValue::Double(v), None) => format!("{:e}", v),
+            _ => unreachable!("typechecker validated"),
+        },
+        FormatKind::ExpUpper => match (val, spec.precision) {
+            (ConstValue::Float(v), Some(prec)) => format!("{:.prec$E}", v, prec = prec as usize),
+            (ConstValue::Float(v), None) => format!("{:E}", v),
+            (ConstValue::Double(v), Some(prec)) => format!("{:.prec$E}", v, prec = prec as usize),
+            (ConstValue::Double(v), None) => format!("{:E}", v),
+            _ => unreachable!("typechecker validated"),
+        },
     }
 }
 
