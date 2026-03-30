@@ -17,3 +17,6 @@ install:
 
 miri:
     MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri test -p anvyx-lang --all-targets
+
+scan-tests threshold="70":
+    python3 scan_tests.py -t {{threshold}}
