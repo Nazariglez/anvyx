@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @match: Color.Red
+
+enum Color { Red, Green, Blue }
+
+fn main() {
+    let c: Color = {
+        .Red
+    };
+    println(c);
+}

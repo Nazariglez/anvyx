@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: Wrong number of arguments
+
+fn main() {
+    let x: Option<int> = .Some(1, 2);
+}

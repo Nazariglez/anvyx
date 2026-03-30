@@ -143,10 +143,7 @@ fn lower_match_enum(
                 });
             }
 
-            Pattern::EnumUnit {
-                qualifier: _,
-                variant,
-            } => {
+            Pattern::EnumUnit { variant, .. } | Pattern::InferredEnumUnit { variant } => {
                 let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
                 let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
                 arms.push(hir::MatchArm {
@@ -157,7 +154,11 @@ fn lower_match_enum(
             }
 
             Pattern::EnumTuple {
-                qualifier: _,
+                variant,
+                fields: subpatterns,
+                ..
+            }
+            | Pattern::InferredEnumTuple {
                 variant,
                 fields: subpatterns,
             } => {
@@ -203,10 +204,14 @@ fn lower_match_enum(
             }
 
             Pattern::EnumStruct {
-                qualifier: _,
                 variant,
                 fields: field_patterns,
-                has_rest: _,
+                ..
+            }
+            | Pattern::InferredEnumStruct {
+                variant,
+                fields: field_patterns,
+                ..
             } => {
                 let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
                 let field_names = ctx
@@ -348,7 +353,8 @@ fn lower_match_enum(
                                 body,
                             });
                         }
-                        Pattern::EnumUnit { variant, .. } => {
+                        Pattern::EnumUnit { variant, .. }
+                        | Pattern::InferredEnumUnit { variant } => {
                             let variant_idx =
                                 resolve_variant_index(ctx, span, enum_name, *variant)?;
                             let body =
@@ -363,6 +369,10 @@ fn lower_match_enum(
                             variant,
                             fields: subpatterns,
                             ..
+                        }
+                        | Pattern::InferredEnumTuple {
+                            variant,
+                            fields: subpatterns,
                         } => {
                             let variant_idx =
                                 resolve_variant_index(ctx, span, enum_name, *variant)?;
@@ -412,6 +422,11 @@ fn lower_match_enum(
                             });
                         }
                         Pattern::EnumStruct {
+                            variant,
+                            fields: field_patterns,
+                            ..
+                        }
+                        | Pattern::InferredEnumStruct {
                             variant,
                             fields: field_patterns,
                             ..
@@ -1240,7 +1255,7 @@ pub(super) fn lower_if_let(
 
             // named variant pattern goes into a specific match arm
             let arm = match pattern {
-                Pattern::EnumUnit { variant, .. } => {
+                Pattern::EnumUnit { variant, .. } | Pattern::InferredEnumUnit { variant } => {
                     let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
                     let body =
                         lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
@@ -1255,6 +1270,10 @@ pub(super) fn lower_if_let(
                     variant,
                     fields: subpatterns,
                     ..
+                }
+                | Pattern::InferredEnumTuple {
+                    variant,
+                    fields: subpatterns,
                 } => {
                     let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
                     let field_types = ctx
@@ -1295,6 +1314,11 @@ pub(super) fn lower_if_let(
                 }
 
                 Pattern::EnumStruct {
+                    variant,
+                    fields: field_patterns,
+                    ..
+                }
+                | Pattern::InferredEnumStruct {
                     variant,
                     fields: field_patterns,
                     ..
@@ -1564,7 +1588,7 @@ pub(super) fn lower_let_else(
             let enum_name = *enum_name;
 
             let arm = match pattern {
-                Pattern::EnumUnit { variant, .. } => {
+                Pattern::EnumUnit { variant, .. } | Pattern::InferredEnumUnit { variant } => {
                     let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
                     hir::MatchArm {
                         variant: variant_idx,
@@ -1577,6 +1601,10 @@ pub(super) fn lower_let_else(
                     variant,
                     fields: subpatterns,
                     ..
+                }
+                | Pattern::InferredEnumTuple {
+                    variant,
+                    fields: subpatterns,
                 } => {
                     let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
                     let field_types = ctx
@@ -1615,6 +1643,11 @@ pub(super) fn lower_let_else(
                 }
 
                 Pattern::EnumStruct {
+                    variant,
+                    fields: field_patterns,
+                    ..
+                }
+                | Pattern::InferredEnumStruct {
                     variant,
                     fields: field_patterns,
                     ..
@@ -1928,7 +1961,7 @@ fn lower_while_let_enum(
     }
 
     let arm = match pattern {
-        Pattern::EnumUnit { variant, .. } => {
+        Pattern::EnumUnit { variant, .. } | Pattern::InferredEnumUnit { variant } => {
             let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
             let body = lower_block(&while_let_node.node.body, ctx, fc, false, &Type::Void)?;
             hir::MatchArm {
@@ -1942,6 +1975,10 @@ fn lower_while_let_enum(
             variant,
             fields: subpatterns,
             ..
+        }
+        | Pattern::InferredEnumTuple {
+            variant,
+            fields: subpatterns,
         } => {
             let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
             let field_types = ctx
@@ -1981,6 +2018,11 @@ fn lower_while_let_enum(
         }
 
         Pattern::EnumStruct {
+            variant,
+            fields: field_patterns,
+            ..
+        }
+        | Pattern::InferredEnumStruct {
             variant,
             fields: field_patterns,
             ..

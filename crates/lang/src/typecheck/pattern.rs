@@ -137,6 +137,70 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
                 is_refutable(&subpat.node, &resolved_ty, type_checker)
             })
         }
+        Pattern::InferredEnumUnit { .. } => {
+            let Type::Enum { name, .. } = value_ty else {
+                return true;
+            };
+            let Some(enum_def) = type_checker.get_enum(*name) else {
+                return true;
+            };
+            enum_def.variants.len() > 1
+        }
+        Pattern::InferredEnumTuple { fields, .. } => {
+            let Type::Enum { name, type_args } = value_ty else {
+                return true;
+            };
+            let Some(enum_def) = type_checker.get_enum(*name) else {
+                return true;
+            };
+            if enum_def.variants.len() > 1 {
+                return true;
+            }
+            let enum_def = enum_def.clone();
+            let Some(variant_def) = enum_def.variants.first() else {
+                return true;
+            };
+            let VariantKind::Tuple(expected_types) = &variant_def.kind else {
+                return true;
+            };
+            if fields.len() != expected_types.len() {
+                return true;
+            }
+            let subst = build_subst(&enum_def.type_params, type_args);
+            fields
+                .iter()
+                .zip(expected_types.iter())
+                .any(|(subpat, expected_ty)| {
+                    let resolved_ty = subst_type(expected_ty, &subst);
+                    is_refutable(&subpat.node, &resolved_ty, type_checker)
+                })
+        }
+        Pattern::InferredEnumStruct { fields, .. } => {
+            let Type::Enum { name, type_args } = value_ty else {
+                return true;
+            };
+            let Some(enum_def) = type_checker.get_enum(*name) else {
+                return true;
+            };
+            if enum_def.variants.len() > 1 {
+                return true;
+            }
+            let enum_def = enum_def.clone();
+            let Some(variant_def) = enum_def.variants.first() else {
+                return true;
+            };
+            let VariantKind::Struct(expected_fields) = &variant_def.kind else {
+                return true;
+            };
+            let subst = build_subst(&enum_def.type_params, type_args);
+            fields.iter().any(|(name, subpat)| {
+                let Some(field_def) = expected_fields.iter().find(|f| f.name == *name) else {
+                    return true;
+                };
+                let resolved_ty = subst_type(&field_def.ty, &subst);
+                is_refutable(&subpat.node, &resolved_ty, type_checker)
+            })
+        }
         Pattern::Nil => true,
         Pattern::Optional(_) => true,
         Pattern::Or(subs) => subs
@@ -386,6 +450,83 @@ fn check_pattern_inner(
             check_enum_struct_pattern(
                 pattern,
                 *qualifier,
+                *variant,
+                fields,
+                *has_rest,
+                value_ty,
+                mutable,
+                in_match,
+                match_ctx,
+                type_checker,
+                errors,
+            );
+        }
+        Pattern::InferredEnumUnit { variant } => {
+            let Type::Enum {
+                name: enum_name, ..
+            } = value_ty
+            else {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::CannotInferEnumVariant { variant: *variant },
+                ));
+                return;
+            };
+            check_enum_pattern(
+                pattern,
+                *enum_name,
+                *variant,
+                &[],
+                value_ty,
+                mutable,
+                in_match,
+                match_ctx,
+                type_checker,
+                errors,
+            );
+        }
+        Pattern::InferredEnumTuple { variant, fields } => {
+            let Type::Enum {
+                name: enum_name, ..
+            } = value_ty
+            else {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::CannotInferEnumVariant { variant: *variant },
+                ));
+                return;
+            };
+            check_enum_pattern(
+                pattern,
+                *enum_name,
+                *variant,
+                fields,
+                value_ty,
+                mutable,
+                in_match,
+                match_ctx,
+                type_checker,
+                errors,
+            );
+        }
+        Pattern::InferredEnumStruct {
+            variant,
+            fields,
+            has_rest,
+        } => {
+            let Type::Enum {
+                name: enum_name, ..
+            } = value_ty
+            else {
+                errors.push(TypeErr::new(
+                    pattern.span,
+                    TypeErrKind::CannotInferEnumVariant { variant: *variant },
+                ));
+                return;
+            };
+            check_enum_struct_pattern(
+                pattern,
+                *enum_name,
                 *variant,
                 fields,
                 *has_rest,

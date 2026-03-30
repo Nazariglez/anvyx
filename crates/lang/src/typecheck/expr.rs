@@ -1,7 +1,7 @@
 use crate::{
     ast::{
         CastNode, ExprKind, ExprNode, FloatSuffix, FormatKind, FormatSign, FormatSpec, FuncParam,
-        Ident, LambdaNode, Lit, StringPart, Type,
+        Ident, InferredEnumArgs, InferredEnumNode, LambdaNode, Lit, StringPart, Type, VariantKind,
     },
     span::Span,
 };
@@ -10,11 +10,12 @@ use std::collections::HashMap;
 use super::{
     composite::{
         check_array_fill, check_array_literal, check_map_literal, check_named_tuple, check_range,
-        check_struct_lit, check_tuple, check_tuple_index,
+        check_struct_lit, check_tuple, check_tuple_index, validate_field_names,
     },
     constraint::TypeRef,
     control::{check_if, check_if_let, check_match},
     error::{TypeErr, TypeErrKind},
+    infer::{build_subst, subst_type},
     ops::{check_assign, check_binary, check_unary},
     postfix::{check_postfix_chain, collect_postfix_chain},
     stmt::check_block_expr,
@@ -57,7 +58,7 @@ pub(super) fn check_expr(
             }
         }
         ExprKind::Block(spanned) => {
-            let (block_ty, _) = check_block_expr(spanned, type_checker, errors, None);
+            let (block_ty, _) = check_block_expr(spanned, type_checker, errors, expected);
             block_ty
         }
         ExprKind::Lit(lit) => match lit {
@@ -84,6 +85,9 @@ pub(super) fn check_expr(
         ExprKind::Cast(cast_node) => check_cast(cast_node, type_checker, errors),
         ExprKind::Lambda(lambda_node) => {
             check_lambda(lambda_node, expr_node, type_checker, errors, expected)
+        }
+        ExprKind::InferredEnum(node) => {
+            check_inferred_enum(node, expr_node.span, type_checker, errors, expected)
         }
         ExprKind::Field(_) | ExprKind::Index(_) | ExprKind::Call(_) => {
             unreachable!("postfix expressions should be routed through check_postfix_chain")
@@ -406,5 +410,164 @@ fn check_lambda(
             .map(|(ty, lp)| FuncParam::new(ty, lp.mutable))
             .collect(),
         ret: Box::new(actual_ret),
+    }
+}
+
+fn check_inferred_enum(
+    node: &InferredEnumNode,
+    span: Span,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+    expected: Option<&Type>,
+) -> Type {
+    let resolved_expected = expected.map(|t| type_checker.resolve_type(t));
+    let Some(Type::Enum {
+        name: enum_name,
+        type_args,
+    }) = resolved_expected.as_ref()
+    else {
+        errors.push(TypeErr::new(
+            span,
+            TypeErrKind::CannotInferEnumVariant {
+                variant: node.node.variant,
+            },
+        ));
+        return Type::Infer;
+    };
+
+    let enum_name = *enum_name;
+    let type_args = type_args.clone();
+    let variant_name = node.node.variant;
+
+    let Some(enum_def) = type_checker.get_enum(enum_name).cloned() else {
+        errors.push(TypeErr::new(
+            span,
+            TypeErrKind::UnknownEnum { name: enum_name },
+        ));
+        return Type::Infer;
+    };
+
+    let Some(variant) = enum_def.variants.iter().find(|v| v.name == variant_name) else {
+        errors.push(TypeErr::new(
+            span,
+            TypeErrKind::UnknownEnumVariant {
+                enum_name,
+                variant_name,
+            },
+        ));
+        return Type::Infer;
+    };
+
+    let type_params = &enum_def.type_params;
+    match (&node.node.args, &variant.kind) {
+        (InferredEnumArgs::Unit, VariantKind::Unit) => Type::Enum {
+            name: enum_name,
+            type_args,
+        },
+        (InferredEnumArgs::Unit, _) => {
+            errors.push(TypeErr::new(
+                span,
+                TypeErrKind::EnumVariantNotUnit {
+                    enum_name,
+                    variant_name,
+                },
+            ));
+            Type::Infer
+        }
+        (InferredEnumArgs::Tuple(args), VariantKind::Tuple(expected_types)) => {
+            if args.len() != expected_types.len() {
+                errors.push(TypeErr::new(
+                    span,
+                    TypeErrKind::EnumVariantArityMismatch {
+                        enum_name,
+                        variant_name,
+                        expected: expected_types.len(),
+                        found: args.len(),
+                    },
+                ));
+                return Type::Infer;
+            }
+            let subst = build_subst(type_params, &type_args);
+            for (arg_expr, field_ty) in args.iter().zip(expected_types.iter()) {
+                let substituted = subst_type(field_ty, &subst);
+                check_expr(arg_expr, type_checker, errors, Some(&substituted));
+                let arg_ref = TypeRef::Expr(arg_expr.node.id);
+                let expected_ref = TypeRef::concrete(&substituted);
+                type_checker.constrain_assignable(arg_expr.span, arg_ref, expected_ref, errors);
+            }
+            Type::Enum {
+                name: enum_name,
+                type_args,
+            }
+        }
+        (InferredEnumArgs::Tuple(_), _) => {
+            errors.push(TypeErr::new(
+                span,
+                TypeErrKind::EnumVariantNotTuple {
+                    enum_name,
+                    variant_name,
+                },
+            ));
+            Type::Infer
+        }
+        (InferredEnumArgs::Struct(fields), VariantKind::Struct(expected_fields)) => {
+            let subst = build_subst(type_params, &type_args);
+            let field_type_map: HashMap<Ident, &Type> =
+                expected_fields.iter().map(|f| (f.name, &f.ty)).collect();
+            for (name, field_expr) in fields.iter() {
+                let field_expected = field_type_map.get(name).map(|ty| subst_type(ty, &subst));
+                check_expr(field_expr, type_checker, errors, field_expected.as_ref());
+            }
+            let provided: Vec<(Ident, Span)> = fields.iter().map(|(n, e)| (*n, e.span)).collect();
+            validate_field_names(
+                &provided,
+                span,
+                expected_fields,
+                false,
+                |field| TypeErrKind::EnumVariantDuplicateField {
+                    enum_name,
+                    variant_name,
+                    field,
+                },
+                |field| TypeErrKind::EnumVariantUnknownField {
+                    enum_name,
+                    variant_name,
+                    field,
+                },
+                |field| TypeErrKind::EnumVariantMissingField {
+                    enum_name,
+                    variant_name,
+                    field,
+                },
+                errors,
+            );
+            for (name, field_expr) in fields.iter() {
+                if let Some(expected_def) = expected_fields.iter().find(|f| f.name == *name) {
+                    let substituted = subst_type(&expected_def.ty, &subst);
+                    let field_ref = TypeRef::Expr(field_expr.node.id);
+                    let expected_ref = TypeRef::concrete(&substituted);
+                    type_checker.constrain_assignable(
+                        field_expr.span,
+                        field_ref,
+                        expected_ref,
+                        errors,
+                    );
+                }
+            }
+            Type::Enum {
+                name: enum_name,
+                type_args,
+            }
+        }
+        (InferredEnumArgs::Struct(_), _) => {
+            errors.push(TypeErr::new(
+                span,
+                TypeErrKind::EnumVariantNotStruct {
+                    enum_name,
+                    variant_name,
+                },
+            ));
+            Type::Infer
+        }
     }
 }

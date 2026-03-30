@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: is not a unit variant
+
+enum Msg { Text(string) }
+
+fn main() {
+    let m: Msg = .Text;
+}

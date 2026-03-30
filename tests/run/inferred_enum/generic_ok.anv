@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// Option.None
+// Option.Some(42)
+// @match-end
+
+fn main() {
+    let a: Option<int> = .None;
+    let b: Option<int> = .Some(42);
+    println(a);
+    println(b);
+}

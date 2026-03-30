@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{self, ArrayLen, BinaryOp, Ident, Lit, Type, UnaryOp},
+    ast::{self, ArrayLen, BinaryOp, Ident, InferredEnumArgs, Lit, Type, UnaryOp},
     builtin::Builtin,
     hir,
     span::Span,
@@ -381,6 +381,10 @@ pub(super) fn lower_expr(
                 ));
             }
         },
+
+        ast::ExprKind::InferredEnum(node) => {
+            return lower_inferred_enum(node, ty, span, ctx, fc, out);
+        }
 
         other => {
             return Err(LowerError::UnsupportedExprKind {
@@ -2728,6 +2732,66 @@ fn synthesize_default_hir_expr(default: &FieldDefault, field_ty: &Type, span: Sp
         FieldDefault::EmptyMap => hir::ExprKind::MapLiteral { entries: vec![] },
     };
     hir::Expr::new(field_ty.clone(), span, kind)
+}
+
+fn lower_inferred_enum(
+    node: &ast::InferredEnumNode,
+    ty: Type,
+    span: Span,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Result<hir::Expr, LowerError> {
+    let Type::Enum {
+        name: enum_name, ..
+    } = &ty
+    else {
+        return Err(LowerError::UnsupportedExprKind {
+            span,
+            kind: "inferred enum on non-enum type".to_string(),
+        });
+    };
+
+    let enum_name = *enum_name;
+    let variant_name = node.node.variant;
+    let type_id = resolve_enum_type_id(ctx, span, enum_name)?;
+    let variant = resolve_variant_index(ctx, span, enum_name, variant_name)?;
+
+    let fields = match &node.node.args {
+        InferredEnumArgs::Unit => vec![],
+        InferredEnumArgs::Tuple(args) => lower_args(args, ctx, fc, out)?,
+        InferredEnumArgs::Struct(field_exprs) => {
+            let field_names = ctx
+                .shared
+                .tcx
+                .enum_variant_field_names(enum_name, variant_name)
+                .ok_or_else(|| LowerError::UnsupportedExprKind {
+                    span,
+                    kind: format!(
+                        "variant '{variant_name}' on enum '{enum_name}' is not a struct variant"
+                    ),
+                })?;
+            let mut fields = vec![];
+            for decl_name in &field_names {
+                let (_, expr) = field_exprs
+                    .iter()
+                    .find(|(name, _)| *name == *decl_name)
+                    .expect("typechecker ensures all declared fields are provided");
+                fields.push(lower_expr(expr, ctx, fc, out)?);
+            }
+            fields
+        }
+    };
+
+    Ok(hir::Expr::new(
+        ty,
+        span,
+        hir::ExprKind::EnumLiteral {
+            type_id,
+            variant,
+            fields,
+        },
+    ))
 }
 
 fn lower_field_expr(

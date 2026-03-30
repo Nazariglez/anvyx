@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown variant 'Yellow' for enum 'Color'
+
+enum Color { Red, Green, Blue }
+
+fn main() {
+    let c: Color = .Yellow;
+}

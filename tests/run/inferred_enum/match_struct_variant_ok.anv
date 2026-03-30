@@ -1,0 +1,19 @@
+// @mode: run
+// @expect: success
+// @match: 10
+
+enum Event {
+    Click { x: int, y: int },
+    Key(string),
+}
+
+fn get_x(e: Event) -> int {
+    match e {
+        .Click { x, .. } => x,
+        .Key(_) => 0,
+    }
+}
+
+fn main() {
+    println(get_x(Event.Click { x: 10, y: 20 }));
+}

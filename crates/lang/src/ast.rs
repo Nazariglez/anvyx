@@ -109,6 +109,7 @@ pub enum ExprKind {
     StringInterp(Vec<StringPart>),
     Cast(CastNode),
     Lambda(LambdaNode),
+    InferredEnum(InferredEnumNode),
 }
 
 impl ExprKind {
@@ -137,6 +138,7 @@ impl ExprKind {
             Self::StringInterp(_) => "StringInterp",
             Self::Cast(_) => "Cast",
             Self::Lambda(_) => "Lambda",
+            Self::InferredEnum(_) => "InferredEnum",
         }
     }
 }
@@ -530,6 +532,18 @@ pub enum Pattern {
         fields: Vec<(Ident, PatternNode)>,
         has_rest: bool,
     },
+    InferredEnumUnit {
+        variant: Ident,
+    },
+    InferredEnumTuple {
+        variant: Ident,
+        fields: Vec<PatternNode>,
+    },
+    InferredEnumStruct {
+        variant: Ident,
+        fields: Vec<(Ident, PatternNode)>,
+        has_rest: bool,
+    },
     Range {
         start: Option<Lit>,
         end: Option<Lit>,
@@ -554,6 +568,9 @@ impl Pattern {
             Self::EnumUnit { .. } => "EnumUnit",
             Self::EnumTuple { .. } => "EnumTuple",
             Self::EnumStruct { .. } => "EnumStruct",
+            Self::InferredEnumUnit { .. } => "InferredEnumUnit",
+            Self::InferredEnumTuple { .. } => "InferredEnumTuple",
+            Self::InferredEnumStruct { .. } => "InferredEnumStruct",
             Self::Range { .. } => "range",
             Self::Lit(_) => "literal",
             Self::VarIdent(_) => "var binding",
@@ -680,6 +697,21 @@ pub struct Lambda {
     pub ret_type: Option<Type>,
     pub body: Box<ExprNode>,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InferredEnumArgs {
+    Unit,
+    Tuple(Vec<ExprNode>),
+    Struct(Vec<(Ident, ExprNode)>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct InferredEnum {
+    pub variant: Ident,
+    pub args: InferredEnumArgs,
+}
+
+pub type InferredEnumNode = Spanned<InferredEnum>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {

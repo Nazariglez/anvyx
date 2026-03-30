@@ -479,4 +479,7 @@ pub enum TypeErrKind {
     InvalidFormatSpec {
         reason: String,
     },
+    CannotInferEnumVariant {
+        variant: Ident,
+    },
 }

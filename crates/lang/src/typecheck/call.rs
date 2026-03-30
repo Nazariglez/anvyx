@@ -2087,7 +2087,7 @@ pub(super) fn type_call_on_base(
         for (arg, param_fp) in call_node.node.args.iter().zip(params.iter()) {
             let needs_expected = matches!(
                 arg.node.kind,
-                ExprKind::Lambda(_) | ExprKind::Lit(Lit::Float { .. })
+                ExprKind::Lambda(_) | ExprKind::Lit(Lit::Float { .. }) | ExprKind::InferredEnum(_)
             );
             let expected = if needs_expected {
                 Some(&param_fp.ty)

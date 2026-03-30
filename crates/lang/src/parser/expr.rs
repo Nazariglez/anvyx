@@ -556,11 +556,66 @@ fn lambda_expr<'src>(
         .boxed()
 }
 
+fn inferred_enum_expr<'src>(
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let comma = select! { (Token::Comma, _) => () };
+
+    let field_init = choice((
+        field_name_ident()
+            .then_ignore(select! { (Token::Colon, _) => () })
+            .then(expr.clone()),
+        identifier().map_with(|name, e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let expr_id = e.state().new_expr_id();
+            let ident_expr = ast::Expr::new(ast::ExprKind::Ident(name), expr_id);
+            let value = Spanned::new(ident_expr, span);
+            (name, value)
+        }),
+    ));
+
+    let tuple_args = select! { (Token::Open(Delimiter::Parent), _) => () }
+        .ignore_then(
+            expr.separated_by(comma)
+                .allow_trailing()
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(select! { (Token::Close(Delimiter::Parent), _) => () })
+        .map(ast::InferredEnumArgs::Tuple);
+
+    let struct_fields = select! { (Token::Open(Delimiter::Brace), _) => () }
+        .ignore_then(
+            field_init
+                .separated_by(comma)
+                .allow_trailing()
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(select! { (Token::Close(Delimiter::Brace), _) => () })
+        .map(ast::InferredEnumArgs::Struct);
+
+    select! { (Token::Dot, _) => () }
+        .ignore_then(identifier())
+        .then(choice((tuple_args, struct_fields)).or_not())
+        .map_with(|(variant, args), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let args = args.unwrap_or(ast::InferredEnumArgs::Unit);
+            let node = Spanned::new(ast::InferredEnum { variant, args }, span);
+            let expr_id = e.state().new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::InferredEnum(node), expr_id);
+            Spanned::new(expr, span)
+        })
+        .labelled("inferred enum variant")
+        .boxed()
+}
+
 fn atom_expr<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
     expr: impl AnvParser<'src, ast::ExprNode>,
 ) -> BoxedParser<'src, ast::ExprNode> {
     choice((
+        inferred_enum_expr(expr.clone()),
         lambda_expr(stmt.clone(), expr.clone()),
         string_interp(expr.clone()),
         literal().map_with(|lit, e| {
@@ -597,6 +652,7 @@ fn cond_atom_expr<'src>(
     cond_expr: impl AnvParser<'src, ast::ExprNode>,
 ) -> BoxedParser<'src, ast::ExprNode> {
     choice((
+        inferred_enum_expr(cond_expr.clone()),
         literal().map_with(|lit, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);

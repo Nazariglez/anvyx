@@ -1,0 +1,19 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// got: 42
+// nope
+// @match-end
+
+fn check(o: Option<int>) {
+    if let .Some(v) = o {
+        println("got: {v}");
+    } else {
+        println("nope");
+    }
+}
+
+fn main() {
+    check(.Some(42));
+    check(.None);
+}

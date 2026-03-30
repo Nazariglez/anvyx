@@ -113,6 +113,7 @@ pub(super) fn pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
 
         let tuple_pat = tuple_pattern(pat.clone());
         let enum_pat = enum_pattern(pat.clone());
+        let inferred_enum_pat = inferred_enum_pattern(pat.clone());
         let struct_pat = struct_pattern(pat);
 
         let question = select! { (Token::Question, _) => () };
@@ -123,6 +124,7 @@ pub(super) fn pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
             var_pat,
             nil_pat,
             lit_or_range_pat,
+            inferred_enum_pat,
             enum_pat,
             struct_pat,
             tuple_pat,
@@ -246,6 +248,38 @@ fn enum_pattern<'src>(
             Spanned::new(pattern, span)
         })
         .labelled("enum pattern")
+        .as_context()
+        .boxed()
+}
+
+fn inferred_enum_pattern<'src>(
+    pat: impl AnvParser<'src, ast::PatternNode>,
+) -> BoxedParser<'src, ast::PatternNode> {
+    let dot = select! { (Token::Dot, _) => () };
+
+    dot.ignore_then(identifier())
+        .then(choice((
+            enum_tuple_payload(pat.clone()),
+            enum_struct_payload(pat),
+            empty().to(EnumPatternKind::Unit),
+        )))
+        .map_with(|(variant, kind), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let pattern = match kind {
+                EnumPatternKind::Unit => ast::Pattern::InferredEnumUnit { variant },
+                EnumPatternKind::Tuple(fields) => {
+                    ast::Pattern::InferredEnumTuple { variant, fields }
+                }
+                EnumPatternKind::Struct(fields, has_rest) => ast::Pattern::InferredEnumStruct {
+                    variant,
+                    fields,
+                    has_rest,
+                },
+            };
+            Spanned::new(pattern, span)
+        })
+        .labelled("inferred enum pattern")
         .as_context()
         .boxed()
 }

@@ -802,6 +802,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             "invalid format specifier".to_string(),
             reason.clone(),
         ),
+        TypeErrKind::CannotInferEnumVariant { variant } => (
+            format!("cannot infer enum type for '.{variant}'"),
+            format!("use fully qualified 'EnumName.{variant}'"),
+        ),
     }
 }
 
