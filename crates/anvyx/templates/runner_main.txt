@@ -1,0 +1,39 @@
+use std::collections::HashMap;
+use std::env;
+use std::fs;
+use std::str::FromStr;
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    if args.get(1).map(|s| s.as_str()) == Some("--metadata") {
+        let output_dir = args.get(2).unwrap_or_else(|| {
+            eprintln!("--metadata requires an output directory argument");
+            std::process::exit(1);
+        });
+        fs::create_dir_all(output_dir)
+            .unwrap_or_else(|e| { eprintln!("Failed to create metadata dir: {e}"); std::process::exit(1); });
+%METADATA_WRITE%
+        return;
+    }
+
+    let file_path = &args[1];
+    let backend = args.get(2).map(|s| s.as_str()).unwrap_or("vm");
+    let metadata_dir = args.get(3).map(|s| s.as_str()).unwrap_or("build/metadata");
+
+    let mut extern_metadata: HashMap<String, String> = HashMap::new();
+%METADATA_READ%
+    let source = fs::read_to_string(file_path)
+        .unwrap_or_else(|e| { eprintln!("Failed to read file: {e}"); std::process::exit(1); });
+
+    let backend = anvyx_lang::Backend::from_str(backend)
+        .unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(1); });
+
+    let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
+%EXTERN_EXTENDS%
+%RUNTIME_INIT%
+    match anvyx_lang::run_program_with_std(&source, file_path, backend, externs, extern_metadata, std_sources, core) {
+        Ok(output) => print!("{output}"),
+        Err(e) => { eprintln!("{e}"); std::process::exit(1); }
+    }
+}

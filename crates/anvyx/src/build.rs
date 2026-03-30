@@ -5,65 +5,23 @@ use std::process;
 use crate::manifest::Manifest;
 
 const ANVYX_CRATE_DIR: &str = env!("CARGO_MANIFEST_DIR");
+const RUNTIME_INIT: &str = include_str!("../templates/runtime_init.txt");
+const RUNNER_TEMPLATE: &str = include_str!("../templates/runner_main.txt");
+const BUILD_TEMPLATE: &str = include_str!("../templates/build_main.txt");
 
-fn lang_crate_path() -> String {
+fn sibling_crate_path(name: &str) -> String {
     Path::new(ANVYX_CRATE_DIR)
         .parent()
         .unwrap()
-        .join("lang")
+        .join(name)
         .to_string_lossy()
         .into_owned()
 }
 
-fn std_crate_path() -> String {
-    Path::new(ANVYX_CRATE_DIR)
-        .parent()
-        .unwrap()
-        .join("std")
-        .to_string_lossy()
-        .into_owned()
-}
-
-fn core_crate_path() -> String {
-    Path::new(ANVYX_CRATE_DIR)
-        .parent()
-        .unwrap()
-        .join("core")
-        .to_string_lossy()
-        .into_owned()
-}
-
-pub fn generate_runner_crate(project_root: &Path, manifest: &Manifest) -> Result<PathBuf, String> {
-    for (name, entry) in &manifest.externs {
-        let resolved = project_root.join(&entry.path);
-        if !resolved.exists() {
-            return Err(format!(
-                "Extern provider '{name}' not found at path: {}",
-                resolved.display()
-            ));
-        }
-    }
-
-    let runner_dir = project_root.join("build/runner");
-    let src_dir = runner_dir.join("src");
-
-    fs::create_dir_all(&src_dir)
-        .map_err(|e| format!("Failed to create runner crate directory: {e}"))?;
-
-    let cargo_toml = generate_cargo_toml(project_root, manifest);
-    fs::write(runner_dir.join("Cargo.toml"), cargo_toml)
-        .map_err(|e| format!("Failed to write runner Cargo.toml: {e}"))?;
-
-    let main_rs = generate_main_rs(manifest);
-    fs::write(src_dir.join("main.rs"), main_rs)
-        .map_err(|e| format!("Failed to write runner src/main.rs: {e}"))?;
-
-    Ok(runner_dir)
-}
-
-pub fn generate_build_runner_crate(
+fn generate_crate(
     project_root: &Path,
     manifest: &Manifest,
+    main_rs: &str,
 ) -> Result<PathBuf, String> {
     for (name, entry) in &manifest.externs {
         let resolved = project_root.join(&entry.path);
@@ -85,11 +43,21 @@ pub fn generate_build_runner_crate(
     fs::write(runner_dir.join("Cargo.toml"), cargo_toml)
         .map_err(|e| format!("Failed to write runner Cargo.toml: {e}"))?;
 
-    let main_rs = generate_build_main_rs(manifest);
     fs::write(src_dir.join("main.rs"), main_rs)
         .map_err(|e| format!("Failed to write runner src/main.rs: {e}"))?;
 
     Ok(runner_dir)
+}
+
+pub fn generate_runner_crate(project_root: &Path, manifest: &Manifest) -> Result<PathBuf, String> {
+    generate_crate(project_root, manifest, &generate_main_rs(manifest))
+}
+
+pub fn generate_build_runner_crate(
+    project_root: &Path,
+    manifest: &Manifest,
+) -> Result<PathBuf, String> {
+    generate_crate(project_root, manifest, &generate_build_main_rs(manifest))
 }
 
 pub fn runner_binary_path(project_root: &Path) -> PathBuf {
@@ -178,9 +146,9 @@ fn format_build_error(stderr: &str) -> String {
 
 fn generate_cargo_toml(project_root: &Path, manifest: &Manifest) -> String {
     // TODO: use `anvyx-lang = "x.y.z"` once published to crates.io
-    let lang_path = lang_crate_path();
-    let std_path = std_crate_path();
-    let core_path = core_crate_path();
+    let lang_path = sibling_crate_path("lang");
+    let std_path = sibling_crate_path("std");
+    let core_path = sibling_crate_path("core");
 
     let mut deps = format!(
         "anvyx-lang = {{ path = \"{lang_path}\" }}\nanvyx-std = {{ path = \"{std_path}\" }}\nanvyx-core = {{ path = \"{core_path}\" }}\n"
@@ -200,83 +168,27 @@ fn generate_cargo_toml(project_root: &Path, manifest: &Manifest) -> String {
     )
 }
 
+fn sorted_extern_names(manifest: &Manifest) -> Vec<&String> {
+    let mut names: Vec<&String> = manifest.externs.keys().collect();
+    names.sort();
+    names
+}
+
+fn generate_extern_extends(names: &[&String]) -> String {
+    names
+        .iter()
+        .map(|n| format!("    externs.extend({n}::anvyx_externs());"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn generate_main_rs(manifest: &Manifest) -> String {
-    let mut entries: Vec<&String> = manifest.externs.keys().collect();
-    entries.sort();
-
-    let mut extend_lines = String::new();
-    for name in &entries {
-        extend_lines.push_str(&format!("    externs.extend({name}::anvyx_externs());\n"));
-    }
-
-    let metadata_lines = generate_metadata_lines(&entries);
-    let metadata_read_lines = generate_metadata_read_lines(&entries);
-
-    format!(
-        r#"use std::collections::HashMap;
-use std::env;
-use std::fs;
-use std::str::FromStr;
-
-fn main() {{
-    let args: Vec<String> = env::args().collect();
-
-    if args.get(1).map(|s| s.as_str()) == Some("--metadata") {{
-        let output_dir = args.get(2).unwrap_or_else(|| {{
-            eprintln!("--metadata requires an output directory argument");
-            std::process::exit(1);
-        }});
-        fs::create_dir_all(output_dir)
-            .unwrap_or_else(|e| {{ eprintln!("Failed to create metadata dir: {{e}}"); std::process::exit(1); }});
-{metadata_lines}
-        return;
-    }}
-
-    let file_path = &args[1];
-    let backend = args.get(2).map(|s| s.as_str()).unwrap_or("vm");
-    let metadata_dir = args.get(3).map(|s| s.as_str()).unwrap_or("build/metadata");
-
-    let mut extern_metadata: HashMap<String, String> = HashMap::new();
-{metadata_read_lines}
-    let source = fs::read_to_string(file_path)
-        .unwrap_or_else(|e| {{ eprintln!("Failed to read file: {{e}}"); std::process::exit(1); }});
-
-    let backend = anvyx_lang::Backend::from_str(backend)
-        .unwrap_or_else(|e| {{ eprintln!("{{e}}"); std::process::exit(1); }});
-
-    let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
-{extend_lines}
-    let (prelude_mods, method_mods) = anvyx_core::split_core_modules();
-    let core_source: String = prelude_mods.iter().map(|m| m.full_anv_source()).collect::<Vec<_>>().join("\n");
-    let mut core_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
-    for m in &prelude_mods {{
-        externs.extend((m.handlers)());
-    }}
-    for m in &method_mods {{
-        core_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
-            anv_source: m.full_anv_source(),
-        }});
-        externs.extend((m.handlers)());
-    }}
-
-    let std_mods = anvyx_std::std_modules();
-    anvyx_std::init_std_modules(&std_mods);
-    let mut std_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
-    for m in &std_mods {{
-        std_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
-            anv_source: m.full_anv_source(),
-        }});
-        externs.extend((m.handlers)());
-    }}
-
-    let core = anvyx_lang::CoreSource {{ prelude: core_source, modules: core_sources }};
-    match anvyx_lang::run_program_with_std(&source, file_path, backend, externs, extern_metadata, std_sources, core) {{
-        Ok(output) => print!("{{output}}"),
-        Err(e) => {{ eprintln!("{{e}}"); std::process::exit(1); }}
-    }}
-}}
-"#
-    )
+    let entries = sorted_extern_names(manifest);
+    RUNNER_TEMPLATE
+        .replace("%RUNTIME_INIT%", RUNTIME_INIT)
+        .replace("%METADATA_WRITE%", &generate_metadata_lines(&entries))
+        .replace("%METADATA_READ%", &generate_metadata_read_lines(&entries))
+        .replace("%EXTERN_EXTENDS%", &generate_extern_extends(&entries))
 }
 
 fn generate_metadata_lines(sorted_names: &[&String]) -> String {
@@ -308,135 +220,19 @@ fn generate_metadata_read_lines(sorted_names: &[&String]) -> String {
 }
 
 fn generate_build_main_rs(manifest: &Manifest) -> String {
-    let entry_point = &manifest.project.entry;
-
-    if manifest.has_externs() {
-        let mut entries: Vec<&String> = manifest.externs.keys().collect();
-        entries.sort();
-
-        let metadata_consts = generate_build_metadata_consts(&entries);
-        let metadata_inserts = generate_build_metadata_inserts(&entries);
-        let mut extend_lines = String::new();
-        for name in &entries {
-            extend_lines.push_str(&format!("    externs.extend({name}::anvyx_externs());\n"));
-        }
-
-        format!(
-            r#"use std::collections::HashMap;
-use std::env;
-use std::fs;
-use std::str::FromStr;
-
-const ENTRY_POINT: &str = "{entry_point}";
-
-{metadata_consts}
-fn main() {{
-    let exe_path = env::current_exe()
-        .unwrap_or_else(|e| {{ eprintln!("Failed to resolve executable path: {{e}}"); std::process::exit(1); }});
-    let base_dir = exe_path.parent()
-        .unwrap_or_else(|| {{ eprintln!("Failed to resolve executable directory"); std::process::exit(1); }});
-
-    let entry = base_dir.join(ENTRY_POINT);
-    let file_path = entry.to_string_lossy().to_string();
-
-    let source = fs::read_to_string(&entry)
-        .unwrap_or_else(|e| {{ eprintln!("Failed to read {{file_path}}: {{e}}"); std::process::exit(1); }});
-
-    let backend = anvyx_lang::Backend::from_str("vm")
-        .unwrap_or_else(|e| {{ eprintln!("{{e}}"); std::process::exit(1); }});
-
-    let mut extern_metadata: HashMap<String, String> = HashMap::new();
-{metadata_inserts}
-    let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
-{extend_lines}
-    let (prelude_mods, method_mods) = anvyx_core::split_core_modules();
-    let core_source: String = prelude_mods.iter().map(|m| m.full_anv_source()).collect::<Vec<_>>().join("\n");
-    let mut core_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
-    for m in &prelude_mods {{
-        externs.extend((m.handlers)());
-    }}
-    for m in &method_mods {{
-        core_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
-            anv_source: m.full_anv_source(),
-        }});
-        externs.extend((m.handlers)());
-    }}
-
-    let std_mods = anvyx_std::std_modules();
-    anvyx_std::init_std_modules(&std_mods);
-    let mut std_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
-    for m in &std_mods {{
-        std_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
-            anv_source: m.full_anv_source(),
-        }});
-        externs.extend((m.handlers)());
-    }}
-
-    let core = anvyx_lang::CoreSource {{ prelude: core_source, modules: core_sources }};
-    match anvyx_lang::run_program_with_std(&source, &file_path, backend, externs, extern_metadata, std_sources, core) {{
-        Ok(output) => print!("{{output}}"),
-        Err(e) => {{ eprintln!("{{e}}"); std::process::exit(1); }}
-    }}
-}}
-"#
+    let entries = sorted_extern_names(manifest);
+    BUILD_TEMPLATE
+        .replace("%ENTRY_POINT%", &manifest.project.entry)
+        .replace("%RUNTIME_INIT%", RUNTIME_INIT)
+        .replace(
+            "%METADATA_CONSTS%",
+            &generate_build_metadata_consts(&entries),
         )
-    } else {
-        format!(
-            r#"use std::collections::HashMap;
-use std::env;
-use std::fs;
-use std::str::FromStr;
-
-const ENTRY_POINT: &str = "{entry_point}";
-
-fn main() {{
-    let exe_path = env::current_exe()
-        .unwrap_or_else(|e| {{ eprintln!("Failed to resolve executable path: {{e}}"); std::process::exit(1); }});
-    let base_dir = exe_path.parent()
-        .unwrap_or_else(|| {{ eprintln!("Failed to resolve executable directory"); std::process::exit(1); }});
-
-    let entry = base_dir.join(ENTRY_POINT);
-    let file_path = entry.to_string_lossy().to_string();
-
-    let source = fs::read_to_string(&entry)
-        .unwrap_or_else(|e| {{ eprintln!("Failed to read {{file_path}}: {{e}}"); std::process::exit(1); }});
-
-    let backend = anvyx_lang::Backend::from_str("vm")
-        .unwrap_or_else(|e| {{ eprintln!("{{e}}"); std::process::exit(1); }});
-
-    let (prelude_mods, method_mods) = anvyx_core::split_core_modules();
-    let core_source: String = prelude_mods.iter().map(|m| m.full_anv_source()).collect::<Vec<_>>().join("\n");
-    let mut core_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
-    let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
-    for m in &prelude_mods {{
-        externs.extend((m.handlers)());
-    }}
-    for m in &method_mods {{
-        core_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
-            anv_source: m.full_anv_source(),
-        }});
-        externs.extend((m.handlers)());
-    }}
-
-    let std_mods = anvyx_std::std_modules();
-    anvyx_std::init_std_modules(&std_mods);
-    let mut std_sources: HashMap<String, anvyx_lang::StdModuleSource> = HashMap::new();
-    for m in &std_mods {{
-        std_sources.insert(m.name.to_string(), anvyx_lang::StdModuleSource {{
-            anv_source: m.full_anv_source(),
-        }});
-        externs.extend((m.handlers)());
-    }}
-
-    let core = anvyx_lang::CoreSource {{ prelude: core_source, modules: core_sources }};
-    match anvyx_lang::run_program_with_std(&source, &file_path, backend, externs, HashMap::new(), std_sources, core) {{
-        Ok(output) => print!("{{output}}"),
-        Err(e) => {{ eprintln!("{{e}}"); std::process::exit(1); }}
-    }}
-}}
-"#
+        .replace(
+            "%METADATA_INSERTS%",
+            &generate_build_metadata_inserts(&entries),
         )
-    }
+        .replace("%EXTERN_EXTENDS%", &generate_extern_extends(&entries))
 }
 
 fn generate_build_metadata_consts(sorted_names: &[&String]) -> String {
@@ -1043,7 +839,7 @@ mod tests {
         assert!(output.contains("anvyx_std::std_modules()"));
         assert!(output.contains("std_sources"));
         assert!(!output.contains("include_str!"));
-        assert!(!output.contains("extern_metadata"));
+        assert!(output.contains("extern_metadata"));
         assert!(!output.contains("anvyx_externs"));
     }
 

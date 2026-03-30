@@ -1,0 +1,33 @@
+use std::collections::HashMap;
+use std::env;
+use std::fs;
+use std::str::FromStr;
+
+const ENTRY_POINT: &str = "%ENTRY_POINT%";
+
+%METADATA_CONSTS%
+fn main() {
+    let exe_path = env::current_exe()
+        .unwrap_or_else(|e| { eprintln!("Failed to resolve executable path: {e}"); std::process::exit(1); });
+    let base_dir = exe_path.parent()
+        .unwrap_or_else(|| { eprintln!("Failed to resolve executable directory"); std::process::exit(1); });
+
+    let entry = base_dir.join(ENTRY_POINT);
+    let file_path = entry.to_string_lossy().to_string();
+
+    let source = fs::read_to_string(&entry)
+        .unwrap_or_else(|e| { eprintln!("Failed to read {file_path}: {e}"); std::process::exit(1); });
+
+    let backend = anvyx_lang::Backend::from_str("vm")
+        .unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(1); });
+
+    let mut extern_metadata: HashMap<String, String> = HashMap::new();
+%METADATA_INSERTS%
+    let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
+%EXTERN_EXTENDS%
+%RUNTIME_INIT%
+    match anvyx_lang::run_program_with_std(&source, &file_path, backend, externs, extern_metadata, std_sources, core) {
+        Ok(output) => print!("{output}"),
+        Err(e) => { eprintln!("{e}"); std::process::exit(1); }
+    }
+}
