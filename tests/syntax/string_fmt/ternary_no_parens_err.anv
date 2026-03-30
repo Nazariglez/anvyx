@@ -5,5 +5,5 @@
 fn main() {
     let a = 1;
     let b = 2;
-    let _s = "{true ? a : b}";
+    let _s = f"{true ? a : b}";
 }

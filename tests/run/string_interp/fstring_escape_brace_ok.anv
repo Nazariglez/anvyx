@@ -1,0 +1,7 @@
+// @mode: run
+// @expect: success
+// @match: literal {brace}
+
+fn main() {
+    println(f"literal \{brace}");
+}

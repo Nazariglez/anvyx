@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: invalid escape sequence
+
+fn main() {
+    let _s: string = "\{test}";
+}

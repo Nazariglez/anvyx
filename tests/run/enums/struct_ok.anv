@@ -15,12 +15,12 @@ fn main() {
     let e2 = Event.Hit { target: 1, damage: 25 };
 
     match e1 {
-        Event.Move { dx, dy } => { println("moved {dx} {dy}"); },
-        Event.Hit { target, damage } => { println("hit {target} {damage}"); },
+        Event.Move { dx, dy } => { println(f"moved {dx} {dy}"); },
+        Event.Hit { target, damage } => { println(f"hit {target} {damage}"); },
     }
 
     match e2 {
-        Event.Move { dx, dy } => { println("moved {dx} {dy}"); },
-        Event.Hit { target, damage } => { println("hit {target} {damage}"); },
+        Event.Move { dx, dy } => { println(f"moved {dx} {dy}"); },
+        Event.Hit { target, damage } => { println(f"hit {target} {damage}"); },
     }
 }

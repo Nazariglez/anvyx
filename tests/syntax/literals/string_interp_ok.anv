@@ -7,10 +7,10 @@ fn main() {
     let x = 1.5;
     let alive = true;
 
-    let a: string = "HP: {hp}";
-    let b: string = "{name} has {hp} HP";
-    let c: string = "pos: {x}";
-    let d: string = "alive: {alive}";
-    let e: string = "{hp + 1}";
-    let f: string = "escaped \{brace}";
+    let a: string = f"HP: {hp}";
+    let b: string = f"{name} has {hp} HP";
+    let c: string = f"pos: {x}";
+    let d: string = f"alive: {alive}";
+    let e: string = f"{hp + 1}";
+    let f: string = f"escaped \{brace}";
 }

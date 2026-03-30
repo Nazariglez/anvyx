@@ -274,13 +274,13 @@ mod tests {
 
     #[test]
     fn string_interp_int() {
-        let out = vm_ok(r#"fn main() { let x = 42; println("val: {x}"); }"#);
+        let out = vm_ok(r#"fn main() { let x = 42; println(f"val: {x}"); }"#);
         assert_eq!(out, "val: 42\n");
     }
 
     #[test]
     fn string_interp_multiple_values() {
-        let out = vm_ok(r#"fn main() { let a = "hi"; let b = 3; println("{a} {b}"); }"#);
+        let out = vm_ok(r#"fn main() { let a = "hi"; let b = 3; println(f"{a} {b}"); }"#);
         assert_eq!(out, "hi 3\n");
     }
 

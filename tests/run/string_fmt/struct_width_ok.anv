@@ -8,11 +8,11 @@ struct Color {
     b: int,
 
     fn to_string(self) -> string {
-        "rgb({self.r}, {self.g}, {self.b})"
+        f"rgb({self.r}, {self.g}, {self.b})"
     }
 }
 
 fn main() {
     let c = Color { r: 255, g: 128, b: 0 };
-    println("[{c:>30}]");
+    println(f"[{c:>30}]");
 }

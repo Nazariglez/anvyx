@@ -388,7 +388,7 @@ fn map_literal_expr_values_parses() {
 
 #[test]
 fn string_interp_single_var_parses() {
-    let expr = parse_expr(r#""HP: {hp}""#);
+    let expr = parse_expr(r#"f"HP: {hp}""#);
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 2);
     match &parts[0] {
@@ -403,7 +403,7 @@ fn string_interp_single_var_parses() {
 
 #[test]
 fn string_interp_expression_parses() {
-    let expr = parse_expr(r#""a {x + y} b""#);
+    let expr = parse_expr(r#"f"a {x + y} b""#);
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 3);
     match &parts[0] {
@@ -426,7 +426,7 @@ fn string_interp_expression_parses() {
 
 #[test]
 fn string_interp_multiple_exprs_parses() {
-    let expr = parse_expr(r#""{a} and {b}""#);
+    let expr = parse_expr(r#"f"{a} and {b}""#);
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 3);
     match &parts[0] {
@@ -445,7 +445,7 @@ fn string_interp_multiple_exprs_parses() {
 
 #[test]
 fn string_interp_only_expr_parses() {
-    let expr = parse_expr(r#""{x}""#);
+    let expr = parse_expr(r#"f"{x}""#);
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 1);
     match &parts[0] {
@@ -462,13 +462,13 @@ fn string_interp_plain_string_still_lit() {
 
 #[test]
 fn string_interp_escaped_brace_still_plain() {
-    let expr = parse_expr(r#""\{not_interp}""#);
+    let expr = parse_expr(r#"f"\{not_interp}""#);
     expect_string(&expr, "{not_interp}");
 }
 
 #[test]
 fn string_interp_no_format_spec_is_none() {
-    let expr = parse_expr(r#""{x}""#);
+    let expr = parse_expr(r#"f"{x}""#);
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 1);
     match &parts[0] {
@@ -479,7 +479,7 @@ fn string_interp_no_format_spec_is_none() {
 
 #[test]
 fn string_interp_format_spec_width() {
-    let expr = parse_expr(r#""{x:04}""#);
+    let expr = parse_expr(r#"f"{x:04}""#);
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 1);
     match &parts[0] {
@@ -496,7 +496,7 @@ fn string_interp_format_spec_width() {
 
 #[test]
 fn string_interp_format_spec_precision() {
-    let expr = parse_expr(r#""{x:.2}""#);
+    let expr = parse_expr(r#"f"{x:.2}""#);
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 1);
     match &parts[0] {
@@ -510,7 +510,7 @@ fn string_interp_format_spec_precision() {
 
 #[test]
 fn string_interp_format_spec_align_width() {
-    let expr = parse_expr(r#""{x:>10}""#);
+    let expr = parse_expr(r#"f"{x:>10}""#);
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 1);
     match &parts[0] {
@@ -524,7 +524,7 @@ fn string_interp_format_spec_align_width() {
 
 #[test]
 fn string_interp_format_spec_fill_align() {
-    let expr = parse_expr(r#""{x:*>10}""#);
+    let expr = parse_expr(r#"f"{x:*>10}""#);
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 1);
     match &parts[0] {
@@ -539,7 +539,7 @@ fn string_interp_format_spec_fill_align() {
 
 #[test]
 fn string_interp_format_spec_hex() {
-    let expr = parse_expr(r#""{x:08x}""#);
+    let expr = parse_expr(r#"f"{x:08x}""#);
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 1);
     match &parts[0] {
@@ -554,7 +554,7 @@ fn string_interp_format_spec_hex() {
 
 #[test]
 fn string_interp_format_spec_sign_precision() {
-    let expr = parse_expr(r#""{x:+.2}""#);
+    let expr = parse_expr(r#"f"{x:+.2}""#);
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 1);
     match &parts[0] {
@@ -568,7 +568,7 @@ fn string_interp_format_spec_sign_precision() {
 
 #[test]
 fn string_interp_format_spec_composed() {
-    let expr = parse_expr(r#""{x:0>+8x}""#);
+    let expr = parse_expr(r#"f"{x:0>+8x}""#);
     let parts = expect_string_interp(&expr);
     assert_eq!(parts.len(), 1);
     match &parts[0] {
@@ -585,12 +585,12 @@ fn string_interp_format_spec_composed() {
 
 #[test]
 fn string_interp_format_spec_invalid_type_err() {
-    parse_program_err(r#"fn main() { let s = "{x:q}"; }"#);
+    parse_program_err(r#"fn main() { let s = f"{x:q}"; }"#);
 }
 
 #[test]
 fn string_interp_format_spec_empty_err() {
-    parse_program_err(r#"fn main() { let s = "{x:}"; }"#);
+    parse_program_err(r#"fn main() { let s = f"{x:}"; }"#);
 }
 
 #[test]

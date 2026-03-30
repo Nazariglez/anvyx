@@ -6,5 +6,5 @@ struct Pair { a: int, b: int }
 
 fn main() {
     let p = Pair { b: 99, a: 42 };
-    println("{p.a}");
+    println(f"{p.a}");
 }

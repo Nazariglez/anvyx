@@ -7,6 +7,6 @@
 
 fn main() {
     let l: [int] = [10, 20, 30];
-    println("{l[0]}");
-    println("{l[1]}");
+    println(f"{l[0]}");
+    println(f"{l[1]}");
 }

@@ -8,6 +8,6 @@
 enum Shape { Point, Circle(float) }
 
 fn main() {
-    println("{Shape.Point}");
-    println("{Shape.Circle(3.14)}");
+    println(f"{Shape.Point}");
+    println(f"{Shape.Circle(3.14)}");
 }

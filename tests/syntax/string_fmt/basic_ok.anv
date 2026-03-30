@@ -4,16 +4,16 @@
 fn main() {
     let x = 5;
     let f = 3.14;
-    let _s = "{x:04}";
-    let _s = "{f:.2}";
-    let _s = "{x:>10}";
-    let _s = "{x:<10}";
-    let _s = "{x:^10}";
-    let _s = "{x:*>10}";
-    let _s = "{x:+}";
-    let _s = "{x:x}";
-    let _s = "{x:X}";
-    let _s = "{x:b}";
-    let _s = "{x:08x}";
-    let _s = "{f:+.2}";
+    let _s = f"{x:04}";
+    let _s = f"{f:.2}";
+    let _s = f"{x:>10}";
+    let _s = f"{x:<10}";
+    let _s = f"{x:^10}";
+    let _s = f"{x:*>10}";
+    let _s = f"{x:+}";
+    let _s = f"{x:x}";
+    let _s = f"{x:X}";
+    let _s = f"{x:b}";
+    let _s = f"{x:08x}";
+    let _s = f"{f:+.2}";
 }

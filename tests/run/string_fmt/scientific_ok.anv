@@ -7,6 +7,6 @@
 
 fn main() {
     let x = 31400.0;
-    println("{x:e}");
-    println("{x:.2E}");
+    println(f"{x:e}");
+    println(f"{x:.2E}");
 }

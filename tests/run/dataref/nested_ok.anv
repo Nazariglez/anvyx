@@ -17,6 +17,6 @@ fn main() {
     var i = Inner { value: 1 };
     var o = Outer { inner: i };
     i.value = 99;
-    println("{o.inner.value}");
-    println("{i.value}");
+    println(f"{o.inner.value}");
+    println(f"{i.value}");
 }

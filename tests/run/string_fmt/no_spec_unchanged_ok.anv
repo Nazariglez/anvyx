@@ -9,7 +9,7 @@
 fn main() {
     let x = 42;
     let name = "world";
-    println("hello {name}, x = {x}");
-    println("{x + 1}");
-    println("{true}");
+    println(f"hello {name}, x = {x}");
+    println(f"{x + 1}");
+    println(f"{true}");
 }

@@ -4,5 +4,5 @@
 
 fn main() {
     let b = true;
-    let _r = "{b:.2}";
+    let _r = f"{b:.2}";
 }

@@ -7,7 +7,7 @@ fn main() {
     let c: string = "line\r";
     let d: string = "path\\to";
     let e: string = "say \"hi\"";
-    let f: string = "\{";
+    let f: string = "{";
     let g: string = "a\nb\tc\\d";
     let h: string = "";
 }

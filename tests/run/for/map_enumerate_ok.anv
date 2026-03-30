@@ -12,6 +12,6 @@ fn main() {
     m["hp"] = 100;
     m["mp"] = 50;
     for (i, (k, v)) in m {
-        println("{i}: {k} = {v}");
+        println(f"{i}: {k} = {v}");
     }
 }

@@ -7,6 +7,6 @@
 
 fn main() {
     let t = (10, "hello");
-    println("{t.0}");
+    println(f"{t.0}");
     println(t.1);
 }

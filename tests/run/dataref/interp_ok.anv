@@ -8,5 +8,5 @@ dataref Node {
 
 fn main() {
     let n = Node { value: 42 };
-    println("{n}");
+    println(f"{n}");
 }

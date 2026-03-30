@@ -8,6 +8,6 @@
 fn main() {
     let a = 5;
     let b = 10;
-    println("{(true ? a : b):04}");
-    println("{(false ? a : b):04}");
+    println(f"{(true ? a : b):04}");
+    println(f"{(false ? a : b):04}");
 }

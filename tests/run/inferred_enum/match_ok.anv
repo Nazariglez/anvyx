@@ -19,7 +19,7 @@ fn show(d: Direction) {
 
 fn show_opt(o: Option<int>) {
     match o {
-        .Some(v) => println("some: {v}"),
+        .Some(v) => println(f"some: {v}"),
         .None => println("none"),
     }
 }

@@ -5,5 +5,5 @@
 fn main() {
     var a: [int; 3] = [1, 2, 3];
     a[1] = 99;
-    println("{a[1]}");
+    println(f"{a[1]}");
 }

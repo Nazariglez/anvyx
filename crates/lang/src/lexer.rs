@@ -289,6 +289,7 @@ fn scan_escape<'src, 'p>(
     input: &mut InputRef<'src, 'p, &'src str, Extra<'src>>,
     char_cursor: &Cursor<'src, 'p, &'src str>,
     text_buf: &mut String,
+    formatted: bool,
 ) -> Result<(), LexErr<'src>> {
     match input.next() {
         Some('n') => text_buf.push('\n'),
@@ -296,7 +297,13 @@ fn scan_escape<'src, 'p>(
         Some('r') => text_buf.push('\r'),
         Some('\\') => text_buf.push('\\'),
         Some('"') => text_buf.push('"'),
-        Some('{') => text_buf.push('{'),
+        Some('{') if formatted => text_buf.push('{'),
+        Some('{') => {
+            return Err(Rich::custom(
+                input.span_since(char_cursor),
+                "invalid escape sequence `\\{`; braces are literal in plain strings, use f\"...\" for interpolation",
+            ));
+        }
         _ => {
             return Err(Rich::custom(
                 input.span_since(char_cursor),
@@ -418,15 +425,35 @@ fn tokenize_interp_expr<'src, 'p>(
 fn string_literal<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Extra<'src>> {
     custom(|input: &mut InputRef<'src, '_, &'src str, Extra<'src>>| {
         let str_open = input.cursor();
-        match input.peek() {
-            Some('"') => input.skip(),
+        let formatted = match input.peek() {
+            Some('"') => {
+                input.skip();
+                false
+            }
+            Some('f') => {
+                let checkpoint = input.save();
+                input.skip(); // consume 'f'
+                match input.peek() {
+                    Some('"') => {
+                        input.skip(); // consume '"'
+                        true
+                    }
+                    _ => {
+                        input.rewind(checkpoint);
+                        return Err(Rich::custom(
+                            input.span_since(&str_open),
+                            "expected string literal",
+                        ));
+                    }
+                }
+            }
             _ => {
                 return Err(Rich::custom(
                     input.span_since(&str_open),
                     "expected string literal",
                 ));
             }
-        }
+        };
 
         let mut tokens: Vec<SpannedToken> = vec![];
         let mut text_buf = String::new();
@@ -443,8 +470,8 @@ fn string_literal<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Ext
                     ));
                 }
                 Some('"') => break,
-                Some('\\') => scan_escape(input, &char_cursor, &mut text_buf)?,
-                Some('{') => {
+                Some('\\') => scan_escape(input, &char_cursor, &mut text_buf, formatted)?,
+                Some('{') if formatted => {
                     is_interpolated = true;
                     let after_brace = input.span_since(&str_open);
                     let brace_pos = after_brace.end - 1;
@@ -500,6 +527,7 @@ fn string_literal<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Ext
 
                     text_src_start = after_close.end;
                 }
+                Some('{') => text_buf.push('{'),
                 Some(c) => text_buf.push(c),
             }
         }
@@ -521,11 +549,12 @@ fn string_literal<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Ext
                     },
                 ));
             }
+            let prefix_len = if formatted { 2 } else { 1 };
             let mut result = vec![(
                 Token::Interp(InterpToken::Start),
                 Span {
                     start: full_span.start,
-                    end: full_span.start + 1,
+                    end: full_span.start + prefix_len,
                 },
             )];
             result.extend(tokens);
@@ -870,8 +899,8 @@ fn lit_int_suffixed<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src
     .map(|(s, suffix)| LitToken::Float(Intern::new(s), Some(suffix)))
 }
 
-fn ident<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
-    text::ident().map(|s: &str| match s {
+fn map_ident_to_token(s: &str) -> Token {
+    match s {
         "struct" => Token::Keyword(Keyword::Struct),
         "enum" => Token::Keyword(Keyword::Enum),
         "string" => Token::Keyword(Keyword::String),
@@ -904,10 +933,47 @@ fn ident<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
         "import" => Token::Keyword(Keyword::Import),
         "extend" => Token::Keyword(Keyword::Extend),
         "dataref" => Token::Keyword(Keyword::DataRef),
-        _ => {
-            let ident = ast::Ident(Intern::new(s.to_string()));
-            Token::Ident(ident)
+        _ => Token::Ident(ast::Ident(Intern::new(s.to_string()))),
+    }
+}
+
+fn ident<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
+    custom(|input: &mut InputRef<'src, '_, &'src str, Extra<'src>>| {
+        let start = input.cursor();
+
+        let first = match input.peek() {
+            Some(c) if c.is_alphabetic() || c == '_' => {
+                input.skip();
+                c
+            }
+            _ => {
+                return Err(Rich::custom(
+                    input.span_since(&start),
+                    "expected identifier",
+                ));
+            }
+        };
+
+        let mut s = String::from(first);
+        loop {
+            match input.peek() {
+                Some(c) if c.is_alphanumeric() || c == '_' => {
+                    s.push(c);
+                    input.skip();
+                }
+                _ => break,
+            }
         }
+
+        // `f` immediately followed by `"` is the f-string prefix — not a bare identifier.
+        if s == "f" && matches!(input.peek(), Some('"')) {
+            return Err(Rich::custom(
+                input.span_since(&start),
+                "expected identifier",
+            ));
+        }
+
+        Ok(map_ident_to_token(&s))
     })
 }
 
@@ -1044,8 +1110,8 @@ mod tests {
     }
 
     #[test]
-    fn test_string_escape_brace() {
-        assert_eq!(tokenize_string(r#""\{""#).unwrap(), "{");
+    fn test_string_escape_brace_in_plain_err() {
+        assert!(tokenize(r#""\{""#).is_err());
     }
 
     #[test]
@@ -1065,7 +1131,7 @@ mod tests {
 
     #[test]
     fn test_interp_string_only_expr() {
-        let tokens = tokenize_tokens(r#""{x}""#);
+        let tokens = tokenize_tokens(r#"f"{x}""#);
         assert_eq!(
             tokens,
             vec![
@@ -1080,7 +1146,7 @@ mod tests {
 
     #[test]
     fn test_interp_string_single_var() {
-        let tokens = tokenize_tokens(r#""HP: {hp}""#);
+        let tokens = tokenize_tokens(r#"f"HP: {hp}""#);
         assert_eq!(
             tokens,
             vec![
@@ -1096,7 +1162,7 @@ mod tests {
 
     #[test]
     fn test_interp_string_expression() {
-        let tokens = tokenize_tokens(r#""a {x + y} b""#);
+        let tokens = tokenize_tokens(r#"f"a {x + y} b""#);
         assert_eq!(
             tokens,
             vec![
@@ -1115,7 +1181,7 @@ mod tests {
 
     #[test]
     fn test_interp_string_multiple_parts() {
-        let tokens = tokenize_tokens(r#""{a} and {b}""#);
+        let tokens = tokenize_tokens(r#"f"{a} and {b}""#);
         assert_eq!(
             tokens,
             vec![
@@ -1134,7 +1200,7 @@ mod tests {
 
     #[test]
     fn test_interp_string_adjacent() {
-        let tokens = tokenize_tokens(r#""{a}{b}""#);
+        let tokens = tokenize_tokens(r#"f"{a}{b}""#);
         assert_eq!(
             tokens,
             vec![
@@ -1162,9 +1228,9 @@ mod tests {
     }
 
     #[test]
-    fn test_interp_string_escaped_brace_no_interp() {
-        // \{ is an escape that produces a literal `{` — no interpolation
-        let tokens = tokenize_tokens(r#""\{not_interp}""#);
+    fn test_fstring_escaped_brace_no_interp() {
+        // \{ in an f-string produces a literal `{` — no interpolation
+        let tokens = tokenize_tokens(r#"f"\{not_interp}""#);
         assert_eq!(
             tokens,
             vec![Token::Literal(LitToken::String(Intern::new(
@@ -1175,7 +1241,7 @@ mod tests {
 
     #[test]
     fn test_interp_string_unterminated_expr_err() {
-        assert!(tokenize(r#""hello {oops""#).is_err());
+        assert!(tokenize(r#"f"hello {oops""#).is_err());
     }
 
     fn fmt_spec(s: &str) -> Token {
@@ -1184,7 +1250,7 @@ mod tests {
 
     #[test]
     fn test_interp_format_spec_basic() {
-        let tokens = tokenize_tokens(r#""{x:04}""#);
+        let tokens = tokenize_tokens(r#"f"{x:04}""#);
         assert_eq!(
             tokens,
             vec![
@@ -1200,7 +1266,7 @@ mod tests {
 
     #[test]
     fn test_interp_format_spec_precision() {
-        let tokens = tokenize_tokens(r#""{x:.2f}""#);
+        let tokens = tokenize_tokens(r#"f"{x:.2f}""#);
         assert_eq!(
             tokens,
             vec![
@@ -1216,7 +1282,7 @@ mod tests {
 
     #[test]
     fn test_interp_format_spec_align() {
-        let tokens = tokenize_tokens(r#""{x:>10}""#);
+        let tokens = tokenize_tokens(r#"f"{x:>10}""#);
         assert_eq!(
             tokens,
             vec![
@@ -1232,7 +1298,7 @@ mod tests {
 
     #[test]
     fn test_interp_no_format_spec_unchanged() {
-        let tokens = tokenize_tokens(r#""{x}""#);
+        let tokens = tokenize_tokens(r#"f"{x}""#);
         assert_eq!(
             tokens,
             vec![
@@ -1248,7 +1314,7 @@ mod tests {
     #[test]
     fn test_interp_format_spec_ternary_with_parens() {
         // ':' inside parens is not the split; ':04' after ')' is
-        let tokens = tokenize_tokens(r#""{(a ? b : c):04}""#);
+        let tokens = tokenize_tokens(r#"f"{(a ? b : c):04}""#);
         assert!(tokens.contains(&fmt_spec("04")));
         assert!(tokens.contains(&Token::Question));
         assert!(tokens.contains(&Token::Colon));
@@ -1257,7 +1323,7 @@ mod tests {
     #[test]
     fn test_interp_format_spec_ternary_no_parens_splits() {
         // "{a ? b : c}" splits on ':' at paren_depth 0
-        let tokens = tokenize_tokens(r#""{a ? b : c}""#);
+        let tokens = tokenize_tokens(r#"f"{a ? b : c}""#);
         assert!(tokens.contains(&fmt_spec(" c")));
         // ':' was consumed as the separator, no Token::Colon in expr tokens
         assert!(!tokens.contains(&Token::Colon));
@@ -1265,7 +1331,7 @@ mod tests {
 
     #[test]
     fn test_interp_format_spec_with_surrounding_text() {
-        let tokens = tokenize_tokens(r#""val={x:04} done""#);
+        let tokens = tokenize_tokens(r#"f"val={x:04} done""#);
         assert_eq!(
             tokens,
             vec![
@@ -1283,7 +1349,7 @@ mod tests {
 
     #[test]
     fn test_interp_format_spec_composed() {
-        let tokens = tokenize_tokens(r#""{x:+08x}""#);
+        let tokens = tokenize_tokens(r#"f"{x:+08x}""#);
         assert_eq!(
             tokens,
             vec![
@@ -1713,5 +1779,51 @@ mod tests {
     #[test]
     fn test_hex_trailing_underscore_err() {
         assert!(tokenize("0xFF_").is_err());
+    }
+
+    #[test]
+    fn test_plain_string_brace_literal() {
+        assert_eq!(tokenize_string(r#""hello {x}""#).unwrap(), "hello {x}");
+    }
+
+    #[test]
+    fn test_plain_string_multiple_braces_literal() {
+        assert_eq!(tokenize_string(r#""{a} and {b}""#).unwrap(), "{a} and {b}");
+    }
+
+    #[test]
+    fn test_plain_string_close_brace_literal() {
+        assert_eq!(tokenize_string(r#""a } b""#).unwrap(), "a } b");
+    }
+
+    #[test]
+    fn test_plain_string_unterminated_brace_is_literal() {
+        assert_eq!(tokenize_string(r#""hello {oops""#).unwrap(), "hello {oops");
+    }
+
+    #[test]
+    fn test_fstring_no_interp_is_plain() {
+        assert_eq!(tokenize_string(r#"f"hello""#).unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_fstring_empty() {
+        assert_eq!(tokenize_string(r#"f"""#).unwrap(), "");
+    }
+
+    #[test]
+    fn test_fstring_escape_brace() {
+        assert_eq!(tokenize_string(r#"f"\{test}""#).unwrap(), "{test}");
+    }
+
+    #[test]
+    fn test_f_space_string_is_ident_and_string() {
+        let tokens = tokenize_tokens(r#"f "hello""#);
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0], ident_tok("f"));
+        assert_eq!(
+            tokens[1],
+            Token::Literal(LitToken::String(Intern::new("hello".to_string())))
+        );
     }
 }

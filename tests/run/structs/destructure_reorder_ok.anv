@@ -10,6 +10,6 @@ struct Point { x: int, y: int }
 fn main() {
     let p = Point { x: 10, y: 20 };
     let Point { y, x } = p;
-    println("{y}");
-    println("{x}");
+    println(f"{y}");
+    println(f"{x}");
 }

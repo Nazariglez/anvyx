@@ -8,9 +8,9 @@
 
 fn check(a: int?, b: int?) {
     if let x? = a {
-        println("a: {x}");
+        println(f"a: {x}");
     } else if let y? = b {
-        println("b: {y}");
+        println(f"b: {y}");
     } else {
         println("none");
     }

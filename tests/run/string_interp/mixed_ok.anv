@@ -6,5 +6,5 @@ struct Player { name: string, hp: int, alive: bool }
 
 fn main() {
     let p = Player { name: "Link", hp: 100, alive: true };
-    println("name: {p.name}, hp: {p.hp}, alive: {p.alive}");
+    println(f"name: {p.name}, hp: {p.hp}, alive: {p.alive}");
 }

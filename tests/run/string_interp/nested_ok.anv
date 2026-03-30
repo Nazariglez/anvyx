@@ -7,5 +7,5 @@ struct Entity { pos: Point }
 
 fn main() {
     let e = Entity { pos: Point { x: 0, y: 1 } };
-    println("entity: {e}");
+    println(f"entity: {e}");
 }

@@ -9,6 +9,6 @@
 fn main() {
     let arr: [int; 3] = [10, 20, 30];
     for (i, el) in arr {
-        println("{i}: {el}");
+        println(f"{i}: {el}");
     }
 }

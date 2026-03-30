@@ -13,6 +13,6 @@ fn main() {
     var a = Node { value: 1 };
     var b = a;
     b.value = 99;
-    println("{a.value}");
+    println(f"{a.value}");
     println(a == b);
 }

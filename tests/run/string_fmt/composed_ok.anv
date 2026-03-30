@@ -7,7 +7,7 @@
 
 fn main() {
     let x = 255;
-    println("{x:0>8x}");
+    println(f"{x:0>8x}");
     let score = 9.5;
-    println("{score:+10.2}");
+    println(f"{score:+10.2}");
 }

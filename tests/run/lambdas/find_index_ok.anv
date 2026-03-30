@@ -9,12 +9,12 @@ fn main() {
     let xs: [int] = [10, 20, 30];
     let r = xs.find_index(|x| x > 15);
     match r {
-        Option.Some(i) => println("index: {i}"),
+        Option.Some(i) => println(f"index: {i}"),
         Option.None => println("not found"),
     }
     let r2 = xs.find_index(|x| x > 100);
     match r2 {
-        Option.Some(i) => println("index: {i}"),
+        Option.Some(i) => println(f"index: {i}"),
         Option.None => println("not found"),
     }
 }

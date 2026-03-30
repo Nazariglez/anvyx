@@ -5,5 +5,5 @@
 fn main() {
     let a = "hello";
     let b = "world";
-    println("{a} {b}");
+    println(f"{a} {b}");
 }

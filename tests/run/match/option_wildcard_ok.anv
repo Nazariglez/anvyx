@@ -9,7 +9,7 @@ fn main() {
     let a: int? = 10;
     match a {
         Option.Some(v) => {
-            println("got: {v}");
+            println(f"got: {v}");
         },
         _ => {
             println("default");
@@ -19,7 +19,7 @@ fn main() {
     let b: int? = nil;
     match b {
         Option.Some(v) => {
-            println("got: {v}");
+            println(f"got: {v}");
         },
         _ => {
             println("default");

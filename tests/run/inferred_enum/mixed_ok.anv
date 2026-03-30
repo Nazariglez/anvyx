@@ -7,7 +7,7 @@
 
 fn show(o: Option<string>) {
     match o {
-        Option.Some(v) => println("some: {v}"),
+        Option.Some(v) => println(f"some: {v}"),
         .None => println("none"),
     }
 }

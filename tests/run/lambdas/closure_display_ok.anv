@@ -13,7 +13,7 @@ fn mul_two(x: int) -> int {
 fn main() {
     let f = |x: int| x + 1;
     println(f);
-    println("value: {f}");
+    println(f"value: {f}");
     let g = mul_two;
     println(g);
 }

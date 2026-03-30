@@ -9,8 +9,8 @@
 fn main() {
     let pos = 42;
     let neg = -42;
-    println("{pos:+}");
-    println("{neg:+}");
+    println(f"{pos:+}");
+    println(f"{neg:+}");
     let f = 3.14;
-    println("{f:+.2}");
+    println(f"{f:+.2}");
 }

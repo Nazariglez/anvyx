@@ -6,11 +6,11 @@ dataref Node {
     value: int,
 
     fn to_string(self) -> string {
-        return "Node[{self.value}]";
+        return f"Node[{self.value}]";
     }
 }
 
 fn main() {
     let n = Node { value: 42 };
-    println("{n}");
+    println(f"{n}");
 }

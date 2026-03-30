@@ -9,8 +9,8 @@
 
 fn main() {
     let name = "Alice";
-    println("[{name:>10}]");
-    println("[{name:<10}]");
-    println("[{name:^10}]");
-    println("{name:.3}");
+    println(f"[{name:>10}]");
+    println(f"[{name:<10}]");
+    println(f"[{name:^10}]");
+    println(f"{name:.3}");
 }

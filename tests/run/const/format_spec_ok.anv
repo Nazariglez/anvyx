@@ -10,13 +10,13 @@
 // @match-end
 
 const PI = 3.14159;
-const FORMATTED = "pi is {PI:.2}";
-const HEX = "{255:x}";
-const HEX_PAD = "{255:04x}";
-const SIGNED = "{42:+}";
-const BIN = "{255:b}";
+const FORMATTED = f"pi is {PI:.2}";
+const HEX = f"{255:x}";
+const HEX_PAD = f"{255:04x}";
+const SIGNED = f"{42:+}";
+const BIN = f"{255:b}";
 const NAME = "hello";
-const PADDED = "{NAME:>10}";
+const PADDED = f"{NAME:>10}";
 
 fn main() {
     println(FORMATTED);

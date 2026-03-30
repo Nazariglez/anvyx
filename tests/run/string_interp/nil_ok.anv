@@ -4,5 +4,5 @@
 
 fn main() {
     let v: int? = nil;
-    println("value: {v}");
+    println(f"value: {v}");
 }

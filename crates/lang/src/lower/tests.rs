@@ -620,7 +620,7 @@ fn lowers_range_to_struct_literal() {
 
 #[test]
 fn string_interp_with_var() {
-    let prog = lower_ok(r#"fn main() { let n = 1; let s = "n = {n}"; }"#);
+    let prog = lower_ok(r#"fn main() { let n = 1; let s = f"n = {n}"; }"#);
     let main = find_main(&prog);
     // s = "n = " + n  → Binary(Add, String("n = "), Local(n))
     let StmtKind::Let { init, .. } = &main.body.stmts[1].kind else {
@@ -637,7 +637,7 @@ fn string_interp_with_var() {
 
 #[test]
 fn string_interp_single_expr_only() {
-    let prog = lower_ok(r#"fn main() { let x = "hi"; let s = "{x}"; }"#);
+    let prog = lower_ok(r#"fn main() { let x = "hi"; let s = f"{x}"; }"#);
     let main = find_main(&prog);
     // single Expr part -> just the local, no wrapper
     let StmtKind::Let { init, .. } = &main.body.stmts[1].kind else {
@@ -648,7 +648,7 @@ fn string_interp_single_expr_only() {
 
 #[test]
 fn string_interp_multiple_parts() {
-    let prog = lower_ok(r#"fn main() { let x = 1; let y = 2; let s = "a {x} b {y}"; }"#);
+    let prog = lower_ok(r#"fn main() { let x = 1; let y = 2; let s = f"a {x} b {y}"; }"#);
     let main = find_main(&prog);
     // "a {x} b {y}" → (("a " + x) + " b ") + y
     let StmtKind::Let { init, .. } = &main.body.stmts[2].kind else {

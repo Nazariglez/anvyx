@@ -7,7 +7,7 @@
 
 fn check(o: Option<int>) {
     if let .Some(v) = o {
-        println("got: {v}");
+        println(f"got: {v}");
     } else {
         println("nope");
     }

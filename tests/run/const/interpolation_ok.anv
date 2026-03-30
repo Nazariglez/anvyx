@@ -3,7 +3,7 @@
 // @match: size: 10
 
 const SIZE = 10;
-const LABEL = "size: {SIZE}";
+const LABEL = f"size: {SIZE}";
 
 fn main() {
     println(LABEL)

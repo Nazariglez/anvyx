@@ -10,9 +10,9 @@
 
 fn main() {
     let x = 255;
-    println("{x:x}");
-    println("{x:X}");
-    println("{x:b}");
-    println("{x:08x}");
-    println("{x:08b}");
+    println(f"{x:x}");
+    println(f"{x:X}");
+    println(f"{x:b}");
+    println(f"{x:08x}");
+    println(f"{x:08b}");
 }
