@@ -1,0 +1,18 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 15
+// 240
+// 256
+// @match-end
+
+fn main() {
+    let MASK = 0xFF & 0x0F;
+    println(MASK);
+
+    let INVERTED = MASK ^ 0xFF;
+    println(INVERTED);
+
+    let SHIFTED = 1 << 8;
+    println(SHIFTED);
+}

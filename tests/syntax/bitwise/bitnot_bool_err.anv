@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: cannot be applied
+
+fn main() {
+    let x = ~true;
+}

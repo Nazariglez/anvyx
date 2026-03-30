@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 240
+// true
+// false
+// @match-end
+
+fn main() {
+    println(255 ^ 15);
+    println(true ^ false);
+    println(true ^ true);
+}

@@ -428,6 +428,11 @@ fn compound_op(op: AssignOp) -> Option<BinaryOp> {
         AssignOp::SubAssign => Some(BinaryOp::Sub),
         AssignOp::MulAssign => Some(BinaryOp::Mul),
         AssignOp::DivAssign => Some(BinaryOp::Div),
+        AssignOp::XorAssign => Some(BinaryOp::Xor),
+        AssignOp::BitAndAssign => Some(BinaryOp::BitAnd),
+        AssignOp::BitOrAssign => Some(BinaryOp::BitOr),
+        AssignOp::ShlAssign => Some(BinaryOp::Shl),
+        AssignOp::ShrAssign => Some(BinaryOp::Shr),
     }
 }
 

@@ -9,7 +9,8 @@ use super::common::{
     TupleShapeResult, block_stmt, field_name_ident, identifier, literal, validate_tuple_shape_raw,
 };
 use super::ops::{
-    add_sub_op, and_op, assign_op, cmp_op, coalesce_op, eq_op, infix_left, mul_div_op, or_op,
+    add_sub_op, and_op, assign_op, bit_and_op, bit_or_op, cmp_op, coalesce_op, eq_op, infix_left,
+    mul_div_op, or_op, shift_op, xor_op,
 };
 use super::pattern::{or_pattern, pattern};
 use super::types::type_ident;
@@ -880,6 +881,7 @@ fn unary_expr<'src>(expr: impl AnvParser<'src, ast::ExprNode>) -> BoxedParser<'s
     select! {
         (Token::Op(Op::Sub), _) => ast::UnaryOp::Neg,
         (Token::Op(Op::Not), _) => ast::UnaryOp::Not,
+        (Token::Op(Op::Tilde), _) => ast::UnaryOp::BitNot,
     }
     .repeated()
     .collect::<Vec<_>>()
@@ -917,9 +919,13 @@ fn binary_expr<'src>(
     let mul = infix_left(unary, mul_div_op());
     let add = infix_left(mul, add_sub_op());
     let range = range_expr(add);
-    let cmp = infix_left(range, cmp_op());
+    let shift = infix_left(range, shift_op());
+    let cmp = infix_left(shift, cmp_op());
     let eq = infix_left(cmp, eq_op());
-    let and = infix_left(eq, and_op());
+    let bit_and = infix_left(eq, bit_and_op());
+    let xor = infix_left(bit_and, xor_op());
+    let bit_or = infix_left(xor, bit_or_op());
+    let and = infix_left(bit_or, and_op());
     let coal = infix_left(and, coalesce_op());
     let or = infix_left(coal, or_op());
     or.labelled("expression").as_context().boxed()

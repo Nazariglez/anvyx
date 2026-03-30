@@ -587,9 +587,64 @@ pub fn value_or(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
 
 pub fn value_xor(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
     match (lhs, rhs) {
+        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a ^ b)),
         (Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a ^ b)),
         (a, b) => Err(RuntimeError::new(format!(
-            "type error: logical xor requires bool, got {} and {}",
+            "type error: xor requires int or bool, got {} and {}",
+            type_name(&a),
+            type_name(&b)
+        ))),
+    }
+}
+
+pub fn value_bit_and(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
+    match (lhs, rhs) {
+        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a & b)),
+        (a, b) => Err(RuntimeError::new(format!(
+            "type error: bitwise AND requires int, got {} and {}",
+            type_name(&a),
+            type_name(&b)
+        ))),
+    }
+}
+
+pub fn value_bit_or(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
+    match (lhs, rhs) {
+        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a | b)),
+        (a, b) => Err(RuntimeError::new(format!(
+            "type error: bitwise OR requires int, got {} and {}",
+            type_name(&a),
+            type_name(&b)
+        ))),
+    }
+}
+
+pub fn value_bit_not(val: Value) -> Result<Value, RuntimeError> {
+    match val {
+        Value::Int(v) => Ok(Value::Int(!v)),
+        other => Err(RuntimeError::new(format!(
+            "type error: bitwise NOT requires int, got {}",
+            type_name(&other)
+        ))),
+    }
+}
+
+pub fn value_shl(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
+    match (lhs, rhs) {
+        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.wrapping_shl(b as u32))),
+        (a, b) => Err(RuntimeError::new(format!(
+            "type error: left shift requires int, got {} and {}",
+            type_name(&a),
+            type_name(&b)
+        ))),
+    }
+}
+
+pub fn value_shr(lhs: Value, rhs: Value) -> Result<Value, RuntimeError> {
+    match (lhs, rhs) {
+        (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a.wrapping_shr(b as u32))),
+        (a, b) => Err(RuntimeError::new(format!(
+            "type error: right shift requires int, got {} and {}",
             type_name(&a),
             type_name(&b)
         ))),

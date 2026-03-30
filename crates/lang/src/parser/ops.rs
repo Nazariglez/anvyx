@@ -74,6 +74,47 @@ pub(super) fn eq_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
     .boxed()
 }
 
+pub(super) fn xor_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
+    select! {
+        (Token::Op(Op::Caret), _) => ast::BinaryOp::Xor,
+    }
+    .labelled("xor op")
+    .as_context()
+    .boxed()
+}
+
+pub(super) fn bit_and_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
+    select! {
+        (Token::Op(Op::BitAnd), _) => ast::BinaryOp::BitAnd,
+    }
+    .labelled("bitwise and op")
+    .as_context()
+    .boxed()
+}
+
+pub(super) fn bit_or_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
+    select! {
+        (Token::Op(Op::Pipe), _) => ast::BinaryOp::BitOr,
+    }
+    .labelled("bitwise or op")
+    .as_context()
+    .boxed()
+}
+
+pub(super) fn shift_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
+    choice((
+        select! { (Token::Op(Op::LessThan), _) => () }
+            .then(select! { (Token::Op(Op::LessThan), _) => () })
+            .to(ast::BinaryOp::Shl),
+        select! { (Token::Op(Op::GreaterThan), _) => () }
+            .then(select! { (Token::Op(Op::GreaterThan), _) => () })
+            .to(ast::BinaryOp::Shr),
+    ))
+    .labelled("shift op")
+    .as_context()
+    .boxed()
+}
+
 pub(super) fn and_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
     select! {
         (Token::Op(Op::And), _) => ast::BinaryOp::And,
@@ -102,13 +143,27 @@ pub(super) fn or_op<'src>() -> BoxedParser<'src, ast::BinaryOp> {
 }
 
 pub(super) fn assign_op<'src>() -> BoxedParser<'src, ast::AssignOp> {
-    select! {
-        (Token::Op(Op::Assign), _) => ast::AssignOp::Assign,
-        (Token::Op(Op::AddAssign), _) => ast::AssignOp::AddAssign,
-        (Token::Op(Op::SubAssign), _) => ast::AssignOp::SubAssign,
-        (Token::Op(Op::MulAssign), _) => ast::AssignOp::MulAssign,
-        (Token::Op(Op::DivAssign), _) => ast::AssignOp::DivAssign,
-    }
+    choice((
+        // two tokens compound assignments for <<= and >>=
+        // <<= lexes as LessThan + LessThanEq
+        select! { (Token::Op(Op::LessThan), _) => () }
+            .then(select! { (Token::Op(Op::LessThanEq), _) => () })
+            .to(ast::AssignOp::ShlAssign),
+        // >>= lexes as GreaterThan + GreaterThanEq
+        select! { (Token::Op(Op::GreaterThan), _) => () }
+            .then(select! { (Token::Op(Op::GreaterThanEq), _) => () })
+            .to(ast::AssignOp::ShrAssign),
+        select! {
+            (Token::Op(Op::Assign), _) => ast::AssignOp::Assign,
+            (Token::Op(Op::AddAssign), _) => ast::AssignOp::AddAssign,
+            (Token::Op(Op::SubAssign), _) => ast::AssignOp::SubAssign,
+            (Token::Op(Op::MulAssign), _) => ast::AssignOp::MulAssign,
+            (Token::Op(Op::DivAssign), _) => ast::AssignOp::DivAssign,
+            (Token::Op(Op::CaretAssign), _) => ast::AssignOp::XorAssign,
+            (Token::Op(Op::BitAndAssign), _) => ast::AssignOp::BitAndAssign,
+            (Token::Op(Op::BitOrAssign), _) => ast::AssignOp::BitOrAssign,
+        },
+    ))
     .labelled("assign op")
     .as_context()
     .boxed()

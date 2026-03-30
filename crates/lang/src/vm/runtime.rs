@@ -9,8 +9,9 @@ use super::managed_rc::ManagedRc;
 use super::meta::VariantMetaKind;
 use super::value::{
     ClosureData, EnumData, MapStorage, RuntimeError, StructData, Value, type_name, value_add,
-    value_and, value_div, value_eq, value_gt, value_gte, value_lt, value_lte, value_mul,
-    value_negate, value_neq, value_not, value_or, value_rem, value_sub, value_xor,
+    value_and, value_bit_and, value_bit_not, value_bit_or, value_div, value_eq, value_gt,
+    value_gte, value_lt, value_lte, value_mul, value_negate, value_neq, value_not, value_or,
+    value_rem, value_shl, value_shr, value_sub, value_xor,
 };
 
 pub type ExternHandler = Box<dyn Fn(Vec<Value>) -> Result<Value, RuntimeError>>;
@@ -137,6 +138,11 @@ impl<'a> VM<'a> {
                     self.push(value_not(v)?);
                 }
 
+                Op::BitNot => {
+                    let v = self.pop();
+                    self.push(value_bit_not(v)?);
+                }
+
                 Op::Add => {
                     let rhs = self.pop();
                     let lhs = self.pop();
@@ -219,6 +225,30 @@ impl<'a> VM<'a> {
                     let rhs = self.pop();
                     let lhs = self.pop();
                     self.push(value_xor(lhs, rhs)?);
+                }
+
+                Op::BitAnd => {
+                    let rhs = self.pop();
+                    let lhs = self.pop();
+                    self.push(value_bit_and(lhs, rhs)?);
+                }
+
+                Op::BitOr => {
+                    let rhs = self.pop();
+                    let lhs = self.pop();
+                    self.push(value_bit_or(lhs, rhs)?);
+                }
+
+                Op::Shl => {
+                    let rhs = self.pop();
+                    let lhs = self.pop();
+                    self.push(value_shl(lhs, rhs)?);
+                }
+
+                Op::Shr => {
+                    let rhs = self.pop();
+                    let lhs = self.pop();
+                    self.push(value_shr(lhs, rhs)?);
                 }
 
                 Op::Jump(offset) => {

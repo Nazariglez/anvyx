@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: invalid
+
+fn main() {
+    let x = 0o89;
+}

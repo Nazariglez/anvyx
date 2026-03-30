@@ -359,6 +359,7 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             match op {
                 UnaryOp::Neg => fc.emit(Op::Negate),
                 UnaryOp::Not => fc.emit(Op::Not),
+                UnaryOp::BitNot => fc.emit(Op::BitNot),
             }
         }
 
@@ -380,6 +381,10 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
                 BinaryOp::And => Op::And,
                 BinaryOp::Or => Op::Or,
                 BinaryOp::Xor => Op::Xor,
+                BinaryOp::BitAnd => Op::BitAnd,
+                BinaryOp::BitOr => Op::BitOr,
+                BinaryOp::Shl => Op::Shl,
+                BinaryOp::Shr => Op::Shr,
                 BinaryOp::Coalesce => unreachable!("coalesce rejected during lowering"),
             };
             fc.emit(opcode);

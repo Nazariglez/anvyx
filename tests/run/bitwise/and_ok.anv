@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 15
+// 0
+// @match-end
+
+fn main() {
+    println(255 & 15);
+    println(255 & 0);
+}

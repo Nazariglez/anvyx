@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 63
+// 511
+// @match-end
+
+fn main() {
+    println(0o77);
+    println(0o777);
+}

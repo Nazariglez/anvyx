@@ -244,6 +244,10 @@ impl Type {
         matches!(self, Type::Int | Type::Float | Type::Double)
     }
 
+    pub fn is_int(&self) -> bool {
+        matches!(self, Type::Int)
+    }
+
     pub fn is_bool(&self) -> bool {
         matches!(self, Type::Bool)
     }
@@ -723,6 +727,10 @@ pub enum BinaryOp {
     And,
     Or,
     Xor,
+    BitAnd,
+    BitOr,
+    Shl,
+    Shr,
     Coalesce,
 }
 
@@ -743,6 +751,10 @@ impl Display for BinaryOp {
             BinaryOp::And => write!(f, "&&"),
             BinaryOp::Or => write!(f, "||"),
             BinaryOp::Xor => write!(f, "^"),
+            BinaryOp::BitAnd => write!(f, "&"),
+            BinaryOp::BitOr => write!(f, "|"),
+            BinaryOp::Shl => write!(f, "<<"),
+            BinaryOp::Shr => write!(f, ">>"),
             BinaryOp::Coalesce => write!(f, "??"),
         }
     }
@@ -759,6 +771,7 @@ pub struct Binary {
 pub enum UnaryOp {
     Neg,
     Not,
+    BitNot,
 }
 
 impl Display for UnaryOp {
@@ -766,6 +779,7 @@ impl Display for UnaryOp {
         match self {
             UnaryOp::Neg => write!(f, "-"),
             UnaryOp::Not => write!(f, "!"),
+            UnaryOp::BitNot => write!(f, "~"),
         }
     }
 }
@@ -798,6 +812,11 @@ pub enum AssignOp {
     SubAssign,
     MulAssign,
     DivAssign,
+    XorAssign,
+    BitAndAssign,
+    BitOrAssign,
+    ShlAssign,
+    ShrAssign,
 }
 
 impl Display for AssignOp {
@@ -808,6 +827,11 @@ impl Display for AssignOp {
             AssignOp::SubAssign => write!(f, "-="),
             AssignOp::MulAssign => write!(f, "*="),
             AssignOp::DivAssign => write!(f, "/="),
+            AssignOp::XorAssign => write!(f, "^="),
+            AssignOp::BitAndAssign => write!(f, "&="),
+            AssignOp::BitOrAssign => write!(f, "|="),
+            AssignOp::ShlAssign => write!(f, "<<="),
+            AssignOp::ShrAssign => write!(f, ">>="),
         }
     }
 }

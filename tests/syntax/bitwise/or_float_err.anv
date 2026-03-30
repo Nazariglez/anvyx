@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: float
+
+fn main() {
+    let x = 1.0 | 2.0;
+}

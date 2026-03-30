@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 256
+// 16
+// @match-end
+
+fn main() {
+    var x = 1;
+    x <<= 8;
+    println(x);
+    x >>= 4;
+    println(x);
+}

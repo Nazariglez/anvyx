@@ -290,6 +290,10 @@ fn eval_binary(
             .map(Int)
             .ok_or_else(|| TypeErr::new(span, TypeErrKind::ConstIntegerOverflow)),
         (Int(l), Xor, Int(r)) => Ok(Int(l ^ r)),
+        (Int(l), BitAnd, Int(r)) => Ok(Int(l & r)),
+        (Int(l), BitOr, Int(r)) => Ok(Int(l | r)),
+        (Int(l), Shl, Int(r)) => Ok(Int(l.wrapping_shl(r as u32))),
+        (Int(l), Shr, Int(r)) => Ok(Int(l.wrapping_shr(r as u32))),
 
         // Float arithmetic
         (Float(l), Add, Float(r)) => Ok(Float(l + r)),
@@ -334,6 +338,7 @@ fn eval_binary(
         (Bool(l), NotEq, Bool(r)) => Ok(Bool(l != r)),
         (Bool(l), And, Bool(r)) => Ok(Bool(l && r)),
         (Bool(l), Or, Bool(r)) => Ok(Bool(l || r)),
+        (Bool(l), Xor, Bool(r)) => Ok(Bool(l ^ r)),
 
         // String operations
         (String(l), Add, String(r)) => Ok(String(l + &r)),
@@ -354,6 +359,7 @@ fn eval_unary(op: UnaryOp, val: ConstValue, span: Span) -> Result<ConstValue, Ty
         (UnaryOp::Neg, Float(f)) => Ok(Float(-f)),
         (UnaryOp::Neg, Double(d)) => Ok(Double(-d)),
         (UnaryOp::Not, Bool(b)) => Ok(Bool(!b)),
+        (UnaryOp::BitNot, Int(n)) => Ok(Int(!n)),
         _ => Err(TypeErr::new(span, TypeErrKind::NotConstantExpression)),
     }
 }

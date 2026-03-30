@@ -30,6 +30,7 @@ pub enum Op {
     // unary
     Negate,
     Not,
+    BitNot,
 
     // binary arithmetic
     Add,
@@ -50,6 +51,10 @@ pub enum Op {
     And,
     Or,
     Xor,
+    BitAnd,
+    BitOr,
+    Shl,
+    Shr,
 
     // control flow
     Jump(i16),

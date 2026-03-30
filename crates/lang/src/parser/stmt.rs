@@ -71,6 +71,9 @@ pub(super) fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
                 (Token::Op(Op::SubAssign), _) => (),
                 (Token::Op(Op::MulAssign), _) => (),
                 (Token::Op(Op::DivAssign), _) => (),
+                (Token::Op(Op::CaretAssign), _) => (),
+                (Token::Op(Op::BitAndAssign), _) => (),
+                (Token::Op(Op::BitOrAssign), _) => (),
             })
             .to(())
             .rewind();

@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 255
+// 65535
+// 255
+// @match-end
+
+fn main() {
+    println(0xFF);
+    println(0xFF_FF);
+    println(0XFF);
+}

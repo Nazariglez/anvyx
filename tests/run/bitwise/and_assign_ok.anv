@@ -1,0 +1,9 @@
+// @mode: run
+// @expect: success
+// @match: 15
+
+fn main() {
+    var x = 255;
+    x &= 15;
+    println(x);
+}

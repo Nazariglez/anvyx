@@ -205,6 +205,12 @@ pub enum Op {
     ThinArrow,
     FatArrow,
     Pipe,
+    Caret,
+    CaretAssign,
+    Tilde,
+    BitAnd,
+    BitAndAssign,
+    BitOrAssign,
 }
 
 impl Display for Op {
@@ -233,6 +239,12 @@ impl Display for Op {
             Op::ThinArrow => write!(f, "->"),
             Op::FatArrow => write!(f, "=>"),
             Op::Pipe => write!(f, "|"),
+            Op::Caret => write!(f, "^"),
+            Op::CaretAssign => write!(f, "^="),
+            Op::Tilde => write!(f, "~"),
+            Op::BitAnd => write!(f, "&"),
+            Op::BitAndAssign => write!(f, "&="),
+            Op::BitOrAssign => write!(f, "|="),
         }
     }
 }
@@ -565,13 +577,98 @@ fn literal<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
     choice((lit_float(), lit_int_suffixed(), lit_integer())).map(Token::Literal)
 }
 
+fn is_digit_for_radix(c: char, radix: u32) -> bool {
+    match radix {
+        2 => c == '0' || c == '1',
+        8 => matches!(c, '0'..='7'),
+        16 => c.is_ascii_hexdigit(),
+        _ => unreachable!(),
+    }
+}
+
+fn parse_prefixed_digits<'src, 'p>(
+    input: &mut InputRef<'src, 'p, &'src str, Extra<'src>>,
+    start: &Cursor<'src, 'p, &'src str>,
+    radix: u32,
+) -> Result<LitToken, LexErr<'src>> {
+    let base_name = match radix {
+        2 => "binary",
+        8 => "octal",
+        16 => "hexadecimal",
+        _ => unreachable!(),
+    };
+
+    let mut buf = String::new();
+
+    loop {
+        match input.peek() {
+            Some(c) if is_digit_for_radix(c, radix) || c == '_' => {
+                buf.push(c);
+                input.skip();
+            }
+            _ => break,
+        }
+    }
+
+    let has_digits = buf.chars().any(|c| c != '_');
+    let next_is_alnum = matches!(input.peek(), Some(c) if c.is_ascii_alphanumeric());
+
+    if !has_digits && next_is_alnum {
+        return Err(Rich::custom(
+            input.span_since(start),
+            format!("invalid digit in {base_name} literal"),
+        ));
+    }
+
+    if !has_digits {
+        return Err(Rich::custom(
+            input.span_since(start),
+            format!("expected digits after {base_name} prefix"),
+        ));
+    }
+
+    if next_is_alnum {
+        return Err(Rich::custom(
+            input.span_since(start),
+            format!("invalid digit in {base_name} literal"),
+        ));
+    }
+
+    if !validate_numeric_underscores(&buf) {
+        return Err(Rich::custom(
+            input.span_since(start),
+            "invalid underscore placement in numeric literal",
+        ));
+    }
+
+    let cleaned = strip_underscores(&buf);
+    i64::from_str_radix(&cleaned, radix)
+        .map(LitToken::Number)
+        .map_err(|_| Rich::custom(input.span_since(start), "integer literal overflow"))
+}
+
 fn lit_integer<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
     custom(|input: &mut InputRef<'src, '_, &'src str, Extra<'src>>| {
         let start = input.cursor();
         let mut buf = String::new();
 
         match input.next() {
-            Some(c) if c.is_ascii_digit() => buf.push(c),
+            Some(c) if c.is_ascii_digit() => {
+                if c == '0' {
+                    let radix = match input.peek() {
+                        Some('x' | 'X') => Some(16u32),
+                        Some('b' | 'B') => Some(2),
+                        Some('o' | 'O') => Some(8),
+                        _ => None,
+                    };
+
+                    if let Some(radix) = radix {
+                        input.skip(); // consume the prefix letter
+                        return parse_prefixed_digits(input, &start, radix);
+                    }
+                }
+                buf.push(c);
+            }
             _ => {
                 return Err(Rich::custom(
                     input.span_since(&start),
@@ -579,6 +676,7 @@ fn lit_integer<'src>() -> impl Parser<'src, &'src str, LitToken, Extra<'src>> {
                 ));
             }
         }
+
         loop {
             match input.peek() {
                 Some(c) if c.is_ascii_digit() || c == '_' => {
@@ -748,13 +846,14 @@ fn ident<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
 }
 
 fn op<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
-    choice((
-        // complex op
+    let complex = choice((
         just("??").to(Op::Coalesce),
         just("==").to(Op::Eq),
         just("!=").to(Op::NotEq),
         just("<=").to(Op::LessThanEq),
         just(">=").to(Op::GreaterThanEq),
+        just("&=").to(Op::BitAndAssign),
+        just("|=").to(Op::BitOrAssign),
         just("&&").to(Op::And),
         just("||").to(Op::Or),
         just("+=").to(Op::AddAssign),
@@ -763,7 +862,9 @@ fn op<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
         just("/=").to(Op::DivAssign),
         just("->").to(Op::ThinArrow),
         just("=>").to(Op::FatArrow),
-        // simple op
+        just("^=").to(Op::CaretAssign),
+    ));
+    let simple = choice((
         just("+").to(Op::Add),
         just("-").to(Op::Sub),
         just("*").to(Op::Mul),
@@ -774,8 +875,11 @@ fn op<'src>() -> impl Parser<'src, &'src str, Token, Extra<'src>> {
         just("!").to(Op::Not),
         just("=").to(Op::Assign),
         just("|").to(Op::Pipe),
-    ))
-    .map(Token::Op)
+        just("^").to(Op::Caret),
+        just("~").to(Op::Tilde),
+        just("&").to(Op::BitAnd),
+    ));
+    complex.or(simple).map(Token::Op)
 }
 
 fn doc_comment<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Extra<'src>> {
@@ -1301,5 +1405,128 @@ mod tests {
             Token::Literal(LitToken::Float(Intern::new("1.5".to_string()), None))
         );
         assert_eq!(tokens[1], ident_tok("efoo"));
+    }
+
+    // --- Hex integer literals ---
+
+    #[test]
+    fn test_hex_basic() {
+        assert_eq!(tokenize_lit("0xFF").unwrap(), LitToken::Number(255));
+    }
+
+    #[test]
+    fn test_hex_uppercase_prefix() {
+        assert_eq!(tokenize_lit("0XFF").unwrap(), LitToken::Number(255));
+    }
+
+    #[test]
+    fn test_hex_with_underscores() {
+        assert_eq!(tokenize_lit("0xFF_FF").unwrap(), LitToken::Number(65535));
+    }
+
+    #[test]
+    fn test_hex_lowercase_digits() {
+        assert_eq!(tokenize_lit("0xab").unwrap(), LitToken::Number(171));
+    }
+
+    #[test]
+    fn test_hex_mixed_case_digits() {
+        assert_eq!(tokenize_lit("0xaBcD").unwrap(), LitToken::Number(43981));
+    }
+
+    #[test]
+    fn test_hex_zero() {
+        assert_eq!(tokenize_lit("0x0").unwrap(), LitToken::Number(0));
+    }
+
+    #[test]
+    fn test_hex_leading_underscore() {
+        assert_eq!(tokenize_lit("0x_FF").unwrap(), LitToken::Number(255));
+    }
+
+    // --- Binary integer literals ---
+
+    #[test]
+    fn test_binary_basic() {
+        assert_eq!(tokenize_lit("0b1010").unwrap(), LitToken::Number(10));
+    }
+
+    #[test]
+    fn test_binary_uppercase_prefix() {
+        assert_eq!(tokenize_lit("0B1010").unwrap(), LitToken::Number(10));
+    }
+
+    #[test]
+    fn test_binary_with_underscores() {
+        assert_eq!(tokenize_lit("0b1010_1010").unwrap(), LitToken::Number(170));
+    }
+
+    #[test]
+    fn test_binary_zero() {
+        assert_eq!(tokenize_lit("0b0").unwrap(), LitToken::Number(0));
+    }
+
+    // --- Octal integer literals ---
+
+    #[test]
+    fn test_octal_basic() {
+        assert_eq!(tokenize_lit("0o77").unwrap(), LitToken::Number(63));
+    }
+
+    #[test]
+    fn test_octal_uppercase_prefix() {
+        assert_eq!(tokenize_lit("0O77").unwrap(), LitToken::Number(63));
+    }
+
+    #[test]
+    fn test_octal_with_underscores() {
+        assert_eq!(tokenize_lit("0o7_7_7").unwrap(), LitToken::Number(511));
+    }
+
+    #[test]
+    fn test_octal_zero() {
+        assert_eq!(tokenize_lit("0o0").unwrap(), LitToken::Number(0));
+    }
+
+    // --- Prefixed literal error cases ---
+
+    #[test]
+    fn test_hex_invalid_digit_err() {
+        assert!(tokenize("0xZZ").is_err());
+    }
+
+    #[test]
+    fn test_binary_invalid_digit_err() {
+        assert!(tokenize("0b12").is_err());
+    }
+
+    #[test]
+    fn test_octal_invalid_digit_err() {
+        assert!(tokenize("0o89").is_err());
+    }
+
+    #[test]
+    fn test_hex_empty_body_err() {
+        assert!(tokenize("0x ").is_err());
+    }
+
+    #[test]
+    fn test_binary_empty_body_err() {
+        assert!(tokenize("0b ").is_err());
+    }
+
+    #[test]
+    fn test_octal_empty_body_err() {
+        assert!(tokenize("0o ").is_err());
+    }
+
+    #[test]
+    fn test_hex_consecutive_underscores_err() {
+        assert!(tokenize("0xFF__FF").is_err());
+    }
+
+    #[test]
+    fn test_hex_trailing_underscore_err() {
+        assert!(tokenize("0xFF_").is_err());
     }
 }

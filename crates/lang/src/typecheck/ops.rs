@@ -148,7 +148,7 @@ pub(super) fn check_binary(
         }
 
         // logical ops must be bool
-        And | Or | Xor => {
+        And | Or => {
             if left_ty.is_bool() && same_ty {
                 Type::Bool
             } else {
@@ -164,6 +164,122 @@ pub(super) fn check_binary(
                         operand_type: wrong_ty,
                     },
                 ));
+                Type::Infer
+            }
+        }
+
+        Xor => {
+            if left_ty.is_int() && same_ty {
+                Type::Int
+            } else if left_ty.is_bool() && same_ty {
+                Type::Bool
+            } else {
+                let kind = if same_ty {
+                    TypeErrKind::InvalidOperand {
+                        op: node.op.to_string(),
+                        operand_type: left_ty,
+                    }
+                } else {
+                    TypeErrKind::MismatchedTypes {
+                        expected: left_ty,
+                        found: right_ty,
+                    }
+                };
+                errors.push(TypeErr::new(bin.span, kind));
+                Type::Infer
+            }
+        }
+
+        BitAnd => {
+            if left_ty.is_int() && same_ty {
+                Type::Int
+            } else if let Some(result) =
+                resolve_extern_binary_op(node.op, &left_ty, &right_ty, type_checker)
+            {
+                match result {
+                    ExternOpResult::Found(ret) => ret,
+                    ExternOpResult::Ambiguous => {
+                        errors.push(TypeErr::new(
+                            bin.span,
+                            TypeErrKind::AmbiguousOperator {
+                                op: node.op.to_string(),
+                                left: left_ty.clone(),
+                                right: right_ty.clone(),
+                            },
+                        ));
+                        Type::Infer
+                    }
+                }
+            } else {
+                let kind = if same_ty {
+                    TypeErrKind::InvalidOperand {
+                        op: node.op.to_string(),
+                        operand_type: left_ty,
+                    }
+                } else {
+                    TypeErrKind::MismatchedTypes {
+                        expected: left_ty,
+                        found: right_ty,
+                    }
+                };
+                errors.push(TypeErr::new(bin.span, kind));
+                Type::Infer
+            }
+        }
+
+        BitOr => {
+            if left_ty.is_int() && same_ty {
+                Type::Int
+            } else if let Some(result) =
+                resolve_extern_binary_op(node.op, &left_ty, &right_ty, type_checker)
+            {
+                match result {
+                    ExternOpResult::Found(ret) => ret,
+                    ExternOpResult::Ambiguous => {
+                        errors.push(TypeErr::new(
+                            bin.span,
+                            TypeErrKind::AmbiguousOperator {
+                                op: node.op.to_string(),
+                                left: left_ty.clone(),
+                                right: right_ty.clone(),
+                            },
+                        ));
+                        Type::Infer
+                    }
+                }
+            } else {
+                let kind = if same_ty {
+                    TypeErrKind::InvalidOperand {
+                        op: node.op.to_string(),
+                        operand_type: left_ty,
+                    }
+                } else {
+                    TypeErrKind::MismatchedTypes {
+                        expected: left_ty,
+                        found: right_ty,
+                    }
+                };
+                errors.push(TypeErr::new(bin.span, kind));
+                Type::Infer
+            }
+        }
+
+        Shl | Shr => {
+            if left_ty.is_int() && same_ty {
+                Type::Int
+            } else {
+                let kind = if same_ty {
+                    TypeErrKind::InvalidOperand {
+                        op: node.op.to_string(),
+                        operand_type: left_ty,
+                    }
+                } else {
+                    TypeErrKind::MismatchedTypes {
+                        expected: left_ty,
+                        found: right_ty,
+                    }
+                };
+                errors.push(TypeErr::new(bin.span, kind));
                 Type::Infer
             }
         }
@@ -287,6 +403,7 @@ pub(super) fn check_unary(
     match node.op {
         UnaryOp::Neg if expr_ty.is_num() => expr_ty,
         UnaryOp::Not if expr_ty.is_bool() => Type::Bool,
+        UnaryOp::BitNot if expr_ty.is_int() => Type::Int,
         UnaryOp::Neg => {
             if let Type::Extern { name } = &expr_ty
                 && let Some(def) = type_checker.get_extern_type(*name)
@@ -418,7 +535,15 @@ pub(super) fn check_assign(
 
     match node.op {
         AssignOp::Assign => check_assign_op(assign, target_ref, value_ref, type_checker, errors),
-        AssignOp::AddAssign | AssignOp::SubAssign | AssignOp::MulAssign | AssignOp::DivAssign => {
+        AssignOp::AddAssign
+        | AssignOp::SubAssign
+        | AssignOp::MulAssign
+        | AssignOp::DivAssign
+        | AssignOp::XorAssign
+        | AssignOp::BitAndAssign
+        | AssignOp::BitOrAssign
+        | AssignOp::ShlAssign
+        | AssignOp::ShrAssign => {
             check_compound_assign_op(assign, target_ref, value_ref, type_checker, errors)
         }
     }
@@ -448,6 +573,11 @@ fn check_compound_assign_op(
     let value_ty = type_checker.get_type_ref(&value_ref).unwrap_or(Type::Infer);
 
     let is_add_assign = assign.node.op == AssignOp::AddAssign;
+    let is_xor_assign = assign.node.op == AssignOp::XorAssign;
+    let is_bit_and_assign = assign.node.op == AssignOp::BitAndAssign;
+    let is_bit_or_assign = assign.node.op == AssignOp::BitOrAssign;
+    let is_shift_assign =
+        assign.node.op == AssignOp::ShlAssign || assign.node.op == AssignOp::ShrAssign;
     let is_str_concat = is_add_assign
         && target_ty.is_str()
         && (value_ty.is_str() || value_ty.is_stringable_primitive());
@@ -459,8 +589,17 @@ fn check_compound_assign_op(
     let target_ty = type_checker
         .get_type_ref(&target_ref)
         .unwrap_or(Type::Infer);
-    let is_valid =
-        target_ty.is_num() || target_ty.is_infer() || (is_add_assign && target_ty.is_str());
+    let is_valid = target_ty.is_infer()
+        || (is_xor_assign && (target_ty.is_int() || target_ty.is_bool()))
+        || (is_bit_and_assign && target_ty.is_int())
+        || (is_bit_or_assign && target_ty.is_int())
+        || (is_shift_assign && target_ty.is_int())
+        || (!is_xor_assign
+            && !is_bit_and_assign
+            && !is_bit_or_assign
+            && !is_shift_assign
+            && target_ty.is_num())
+        || (is_add_assign && target_ty.is_str());
     if !is_valid {
         errors.push(TypeErr::new(
             assign.span,
