@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{GenericArgument, PathArguments, ReturnType, Type};
 
 pub struct ExternTypeInfo {
@@ -30,10 +30,9 @@ pub struct ClassifiedReturn {
 }
 
 fn extern_type_info(ident: &syn::Ident) -> ExternTypeInfo {
-    let name_upper = ident.to_string().to_uppercase();
     ExternTypeInfo {
         type_ident: ident.clone(),
-        decl_ident: format_ident!("__ANVYX_TYPE_DECL_{}", name_upper),
+        decl_ident: crate::naming::type_decl_ident(&ident.to_string()),
     }
 }
 

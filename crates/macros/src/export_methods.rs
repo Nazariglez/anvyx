@@ -1,11 +1,10 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
-use syn::{FnArg, ImplItem, ItemImpl, LitStr, Pat, ReturnType, Token, Type};
+use syn::{FnArg, ImplItem, ItemImpl, LitStr, Pat, Token, Type};
 
 use crate::type_map::{
-    ClassifiedReturn, ExternTypeInfo, ParamMode, ReturnMode, ReturnWrapper, classify_param,
-    classify_return,
+    ClassifiedReturn, ParamMode, ReturnMode, ReturnWrapper, classify_param, classify_return,
 };
 
 struct ExportMethodsArgs {
@@ -147,6 +146,54 @@ fn parse_op_annotation(tokens: TokenStream) -> syn::Result<OpAnnotation> {
     }
 }
 
+struct GetterInfo {
+    field_name: String,
+    method_ident: syn::Ident,
+    classified: ClassifiedReturn,
+}
+
+struct SetterInfo {
+    field_name: String,
+    method_ident: syn::Ident,
+    param_ident: syn::Ident,
+    param_ty: TokenStream,
+}
+
+struct OpInfo {
+    op_cap: &'static str,
+    other_type: String,
+    is_unary: bool,
+    op_sym: &'static str,
+}
+
+struct HandlerOutput {
+    handler_fn: TokenStream,
+    handler_call: TokenStream,
+}
+
+struct InitResult {
+    handler: HandlerOutput,
+    field_decls: Vec<TokenStream>,
+}
+
+struct OpResult {
+    handler: HandlerOutput,
+    op_decl: TokenStream,
+    dup_key: (&'static str, String, bool),
+    op_sym: &'static str,
+    is_unary: bool,
+}
+
+enum MethodDeclKind {
+    Instance(TokenStream),
+    Static(TokenStream),
+}
+
+struct MethodResult {
+    handler: HandlerOutput,
+    decl: MethodDeclKind,
+}
+
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
     match do_expand(attr, item.clone()) {
         Ok(ts) => ts,
@@ -182,31 +229,10 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         .name_override
         .unwrap_or_else(|| rust_type_ident.to_string());
     let rust_type_str = rust_type_ident.to_string();
-    let type_upper = rust_type_str.to_uppercase();
-    let methods_decl_ident = format_ident!("__ANVYX_METHODS_DECL_{}", type_upper);
-    let statics_decl_ident = format_ident!("__ANVYX_STATICS_DECL_{}", type_upper);
-    let ops_decl_ident = format_ident!("__ANVYX_OPS_DECL_{}", type_upper);
-    let companion_fn_ident = format_ident!("__anvyx_methods_{}", rust_type_ident);
-
-    struct GetterInfo {
-        field_name: String,
-        method_ident: syn::Ident,
-        classified: ClassifiedReturn,
-    }
-
-    struct SetterInfo {
-        field_name: String,
-        method_ident: syn::Ident,
-        param_ident: syn::Ident,
-        param_ty: TokenStream,
-    }
-
-    struct OpInfo {
-        op_cap: &'static str,
-        other_type: String,
-        is_unary: bool,
-        op_sym: &'static str,
-    }
+    let methods_decl_ident = crate::naming::methods_decl_ident(&rust_type_str);
+    let statics_decl_ident = crate::naming::statics_decl_ident(&rust_type_str);
+    let ops_decl_ident = crate::naming::ops_decl_ident(&rust_type_str);
+    let companion_fn_ident = crate::naming::methods_fn_ident(&rust_type_ident);
 
     let mut method_handler_fns = vec![];
     let mut method_handler_calls = vec![];
@@ -236,199 +262,21 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                     "only one #[init] method is allowed per type",
                 ));
             }
-            let kind = classify_method_kind(&method.sig)?;
-            if !matches!(kind, MethodKind::Static) {
-                return Err(syn::Error::new_spanned(
-                    &method.sig,
-                    "#[init] method must be a static method (no self parameter)",
-                ));
-            }
-            let method_ident = &method.sig.ident;
-            let method_name_str = method_ident.to_string();
-            let handler_key = format!("{}::__init__", anvyx_name_str);
-            let handler_fn_ident = format_ident!("__anvyx_method_{}___init__", rust_type_str);
-
-            let resolved_output = resolve_self_in_return(&method.sig.output, &rust_type_ident);
-            let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
-                syn::Error::new_spanned(&method.sig.output, "#[init] method must return Self")
-            })?;
-            let returns_self = matches!(&ret_mode.mode, ReturnMode::Valued(ty) if rust_type_ident == ty.to_string());
-            if !returns_self {
-                return Err(syn::Error::new_spanned(
-                    &method.sig.output,
-                    "#[init] method must return Self",
-                ));
-            }
-            if matches!(ret_mode.wrapper, ReturnWrapper::AnvyxOption) {
-                return Err(syn::Error::new_spanned(
-                    &method.sig.output,
-                    "#[init] does not support Option return type",
-                ));
-            }
-
-            let non_self_params: Vec<_> = method
-                .sig
-                .inputs
-                .iter()
-                .filter(|arg| matches!(arg, FnArg::Typed(_)))
-                .collect();
-
-            let mut param_extractions = vec![];
-            let mut param_names = vec![];
-
-            for (i, arg) in non_self_params.iter().enumerate() {
-                let FnArg::Typed(pat_type) = arg else {
-                    unreachable!()
-                };
-                let param_name = match &*pat_type.pat {
-                    Pat::Ident(pi) => pi.ident.clone(),
-                    other => {
-                        return Err(syn::Error::new_spanned(
-                            other,
-                            "only simple parameter names are supported in #[init]",
-                        ));
-                    }
-                };
-                let param_name_str = param_name.to_string();
-                let resolved_ty = resolve_self_in_type(&pat_type.ty, &rust_type_ident);
-                let mode = classify_param(&resolved_ty).ok_or_else(|| {
-                    syn::Error::new_spanned(&pat_type.ty, "unsupported type in #[init]")
-                })?;
-                match mode {
-                    ParamMode::Owned(ty) => {
-                        param_extractions.push(quote! {
-                            let #param_name = <#ty as anvyx_lang::AnvyxConvert>::from_anvyx(&args[#i])?;
-                        });
-                        init_field_decls.push(quote! {
-                            anvyx_lang::ExternFieldDecl { name: #param_name_str, ty: <#ty as anvyx_lang::AnvyxConvert>::ANVYX_TYPE, computed: false }
-                        });
-                    }
-                    ParamMode::ExternRef(_) | ParamMode::ExternMutRef(_) => {
-                        return Err(syn::Error::new_spanned(
-                            &pat_type.ty,
-                            "#[init] does not support reference parameters; pass by value instead",
-                        ));
-                    }
-                }
-                param_names.push(param_name);
-            }
-
-            let call = quote! { #rust_type_ident::#method_ident(#(#param_names),*) };
-            let handler_body = crate::codegen::build_flat_call(&call, &ret_mode);
-            let _ = method_name_str; // suppress unused warning
-
-            method_handler_fns.push(quote! {
-                pub fn #handler_fn_ident() -> (&'static str, anvyx_lang::ExternHandler) {
-                    (#handler_key, Box::new(|args: Vec<anvyx_lang::Value>| {
-                        #(#param_extractions)*
-                        #handler_body
-                    }))
-                }
-            });
-            method_handler_calls.push(quote! { #handler_fn_ident() });
+            let result = process_init(method, &anvyx_name_str, &rust_type_ident, &rust_type_str)?;
+            method_handler_fns.push(result.handler.handler_fn);
+            method_handler_calls.push(result.handler.handler_call);
+            init_field_decls = result.field_decls;
             found_init = true;
             continue;
         }
 
         if has_getter {
-            let method_ident = method.sig.ident.clone();
-            let kind = classify_method_kind(&method.sig)?;
-            if !matches!(kind, MethodKind::Borrowing) {
-                return Err(syn::Error::new_spanned(
-                    &method.sig,
-                    "#[getter] method must take `&self`",
-                ));
-            }
-            let non_self_count = method
-                .sig
-                .inputs
-                .iter()
-                .filter(|a| matches!(a, FnArg::Typed(_)))
-                .count();
-            if non_self_count != 0 {
-                return Err(syn::Error::new_spanned(
-                    &method.sig,
-                    "#[getter] method must have no parameters besides `&self`",
-                ));
-            }
-            let resolved_output = resolve_self_in_return(&method.sig.output, &rust_type_ident);
-            let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
-                syn::Error::new_spanned(&method.sig.output, "unsupported return type in #[getter]")
-            })?;
-            if matches!(ret_mode.mode, ReturnMode::Void) {
-                return Err(syn::Error::new_spanned(
-                    &method.sig.output,
-                    "#[getter] method must have a non-void return type",
-                ));
-            }
-            getters.push(GetterInfo {
-                field_name: method_ident.to_string(),
-                method_ident,
-                classified: ret_mode,
-            });
+            getters.push(process_getter(method, &rust_type_ident)?);
             continue;
         }
 
         if has_setter {
-            let method_ident = method.sig.ident.clone();
-            let method_name_str = method_ident.to_string();
-            if !method_name_str.starts_with("set_") {
-                return Err(syn::Error::new_spanned(
-                    &method.sig,
-                    "#[setter] method name must start with `set_`",
-                ));
-            }
-            let field_name = method_name_str["set_".len()..].to_string();
-            let kind = classify_method_kind(&method.sig)?;
-            if !matches!(kind, MethodKind::Mutating) {
-                return Err(syn::Error::new_spanned(
-                    &method.sig,
-                    "#[setter] method must take `&mut self`",
-                ));
-            }
-            let non_self_params: Vec<_> = method
-                .sig
-                .inputs
-                .iter()
-                .filter(|a| matches!(a, FnArg::Typed(_)))
-                .collect();
-            if non_self_params.len() != 1 {
-                return Err(syn::Error::new_spanned(
-                    &method.sig,
-                    "#[setter] method must have exactly one parameter besides `&mut self`",
-                ));
-            }
-            let FnArg::Typed(pat_type) = non_self_params[0] else {
-                unreachable!()
-            };
-            let param_ident = match &*pat_type.pat {
-                Pat::Ident(pi) => pi.ident.clone(),
-                other => {
-                    return Err(syn::Error::new_spanned(
-                        other,
-                        "only simple parameter names are supported",
-                    ));
-                }
-            };
-            let resolved_ty = resolve_self_in_type(&pat_type.ty, &rust_type_ident);
-            let param_mode = classify_param(&resolved_ty).ok_or_else(|| {
-                syn::Error::new_spanned(&pat_type.ty, "unsupported type in #[setter]")
-            })?;
-            let param_ty = match param_mode {
-                ParamMode::Owned(ty) => ty,
-                _ => {
-                    return Err(syn::Error::new_spanned(
-                        &pat_type.ty,
-                        "#[setter] does not support reference parameters; pass by value instead",
-                    ));
-                }
-            };
-            setters.push(SetterInfo {
-                field_name,
-                method_ident,
-                param_ident,
-                param_ty,
-            });
+            setters.push(process_setter(method, &rust_type_ident)?);
             continue;
         }
 
@@ -438,513 +286,41 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
                 .iter()
                 .find(|a| a.path().is_ident("op"))
                 .unwrap();
-            let op_tokens = match &op_attr.meta {
-                syn::Meta::List(list) => list.tokens.clone(),
-                _ => {
-                    return Err(syn::Error::new_spanned(op_attr, "expected #[op(...)]"));
-                }
-            };
-            let op_ann = parse_op_annotation(op_tokens)?;
-
-            let kind = classify_method_kind(&method.sig)?;
-            if !matches!(kind, MethodKind::Borrowing) {
-                return Err(syn::Error::new_spanned(
-                    &method.sig,
-                    "#[op] method must take `&self`",
-                ));
-            }
-
-            let method_ident = &method.sig.ident;
-
-            let non_self_params: Vec<_> = method
-                .sig
-                .inputs
-                .iter()
-                .filter(|arg| matches!(arg, FnArg::Typed(_)))
-                .collect();
-
-            let self_on_right = op_ann.self_on_right;
-            let (handler_key, ident_component, op_info) = match op_ann.kind {
-                OpKind::Binary { op, lhs, rhs } => {
-                    if non_self_params.len() != 1 {
-                        return Err(syn::Error::new_spanned(
-                            &method.sig,
-                            "#[op] binary operator method must have exactly one non-self parameter",
-                        ));
-                    }
-                    let op_cap = op_to_capitalized(op);
-                    let op_sym = op_to_symbol(op);
-                    if self_on_right {
-                        let lhs_r = if lhs == "Self" {
-                            anvyx_name_str.clone()
-                        } else {
-                            lhs
-                        };
-                        (
-                            format!("{}::__op_r{}__{}", anvyx_name_str, op, lhs_r),
-                            format!("__op_r{}__{}", op, lhs_r),
-                            OpInfo {
-                                op_cap,
-                                other_type: lhs_r,
-                                is_unary: false,
-                                op_sym,
-                            },
-                        )
-                    } else {
-                        let rhs_r = if rhs == "Self" {
-                            anvyx_name_str.clone()
-                        } else {
-                            rhs
-                        };
-                        (
-                            format!("{}::__op_{}__{}", anvyx_name_str, op, rhs_r),
-                            format!("__op_{}__{}", op, rhs_r),
-                            OpInfo {
-                                op_cap,
-                                other_type: rhs_r,
-                                is_unary: false,
-                                op_sym,
-                            },
-                        )
-                    }
-                }
-                OpKind::Unary { op } => {
-                    if !non_self_params.is_empty() {
-                        return Err(syn::Error::new_spanned(
-                            &method.sig,
-                            "#[op] unary operator method must have no non-self parameters",
-                        ));
-                    }
-                    let op_cap = op_to_capitalized(op);
-                    let op_sym = op_to_symbol(op);
-                    (
-                        format!("{}::__op_{}", anvyx_name_str, op),
-                        format!("__op_{}", op),
-                        OpInfo {
-                            op_cap,
-                            other_type: String::new(),
-                            is_unary: true,
-                            op_sym,
-                        },
-                    )
-                }
-            };
-
-            // duplicate op detection
-            let dup_key = (op_info.op_cap, op_info.other_type.clone(), self_on_right);
-            if seen_ops.contains(&dup_key) {
-                let sym = op_info.op_sym;
-                let msg = if op_info.is_unary {
+            let result = process_op(method, &anvyx_name_str, &rust_type_ident, &rust_type_str)?;
+            if seen_ops.contains(&result.dup_key) {
+                let sym = result.op_sym;
+                let msg = if result.is_unary {
                     format!("duplicate operator `{sym}Self`")
                 } else {
+                    let self_on_right = result.dup_key.2;
+                    let other_type = &result.dup_key.1;
                     let lhs_display = if self_on_right {
-                        op_info.other_type.as_str()
+                        other_type.as_str()
                     } else {
                         anvyx_name_str.as_str()
                     };
                     let rhs_display = if self_on_right {
                         anvyx_name_str.as_str()
                     } else {
-                        op_info.other_type.as_str()
+                        other_type.as_str()
                     };
                     format!("duplicate operator `{sym}` for `({lhs_display}, {rhs_display})`")
                 };
                 return Err(syn::Error::new_spanned(op_attr, msg));
             }
-            seen_ops.push(dup_key);
-
-            let handler_fn_ident =
-                format_ident!("__anvyx_method_{}_{}", rust_type_str, ident_component);
-
-            let resolved_output = resolve_self_in_return(&method.sig.output, &rust_type_ident);
-            let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
-                syn::Error::new_spanned(&method.sig.output, "unsupported return type in #[op]")
-            })?;
-
-            // == must return bool
-            if op_info.op_cap == "Eq" {
-                let is_bool =
-                    matches!(&ret_mode.mode, ReturnMode::Valued(ty) if ty.to_string() == "bool");
-                if !is_bool {
-                    return Err(syn::Error::new_spanned(
-                        &method.sig.output,
-                        "#[op(Self == T)] must return bool",
-                    ));
-                }
-            }
-
-            // collect op metadata for __ANVYX_OPS_DECL_ const
-            let ret_anvyx = crate::codegen::ret_anvyx_type_str(&ret_mode);
-            let op_cap_str = op_info.op_cap;
-            let other_type_str = &op_info.other_type;
-            if op_info.is_unary {
-                op_decls.push(quote! {
-                    anvyx_lang::ExternOpDecl { op: #op_cap_str, rhs: None, lhs: None, ret: #ret_anvyx }
-                });
-            } else if self_on_right {
-                op_decls.push(quote! {
-                    anvyx_lang::ExternOpDecl { op: #op_cap_str, rhs: None, lhs: Some(#other_type_str), ret: #ret_anvyx }
-                });
-            } else {
-                op_decls.push(quote! {
-                    anvyx_lang::ExternOpDecl { op: #op_cap_str, rhs: Some(#other_type_str), lhs: None, ret: #ret_anvyx }
-                });
-            }
-
-            let self_arg_idx: usize = if self_on_right { 1 } else { 0 };
-            let other_arg_idx: usize = if self_on_right { 0 } else { 1 };
-
-            let self_extract = quote! {
-                let anvyx_lang::Value::ExternHandle(ref __ehd_self) = args[#self_arg_idx] else {
-                    return Err(anvyx_lang::RuntimeError::new(format!(
-                        "expected extern handle for self in extern method '{}'",
-                        #handler_key
-                    )));
-                };
-                let __handle_self = __ehd_self.id;
-            };
-
-            let self_bp = crate::codegen::BorrowParam {
-                param_name: None,
-                type_ident: rust_type_ident.clone(),
-                handle_ident: format_ident!("__handle_self"),
-                guard_ident: format_ident!("__guard_self"),
-                is_mut: false,
-            };
-
-            let mut param_extractions = vec![];
-            let mut param_names = vec![];
-            let mut borrow_params: Vec<crate::codegen::BorrowParam> = vec![];
-
-            for (i, arg) in non_self_params.iter().enumerate() {
-                let FnArg::Typed(pat_type) = arg else {
-                    unreachable!()
-                };
-                let param_name = match &*pat_type.pat {
-                    Pat::Ident(pi) => pi.ident.clone(),
-                    other => {
-                        return Err(syn::Error::new_spanned(
-                            other,
-                            "only simple parameter names are supported in #[op]",
-                        ));
-                    }
-                };
-                let param_name_str = param_name.to_string();
-                let arg_idx = other_arg_idx + i;
-
-                let resolved_ty = resolve_self_in_type(&pat_type.ty, &rust_type_ident);
-                let mode = classify_param(&resolved_ty).ok_or_else(|| {
-                    syn::Error::new_spanned(&pat_type.ty, "unsupported type in #[op]")
-                })?;
-
-                match mode {
-                    ParamMode::Owned(ty) => {
-                        param_extractions.push(quote! {
-                            let #param_name = <#ty as anvyx_lang::AnvyxConvert>::from_anvyx(&args[#arg_idx])?;
-                        });
-                    }
-                    ParamMode::ExternRef(info) => {
-                        let handle_ident = format_ident!("__handle_{}", i);
-                        param_extractions.push(quote! {
-                            let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
-                                return Err(anvyx_lang::RuntimeError::new(format!(
-                                    "expected extern handle for parameter '{}' in extern method '{}'",
-                                    #param_name_str, #handler_key
-                                )));
-                            };
-                            let #handle_ident = __ehd.id;
-                        });
-                        let guard_ident = format_ident!("__guard_{}", i);
-                        borrow_params.push(crate::codegen::BorrowParam {
-                            param_name: Some(param_name.clone()),
-                            type_ident: info.type_ident,
-                            handle_ident,
-                            guard_ident,
-                            is_mut: false,
-                        });
-                    }
-                    ParamMode::ExternMutRef(info) => {
-                        let handle_ident = format_ident!("__handle_{}", i);
-                        param_extractions.push(quote! {
-                            let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
-                                return Err(anvyx_lang::RuntimeError::new(format!(
-                                    "expected extern handle for parameter '{}' in extern method '{}'",
-                                    #param_name_str, #handler_key
-                                )));
-                            };
-                            let #handle_ident = __ehd.id;
-                        });
-                        let guard_ident = format_ident!("__guard_{}", i);
-                        borrow_params.push(crate::codegen::BorrowParam {
-                            param_name: Some(param_name.clone()),
-                            type_ident: info.type_ident,
-                            handle_ident,
-                            guard_ident,
-                            is_mut: true,
-                        });
-                    }
-                }
-
-                param_names.push(param_name);
-            }
-
-            let mut all_borrows = vec![self_bp];
-            all_borrows.extend(borrow_params);
-            let call = quote! { __guard_self.#method_ident(#(#param_names),*) };
-            let call_body = build_handler_body(&call, &ret_mode, &handler_key, &all_borrows);
-
-            let handler_body = quote! {
-                #self_extract
-                #(#param_extractions)*
-                #call_body
-            };
-
-            method_handler_fns.push(quote! {
-                pub fn #handler_fn_ident() -> (&'static str, anvyx_lang::ExternHandler) {
-                    (#handler_key, Box::new(|args: Vec<anvyx_lang::Value>| {
-                        #handler_body
-                    }))
-                }
-            });
-            method_handler_calls.push(quote! { #handler_fn_ident() });
-
+            seen_ops.push(result.dup_key);
+            method_handler_fns.push(result.handler.handler_fn);
+            method_handler_calls.push(result.handler.handler_call);
+            op_decls.push(result.op_decl);
             continue;
         }
 
-        let method_ident = &method.sig.ident;
-        let method_name_str = method_ident.to_string();
-        let handler_key = format!("{}::{}", anvyx_name_str, method_name_str);
-        let handler_fn_ident =
-            format_ident!("__anvyx_method_{}_{}", rust_type_str, method_name_str);
-
-        let kind = classify_method_kind(&method.sig)?;
-
-        let resolved_output = resolve_self_in_return(&method.sig.output, &rust_type_ident);
-
-        let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
-            syn::Error::new_spanned(
-                &method.sig.output,
-                "unsupported return type in #[export_methods]",
-            )
-        })?;
-
-        let self_offset = match kind {
-            MethodKind::Static => 0,
-            _ => 1,
-        };
-
-        let non_self_params: Vec<_> = method
-            .sig
-            .inputs
-            .iter()
-            .filter(|arg| matches!(arg, FnArg::Typed(_)))
-            .collect();
-
-        let mut param_extractions = vec![];
-        let mut param_names = vec![];
-        let mut param_anvyx_types = vec![];
-        let mut borrow_params: Vec<crate::codegen::BorrowParam> = vec![];
-
-        for (i, arg) in non_self_params.iter().enumerate() {
-            let FnArg::Typed(pat_type) = arg else {
-                unreachable!()
-            };
-            let param_name = match &*pat_type.pat {
-                Pat::Ident(pi) => pi.ident.clone(),
-                other => {
-                    return Err(syn::Error::new_spanned(
-                        other,
-                        "only simple parameter names are supported in #[export_methods]",
-                    ));
-                }
-            };
-
-            let param_name_str = param_name.to_string();
-            let arg_idx = self_offset + i;
-
-            let resolved_ty = resolve_self_in_type(&pat_type.ty, &rust_type_ident);
-            let mode = classify_param(&resolved_ty).ok_or_else(|| {
-                syn::Error::new_spanned(&pat_type.ty, "unsupported type in #[export_methods]")
-            })?;
-
-            match mode {
-                ParamMode::Owned(ty) => {
-                    param_extractions.push(quote! {
-                        let #param_name = <#ty as anvyx_lang::AnvyxConvert>::from_anvyx(&args[#arg_idx])?;
-                    });
-                    param_anvyx_types.push(
-                        quote! { (#param_name_str, <#ty as anvyx_lang::AnvyxConvert>::ANVYX_TYPE) },
-                    );
-                }
-                ParamMode::ExternRef(info) => {
-                    let ExternTypeInfo {
-                        type_ident: ref_type,
-                        decl_ident: ref_decl,
-                    } = info;
-                    let handle_ident = format_ident!("__handle_{}", i);
-                    param_extractions.push(quote! {
-                        let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
-                            return Err(anvyx_lang::RuntimeError::new(format!(
-                                "expected extern handle for parameter '{}' in extern method '{}'",
-                                #param_name_str, #handler_key
-                            )));
-                        };
-                        let #handle_ident = __ehd.id;
-                    });
-                    param_anvyx_types.push(quote! { (#param_name_str, #ref_decl.name) });
-                    let guard_ident = format_ident!("__guard_{}", i);
-                    borrow_params.push(crate::codegen::BorrowParam {
-                        param_name: Some(param_name.clone()),
-                        type_ident: ref_type,
-                        handle_ident,
-                        guard_ident,
-                        is_mut: false,
-                    });
-                }
-                ParamMode::ExternMutRef(info) => {
-                    let ExternTypeInfo {
-                        type_ident: ref_type,
-                        decl_ident: ref_decl,
-                    } = info;
-                    let handle_ident = format_ident!("__handle_{}", i);
-                    param_extractions.push(quote! {
-                        let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#arg_idx] else {
-                            return Err(anvyx_lang::RuntimeError::new(format!(
-                                "expected extern handle for parameter '{}' in extern method '{}'",
-                                #param_name_str, #handler_key
-                            )));
-                        };
-                        let #handle_ident = __ehd.id;
-                    });
-                    param_anvyx_types.push(quote! { (#param_name_str, #ref_decl.name) });
-                    let guard_ident = format_ident!("__guard_{}", i);
-                    borrow_params.push(crate::codegen::BorrowParam {
-                        param_name: Some(param_name.clone()),
-                        type_ident: ref_type,
-                        handle_ident,
-                        guard_ident,
-                        is_mut: true,
-                    });
-                }
-            }
-
-            param_names.push(param_name);
-        }
-
-        let handler_body = match kind {
-            MethodKind::Static => {
-                let call = quote! { #rust_type_ident::#method_ident(#(#param_names),*) };
-                let call_body = build_handler_body(&call, &ret_mode, &handler_key, &borrow_params);
-                quote! {
-                    #(#param_extractions)*
-                    #call_body
-                }
-            }
-            MethodKind::Borrowing => {
-                let self_extract = quote! {
-                    let anvyx_lang::Value::ExternHandle(ref __ehd_self) = args[0] else {
-                        return Err(anvyx_lang::RuntimeError::new(format!(
-                            "expected extern handle for self in extern method '{}'",
-                            #handler_key
-                        )));
-                    };
-                    let __handle_self = __ehd_self.id;
-                };
-                let self_bp = crate::codegen::BorrowParam {
-                    param_name: None,
-                    type_ident: rust_type_ident.clone(),
-                    handle_ident: format_ident!("__handle_self"),
-                    guard_ident: format_ident!("__guard_self"),
-                    is_mut: false,
-                };
-                let mut all_borrows = vec![self_bp];
-                all_borrows.extend(borrow_params);
-                let call = quote! { __guard_self.#method_ident(#(#param_names),*) };
-                let call_body = build_handler_body(&call, &ret_mode, &handler_key, &all_borrows);
-                quote! {
-                    #self_extract
-                    #(#param_extractions)*
-                    #call_body
-                }
-            }
-            MethodKind::Mutating => {
-                let self_extract = quote! {
-                    let anvyx_lang::Value::ExternHandle(ref __ehd_self) = args[0] else {
-                        return Err(anvyx_lang::RuntimeError::new(format!(
-                            "expected extern handle for self in extern method '{}'",
-                            #handler_key
-                        )));
-                    };
-                    let __handle_self = __ehd_self.id;
-                };
-                let self_bp = crate::codegen::BorrowParam {
-                    param_name: None,
-                    type_ident: rust_type_ident.clone(),
-                    handle_ident: format_ident!("__handle_self"),
-                    guard_ident: format_ident!("__guard_self"),
-                    is_mut: true,
-                };
-                let mut all_borrows = vec![self_bp];
-                all_borrows.extend(borrow_params);
-                let call = quote! { __guard_self.#method_ident(#(#param_names),*) };
-                let call_body = build_handler_body(&call, &ret_mode, &handler_key, &all_borrows);
-                quote! {
-                    #self_extract
-                    #(#param_extractions)*
-                    #call_body
-                }
-            }
-        };
-
-        method_handler_fns.push(quote! {
-            pub fn #handler_fn_ident() -> (&'static str, anvyx_lang::ExternHandler) {
-                (#handler_key, Box::new(|args: Vec<anvyx_lang::Value>| {
-                    #handler_body
-                }))
-            }
-        });
-        method_handler_calls.push(quote! { #handler_fn_ident() });
-
-        let ret_anvyx_str = crate::codegen::ret_anvyx_type_str(&ret_mode);
-
-        let method_doc_token = match crate::codegen::extract_doc(&method.attrs) {
-            Some(s) => quote! { Some(#s) },
-            None => quote! { None },
-        };
-
-        match classify_method_kind(&method.sig)? {
-            MethodKind::Static => {
-                static_decls.push(quote! {
-                    anvyx_lang::ExternStaticMethodDecl {
-                        name: #method_name_str,
-                        doc: #method_doc_token,
-                        params: &[#(#param_anvyx_types),*],
-                        ret: #ret_anvyx_str,
-                    }
-                });
-            }
-            MethodKind::Borrowing => {
-                method_decls.push(quote! {
-                    anvyx_lang::ExternMethodDecl {
-                        name: #method_name_str,
-                        doc: #method_doc_token,
-                        receiver: "self",
-                        params: &[#(#param_anvyx_types),*],
-                        ret: #ret_anvyx_str,
-                    }
-                });
-            }
-            MethodKind::Mutating => {
-                method_decls.push(quote! {
-                    anvyx_lang::ExternMethodDecl {
-                        name: #method_name_str,
-                        doc: #method_doc_token,
-                        receiver: "var",
-                        params: &[#(#param_anvyx_types),*],
-                        ret: #ret_anvyx_str,
-                    }
-                });
-            }
+        let result = process_method(method, &anvyx_name_str, &rust_type_ident, &rust_type_str)?;
+        method_handler_fns.push(result.handler.handler_fn);
+        method_handler_calls.push(result.handler.handler_call);
+        match result.decl {
+            MethodDeclKind::Instance(d) => method_decls.push(d),
+            MethodDeclKind::Static(d) => static_decls.push(d),
         }
     }
 
@@ -1002,24 +378,10 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         let get_key = format!("{}::__get_{}", anvyx_name_str, field_name);
         let get_fn_ident = format_ident!("__anvyx_method_{}_get_{}", rust_type_str, field_name);
 
-        let self_extract = quote! {
-            let anvyx_lang::Value::ExternHandle(ref __ehd_self) = args[0] else {
-                return Err(anvyx_lang::RuntimeError::new(format!(
-                    "expected extern handle for self in extern method '{}'",
-                    #get_key
-                )));
-            };
-            let __handle_self = __ehd_self.id;
-        };
-        let self_bp = crate::codegen::BorrowParam {
-            param_name: None,
-            type_ident: rust_type_ident.clone(),
-            handle_ident: format_ident!("__handle_self"),
-            guard_ident: format_ident!("__guard_self"),
-            is_mut: false,
-        };
+        let sb = crate::codegen::build_self_borrow(&rust_type_ident, false, &get_key, 0);
+        let self_extract = &sb.extraction;
         let call = quote! { __guard_self.#method_ident() };
-        let call_body = build_handler_body(&call, &g.classified, &get_key, &[self_bp]);
+        let call_body = build_handler_body(&call, &g.classified, &get_key, &[sb.borrow_param]);
 
         method_handler_fns.push(quote! {
             pub fn #get_fn_ident() -> (&'static str, anvyx_lang::ExternHandler) {
@@ -1044,31 +406,17 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         let set_key = format!("{}::__set_{}", anvyx_name_str, field_name);
         let set_fn_ident = format_ident!("__anvyx_method_{}_set_{}", rust_type_str, field_name);
 
-        let self_extract = quote! {
-            let anvyx_lang::Value::ExternHandle(ref __ehd_self) = args[0] else {
-                return Err(anvyx_lang::RuntimeError::new(format!(
-                    "expected extern handle for self in extern method '{}'",
-                    #set_key
-                )));
-            };
-            let __handle_self = __ehd_self.id;
-        };
+        let sb = crate::codegen::build_self_borrow(&rust_type_ident, true, &set_key, 0);
+        let self_extract = &sb.extraction;
         let extraction = quote! {
             let #param_ident = <#param_ty as anvyx_lang::AnvyxConvert>::from_anvyx(&args[1])?;
-        };
-        let self_bp = crate::codegen::BorrowParam {
-            param_name: None,
-            type_ident: rust_type_ident.clone(),
-            handle_ident: format_ident!("__handle_self"),
-            guard_ident: format_ident!("__guard_self"),
-            is_mut: true,
         };
         let call = quote! { __guard_self.#method_ident(#param_ident) };
         let void_return = ClassifiedReturn {
             mode: ReturnMode::Void,
             wrapper: ReturnWrapper::None,
         };
-        let call_body = build_handler_body(&call, &void_return, &set_key, &[self_bp]);
+        let call_body = build_handler_body(&call, &void_return, &set_key, &[sb.borrow_param]);
 
         method_handler_fns.push(quote! {
             pub fn #set_fn_ident() -> (&'static str, anvyx_lang::ExternHandler) {
@@ -1082,9 +430,9 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         method_handler_calls.push(quote! { #set_fn_ident() });
     }
 
-    let getter_fields_fn_ident = format_ident!("__anvyx_getter_fields_{}", rust_type_ident);
-    let init_fields_fn_ident = format_ident!("__anvyx_init_fields_{}", rust_type_ident);
-    let has_init_ident = format_ident!("__ANVYX_HAS_INIT_{}", type_upper);
+    let getter_fields_fn_ident = crate::naming::getter_fields_fn_ident(&rust_type_ident);
+    let init_fields_fn_ident = crate::naming::init_fields_fn_ident(&rust_type_ident);
+    let has_init_ident = crate::naming::has_init_ident(&rust_type_str);
 
     let mut cleaned_impl = impl_block.clone();
     for item in &mut cleaned_impl.items {
@@ -1134,6 +482,537 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     })
 }
 
+fn process_init(
+    method: &syn::ImplItemFn,
+    anvyx_name_str: &str,
+    rust_type_ident: &syn::Ident,
+    rust_type_str: &str,
+) -> syn::Result<InitResult> {
+    let kind = classify_method_kind(&method.sig)?;
+    if !matches!(kind, MethodKind::Static) {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "#[init] method must be a static method (no self parameter)",
+        ));
+    }
+    let method_ident = &method.sig.ident;
+    let handler_key = format!("{}::__init__", anvyx_name_str);
+    let handler_fn_ident = format_ident!("__anvyx_method_{}___init__", rust_type_str);
+
+    let resolved_output =
+        crate::codegen::resolve_self_in_return(&method.sig.output, rust_type_ident);
+    let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
+        syn::Error::new_spanned(&method.sig.output, "#[init] method must return Self")
+    })?;
+    let returns_self =
+        matches!(&ret_mode.mode, ReturnMode::Valued(ty) if *rust_type_ident == *ty.to_string());
+    if !returns_self {
+        return Err(syn::Error::new_spanned(
+            &method.sig.output,
+            "#[init] method must return Self",
+        ));
+    }
+    if matches!(ret_mode.wrapper, ReturnWrapper::AnvyxOption) {
+        return Err(syn::Error::new_spanned(
+            &method.sig.output,
+            "#[init] does not support Option return type",
+        ));
+    }
+
+    let non_self_params: Vec<_> = method
+        .sig
+        .inputs
+        .iter()
+        .filter(|arg| matches!(arg, FnArg::Typed(_)))
+        .collect();
+
+    let mut param_extractions = vec![];
+    let mut param_names = vec![];
+    let mut field_decls = vec![];
+
+    for (i, arg) in non_self_params.iter().enumerate() {
+        let FnArg::Typed(pat_type) = arg else {
+            unreachable!()
+        };
+        let param_name = match &*pat_type.pat {
+            Pat::Ident(pi) => pi.ident.clone(),
+            other => {
+                return Err(syn::Error::new_spanned(
+                    other,
+                    "only simple parameter names are supported in #[init]",
+                ));
+            }
+        };
+        let param_name_str = param_name.to_string();
+        let resolved_ty = crate::codegen::resolve_self_in_type(&pat_type.ty, rust_type_ident);
+        let mode = classify_param(&resolved_ty)
+            .ok_or_else(|| syn::Error::new_spanned(&pat_type.ty, "unsupported type in #[init]"))?;
+        match mode {
+            ParamMode::Owned(ty) => {
+                param_extractions.push(quote! {
+                    let #param_name = <#ty as anvyx_lang::AnvyxConvert>::from_anvyx(&args[#i])?;
+                });
+                field_decls.push(quote! {
+                    anvyx_lang::ExternFieldDecl {
+                        name: #param_name_str,
+                        ty: <#ty as anvyx_lang::AnvyxConvert>::ANVYX_TYPE,
+                        computed: false,
+                    }
+                });
+            }
+            ParamMode::ExternRef(_) | ParamMode::ExternMutRef(_) => {
+                return Err(syn::Error::new_spanned(
+                    &pat_type.ty,
+                    "#[init] does not support reference parameters; pass by value instead",
+                ));
+            }
+        }
+        param_names.push(param_name);
+    }
+
+    let call = quote! { #rust_type_ident::#method_ident(#(#param_names),*) };
+    let handler_body = crate::codegen::build_flat_call(&call, &ret_mode);
+
+    let handler_fn = quote! {
+        pub fn #handler_fn_ident() -> (&'static str, anvyx_lang::ExternHandler) {
+            (#handler_key, Box::new(|args: Vec<anvyx_lang::Value>| {
+                #(#param_extractions)*
+                #handler_body
+            }))
+        }
+    };
+    let handler_call = quote! { #handler_fn_ident() };
+
+    Ok(InitResult {
+        handler: HandlerOutput {
+            handler_fn,
+            handler_call,
+        },
+        field_decls,
+    })
+}
+
+fn process_getter(
+    method: &syn::ImplItemFn,
+    rust_type_ident: &syn::Ident,
+) -> syn::Result<GetterInfo> {
+    let method_ident = method.sig.ident.clone();
+    let kind = classify_method_kind(&method.sig)?;
+    if !matches!(kind, MethodKind::Borrowing) {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "#[getter] method must take `&self`",
+        ));
+    }
+    let non_self_count = method
+        .sig
+        .inputs
+        .iter()
+        .filter(|a| matches!(a, FnArg::Typed(_)))
+        .count();
+    if non_self_count != 0 {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "#[getter] method must have no parameters besides `&self`",
+        ));
+    }
+    let resolved_output =
+        crate::codegen::resolve_self_in_return(&method.sig.output, rust_type_ident);
+    let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
+        syn::Error::new_spanned(&method.sig.output, "unsupported return type in #[getter]")
+    })?;
+    if matches!(ret_mode.mode, ReturnMode::Void) {
+        return Err(syn::Error::new_spanned(
+            &method.sig.output,
+            "#[getter] method must have a non-void return type",
+        ));
+    }
+    Ok(GetterInfo {
+        field_name: method_ident.to_string(),
+        method_ident,
+        classified: ret_mode,
+    })
+}
+
+fn process_setter(
+    method: &syn::ImplItemFn,
+    rust_type_ident: &syn::Ident,
+) -> syn::Result<SetterInfo> {
+    let method_ident = method.sig.ident.clone();
+    let method_name_str = method_ident.to_string();
+    if !method_name_str.starts_with("set_") {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "#[setter] method name must start with `set_`",
+        ));
+    }
+    let field_name = method_name_str["set_".len()..].to_string();
+    let kind = classify_method_kind(&method.sig)?;
+    if !matches!(kind, MethodKind::Mutating) {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "#[setter] method must take `&mut self`",
+        ));
+    }
+    let non_self_params: Vec<_> = method
+        .sig
+        .inputs
+        .iter()
+        .filter(|a| matches!(a, FnArg::Typed(_)))
+        .collect();
+    if non_self_params.len() != 1 {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "#[setter] method must have exactly one parameter besides `&mut self`",
+        ));
+    }
+    let FnArg::Typed(pat_type) = non_self_params[0] else {
+        unreachable!()
+    };
+    let param_ident = match &*pat_type.pat {
+        Pat::Ident(pi) => pi.ident.clone(),
+        other => {
+            return Err(syn::Error::new_spanned(
+                other,
+                "only simple parameter names are supported",
+            ));
+        }
+    };
+    let resolved_ty = crate::codegen::resolve_self_in_type(&pat_type.ty, rust_type_ident);
+    let param_mode = classify_param(&resolved_ty)
+        .ok_or_else(|| syn::Error::new_spanned(&pat_type.ty, "unsupported type in #[setter]"))?;
+    let param_ty = match param_mode {
+        ParamMode::Owned(ty) => ty,
+        _ => {
+            return Err(syn::Error::new_spanned(
+                &pat_type.ty,
+                "#[setter] does not support reference parameters; pass by value instead",
+            ));
+        }
+    };
+    Ok(SetterInfo {
+        field_name,
+        method_ident,
+        param_ident,
+        param_ty,
+    })
+}
+
+fn process_op(
+    method: &syn::ImplItemFn,
+    anvyx_name_str: &str,
+    rust_type_ident: &syn::Ident,
+    rust_type_str: &str,
+) -> syn::Result<OpResult> {
+    let op_attr = method
+        .attrs
+        .iter()
+        .find(|a| a.path().is_ident("op"))
+        .unwrap();
+    let op_tokens = match &op_attr.meta {
+        syn::Meta::List(list) => list.tokens.clone(),
+        _ => {
+            return Err(syn::Error::new_spanned(op_attr, "expected #[op(...)]"));
+        }
+    };
+    let op_ann = parse_op_annotation(op_tokens)?;
+
+    let kind = classify_method_kind(&method.sig)?;
+    if !matches!(kind, MethodKind::Borrowing) {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "#[op] method must take `&self`",
+        ));
+    }
+
+    let method_ident = &method.sig.ident;
+
+    let non_self_params: Vec<_> = method
+        .sig
+        .inputs
+        .iter()
+        .filter(|arg| matches!(arg, FnArg::Typed(_)))
+        .collect();
+
+    let self_on_right = op_ann.self_on_right;
+    let (handler_key, ident_component, op_info) = match op_ann.kind {
+        OpKind::Binary { op, lhs, rhs } => {
+            if non_self_params.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    &method.sig,
+                    "#[op] binary operator method must have exactly one non-self parameter",
+                ));
+            }
+            let op_cap = op_to_capitalized(op);
+            let op_sym = op_to_symbol(op);
+            if self_on_right {
+                let lhs_r = if lhs == "Self" {
+                    anvyx_name_str.to_owned()
+                } else {
+                    lhs
+                };
+                (
+                    format!("{}::__op_r{}__{}", anvyx_name_str, op, lhs_r),
+                    format!("__op_r{}__{}", op, lhs_r),
+                    OpInfo {
+                        op_cap,
+                        other_type: lhs_r,
+                        is_unary: false,
+                        op_sym,
+                    },
+                )
+            } else {
+                let rhs_r = if rhs == "Self" {
+                    anvyx_name_str.to_owned()
+                } else {
+                    rhs
+                };
+                (
+                    format!("{}::__op_{}__{}", anvyx_name_str, op, rhs_r),
+                    format!("__op_{}__{}", op, rhs_r),
+                    OpInfo {
+                        op_cap,
+                        other_type: rhs_r,
+                        is_unary: false,
+                        op_sym,
+                    },
+                )
+            }
+        }
+        OpKind::Unary { op } => {
+            if !non_self_params.is_empty() {
+                return Err(syn::Error::new_spanned(
+                    &method.sig,
+                    "#[op] unary operator method must have no non-self parameters",
+                ));
+            }
+            let op_cap = op_to_capitalized(op);
+            let op_sym = op_to_symbol(op);
+            (
+                format!("{}::__op_{}", anvyx_name_str, op),
+                format!("__op_{}", op),
+                OpInfo {
+                    op_cap,
+                    other_type: String::new(),
+                    is_unary: true,
+                    op_sym,
+                },
+            )
+        }
+    };
+
+    let dup_key = (op_info.op_cap, op_info.other_type.clone(), self_on_right);
+
+    let handler_fn_ident = format_ident!("__anvyx_method_{}_{}", rust_type_str, ident_component);
+
+    let resolved_output =
+        crate::codegen::resolve_self_in_return(&method.sig.output, rust_type_ident);
+    let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
+        syn::Error::new_spanned(&method.sig.output, "unsupported return type in #[op]")
+    })?;
+
+    if op_info.op_cap == "Eq" {
+        let is_bool = matches!(&ret_mode.mode, ReturnMode::Valued(ty) if ty.to_string() == "bool");
+        if !is_bool {
+            return Err(syn::Error::new_spanned(
+                &method.sig.output,
+                "#[op(Self == T)] must return bool",
+            ));
+        }
+    }
+
+    let ret_anvyx = crate::codegen::ret_anvyx_type_str(&ret_mode);
+    let op_cap_str = op_info.op_cap;
+    let other_type_str = &op_info.other_type;
+    let op_decl = if op_info.is_unary {
+        quote! {
+            anvyx_lang::ExternOpDecl { op: #op_cap_str, rhs: None, lhs: None, ret: #ret_anvyx }
+        }
+    } else if self_on_right {
+        quote! {
+            anvyx_lang::ExternOpDecl { op: #op_cap_str, rhs: None, lhs: Some(#other_type_str), ret: #ret_anvyx }
+        }
+    } else {
+        quote! {
+            anvyx_lang::ExternOpDecl { op: #op_cap_str, rhs: Some(#other_type_str), lhs: None, ret: #ret_anvyx }
+        }
+    };
+
+    let self_arg_idx: usize = if self_on_right { 1 } else { 0 };
+    let other_arg_idx: usize = if self_on_right { 0 } else { 1 };
+
+    let sb = crate::codegen::build_self_borrow(rust_type_ident, false, &handler_key, self_arg_idx);
+
+    let handler_label = format!("extern method '{handler_key}'");
+    let extracted = crate::codegen::extract_params(
+        &non_self_params,
+        other_arg_idx,
+        &handler_label,
+        Some(rust_type_ident),
+    )?;
+
+    let param_names = extracted.param_names.as_slice();
+    let param_extractions = extracted.extractions.as_slice();
+    let mut all_borrows = vec![sb.borrow_param];
+    all_borrows.extend(extracted.borrow_params);
+    let call = quote! { __guard_self.#method_ident(#(#param_names),*) };
+    let call_body = build_handler_body(&call, &ret_mode, &handler_key, &all_borrows);
+    let self_extract = &sb.extraction;
+
+    let handler_body = quote! {
+        #self_extract
+        #(#param_extractions)*
+        #call_body
+    };
+
+    let handler_fn = quote! {
+        pub fn #handler_fn_ident() -> (&'static str, anvyx_lang::ExternHandler) {
+            (#handler_key, Box::new(|args: Vec<anvyx_lang::Value>| {
+                #handler_body
+            }))
+        }
+    };
+    let handler_call = quote! { #handler_fn_ident() };
+
+    Ok(OpResult {
+        handler: HandlerOutput {
+            handler_fn,
+            handler_call,
+        },
+        op_decl,
+        dup_key,
+        op_sym: op_info.op_sym,
+        is_unary: op_info.is_unary,
+    })
+}
+
+fn process_method(
+    method: &syn::ImplItemFn,
+    anvyx_name_str: &str,
+    rust_type_ident: &syn::Ident,
+    rust_type_str: &str,
+) -> syn::Result<MethodResult> {
+    let method_ident = &method.sig.ident;
+    let method_name_str = method_ident.to_string();
+    let handler_key = format!("{}::{}", anvyx_name_str, method_name_str);
+    let handler_fn_ident = format_ident!("__anvyx_method_{}_{}", rust_type_str, method_name_str);
+
+    let kind = classify_method_kind(&method.sig)?;
+
+    let resolved_output =
+        crate::codegen::resolve_self_in_return(&method.sig.output, rust_type_ident);
+    let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
+        syn::Error::new_spanned(
+            &method.sig.output,
+            "unsupported return type in #[export_methods]",
+        )
+    })?;
+
+    let self_offset = match kind {
+        MethodKind::Static => 0,
+        _ => 1,
+    };
+
+    let non_self_params: Vec<_> = method
+        .sig
+        .inputs
+        .iter()
+        .filter(|arg| matches!(arg, FnArg::Typed(_)))
+        .collect();
+
+    let handler_label = format!("extern method '{handler_key}'");
+    let extracted = crate::codegen::extract_params(
+        &non_self_params,
+        self_offset,
+        &handler_label,
+        Some(rust_type_ident),
+    )?;
+
+    let handler_body = {
+        let param_names = extracted.param_names.as_slice();
+        let extractions = extracted.extractions.as_slice();
+        match kind {
+            MethodKind::Static => {
+                let call = quote! { #rust_type_ident::#method_ident(#(#param_names),*) };
+                let call_body =
+                    build_handler_body(&call, &ret_mode, &handler_key, &extracted.borrow_params);
+                quote! {
+                    #(#extractions)*
+                    #call_body
+                }
+            }
+            MethodKind::Borrowing | MethodKind::Mutating => {
+                let is_mut = matches!(kind, MethodKind::Mutating);
+                let sb =
+                    crate::codegen::build_self_borrow(rust_type_ident, is_mut, &handler_key, 0);
+                let mut all_borrows = vec![sb.borrow_param];
+                all_borrows.extend(extracted.borrow_params);
+                let call = quote! { __guard_self.#method_ident(#(#param_names),*) };
+                let call_body = build_handler_body(&call, &ret_mode, &handler_key, &all_borrows);
+                let self_extract = &sb.extraction;
+                quote! {
+                    #self_extract
+                    #(#extractions)*
+                    #call_body
+                }
+            }
+        }
+    };
+
+    let handler_fn = quote! {
+        pub fn #handler_fn_ident() -> (&'static str, anvyx_lang::ExternHandler) {
+            (#handler_key, Box::new(|args: Vec<anvyx_lang::Value>| {
+                #handler_body
+            }))
+        }
+    };
+    let handler_call = quote! { #handler_fn_ident() };
+
+    let ret_anvyx_str = crate::codegen::ret_anvyx_type_str(&ret_mode);
+    let method_doc_token = match crate::codegen::extract_doc(&method.attrs) {
+        Some(s) => quote! { Some(#s) },
+        None => quote! { None },
+    };
+    let param_anvyx_types = extracted.anvyx_types.as_slice();
+
+    let decl = match kind {
+        MethodKind::Static => MethodDeclKind::Static(quote! {
+            anvyx_lang::ExternStaticMethodDecl {
+                name: #method_name_str,
+                doc: #method_doc_token,
+                params: &[#(#param_anvyx_types),*],
+                ret: #ret_anvyx_str,
+            }
+        }),
+        MethodKind::Borrowing => MethodDeclKind::Instance(quote! {
+            anvyx_lang::ExternMethodDecl {
+                name: #method_name_str,
+                doc: #method_doc_token,
+                receiver: "self",
+                params: &[#(#param_anvyx_types),*],
+                ret: #ret_anvyx_str,
+            }
+        }),
+        MethodKind::Mutating => MethodDeclKind::Instance(quote! {
+            anvyx_lang::ExternMethodDecl {
+                name: #method_name_str,
+                doc: #method_doc_token,
+                receiver: "var",
+                params: &[#(#param_anvyx_types),*],
+                ret: #ret_anvyx_str,
+            }
+        }),
+    };
+
+    Ok(MethodResult {
+        handler: HandlerOutput {
+            handler_fn,
+            handler_call,
+        },
+        decl,
+    })
+}
+
 fn classify_method_kind(sig: &syn::Signature) -> syn::Result<MethodKind> {
     match sig.inputs.first() {
         None | Some(FnArg::Typed(_)) => Ok(MethodKind::Static),
@@ -1150,42 +1029,6 @@ fn classify_method_kind(sig: &syn::Signature) -> syn::Result<MethodKind> {
                 Ok(MethodKind::Borrowing)
             }
         }
-    }
-}
-
-fn resolve_self_in_return(output: &ReturnType, type_ident: &syn::Ident) -> ReturnType {
-    match output {
-        ReturnType::Default => ReturnType::Default,
-        ReturnType::Type(arrow, ty) => {
-            let resolved = resolve_self_in_type(ty, type_ident);
-            ReturnType::Type(*arrow, Box::new(resolved))
-        }
-    }
-}
-
-fn resolve_self_in_type(ty: &Type, type_ident: &syn::Ident) -> Type {
-    match ty {
-        Type::Path(path) if path.qself.is_none() => {
-            if let Some(ident) = path.path.get_ident()
-                && ident == "Self"
-            {
-                return Type::Path(syn::TypePath {
-                    qself: None,
-                    path: type_ident.clone().into(),
-                });
-            }
-            ty.clone()
-        }
-        Type::Reference(ref_type) => {
-            let resolved_elem = resolve_self_in_type(&ref_type.elem, type_ident);
-            Type::Reference(syn::TypeReference {
-                and_token: ref_type.and_token,
-                lifetime: ref_type.lifetime.clone(),
-                mutability: ref_type.mutability,
-                elem: Box::new(resolved_elem),
-            })
-        }
-        _ => ty.clone(),
     }
 }
 

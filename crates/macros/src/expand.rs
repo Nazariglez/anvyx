@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{
-    FnArg, ItemFn, LitStr, Pat, Result, ReturnType, Token,
+    FnArg, ItemFn, LitStr, Result, Token,
     parse::{Parse, ParseStream},
 };
 
-use crate::type_map::{ExternTypeInfo, ParamMode, classify_param, classify_return};
+use crate::type_map::classify_return;
 
 struct ExportFnArgs {
     name: Option<String>,
@@ -79,114 +79,59 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
 
     let fn_ident = &func.sig.ident;
     let export_name = args.name.unwrap_or_else(|| fn_ident.to_string());
-    let companion_ident = format_ident!("__anvyx_export_{}", fn_ident);
-    let decl_upper = fn_ident.to_string().to_uppercase();
-    let decl_ident = format_ident!("__ANVYX_DECL_{}", decl_upper);
+    let companion_ident = crate::naming::fn_companion_ident(fn_ident);
+    let decl_ident = crate::naming::fn_decl_ident(&fn_ident.to_string());
 
-    let mut extractions = vec![];
-    let mut param_names = vec![];
-    let mut param_tuples = vec![];
-    let mut borrow_params: Vec<crate::codegen::BorrowParam> = vec![];
-
-    for (i, arg) in func.sig.inputs.iter().enumerate() {
-        let FnArg::Typed(pat_type) = arg else {
+    // reject self parameters because they are not valid in free functions
+    for arg in func.sig.inputs.iter() {
+        if let FnArg::Receiver(_) = arg {
             return Err(syn::Error::new_spanned(
                 arg,
                 "self parameters are not supported in #[export_fn]",
             ));
-        };
-
-        let param_name = match &*pat_type.pat {
-            Pat::Ident(pi) => pi.ident.clone(),
-            other => {
-                return Err(syn::Error::new_spanned(
-                    other,
-                    "only simple parameter names are supported in #[export_fn]",
-                ));
-            }
-        };
-
-        let param_name_str = param_name.to_string();
-        let handle_ident = format_ident!("__handle_{}", i);
-
-        let mode = classify_param(&pat_type.ty).ok_or_else(|| {
-            syn::Error::new_spanned(&pat_type.ty, "unsupported type in #[export_fn]")
-        })?;
-
-        match mode {
-            ParamMode::Owned(ty) => {
-                let anvyx_type_tokens = match args.params.get(&param_name_str) {
-                    Some(s) => quote! { #s },
-                    None => quote! { <#ty as anvyx_lang::AnvyxConvert>::ANVYX_TYPE },
-                };
-                extractions.push(quote! {
-                    let #param_name = <#ty as anvyx_lang::AnvyxConvert>::from_anvyx(&args[#i])?;
-                });
-                param_tuples.push(quote! { (#param_name_str, #anvyx_type_tokens) });
-            }
-            ParamMode::ExternRef(info) => {
-                let ExternTypeInfo {
-                    type_ident,
-                    decl_ident,
-                } = info;
-
-                extractions.push(quote! {
-                    let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#i] else {
-                        return Err(anvyx_lang::RuntimeError::new(format!(
-                            "expected extern handle for parameter '{}' in extern fn '{}'",
-                            #param_name_str, #export_name
-                        )));
-                    };
-                    let #handle_ident = __ehd.id;
-                });
-                param_tuples.push(quote! { (#param_name_str, #decl_ident.name) });
-                let guard_ident = format_ident!("__guard_{}", i);
-                borrow_params.push(crate::codegen::BorrowParam {
-                    param_name: Some(param_name.clone()),
-                    type_ident,
-                    handle_ident,
-                    guard_ident,
-                    is_mut: false,
-                });
-            }
-            ParamMode::ExternMutRef(info) => {
-                let ExternTypeInfo {
-                    type_ident,
-                    decl_ident,
-                } = info;
-
-                extractions.push(quote! {
-                    let anvyx_lang::Value::ExternHandle(ref __ehd) = args[#i] else {
-                        return Err(anvyx_lang::RuntimeError::new(format!(
-                            "expected extern handle for parameter '{}' in extern fn '{}'",
-                            #param_name_str, #export_name
-                        )));
-                    };
-                    let #handle_ident = __ehd.id;
-                });
-                param_tuples.push(quote! { (#param_name_str, #decl_ident.name) });
-                let guard_ident = format_ident!("__guard_{}", i);
-                borrow_params.push(crate::codegen::BorrowParam {
-                    param_name: Some(param_name.clone()),
-                    type_ident,
-                    handle_ident,
-                    guard_ident,
-                    is_mut: true,
-                });
-            }
         }
-
-        param_names.push(param_name);
     }
 
-    let ret_type_ts = ret_anvyx_type(&func.sig.output, &export_name, &args.ret)?;
-    let call_body = build_call_body(
-        &func.sig.output,
-        fn_ident,
-        &param_names,
-        &export_name,
-        &borrow_params,
-    )?;
+    // extract all params via codegen helper
+    let handler_label = format!("extern fn '{export_name}'");
+    let params: Vec<_> = func.sig.inputs.iter().collect();
+    let mut extracted = crate::codegen::extract_params(&params, 0, &handler_label, None)?;
+
+    // Apply param type overrides from #[export_fn(params(...))]
+    for (i, name) in extracted.param_names.iter().enumerate() {
+        if let Some(override_str) = args.params.get(&name.to_string()) {
+            let name_str = name.to_string();
+            extracted.anvyx_types[i] = quote! { (#name_str, #override_str) };
+        }
+    }
+
+    // classify return type once because it is used for both decl and handler body
+    let classified = classify_return(&func.sig.output).ok_or_else(|| {
+        syn::Error::new_spanned(
+            &func.sig.output,
+            format!(
+                "unsupported return type in #[export_fn] '{export_name}': \
+                 only i64, f64, bool, String, Value, and exported types are supported"
+            ),
+        )
+    })?;
+
+    let ret_type_ts = match &args.ret {
+        Some(ret_str) => quote! { #ret_str },
+        None => crate::codegen::ret_anvyx_type_str(&classified),
+    };
+
+    let param_names = &extracted.param_names;
+    let call = quote! { #fn_ident(#(#param_names),*) };
+    let call_body = crate::codegen::build_call_with_borrows(
+        &call,
+        &classified,
+        &handler_label,
+        &extracted.borrow_params,
+    );
+
+    let extractions = &extracted.extractions;
+    let param_tuples = &extracted.anvyx_types;
 
     let doc_token = match crate::codegen::extract_doc(&func.attrs) {
         Some(s) => quote! { Some(#s) },
@@ -210,54 +155,4 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
             }))
         }
     })
-}
-
-fn ret_anvyx_type(
-    output: &ReturnType,
-    export_name: &str,
-    ret_override: &Option<String>,
-) -> syn::Result<TokenStream> {
-    if let Some(ret_str) = ret_override {
-        return Ok(quote! { #ret_str });
-    }
-
-    let mode = classify_return(output).ok_or_else(|| {
-        syn::Error::new_spanned(
-            output,
-            format!(
-                "unsupported return type in #[export_fn] '{export_name}': \
-                 only i64, f64, bool, String, Value, and exported types are supported"
-            ),
-        )
-    })?;
-
-    Ok(crate::codegen::ret_anvyx_type_str(&mode))
-}
-
-fn build_call_body(
-    output: &ReturnType,
-    fn_ident: &syn::Ident,
-    param_names: &[syn::Ident],
-    export_name: &str,
-    borrow_params: &[crate::codegen::BorrowParam],
-) -> syn::Result<TokenStream> {
-    let call = quote! { #fn_ident(#(#param_names),*) };
-
-    let mode = classify_return(output).ok_or_else(|| {
-        syn::Error::new_spanned(
-            output,
-            format!(
-                "unsupported return type in #[export_fn] '{export_name}': \
-                 only i64, f64, bool, String, Value, and exported types are supported"
-            ),
-        )
-    })?;
-
-    let handler_label = format!("extern fn '{export_name}'");
-    Ok(crate::codegen::build_call_with_borrows(
-        &call,
-        &mode,
-        &handler_label,
-        borrow_params,
-    ))
 }

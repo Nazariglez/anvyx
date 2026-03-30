@@ -2,6 +2,7 @@ mod codegen;
 mod expand;
 mod export_methods;
 mod export_type;
+mod naming;
 mod provider;
 mod type_map;
 

@@ -5,6 +5,9 @@ use syn::{
     parse::{Parse, ParseStream},
 };
 
+use crate::codegen;
+use crate::type_map::{ClassifiedReturn, ReturnMode, ReturnWrapper};
+
 struct ExportTypeArgs {
     name: String,
 }
@@ -50,9 +53,9 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
 
     let option_name = format!("Option<{}>", anvyx_name);
 
-    let name_upper = struct_ident.to_string().to_uppercase();
-    let decl_ident = format_ident!("__ANVYX_TYPE_DECL_{}", name_upper);
-    let store_ident = format_ident!("__ANVYX_STORE_{}", name_upper);
+    let struct_name = struct_ident.to_string();
+    let decl_ident = crate::naming::type_decl_ident(&struct_name);
+    let store_ident = crate::naming::type_store_ident(&struct_name);
 
     let mut cleaned_struct = item_struct.clone();
     if let syn::Fields::Named(ref mut fields) = cleaned_struct.fields {
@@ -95,49 +98,53 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
         let get_fn_ident = format_ident!("__anvyx_field_get_{}_{}", struct_ident, field_ident);
         let set_fn_ident = format_ident!("__anvyx_field_set_{}_{}", struct_ident, field_ident);
 
+        // getter
+        let get_sb = codegen::build_self_borrow(struct_ident, false, &get_key, 0);
+        let get_self_extract = &get_sb.extraction;
+        let get_call = quote! { __guard_self.#field_ident.clone() };
+        let get_classified = ClassifiedReturn {
+            mode: ReturnMode::Valued(quote! { #field_ty }),
+            wrapper: ReturnWrapper::None,
+        };
+        let get_label = format!("extern method '{}'", get_key);
+        let get_body = codegen::build_call_with_borrows(
+            &get_call,
+            &get_classified,
+            &get_label,
+            &[get_sb.borrow_param],
+        );
+
+        // setter
+        let set_sb = codegen::build_self_borrow(struct_ident, true, &set_key, 0);
+        let set_self_extract = &set_sb.extraction;
+        let set_call = quote! { __guard_self.#field_ident = val };
+        let set_classified = ClassifiedReturn {
+            mode: ReturnMode::Void,
+            wrapper: ReturnWrapper::None,
+        };
+        let set_label = format!("extern method '{}'", set_key);
+        let set_body = codegen::build_call_with_borrows(
+            &set_call,
+            &set_classified,
+            &set_label,
+            &[set_sb.borrow_param],
+        );
+
         getter_setter_fns.push(quote! {
             #[allow(non_snake_case)]
             fn #get_fn_ident() -> (&'static str, anvyx_lang::ExternHandler) {
                 (#get_key, Box::new(|args: Vec<anvyx_lang::Value>| {
-                    let anvyx_lang::Value::ExternHandle(ref __ehd) = args[0] else {
-                        return Err(anvyx_lang::RuntimeError::new(
-                            format!("expected ExternHandle for '{}'", #get_key)
-                        ));
-                    };
-                    let handle = __ehd.id;
-                    <#struct_ident as anvyx_lang::AnvyxExternType>::with_store(|__store| {
-                        let __borrow = __store.borrow();
-                        let __guard = __borrow.borrow(handle).map_err(|e| {
-                            anvyx_lang::RuntimeError::new(format!(
-                                "invalid handle in '{}': {}", #get_key, e.message
-                            ))
-                        })?;
-                        let result = __guard.#field_ident.clone();
-                        Ok(anvyx_lang::AnvyxConvert::into_anvyx(result))
-                    })
+                    #get_self_extract
+                    #get_body
                 }))
             }
 
             #[allow(non_snake_case)]
             fn #set_fn_ident() -> (&'static str, anvyx_lang::ExternHandler) {
                 (#set_key, Box::new(|args: Vec<anvyx_lang::Value>| {
-                    let anvyx_lang::Value::ExternHandle(ref __ehd) = args[0] else {
-                        return Err(anvyx_lang::RuntimeError::new(
-                            format!("expected ExternHandle for '{}'", #set_key)
-                        ));
-                    };
-                    let handle = __ehd.id;
+                    #set_self_extract
                     let val = <#field_ty as anvyx_lang::AnvyxConvert>::from_anvyx(&args[1])?;
-                    <#struct_ident as anvyx_lang::AnvyxExternType>::with_store(|__store| {
-                        let __borrow = __store.borrow();
-                        let mut __guard = __borrow.borrow_mut(handle).map_err(|e| {
-                            anvyx_lang::RuntimeError::new(format!(
-                                "invalid handle in '{}': {}", #set_key, e.message
-                            ))
-                        })?;
-                        __guard.#field_ident = val;
-                        Ok(anvyx_lang::Value::Nil)
-                    })
+                    #set_body
                 }))
             }
         });
@@ -160,20 +167,26 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
             init_field_assigns.push(quote! { #field_ident: #val_ident });
         }
 
+        let init_call = quote! { #struct_ident { #(#init_field_assigns),* } };
+        let init_classified = ClassifiedReturn {
+            mode: ReturnMode::Valued(quote! { #struct_ident }),
+            wrapper: ReturnWrapper::None,
+        };
+        let init_body = codegen::build_flat_call(&init_call, &init_classified);
+
         getter_setter_fns.push(quote! {
             #[allow(non_snake_case)]
             fn #init_fn_ident() -> (&'static str, anvyx_lang::ExternHandler) {
                 (#init_key, Box::new(|args: Vec<anvyx_lang::Value>| {
                     #(#init_extractions)*
-                    let instance = #struct_ident { #(#init_field_assigns),* };
-                    Ok(anvyx_lang::extern_handle(instance))
+                    #init_body
                 }))
             }
         });
         companion_entries.push(quote! { #init_fn_ident() });
     }
 
-    let companion_fn_ident = format_ident!("__anvyx_fields_{}", struct_ident);
+    let companion_fn_ident = crate::naming::fields_fn_ident(struct_ident);
 
     let type_doc_token = match crate::codegen::extract_doc(&item_struct.attrs) {
         Some(s) => quote! { Some(#s) },
