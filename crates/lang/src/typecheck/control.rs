@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::ast::{
-    self, BlockNode, ExprKind, ExprNode, ForNode, Ident, IfLetNode, IfNode, Lit, MatchNode,
+    self, BlockNode, ExprId, ExprKind, ExprNode, ForNode, Ident, IfLetNode, IfNode, Lit, MatchNode,
     Pattern, Stmt, Type, WhileLetNode, WhileNode,
 };
 use crate::span::Span;
@@ -17,6 +17,82 @@ use super::{
     types::{EnumDef, TypeChecker},
     unify::{contains_infer, unify_types},
 };
+
+fn check_bare_catchall_on_optional(
+    pattern: &ast::PatternNode,
+    value_ty: &Type,
+    keyword: &str,
+    errors: &mut Vec<TypeErr>,
+) {
+    if !value_ty.is_option() {
+        return;
+    }
+    if let Pattern::Ident(name) | Pattern::VarIdent(name) = &pattern.node {
+        errors.push(
+            TypeErr::new(
+                pattern.span,
+                TypeErrKind::BareCatchAllOnOptional { pattern_name: *name },
+            )
+            .with_help(format!(
+                "use '{keyword} {name}? = ...' to unwrap the optional, or 'let {name} = ...' if you want the full optional type",
+            )),
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn unify_branch_types(
+    then_ty: Type,
+    else_ty: Type,
+    then_expr_id: Option<ExprId>,
+    else_expr_id: Option<ExprId>,
+    then_span: Span,
+    else_span: Span,
+    parent_span: Span,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> Type {
+    if then_ty == else_ty {
+        return then_ty;
+    }
+
+    let then_is_nil = then_ty.is_option_with_infer();
+    let else_is_nil = else_ty.is_option_with_infer();
+
+    if !then_ty.is_option() && else_is_nil {
+        let result_ty = Type::option_of(then_ty);
+        if let Some(id) = else_expr_id {
+            type_checker.set_type(id, result_ty.clone(), else_span);
+        }
+        return result_ty;
+    }
+
+    if !else_ty.is_option() && then_is_nil {
+        let result_ty = Type::option_of(else_ty);
+        if let Some(id) = then_expr_id {
+            type_checker.set_type(id, result_ty.clone(), then_span);
+        }
+        return result_ty;
+    }
+
+    let is_unifiable = contains_infer(&then_ty) || contains_infer(&else_ty);
+    if !is_unifiable {
+        errors.push(TypeErr::new(
+            parent_span,
+            TypeErrKind::MismatchedTypes {
+                expected: then_ty.clone(),
+                found: else_ty.clone(),
+            },
+        ));
+        return Type::Infer;
+    }
+
+    if contains_infer(&then_ty) {
+        else_ty
+    } else {
+        then_ty
+    }
+}
 
 fn validate_var_scrutinee(
     scrutinee: &ExprNode,
@@ -80,6 +156,8 @@ pub(super) fn check_while_let(
 ) {
     let node = &while_let_node.node;
     let value_ty = check_expr(&node.value, type_checker, errors, None);
+
+    check_bare_catchall_on_optional(&node.pattern, &value_ty, "while let", errors);
 
     let mutable = if pattern_has_var_binding(&node.pattern) {
         validate_var_scrutinee(&node.value, type_checker, errors)
@@ -291,51 +369,17 @@ pub(super) fn check_if(
 
     let (else_ty, else_expr_id) = check_block_expr(else_block, type_checker, errors, None);
 
-    // unify branch types
-    let same_ty = then_ty == else_ty;
-    if same_ty {
-        return then_ty;
-    }
-
-    // handle T vs nil case where one branch is nil
-    let then_is_nil = then_ty.is_option_with_infer();
-    let else_is_nil = else_ty.is_option_with_infer();
-
-    if !then_ty.is_option() && else_is_nil {
-        let result_ty = Type::option_of(then_ty);
-        if let Some(id) = else_expr_id {
-            type_checker.set_type(id, result_ty.clone(), else_block.span);
-        }
-        return result_ty;
-    }
-
-    if !else_ty.is_option() && then_is_nil {
-        let result_ty = Type::option_of(else_ty);
-        if let Some(id) = then_expr_id {
-            type_checker.set_type(id, result_ty.clone(), node.then_block.span);
-        }
-        return result_ty;
-    }
-
-    // check if unifiable
-    let is_unifiable = contains_infer(&then_ty) || contains_infer(&else_ty);
-    if !is_unifiable {
-        errors.push(TypeErr::new(
-            if_node.span,
-            TypeErrKind::MismatchedTypes {
-                expected: then_ty.clone(),
-                found: else_ty.clone(),
-            },
-        ));
-        return Type::Infer;
-    }
-
-    // return the type of the branch that doesn't contain infer
-    if contains_infer(&then_ty) {
-        else_ty
-    } else {
-        then_ty
-    }
+    unify_branch_types(
+        then_ty,
+        else_ty,
+        then_expr_id,
+        else_expr_id,
+        node.then_block.span,
+        else_block.span,
+        if_node.span,
+        type_checker,
+        errors,
+    )
 }
 
 pub(super) fn is_if_without_else(expr: &ExprNode) -> bool {
@@ -364,6 +408,8 @@ pub(super) fn check_if_let(
 
     let value_ty = check_expr(&node.value, type_checker, errors, None);
 
+    check_bare_catchall_on_optional(&node.pattern, &value_ty, "if let", errors);
+
     let mutable = if pattern_has_var_binding(&node.pattern) {
         validate_var_scrutinee(&node.value, type_checker, errors)
     } else {
@@ -381,48 +427,17 @@ pub(super) fn check_if_let(
 
     let (else_ty, else_expr_id) = check_block_expr(else_block, type_checker, errors, None);
 
-    // unify branch types
-    let same_ty = then_ty == else_ty;
-    if same_ty {
-        return then_ty;
-    }
-
-    let then_is_nil = then_ty.is_option_with_infer();
-    let else_is_nil = else_ty.is_option_with_infer();
-
-    if !then_ty.is_option() && else_is_nil {
-        let result_ty = Type::option_of(then_ty);
-        if let Some(id) = else_expr_id {
-            type_checker.set_type(id, result_ty.clone(), else_block.span);
-        }
-        return result_ty;
-    }
-
-    if !else_ty.is_option() && then_is_nil {
-        let result_ty = Type::option_of(else_ty);
-        if let Some(id) = then_expr_id {
-            type_checker.set_type(id, result_ty.clone(), node.then_block.span);
-        }
-        return result_ty;
-    }
-
-    let is_unifiable = contains_infer(&then_ty) || contains_infer(&else_ty);
-    if !is_unifiable {
-        errors.push(TypeErr::new(
-            if_let_node.span,
-            TypeErrKind::MismatchedTypes {
-                expected: then_ty.clone(),
-                found: else_ty.clone(),
-            },
-        ));
-        return Type::Infer;
-    }
-
-    if contains_infer(&then_ty) {
-        else_ty
-    } else {
-        then_ty
-    }
+    unify_branch_types(
+        then_ty,
+        else_ty,
+        then_expr_id,
+        else_expr_id,
+        node.then_block.span,
+        else_block.span,
+        if_let_node.span,
+        type_checker,
+        errors,
+    )
 }
 
 pub(super) fn check_match(
@@ -451,7 +466,7 @@ pub(super) fn check_match(
             check_match_scalar(match_node, &scrutinee_ty, type_checker, errors)
         }
         Type::Tuple(_) | Type::NamedTuple(_) => {
-            check_match_tuple(match_node, &scrutinee_ty, type_checker, errors)
+            check_match_scalar(match_node, &scrutinee_ty, type_checker, errors)
         }
         Type::Infer => Type::Infer,
         _ => {
@@ -585,46 +600,6 @@ fn check_match_bool(
 }
 
 fn check_match_scalar(
-    match_node: &MatchNode,
-    scrutinee_ty: &Type,
-    type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
-) -> Type {
-    let mut has_wildcard = false;
-    let mut arm_types: Vec<Type> = vec![];
-
-    for arm in &match_node.node.arms {
-        type_checker.push_scope();
-
-        match &arm.node.pattern.node {
-            Pattern::Ident(name) => {
-                if type_checker.get_const(*name).is_none() {
-                    has_wildcard = true;
-                }
-            }
-            Pattern::Wildcard | Pattern::VarIdent(_) => has_wildcard = true,
-            _ => {}
-        }
-
-        check_pattern_in_match(&arm.node.pattern, scrutinee_ty, type_checker, errors);
-
-        let arm_ty = check_expr(&arm.node.body, type_checker, errors, None);
-        arm_types.push(arm_ty);
-
-        type_checker.pop_scope();
-    }
-
-    if !has_wildcard {
-        errors.push(TypeErr::new(
-            match_node.span,
-            TypeErrKind::NonExhaustiveMatchNoCatchAll,
-        ));
-    }
-
-    unify_arm_types(&arm_types, match_node.span, errors)
-}
-
-fn check_match_tuple(
     match_node: &MatchNode,
     scrutinee_ty: &Type,
     type_checker: &mut TypeChecker,

@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: requires an unwrapping pattern
+
+fn main() {
+    let opt: int? = 42;
+    if let x = opt {
+        println(x);
+    }
+}

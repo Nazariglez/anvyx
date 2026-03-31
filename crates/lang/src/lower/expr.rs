@@ -173,10 +173,7 @@ pub(super) fn lower_expr(
         }
 
         ast::ExprKind::ArrayLiteral(lit) => {
-            let mut elements = vec![];
-            for e in &lit.node.elements {
-                elements.push(lower_expr(e, ctx, fc, out)?);
-            }
+            let elements = lower_args(&lit.node.elements, ctx, fc, out)?;
 
             match &ty {
                 Type::Array { .. } => hir::ExprKind::ArrayLiteral { elements },
@@ -584,6 +581,7 @@ fn lower_coalesce_expr(
             local: inner_local,
             mutable: false,
         }],
+        guard: None,
         body: hir::Block {
             stmts: vec![hir::Stmt {
                 span,
@@ -736,6 +734,7 @@ fn lower_safe_field_expr(
     let some_arm = hir::MatchArm {
         variant: some_variant,
         bindings: vec![],
+        guard: None,
         body: hir::Block {
             stmts: vec![
                 hir::Stmt {
@@ -865,6 +864,7 @@ fn lower_safe_index_expr(
     let some_arm = hir::MatchArm {
         variant: some_variant,
         bindings: vec![],
+        guard: None,
         body: hir::Block {
             stmts: vec![
                 hir::Stmt {
@@ -1130,6 +1130,7 @@ fn lower_safe_call_expr(
     let some_arm = hir::MatchArm {
         variant: some_variant,
         bindings,
+        guard: None,
         body: hir::Block { stmts: arm_stmts },
     };
 
@@ -1264,6 +1265,7 @@ fn inject_assign_target(stmt: hir::Stmt, target: hir::LocalId) -> hir::Stmt {
                 .map(|arm| hir::MatchArm {
                     variant: arm.variant,
                     bindings: arm.bindings,
+                    guard: arm.guard,
                     body: inject_assign_target_block(arm.body, target),
                 })
                 .collect();

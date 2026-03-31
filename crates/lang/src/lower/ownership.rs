@@ -229,9 +229,7 @@ fn analyze_stmt(stmt: &mut Stmt, ctx: &mut LivenessCtx) {
             }
 
             ctx.seen = then_ctx.seen;
-            for id in else_ctx.seen {
-                ctx.seen.insert(id);
-            }
+            ctx.seen.extend(else_ctx.seen);
 
             analyze_expr(cond, ctx);
         }
@@ -249,9 +247,7 @@ fn analyze_stmt(stmt: &mut Stmt, ctx: &mut LivenessCtx) {
             analyze_block(body, &mut loop_ctx);
             analyze_expr(cond, &mut loop_ctx);
 
-            for id in loop_ctx.seen {
-                ctx.seen.insert(id);
-            }
+            ctx.seen.extend(loop_ctx.seen);
         }
         StmtKind::Match {
             scrutinee_init,
@@ -270,10 +266,14 @@ fn analyze_stmt(stmt: &mut Stmt, ctx: &mut LivenessCtx) {
                     reassigned: ctx.reassigned.clone(),
                     ref_locals: ctx.ref_locals.clone(),
                 };
-                analyze_block(&mut arm.body, &mut arm_ctx);
-                for id in &arm_ctx.seen {
-                    merged.insert(*id);
+                if let Some(guard) = &mut arm.guard {
+                    // the scrutinee must remain valid for subsequent arms if
+                    // the guard fails so we treat it as already seen
+                    arm_ctx.seen.insert(*scrutinee);
+                    analyze_expr(guard, &mut arm_ctx);
                 }
+                analyze_block(&mut arm.body, &mut arm_ctx);
+                merged.extend(&arm_ctx.seen);
             }
 
             if let Some(eb) = else_body {
@@ -353,6 +353,9 @@ fn collect_locals_in_stmt(stmt: &Stmt, set: &mut HashSet<LocalId>) {
                 set.insert(wt.ref_local);
             }
             for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_locals_in_expr(guard, set);
+                }
                 collect_locals_in_block(&arm.body, set);
             }
             if let Some(eb) = else_body {

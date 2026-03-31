@@ -335,14 +335,105 @@ fn compile_stmt(fc: &mut FuncCompiler<'_>, stmt: &hir::Stmt) -> Result<(), Compi
             arms,
             else_body,
         } => {
-            compile_match_stmt(
-                fc,
-                scrutinee_init,
-                scrutinee,
-                write_through,
-                arms,
-                else_body,
-            )?;
+            // evaluate scrutinee and store to local
+            compile_expr(fc, scrutinee_init)?;
+            fc.emit(Op::SetLocal(scrutinee.0 as u16));
+
+            // initialize ref local for writethrough if any
+            if let Some(wt) = write_through {
+                if fc.locals[wt.original.0 as usize].is_ref {
+                    fc.emit(Op::GetLocal(wt.original.0 as u16));
+                } else {
+                    fc.emit(Op::PushRef(wt.original.0 as u16));
+                }
+                fc.emit(Op::SetLocal(wt.ref_local.0 as u16));
+            }
+
+            // we collect patch positions for the "jump to end" after each matched arm
+            let mut end_jump_positions: Vec<usize> = vec![];
+
+            for arm in arms {
+                // check if variant matches, GetLocal scrutinee, GetEnumVariant, push expected, Eq, JumpIfFalse(skip)
+                fc.emit(Op::GetLocal(scrutinee.0 as u16));
+                fc.emit(Op::GetEnumVariant);
+                let variant_idx = fc.add_constant(Value::Int(arm.variant as i64))?;
+                fc.emit(Op::Constant(variant_idx));
+                fc.emit(Op::Eq);
+                let skip_pos = fc.emit_jump(Op::JumpIfFalse(0));
+
+                // bind fields to locals
+                for binding in &arm.bindings {
+                    fc.emit(Op::GetLocal(scrutinee.0 as u16));
+                    fc.emit(Op::GetField(binding.field_index));
+                    fc.emit(Op::SetLocal(binding.local.0 as u16));
+                    if binding.mutable
+                        && let Some(wt) = write_through
+                    {
+                        fc.write_through_map.insert(
+                            binding.local,
+                            WriteThroughInfo {
+                                ref_local: wt.ref_local,
+                                kind: WriteThroughKind::Field(binding.field_index),
+                            },
+                        );
+                    }
+                }
+
+                // evaluate if false, skip to next arm
+                let guard_skip_pos = if let Some(guard) = &arm.guard {
+                    compile_expr(fc, guard)?;
+                    Some(fc.emit_jump(Op::JumpIfFalse(0)))
+                } else {
+                    None
+                };
+
+                compile_block(fc, &arm.body)?;
+
+                // remove writethrough entries for this arm's bindings
+                for binding in &arm.bindings {
+                    if binding.mutable {
+                        fc.write_through_map.remove(&binding.local);
+                    }
+                }
+
+                // jump past all remaining arms
+                let end_pos = fc.emit_jump(Op::Jump(0));
+                end_jump_positions.push(end_pos);
+
+                // patch both the variant mismatch skip and the guard skip to the next arm
+                fc.patch_jump(skip_pos)?;
+                if let Some(guard_pos) = guard_skip_pos {
+                    fc.patch_jump(guard_pos)?;
+                }
+            }
+
+            // else_body (wildcard / Ident catch-all)
+            if let Some(else_b) = else_body {
+                if let Some((binding_local, mutable)) = else_b.binding {
+                    fc.emit(Op::GetLocal(scrutinee.0 as u16));
+                    fc.emit(Op::SetLocal(binding_local.0 as u16));
+                    if mutable && let Some(wt) = write_through {
+                        fc.write_through_map.insert(
+                            binding_local,
+                            WriteThroughInfo {
+                                ref_local: wt.ref_local,
+                                kind: WriteThroughKind::Whole,
+                            },
+                        );
+                    }
+                }
+                compile_block(fc, &else_b.body)?;
+                if let Some((binding_local, mutable)) = else_b.binding
+                    && mutable
+                {
+                    fc.write_through_map.remove(&binding_local);
+                }
+            }
+
+            // patch all end-jumps to land after the whole match
+            for pos in end_jump_positions {
+                fc.patch_jump(pos)?;
+            }
         }
 
         hir::StmtKind::SetIndex {
@@ -363,106 +454,6 @@ fn compile_stmt(fc: &mut FuncCompiler<'_>, stmt: &hir::Stmt) -> Result<(), Compi
             }
             fc.emit_write_through(object);
         }
-    }
-
-    Ok(())
-}
-
-fn compile_match_stmt(
-    fc: &mut FuncCompiler<'_>,
-    scrutinee_init: &hir::Expr,
-    scrutinee: &hir::LocalId,
-    write_through: &Option<hir::MatchWriteThrough>,
-    arms: &[hir::MatchArm],
-    else_body: &Option<hir::MatchElse>,
-) -> Result<(), CompileError> {
-    // evaluate scrutinee and store to local
-    compile_expr(fc, scrutinee_init)?;
-    fc.emit(Op::SetLocal(scrutinee.0 as u16));
-
-    // initialize ref local for writethrough if any
-    if let Some(wt) = write_through {
-        if fc.locals[wt.original.0 as usize].is_ref {
-            fc.emit(Op::GetLocal(wt.original.0 as u16));
-        } else {
-            fc.emit(Op::PushRef(wt.original.0 as u16));
-        }
-        fc.emit(Op::SetLocal(wt.ref_local.0 as u16));
-    }
-
-    // we collect patch positions for the "jump to end" after each matched arm
-    let mut end_jump_positions: Vec<usize> = vec![];
-
-    for arm in arms {
-        // check if variant matches, GetLocal scrutinee, GetEnumVariant, push expected, Eq, JumpIfFalse(skip)
-        fc.emit(Op::GetLocal(scrutinee.0 as u16));
-        fc.emit(Op::GetEnumVariant);
-        let variant_idx = fc.add_constant(Value::Int(arm.variant as i64))?;
-        fc.emit(Op::Constant(variant_idx));
-        fc.emit(Op::Eq);
-        let skip_pos = fc.emit_jump(Op::JumpIfFalse(0));
-
-        // bind fields to locals
-        for binding in &arm.bindings {
-            fc.emit(Op::GetLocal(scrutinee.0 as u16));
-            fc.emit(Op::GetField(binding.field_index));
-            fc.emit(Op::SetLocal(binding.local.0 as u16));
-            if binding.mutable
-                && let Some(wt) = write_through
-            {
-                fc.write_through_map.insert(
-                    binding.local,
-                    WriteThroughInfo {
-                        ref_local: wt.ref_local,
-                        kind: WriteThroughKind::Field(binding.field_index),
-                    },
-                );
-            }
-        }
-
-        compile_block(fc, &arm.body)?;
-
-        // remove writethrough entries for this arm's bindings
-        for binding in &arm.bindings {
-            if binding.mutable {
-                fc.write_through_map.remove(&binding.local);
-            }
-        }
-
-        // jump past all remaining arms
-        let end_pos = fc.emit_jump(Op::Jump(0));
-        end_jump_positions.push(end_pos);
-
-        // patch the skip jump to land here (after the arm body)
-        fc.patch_jump(skip_pos)?;
-    }
-
-    // else_body (wildcard / Ident catch-all)
-    if let Some(else_b) = else_body {
-        if let Some((binding_local, mutable)) = else_b.binding {
-            fc.emit(Op::GetLocal(scrutinee.0 as u16));
-            fc.emit(Op::SetLocal(binding_local.0 as u16));
-            if mutable && let Some(wt) = write_through {
-                fc.write_through_map.insert(
-                    binding_local,
-                    WriteThroughInfo {
-                        ref_local: wt.ref_local,
-                        kind: WriteThroughKind::Whole,
-                    },
-                );
-            }
-        }
-        compile_block(fc, &else_b.body)?;
-        if let Some((binding_local, mutable)) = else_b.binding
-            && mutable
-        {
-            fc.write_through_map.remove(&binding_local);
-        }
-    }
-
-    // patch all end-jumps to land after the whole match
-    for pos in end_jump_positions {
-        fc.patch_jump(pos)?;
     }
 
     Ok(())
@@ -1304,6 +1295,7 @@ mod tests {
                 arms: vec![MatchArm {
                     variant: 0,
                     bindings: vec![],
+                    guard: None,
                     body: Block { stmts: vec![] },
                 }],
                 else_body: Some(MatchElse {

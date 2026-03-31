@@ -24,7 +24,7 @@ fn main() {
     }
 
     var opt3: int? = 10;
-    if let var x = opt3 {
+    if let Option.Some(var x) = opt3 {
         x = 42;
     }
     if let Option.Some(v) = opt3 {

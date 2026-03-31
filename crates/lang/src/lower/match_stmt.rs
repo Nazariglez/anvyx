@@ -177,6 +177,7 @@ fn lower_match_enum(
                 arms.push(hir::MatchArm {
                     variant: variant_idx,
                     bindings: vec![],
+                    guard: None,
                     body,
                 });
             }
@@ -227,6 +228,7 @@ fn lower_match_enum(
                 arms.push(hir::MatchArm {
                     variant: variant_idx,
                     bindings,
+                    guard: None,
                     body,
                 });
             }
@@ -291,6 +293,7 @@ fn lower_match_enum(
                 arms.push(hir::MatchArm {
                     variant: variant_idx,
                     bindings,
+                    guard: None,
                     body,
                 });
             }
@@ -302,6 +305,7 @@ fn lower_match_enum(
                 arms.push(hir::MatchArm {
                     variant: variant_idx,
                     bindings: vec![],
+                    guard: None,
                     body,
                 });
             }
@@ -345,6 +349,7 @@ fn lower_match_enum(
                 arms.push(hir::MatchArm {
                     variant: variant_idx,
                     bindings,
+                    guard: None,
                     body,
                 });
             }
@@ -390,6 +395,7 @@ fn lower_match_enum(
                             arms.push(hir::MatchArm {
                                 variant: variant_idx,
                                 bindings: vec![],
+                                guard: None,
                                 body,
                             });
                         }
@@ -446,6 +452,7 @@ fn lower_match_enum(
                             arms.push(hir::MatchArm {
                                 variant: variant_idx,
                                 bindings,
+                                guard: None,
                                 body,
                             });
                         }
@@ -516,6 +523,7 @@ fn lower_match_enum(
                             arms.push(hir::MatchArm {
                                 variant: variant_idx,
                                 bindings,
+                                guard: None,
                                 body,
                             });
                         }
@@ -528,6 +536,7 @@ fn lower_match_enum(
                             arms.push(hir::MatchArm {
                                 variant: variant_idx,
                                 bindings: vec![],
+                                guard: None,
                                 body,
                             });
                         }
@@ -541,25 +550,172 @@ fn lower_match_enum(
                                 .enum_variant_field_types(enum_name, some_ident, type_args)
                                 .unwrap_or_default();
                             let field_ty = field_types.first().cloned().unwrap_or(Type::Void);
-                            let mut bindings = vec![];
                             match &inner.node {
                                 Pattern::Ident(name) => {
                                     let local = register_named_local(fc, *name, field_ty);
-                                    bindings.push(hir::MatchBinding {
-                                        field_index: 0,
-                                        local,
-                                        mutable: false,
+                                    let body = lower_arm_body(
+                                        &arm.node.body,
+                                        ctx,
+                                        fc,
+                                        is_func_body,
+                                        ret_ty,
+                                    )?;
+                                    arms.push(hir::MatchArm {
+                                        variant: variant_idx,
+                                        bindings: vec![hir::MatchBinding {
+                                            field_index: 0,
+                                            local,
+                                            mutable: false,
+                                        }],
+                                        guard: None,
+                                        body,
                                     });
                                 }
                                 Pattern::VarIdent(name) => {
                                     let local = register_named_local(fc, *name, field_ty);
-                                    bindings.push(hir::MatchBinding {
-                                        field_index: 0,
-                                        local,
-                                        mutable: true,
+                                    let body = lower_arm_body(
+                                        &arm.node.body,
+                                        ctx,
+                                        fc,
+                                        is_func_body,
+                                        ret_ty,
+                                    )?;
+                                    arms.push(hir::MatchArm {
+                                        variant: variant_idx,
+                                        bindings: vec![hir::MatchBinding {
+                                            field_index: 0,
+                                            local,
+                                            mutable: true,
+                                        }],
+                                        guard: None,
+                                        body,
                                     });
                                 }
-                                Pattern::Wildcard => {}
+                                Pattern::Wildcard => {
+                                    let body = lower_arm_body(
+                                        &arm.node.body,
+                                        ctx,
+                                        fc,
+                                        is_func_body,
+                                        ret_ty,
+                                    )?;
+                                    arms.push(hir::MatchArm {
+                                        variant: variant_idx,
+                                        bindings: vec![],
+                                        guard: None,
+                                        body,
+                                    });
+                                }
+                                Pattern::Lit(lit) => {
+                                    let field_expr = hir::Expr::new(
+                                        field_ty.clone(),
+                                        span,
+                                        hir::ExprKind::FieldGet {
+                                            object: Box::new(hir::Expr::local(
+                                                scrutinee_ty.clone(),
+                                                span,
+                                                scrutinee_local,
+                                            )),
+                                            index: 0,
+                                        },
+                                    );
+                                    let rhs = build_rhs_from_lit(lit, span)?;
+                                    let guard = hir::Expr::binary(
+                                        Type::Bool,
+                                        span,
+                                        BinaryOp::Eq,
+                                        field_expr,
+                                        rhs,
+                                    );
+                                    let body = lower_arm_body(
+                                        &arm.node.body,
+                                        ctx,
+                                        fc,
+                                        is_func_body,
+                                        ret_ty,
+                                    )?;
+                                    arms.push(hir::MatchArm {
+                                        variant: variant_idx,
+                                        bindings: vec![],
+                                        guard: Some(guard),
+                                        body,
+                                    });
+                                }
+                                Pattern::Range {
+                                    start,
+                                    end,
+                                    inclusive,
+                                } => {
+                                    let field_expr = hir::Expr::new(
+                                        field_ty.clone(),
+                                        span,
+                                        hir::ExprKind::FieldGet {
+                                            object: Box::new(hir::Expr::local(
+                                                scrutinee_ty.clone(),
+                                                span,
+                                                scrutinee_local,
+                                            )),
+                                            index: 0,
+                                        },
+                                    );
+                                    let ge = if let Some(s) = start {
+                                        let rhs = build_rhs_from_lit(s, span)?;
+                                        Some(hir::Expr::binary(
+                                            Type::Bool,
+                                            span,
+                                            BinaryOp::GreaterThanEq,
+                                            field_expr.clone(),
+                                            rhs,
+                                        ))
+                                    } else {
+                                        None
+                                    };
+                                    let lt = if let Some(e) = end {
+                                        let rhs = build_rhs_from_lit(e, span)?;
+                                        let op = if *inclusive {
+                                            BinaryOp::LessThanEq
+                                        } else {
+                                            BinaryOp::LessThan
+                                        };
+                                        Some(hir::Expr::binary(
+                                            Type::Bool,
+                                            span,
+                                            op,
+                                            field_expr.clone(),
+                                            rhs,
+                                        ))
+                                    } else {
+                                        None
+                                    };
+                                    let guard = match (ge, lt) {
+                                        (Some(ge), Some(lt)) => hir::Expr::binary(
+                                            Type::Bool,
+                                            span,
+                                            BinaryOp::And,
+                                            ge,
+                                            lt,
+                                        ),
+                                        (Some(only), None) | (None, Some(only)) => only,
+                                        (None, None) => {
+                                            unreachable!(
+                                                "range pattern must have at least one bound"
+                                            )
+                                        }
+                                    };
+                                    let body = lower_arm_body(
+                                        &arm.node.body,
+                                        ctx,
+                                        fc,
+                                        is_func_body,
+                                        ret_ty,
+                                    )?;
+                                    arms.push(hir::MatchArm {
+                                        variant: variant_idx,
+                                        bindings: vec![],
+                                        guard: Some(guard),
+                                        body,
+                                    });
+                                }
                                 _ => {
                                     return Err(LowerError::UnsupportedExprKind {
                                         span,
@@ -567,13 +723,6 @@ fn lower_match_enum(
                                     });
                                 }
                             }
-                            let body =
-                                lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
-                            arms.push(hir::MatchArm {
-                                variant: variant_idx,
-                                bindings,
-                                body,
-                            });
                         }
                         other => {
                             return Err(LowerError::UnsupportedExprKind {
@@ -1302,6 +1451,7 @@ pub(super) fn lower_if_let(
                     hir::MatchArm {
                         variant: variant_idx,
                         bindings: vec![],
+                        guard: None,
                         body,
                     }
                 }
@@ -1349,6 +1499,7 @@ pub(super) fn lower_if_let(
                     hir::MatchArm {
                         variant: variant_idx,
                         bindings,
+                        guard: None,
                         body,
                     }
                 }
@@ -1406,6 +1557,7 @@ pub(super) fn lower_if_let(
                     hir::MatchArm {
                         variant: variant_idx,
                         bindings,
+                        guard: None,
                         body,
                     }
                 }
@@ -1418,6 +1570,7 @@ pub(super) fn lower_if_let(
                     hir::MatchArm {
                         variant: variant_idx,
                         bindings: vec![],
+                        guard: None,
                         body,
                     }
                 }
@@ -1463,6 +1616,7 @@ pub(super) fn lower_if_let(
                     hir::MatchArm {
                         variant: variant_idx,
                         bindings,
+                        guard: None,
                         body,
                     }
                 }
@@ -1642,6 +1796,7 @@ pub(super) fn lower_let_else(
                     hir::MatchArm {
                         variant: variant_idx,
                         bindings: vec![],
+                        guard: None,
                         body: hir::Block { stmts: vec![] },
                     }
                 }
@@ -1687,6 +1842,7 @@ pub(super) fn lower_let_else(
                     hir::MatchArm {
                         variant: variant_idx,
                         bindings,
+                        guard: None,
                         body: hir::Block { stmts: vec![] },
                     }
                 }
@@ -1742,6 +1898,7 @@ pub(super) fn lower_let_else(
                     hir::MatchArm {
                         variant: variant_idx,
                         bindings,
+                        guard: None,
                         body: hir::Block { stmts: vec![] },
                     }
                 }
@@ -1752,6 +1909,7 @@ pub(super) fn lower_let_else(
                     hir::MatchArm {
                         variant: variant_idx,
                         bindings: vec![],
+                        guard: None,
                         body: hir::Block { stmts: vec![] },
                     }
                 }
@@ -1794,6 +1952,7 @@ pub(super) fn lower_let_else(
                     hir::MatchArm {
                         variant: variant_idx,
                         bindings,
+                        guard: None,
                         body: hir::Block { stmts: vec![] },
                     }
                 }
@@ -2022,6 +2181,7 @@ fn lower_while_let_enum(
             hir::MatchArm {
                 variant: variant_idx,
                 bindings: vec![],
+                guard: None,
                 body,
             }
         }
@@ -2068,6 +2228,7 @@ fn lower_while_let_enum(
             hir::MatchArm {
                 variant: variant_idx,
                 bindings,
+                guard: None,
                 body,
             }
         }
@@ -2124,6 +2285,7 @@ fn lower_while_let_enum(
             hir::MatchArm {
                 variant: variant_idx,
                 bindings,
+                guard: None,
                 body,
             }
         }
@@ -2135,6 +2297,7 @@ fn lower_while_let_enum(
             hir::MatchArm {
                 variant: variant_idx,
                 bindings: vec![],
+                guard: None,
                 body,
             }
         }
@@ -2179,6 +2342,7 @@ fn lower_while_let_enum(
             hir::MatchArm {
                 variant: variant_idx,
                 bindings,
+                guard: None,
                 body,
             }
         }

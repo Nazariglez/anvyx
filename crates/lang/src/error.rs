@@ -818,6 +818,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("cannot infer enum type for '.{variant}'"),
             format!("use fully qualified 'EnumName.{variant}'"),
         ),
+        TypeErrKind::BareCatchAllOnOptional { pattern_name } => (
+            "'if let' on optional type requires an unwrapping pattern".to_string(),
+            format!("'{pattern_name}' matches any value, including nil; use '{pattern_name}?' to unwrap"),
+        ),
     }
 }
 

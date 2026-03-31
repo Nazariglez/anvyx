@@ -1,15 +1,16 @@
 // @mode: run
 // @expect: success
 // @match-begin
-// empty-ish
-// empty-ish
-// has value
+// zero or nil
+// zero or nil
+// positive
+// positive
 // @match-end
 
 fn describe(v: int?) -> string {
     match v {
-        nil | 0? => "empty-ish",
-        _? => "has value",
+        nil | 0? => "zero or nil",
+        _? => "positive",
     }
 }
 
@@ -18,4 +19,5 @@ fn main() {
     println(describe(a));
     println(describe(0));
     println(describe(42));
+    println(describe(7));
 }

@@ -229,7 +229,9 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
         Pattern::Or(subs) => subs
             .iter()
             .all(|s| is_refutable(&s.node, value_ty, type_checker)),
-        _ => true,
+        Pattern::NamedTuple(_) | Pattern::Struct { .. } | Pattern::Range { .. } | Pattern::Rest => {
+            true
+        }
     }
 }
 
@@ -289,7 +291,7 @@ fn check_pattern_inner(
     value_ty: &Type,
     mutable: bool,
     in_match: bool,
-    match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
+    mut match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) {
@@ -725,46 +727,26 @@ fn check_pattern_inner(
         Pattern::Or(alternatives) => {
             let mut first_bindings: Option<Vec<(Ident, Type, bool)>> = None;
 
-            if let Some((enum_def, covered, wildcard)) = match_ctx {
-                for alt in alternatives {
-                    type_checker.push_scope();
-                    check_pattern_inner(
-                        alt,
-                        value_ty,
-                        mutable,
-                        in_match,
-                        Some((enum_def, &mut *covered, &mut *wildcard)),
-                        type_checker,
-                        errors,
-                    );
-                    let scope_bindings = type_checker.collect_current_scope_bindings();
-                    type_checker.pop_scope();
-                    match &first_bindings {
-                        None => first_bindings = Some(scope_bindings),
-                        Some(first) => {
-                            validate_or_bindings(first, &scope_bindings, alt.span, errors);
-                        }
-                    }
-                }
-            } else {
-                for alt in alternatives {
-                    type_checker.push_scope();
-                    check_pattern_inner(
-                        alt,
-                        value_ty,
-                        mutable,
-                        in_match,
-                        None,
-                        type_checker,
-                        errors,
-                    );
-                    let scope_bindings = type_checker.collect_current_scope_bindings();
-                    type_checker.pop_scope();
-                    match &first_bindings {
-                        None => first_bindings = Some(scope_bindings),
-                        Some(first) => {
-                            validate_or_bindings(first, &scope_bindings, alt.span, errors);
-                        }
+            for alt in alternatives {
+                let inner_ctx = match_ctx
+                    .as_mut()
+                    .map(|(def, cov, wc)| (*def, &mut **cov, &mut **wc));
+                type_checker.push_scope();
+                check_pattern_inner(
+                    alt,
+                    value_ty,
+                    mutable,
+                    in_match,
+                    inner_ctx,
+                    type_checker,
+                    errors,
+                );
+                let scope_bindings = type_checker.collect_current_scope_bindings();
+                type_checker.pop_scope();
+                match &first_bindings {
+                    None => first_bindings = Some(scope_bindings),
+                    Some(first) => {
+                        validate_or_bindings(first, &scope_bindings, alt.span, errors);
                     }
                 }
             }
@@ -778,19 +760,14 @@ fn check_pattern_inner(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn check_enum_pattern(
+fn check_enum_preamble<'a>(
     pattern: &PatternNode,
     qualifier: Ident,
     variant_name: Ident,
-    fields: &[PatternNode],
-    value_ty: &Type,
-    mutable: bool,
-    in_match: bool,
-    match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
-    type_checker: &mut TypeChecker,
+    value_ty: &'a Type,
+    type_checker: &TypeChecker,
     errors: &mut Vec<TypeErr>,
-) {
+) -> Option<(&'a Vec<Type>, EnumDef)> {
     let Type::Enum {
         name: enum_name,
         type_args,
@@ -806,7 +783,7 @@ fn check_enum_pattern(
                 },
             },
         ));
-        return;
+        return None;
     };
 
     if qualifier != *enum_name {
@@ -817,7 +794,7 @@ fn check_enum_pattern(
                 pattern_enum: qualifier,
             },
         ));
-        return;
+        return None;
     }
 
     let Some(enum_def) = type_checker.get_enum(qualifier) else {
@@ -825,11 +802,11 @@ fn check_enum_pattern(
             pattern.span,
             TypeErrKind::UnknownEnum { name: qualifier },
         ));
-        return;
+        return None;
     };
     let enum_def = enum_def.clone();
 
-    let Some(variant_def) = enum_def.variants.iter().find(|v| v.name == variant_name) else {
+    if enum_def.variants.iter().all(|v| v.name != variant_name) {
         errors.push(TypeErr::new(
             pattern.span,
             TypeErrKind::UnknownEnumVariant {
@@ -837,12 +814,45 @@ fn check_enum_pattern(
                 variant_name,
             },
         ));
+        return None;
+    }
+
+    Some((type_args, enum_def))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_enum_pattern(
+    pattern: &PatternNode,
+    qualifier: Ident,
+    variant_name: Ident,
+    fields: &[PatternNode],
+    value_ty: &Type,
+    mutable: bool,
+    in_match: bool,
+    match_ctx: Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    let Some((type_args, enum_def)) = check_enum_preamble(
+        pattern,
+        qualifier,
+        variant_name,
+        value_ty,
+        type_checker,
+        errors,
+    ) else {
         return;
     };
 
     if let Some((_, covered_variants, _)) = match_ctx {
         covered_variants.insert(variant_name);
     }
+
+    let variant_def = enum_def
+        .variants
+        .iter()
+        .find(|v| v.name == variant_name)
+        .unwrap();
 
     match &variant_def.kind {
         VariantKind::Unit => {
@@ -873,7 +883,7 @@ fn check_enum_pattern(
             let subst = build_subst(&enum_def.type_params, type_args);
 
             for (subpat, expected_ty) in fields.iter().zip(expected_types.iter()) {
-                let resolved_ty = subst_type(expected_ty, &subst);
+                let resolved_ty = type_checker.resolve_type(&subst_type(expected_ty, &subst));
                 check_pattern_inner(
                     subpat,
                     &resolved_ty,
@@ -911,58 +921,26 @@ fn check_enum_struct_pattern(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) {
-    let Type::Enum {
-        name: enum_name,
-        type_args,
-    } = value_ty
-    else {
-        errors.push(TypeErr::new(
-            pattern.span,
-            TypeErrKind::MismatchedTypes {
-                expected: value_ty.clone(),
-                found: Type::Enum {
-                    name: qualifier,
-                    type_args: vec![],
-                },
-            },
-        ));
-        return;
-    };
-
-    if qualifier != *enum_name {
-        errors.push(TypeErr::new(
-            pattern.span,
-            TypeErrKind::MatchPatternEnumMismatch {
-                expected_enum: *enum_name,
-                pattern_enum: qualifier,
-            },
-        ));
-        return;
-    }
-
-    let Some(enum_def) = type_checker.get_enum(qualifier) else {
-        errors.push(TypeErr::new(
-            pattern.span,
-            TypeErrKind::UnknownEnum { name: qualifier },
-        ));
-        return;
-    };
-    let enum_def = enum_def.clone();
-
-    let Some(variant_def) = enum_def.variants.iter().find(|v| v.name == variant_name) else {
-        errors.push(TypeErr::new(
-            pattern.span,
-            TypeErrKind::UnknownEnumVariant {
-                enum_name: qualifier,
-                variant_name,
-            },
-        ));
+    let Some((type_args, enum_def)) = check_enum_preamble(
+        pattern,
+        qualifier,
+        variant_name,
+        value_ty,
+        type_checker,
+        errors,
+    ) else {
         return;
     };
 
     if let Some((_, covered_variants, _)) = match_ctx {
         covered_variants.insert(variant_name);
     }
+
+    let variant_def = enum_def
+        .variants
+        .iter()
+        .find(|v| v.name == variant_name)
+        .unwrap();
 
     let VariantKind::Struct(expected_fields) = &variant_def.kind else {
         errors.push(TypeErr::new(

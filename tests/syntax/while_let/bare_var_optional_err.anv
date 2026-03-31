@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: requires an unwrapping pattern
+
+fn main() {
+    var items: [int] = [1, 2, 3];
+    while let var val = items.pop() {
+        println(val);
+    }
+}

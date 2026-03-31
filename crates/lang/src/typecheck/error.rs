@@ -491,4 +491,7 @@ pub enum TypeErrKind {
     CannotInferEnumVariant {
         variant: Ident,
     },
+    BareCatchAllOnOptional {
+        pattern_name: Ident,
+    },
 }

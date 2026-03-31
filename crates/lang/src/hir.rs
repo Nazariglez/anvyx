@@ -125,6 +125,7 @@ pub struct MatchWriteThrough {
 pub struct MatchArm {
     pub variant: u16,
     pub bindings: Vec<MatchBinding>,
+    pub guard: Option<Expr>,
     pub body: Block,
 }
 
@@ -824,6 +825,7 @@ mod tests {
         let arm = MatchArm {
             variant: 0,
             bindings: vec![],
+            guard: None,
             body: Block { stmts: vec![] },
         };
         let stmt = Stmt {
@@ -856,6 +858,7 @@ mod tests {
         let arm = MatchArm {
             variant: 2,
             bindings: vec![binding],
+            guard: None,
             body: Block { stmts: vec![] },
         };
         assert_eq!(arm.variant, 2);

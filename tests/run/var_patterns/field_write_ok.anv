@@ -1,7 +1,6 @@
 // @mode: run
 // @expect: success
 // @match: 99
-// @skip: struct fields inside enum variant bindings use positional access, not named access
 
 struct Point { x: int, y: int }
 enum Shape { Dot(Point), None }
