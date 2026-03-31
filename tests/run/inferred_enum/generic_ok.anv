@@ -1,8 +1,8 @@
 // @mode: run
 // @expect: success
 // @match-begin
-// Option.None
-// Option.Some(42)
+// .None<int>
+// .Some(42)
 // @match-end
 
 fn main() {

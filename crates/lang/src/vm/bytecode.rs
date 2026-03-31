@@ -83,6 +83,7 @@ pub enum Op {
     GetField(u16),                // field_index
     SetField(u16),                // field_index
     GetEnumVariant,               // pops enum, pushes variant index as Int
+    UnwrapOptional, // pops optional value, pushes inner: Enum(Some(v)) -> v, flat -> self, Nil -> Nil
 
     // arrays and lists
     ConstructArray(u16), // pops N values, pushes Value::Array
@@ -105,6 +106,7 @@ pub enum Op {
     MapRemove,       // pops key, map -> pushes removed or Nil, modified map
 
     ToString,
+    OptionalToString(u16), // pops optional value, pushes ".Some(inner)" or ".None<T>"; u16 = constant index for inner type name
     Format(FormatSpec),
     Cast(CastKind),
 }
@@ -133,6 +135,11 @@ impl Chunk {
     }
 
     pub fn add_constant(&mut self, value: Value) -> u16 {
+        assert!(
+            self.constants.len() <= u16::MAX as usize,
+            "constant pool overflow in chunk '{}'",
+            self.name
+        );
         let idx = self.constants.len() as u16;
         self.constants.push(value);
         idx
@@ -142,15 +149,6 @@ impl Chunk {
         let pos = self.code.len();
         self.code.push(op);
         pos
-    }
-
-    pub fn patch_jump(&mut self, pos: usize) {
-        let target = self.code.len();
-        let offset = (target as isize - pos as isize - 1) as i16;
-        match &mut self.code[pos] {
-            Op::Jump(o) | Op::JumpIfFalse(o) => *o = offset,
-            _ => panic!("patch_jump called on non-jump op at position {pos}"),
-        }
     }
 }
 
@@ -198,21 +196,6 @@ mod tests {
         let pos = chunk.emit_jump(Op::JumpIfFalse(0));
         assert_eq!(pos, 1);
         assert_eq!(chunk.code[1], Op::JumpIfFalse(0));
-    }
-
-    #[test]
-    fn patch_jump_forward() {
-        let mut chunk = Chunk::new("test", 0, 0);
-        // pos 0: JumpIfFalse(placeholder)
-        let pos = chunk.emit_jump(Op::JumpIfFalse(0));
-        // pos 1, 2: some code
-        chunk.emit(Op::Nil);
-        chunk.emit(Op::Pop);
-        // pos 3: target — patch jump to here
-        chunk.patch_jump(pos);
-        // after reading JumpIfFalse at pos 0, ip = 1. new_ip = 1 + offset.
-        // offset = 3 - 0 - 1 = 2  =>  new_ip = 1 + 2 = 3
-        assert_eq!(chunk.code[0], Op::JumpIfFalse(2));
     }
 
     #[test]

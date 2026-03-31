@@ -2,6 +2,7 @@ use std::fmt::Write;
 
 use crate::ast::{FormatKind, FormatSpec};
 use crate::builtin::Builtin;
+use crate::prelude_enums::OPTION_TYPE_ID;
 
 use super::builtins;
 use super::bytecode::{CastKind, Op};
@@ -19,6 +20,7 @@ pub type ExternHandler = Box<dyn Fn(Vec<Value>) -> Result<Value, RuntimeError>>;
 
 fn as_usize_index(val: &Value) -> Result<usize, RuntimeError> {
     match val {
+        Value::Int(i) if *i < 0 => Err(RuntimeError::new(format!("negative index {i}"))),
         Value::Int(i) => Ok(*i as usize),
         other => Err(RuntimeError::new(format!("index must be int, got {other}"))),
     }
@@ -141,9 +143,7 @@ impl<'a> VM<'a> {
             ip: 0,
             stack_base: 0,
         });
-        for _ in 0..main_local_count {
-            self.stack.push(Value::Nil);
-        }
+        self.stack.resize(main_local_count, Value::Nil);
 
         self.run_until_depth(0).map(|_| ())
     }
@@ -482,9 +482,8 @@ impl<'a> VM<'a> {
                     });
 
                     let extra_locals = local_count - params_count;
-                    for _ in 0..extra_locals {
-                        self.stack.push(Value::Nil);
-                    }
+                    self.stack
+                        .resize(self.stack.len() + extra_locals, Value::Nil);
                 }
 
                 Op::CallBuiltin(builtin_idx, arg_count) => {
@@ -558,18 +557,12 @@ impl<'a> VM<'a> {
                     let captures: Vec<Value> = closure.captures.clone();
                     drop(closure);
 
-                    for capture in captures {
-                        self.push(capture);
-                    }
-
-                    for arg in args {
-                        self.push(arg);
-                    }
+                    self.stack.extend(captures);
+                    self.stack.extend(args);
 
                     let extra_locals = local_count - params_count;
-                    for _ in 0..extra_locals {
-                        self.push(Value::Nil);
-                    }
+                    self.stack
+                        .resize(self.stack.len() + extra_locals, Value::Nil);
 
                     self.frames.push(CallFrame {
                         chunk_idx: callee_idx,
@@ -635,6 +628,16 @@ impl<'a> VM<'a> {
                         Value::Enum(e) => self.push(Value::Int(e.variant as i64)),
                         Value::Nil => self.push(Value::Int(0)),
                         _ => self.push(Value::Int(1)),
+                    }
+                }
+
+                Op::UnwrapOptional => {
+                    let val = self.pop();
+                    match val {
+                        Value::Enum(e) if e.fields.len() == 1 => {
+                            self.push(e.fields[0].clone());
+                        }
+                        other => self.push(other),
                     }
                 }
 
@@ -1066,6 +1069,30 @@ impl<'a> VM<'a> {
                     self.push(Value::String(ManagedRc::new(s)));
                 }
 
+                Op::OptionalToString(type_name_idx) => {
+                    let val = self.pop();
+                    let type_name =
+                        match &self.program.chunks[chunk_idx].constants[type_name_idx as usize] {
+                            Value::String(s) => s.as_str().to_string(),
+                            _ => unreachable!("OptionalToString constant must be a string"),
+                        };
+                    let s = match val {
+                        Value::Enum(ref e) if e.type_id == OPTION_TYPE_ID && e.variant == 1 => {
+                            let inner = self.format_value(&e.fields[0])?;
+                            format!(".Some({inner})")
+                        }
+                        Value::Enum(ref e) if e.type_id == OPTION_TYPE_ID => {
+                            format!(".None<{type_name}>")
+                        }
+                        Value::Nil => format!(".None<{type_name}>"),
+                        other => {
+                            let inner = self.format_value(&other)?;
+                            format!(".Some({inner})")
+                        }
+                    };
+                    self.push(Value::String(ManagedRc::new(s)));
+                }
+
                 Op::Format(spec) => {
                     let val = self.pop();
                     let s = self.format_value_with_spec(&val, &spec)?;
@@ -1079,9 +1106,7 @@ impl<'a> VM<'a> {
         let return_depth = self.frames.len();
 
         let stack_base = self.stack.len();
-        for arg in args {
-            self.stack.push(arg);
-        }
+        self.stack.extend(args);
 
         let extra_locals = {
             let chunk = &self.program.chunks[chunk_idx];
@@ -1092,116 +1117,80 @@ impl<'a> VM<'a> {
             ip: 0,
             stack_base,
         });
-        for _ in 0..extra_locals {
-            self.stack.push(Value::Nil);
-        }
+        self.stack
+            .resize(self.stack.len() + extra_locals, Value::Nil);
 
         self.run_until_depth(return_depth)
     }
 
+    fn format_struct_data(
+        &mut self,
+        s: &StructData,
+        value: &Value,
+    ) -> Result<String, RuntimeError> {
+        let meta = &self.program.struct_meta[s.type_id as usize];
+        if let Some(chunk_idx) = meta.to_string_fn {
+            let result = self.call_function(chunk_idx, vec![value.clone()])?;
+            match result {
+                Value::String(s) => Ok((*s).clone()),
+                _ => Err(RuntimeError::new("to_string must return a string")),
+            }
+        } else {
+            let name = meta.name.clone();
+            let field_names: Vec<String> = meta.field_names.clone();
+            let fields: Vec<Value> = s.fields.clone();
+            let mut out = format!("{name}(");
+            for (i, (fname, val)) in field_names.iter().zip(fields.iter()).enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                let formatted = self.format_value(val)?;
+                write!(out, "{fname}: {formatted}").unwrap();
+            }
+            out.push(')');
+            Ok(out)
+        }
+    }
+
+    fn format_sequence(&mut self, elements: &[Value]) -> Result<String, RuntimeError> {
+        let mut out = String::from("[");
+        for (i, v) in elements.iter().enumerate() {
+            if i > 0 {
+                out.push_str(", ");
+            }
+            let formatted = self.format_value(v)?;
+            out.push_str(&formatted);
+        }
+        out.push(']');
+        Ok(out)
+    }
+
     fn format_value(&mut self, value: &Value) -> Result<String, RuntimeError> {
         match value {
-            Value::Struct(s) => {
-                let program = self.program;
-                let meta = &program.struct_meta[s.type_id as usize];
-                if let Some(chunk_idx) = meta.to_string_fn {
-                    let result = self.call_function(chunk_idx, vec![value.clone()])?;
-                    match result {
-                        Value::String(s) => Ok((*s).clone()),
-                        _ => Err(RuntimeError::new("to_string must return a string")),
-                    }
-                } else {
-                    let name = meta.name.clone();
-                    let field_names: Vec<String> = meta.field_names.clone();
-                    let fields: Vec<Value> = s.fields.clone();
-                    let mut out = format!("{name}(");
-                    for (i, (fname, val)) in field_names.iter().zip(fields.iter()).enumerate() {
-                        if i > 0 {
-                            out.push_str(", ");
-                        }
-                        let formatted = self.format_value(val)?;
-                        write!(out, "{fname}: {formatted}").unwrap();
-                    }
-                    out.push(')');
-                    Ok(out)
-                }
-            }
-            Value::DataRef(s) => {
-                let program = self.program;
-                let meta = &program.struct_meta[s.type_id as usize];
-                if let Some(chunk_idx) = meta.to_string_fn {
-                    let result = self.call_function(chunk_idx, vec![value.clone()])?;
-                    match result {
-                        Value::String(s) => Ok((*s).clone()),
-                        _ => Err(RuntimeError::new("to_string must return a string")),
-                    }
-                } else {
-                    let name = meta.name.clone();
-                    let field_names: Vec<String> = meta.field_names.clone();
-                    let fields: Vec<Value> = s.fields.clone();
-                    let mut out = format!("{name}(");
-                    for (i, (fname, val)) in field_names.iter().zip(fields.iter()).enumerate() {
-                        if i > 0 {
-                            out.push_str(", ");
-                        }
-                        let formatted = self.format_value(val)?;
-                        write!(out, "{fname}: {formatted}").unwrap();
-                    }
-                    out.push(')');
-                    Ok(out)
-                }
-            }
+            Value::Struct(s) => self.format_struct_data(s, value),
+            Value::DataRef(s) => self.format_struct_data(s, value),
             Value::List(l) => {
                 let elems: Vec<Value> = l.iter().cloned().collect();
-                let mut out = String::from("[");
-                for (i, v) in elems.iter().enumerate() {
-                    if i > 0 {
-                        out.push_str(", ");
-                    }
-                    let formatted = self.format_value(v)?;
-                    out.push_str(&formatted);
-                }
-                out.push(']');
-                Ok(out)
+                self.format_sequence(&elems)
             }
             Value::Array(a) => {
                 let elems: Vec<Value> = a.iter().cloned().collect();
-                let mut out = String::from("[");
-                for (i, v) in elems.iter().enumerate() {
-                    if i > 0 {
-                        out.push_str(", ");
-                    }
-                    let formatted = self.format_value(v)?;
-                    out.push_str(&formatted);
-                }
-                out.push(']');
-                Ok(out)
+                self.format_sequence(&elems)
             }
             Value::Map(m) => {
                 let mut out = String::from("[");
-                if m.is_ordered() {
-                    let entries: Vec<(Value, Value)> =
-                        m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                    for (i, (k, v)) in entries.iter().enumerate() {
-                        if i > 0 {
-                            out.push_str(", ");
-                        }
-                        let fk = self.format_value(k)?;
-                        let fv = self.format_value(v)?;
-                        write!(out, "{fk}: {fv}").unwrap();
-                    }
-                } else {
-                    let mut entries: Vec<(Value, Value)> =
-                        m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                let mut entries: Vec<(Value, Value)> =
+                    m.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                if !m.is_ordered() {
                     entries.sort_by(|(a, _), (b, _)| a.to_string().cmp(&b.to_string()));
-                    for (i, (k, v)) in entries.iter().enumerate() {
-                        if i > 0 {
-                            out.push_str(", ");
-                        }
-                        let fk = self.format_value(k)?;
-                        let fv = self.format_value(v)?;
-                        write!(out, "{fk}: {fv}").unwrap();
+                }
+                for (i, (k, v)) in entries.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
                     }
+                    let fk = self.format_value(k)?;
+                    let fv = self.format_value(v)?;
+                    write!(out, "{fk}: {fv}").unwrap();
                 }
                 out.push(']');
                 Ok(out)
@@ -1220,6 +1209,16 @@ impl<'a> VM<'a> {
                 Ok(out)
             }
             Value::Enum(e) => {
+                if e.type_id == OPTION_TYPE_ID {
+                    return match e.variant {
+                        1 => {
+                            let inner = self.format_value(&e.fields[0])?;
+                            Ok(format!(".Some({inner})"))
+                        }
+                        _ => Ok(".None".to_string()),
+                    };
+                }
+
                 let program = self.program;
                 let meta = &program.enum_meta[e.type_id as usize];
                 let variant_idx = e.variant as usize;
@@ -1649,6 +1648,33 @@ mod tests {
         let mut chunk = Chunk::new("main", 0, 0);
         chunk.emit(Op::Nil);
         chunk.emit(Op::GetEnumVariant);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+    }
+
+    #[test]
+    fn unwrap_optional_on_enum_extracts_field() {
+        let mut chunk = Chunk::new("main", 0, 0);
+        let i42 = chunk.add_constant(Value::Int(42));
+        chunk.emit(Op::Constant(i42));
+        chunk.emit(Op::ConstructEnum(0, 1, 1));
+        chunk.emit(Op::UnwrapOptional);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+    }
+
+    #[test]
+    fn unwrap_optional_on_flat_value_returns_same() {
+        let mut chunk = Chunk::new("main", 0, 0);
+        let i99 = chunk.add_constant(Value::Int(99));
+        chunk.emit(Op::Constant(i99));
+        chunk.emit(Op::UnwrapOptional);
         chunk.emit(Op::Return);
 
         let program = make_program(vec![chunk], 0);

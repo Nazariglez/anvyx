@@ -1,9 +1,8 @@
 // @mode: run
 // @expect: success
-// @skip: safe chain wraps result in Option.Some() (findings.md #6)
 // @match-begin
-// 5
-// nil
+// .Some(5)
+// .None<int>
 // @match-end
 
 struct Inner { value: int }

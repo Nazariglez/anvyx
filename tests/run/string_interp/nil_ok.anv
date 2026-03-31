@@ -1,6 +1,6 @@
 // @mode: run
 // @expect: success
-// @match: value: nil
+// @match: value: .None<int>
 
 fn main() {
     let v: int? = nil;

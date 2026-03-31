@@ -1,7 +1,7 @@
 // @mode: run
 // @expect: success
 // @match-begin
-// Option.Some(42)
+// .Some(42)
 // Wrapper.Val(hello)
 // @match-end
 

@@ -5,8 +5,8 @@
 // Color(r: 0.5, g: 0.25, b: 0.75)
 // Named(name: hello)
 // Rect(origin: Point(x: 1, y: 2), size: Size(w: 10, h: 20))
-// Point(x: 1, y: 2)
-// nil
+// .Some(Point(x: 1, y: 2))
+// .None<Point>
 // [Point(x: 1, y: 2), Point(x: 3, y: 4)]
 // @match-end
 

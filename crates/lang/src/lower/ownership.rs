@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::hir::{self, Block, Expr, ExprKind, LocalId, MatchElse, Ownership, Stmt, StmtKind};
+use crate::hir::{self, Block, Expr, ExprKind, LocalId, Ownership, Stmt, StmtKind};
 
 pub fn analyze_ownership(program: &mut hir::Program) {
     for func in &mut program.funcs {
@@ -113,7 +113,8 @@ fn collect_reassigned_expr(expr: &Expr, set: &mut HashSet<LocalId>) {
         | ExprKind::CollectionLen { collection: expr }
         | ExprKind::MapLen { map: expr }
         | ExprKind::ArrayFill { value: expr, .. }
-        | ExprKind::ListFill { value: expr, .. } => {
+        | ExprKind::ListFill { value: expr, .. }
+        | ExprKind::UnwrapOptional(expr) => {
             collect_reassigned_expr(expr, set);
         }
         ExprKind::FieldGet { object, .. } | ExprKind::TupleIndex { tuple: object, .. } => {
@@ -281,7 +282,7 @@ fn analyze_stmt(stmt: &mut Stmt, ctx: &mut LivenessCtx) {
                     reassigned: ctx.reassigned.clone(),
                     ref_locals: ctx.ref_locals.clone(),
                 };
-                analyze_else_body(eb, &mut else_ctx);
+                analyze_block(&mut eb.body, &mut else_ctx);
                 for id in &else_ctx.seen {
                     merged.insert(*id);
                 }
@@ -294,10 +295,6 @@ fn analyze_stmt(stmt: &mut Stmt, ctx: &mut LivenessCtx) {
             analyze_expr(scrutinee_init, ctx);
         }
     }
-}
-
-fn analyze_else_body(eb: &mut MatchElse, ctx: &mut LivenessCtx) {
-    analyze_block(&mut eb.body, ctx);
 }
 
 fn collect_locals_in_block(block: &Block, set: &mut HashSet<LocalId>) {
@@ -398,7 +395,8 @@ fn collect_locals_in_expr(expr: &Expr, set: &mut HashSet<LocalId>) {
         | ExprKind::CollectionLen { collection: expr }
         | ExprKind::MapLen { map: expr }
         | ExprKind::ArrayFill { value: expr, .. }
-        | ExprKind::ListFill { value: expr, .. } => {
+        | ExprKind::ListFill { value: expr, .. }
+        | ExprKind::UnwrapOptional(expr) => {
             collect_locals_in_expr(expr, set);
         }
         ExprKind::FieldGet { object, .. } | ExprKind::TupleIndex { tuple: object, .. } => {
@@ -503,7 +501,8 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut LivenessCtx) {
         | ExprKind::CollectionLen { collection: inner }
         | ExprKind::MapLen { map: inner }
         | ExprKind::ArrayFill { value: inner, .. }
-        | ExprKind::ListFill { value: inner, .. } => {
+        | ExprKind::ListFill { value: inner, .. }
+        | ExprKind::UnwrapOptional(inner) => {
             analyze_expr(inner, ctx);
         }
         ExprKind::FieldGet { object, .. } | ExprKind::TupleIndex { tuple: object, .. } => {

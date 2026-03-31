@@ -15,6 +15,8 @@ pub enum CompileError {
     NoMainFunction,
     TooManyConstants { func_name: String },
     TooManyLocals { func_name: String },
+    TooManyParams { func_name: String },
+    JumpTooFar { func_name: String },
 }
 
 impl fmt::Display for CompileError {
@@ -26,6 +28,15 @@ impl fmt::Display for CompileError {
             }
             Self::TooManyLocals { func_name } => {
                 write!(f, "too many locals in function '{func_name}'")
+            }
+            Self::TooManyParams { func_name } => {
+                write!(f, "too many parameters in function '{func_name}' (max 255)")
+            }
+            Self::JumpTooFar { func_name } => {
+                write!(
+                    f,
+                    "function '{func_name}' is too large: jump offset exceeds i16 range"
+                )
             }
         }
     }
@@ -84,8 +95,23 @@ impl<'a> FuncCompiler<'a> {
         self.chunk.emit_jump(op)
     }
 
-    fn patch_jump(&mut self, pos: usize) {
-        self.chunk.patch_jump(pos);
+    fn check_jump_offset(&self, offset: isize) -> Result<i16, CompileError> {
+        if offset < i16::MIN as isize || offset > i16::MAX as isize {
+            return Err(CompileError::JumpTooFar {
+                func_name: self.chunk.name.clone(),
+            });
+        }
+        Ok(offset as i16)
+    }
+
+    fn patch_jump(&mut self, pos: usize) -> Result<(), CompileError> {
+        let target = self.chunk.code.len();
+        let offset = self.check_jump_offset(target as isize - pos as isize - 1)?;
+        match &mut self.chunk.code[pos] {
+            Op::Jump(o) | Op::JumpIfFalse(o) => *o = offset,
+            _ => panic!("patch_jump called on non-jump op at position {pos}"),
+        }
+        Ok(())
     }
 
     fn add_constant(&mut self, value: Value) -> Result<u16, CompileError> {
@@ -145,6 +171,11 @@ fn compile_func(func: &hir::Func) -> Result<Chunk, CompileError> {
     let local_count = func.locals.len();
     if local_count > u16::MAX as usize {
         return Err(CompileError::TooManyLocals {
+            func_name: func.name.to_string(),
+        });
+    }
+    if func.params_len > u8::MAX as u32 {
+        return Err(CompileError::TooManyParams {
             func_name: func.name.to_string(),
         });
     }
@@ -217,12 +248,12 @@ fn compile_stmt(fc: &mut FuncCompiler<'_>, stmt: &hir::Stmt) -> Result<(), Compi
             match else_block {
                 Some(else_b) => {
                     let skip_else_pos = fc.emit_jump(Op::Jump(0));
-                    fc.patch_jump(jump_pos);
+                    fc.patch_jump(jump_pos)?;
                     compile_block(fc, else_b)?;
-                    fc.patch_jump(skip_else_pos);
+                    fc.patch_jump(skip_else_pos)?;
                 }
                 None => {
-                    fc.patch_jump(jump_pos);
+                    fc.patch_jump(jump_pos)?;
                 }
             }
         }
@@ -240,19 +271,20 @@ fn compile_stmt(fc: &mut FuncCompiler<'_>, stmt: &hir::Stmt) -> Result<(), Compi
             compile_block(fc, body)?;
 
             // back-jump to loop condition, offset is negative
-            let back_offset = loop_start as isize - fc.chunk.code.len() as isize - 1;
-            fc.emit(Op::Jump(back_offset as i16));
+            let back_offset =
+                fc.check_jump_offset(loop_start as isize - fc.chunk.code.len() as isize - 1)?;
+            fc.emit(Op::Jump(back_offset));
 
             // patch exit jump to land after the back-jump
-            fc.patch_jump(exit_jump_pos);
+            fc.patch_jump(exit_jump_pos)?;
 
             // patch all break jumps to the same landing spot
             let loop_state = fc.loop_stack.pop().expect("loop stack underflow");
             let after_loop = fc.chunk.code.len();
             for patch_pos in loop_state.break_patches {
-                let offset = after_loop as isize - patch_pos as isize - 1;
+                let offset = fc.check_jump_offset(after_loop as isize - patch_pos as isize - 1)?;
                 match &mut fc.chunk.code[patch_pos] {
-                    Op::Jump(o) => *o = offset as i16,
+                    Op::Jump(o) => *o = offset,
                     _ => panic!("expected Jump at break patch position {patch_pos}"),
                 }
             }
@@ -274,8 +306,9 @@ fn compile_stmt(fc: &mut FuncCompiler<'_>, stmt: &hir::Stmt) -> Result<(), Compi
                 .last()
                 .expect("continue outside loop (should be caught earlier)")
                 .start;
-            let back_offset = loop_start as isize - fc.chunk.code.len() as isize - 1;
-            fc.emit(Op::Jump(back_offset as i16));
+            let back_offset =
+                fc.check_jump_offset(loop_start as isize - fc.chunk.code.len() as isize - 1)?;
+            fc.emit(Op::Jump(back_offset));
         }
 
         hir::StmtKind::SetField {
@@ -302,94 +335,14 @@ fn compile_stmt(fc: &mut FuncCompiler<'_>, stmt: &hir::Stmt) -> Result<(), Compi
             arms,
             else_body,
         } => {
-            // evaluate scrutinee and store to local
-            compile_expr(fc, scrutinee_init)?;
-            fc.emit(Op::SetLocal(scrutinee.0 as u16));
-
-            // initialize ref local for writethrough if any
-            if let Some(wt) = write_through {
-                if fc.locals[wt.original.0 as usize].is_ref {
-                    fc.emit(Op::GetLocal(wt.original.0 as u16));
-                } else {
-                    fc.emit(Op::PushRef(wt.original.0 as u16));
-                }
-                fc.emit(Op::SetLocal(wt.ref_local.0 as u16));
-            }
-
-            // we collect patch positions for the "jump to end" after each matched arm
-            let mut end_jump_positions: Vec<usize> = vec![];
-
-            for arm in arms {
-                // check if variant matches, GetLocal scrutinee, GetEnumVariant, push expected, Eq, JumpIfFalse(skip)
-                fc.emit(Op::GetLocal(scrutinee.0 as u16));
-                fc.emit(Op::GetEnumVariant);
-                let variant_idx = fc.add_constant(Value::Int(arm.variant as i64))?;
-                fc.emit(Op::Constant(variant_idx));
-                fc.emit(Op::Eq);
-                let skip_pos = fc.emit_jump(Op::JumpIfFalse(0));
-
-                // bind fields to locals
-                for binding in &arm.bindings {
-                    fc.emit(Op::GetLocal(scrutinee.0 as u16));
-                    fc.emit(Op::GetField(binding.field_index));
-                    fc.emit(Op::SetLocal(binding.local.0 as u16));
-                    if binding.mutable
-                        && let Some(wt) = write_through
-                    {
-                        fc.write_through_map.insert(
-                            binding.local,
-                            WriteThroughInfo {
-                                ref_local: wt.ref_local,
-                                kind: WriteThroughKind::Field(binding.field_index),
-                            },
-                        );
-                    }
-                }
-
-                compile_block(fc, &arm.body)?;
-
-                // remove writethrough entries for this arm's bindings
-                for binding in &arm.bindings {
-                    if binding.mutable {
-                        fc.write_through_map.remove(&binding.local);
-                    }
-                }
-
-                // jump past all remaining arms
-                let end_pos = fc.emit_jump(Op::Jump(0));
-                end_jump_positions.push(end_pos);
-
-                // patch the skip jump to land here (after the arm body)
-                fc.patch_jump(skip_pos);
-            }
-
-            // else_body (wildcard / Ident catch-all)
-            if let Some(else_b) = else_body {
-                if let Some((binding_local, mutable)) = else_b.binding {
-                    fc.emit(Op::GetLocal(scrutinee.0 as u16));
-                    fc.emit(Op::SetLocal(binding_local.0 as u16));
-                    if mutable && let Some(wt) = write_through {
-                        fc.write_through_map.insert(
-                            binding_local,
-                            WriteThroughInfo {
-                                ref_local: wt.ref_local,
-                                kind: WriteThroughKind::Whole,
-                            },
-                        );
-                    }
-                }
-                compile_block(fc, &else_b.body)?;
-                if let Some((binding_local, mutable)) = else_b.binding
-                    && mutable
-                {
-                    fc.write_through_map.remove(&binding_local);
-                }
-            }
-
-            // patch all end-jumps to land after the whole match
-            for pos in end_jump_positions {
-                fc.patch_jump(pos);
-            }
+            compile_match_stmt(
+                fc,
+                scrutinee_init,
+                scrutinee,
+                write_through,
+                arms,
+                else_body,
+            )?;
         }
 
         hir::StmtKind::SetIndex {
@@ -410,6 +363,106 @@ fn compile_stmt(fc: &mut FuncCompiler<'_>, stmt: &hir::Stmt) -> Result<(), Compi
             }
             fc.emit_write_through(object);
         }
+    }
+
+    Ok(())
+}
+
+fn compile_match_stmt(
+    fc: &mut FuncCompiler<'_>,
+    scrutinee_init: &hir::Expr,
+    scrutinee: &hir::LocalId,
+    write_through: &Option<hir::MatchWriteThrough>,
+    arms: &[hir::MatchArm],
+    else_body: &Option<hir::MatchElse>,
+) -> Result<(), CompileError> {
+    // evaluate scrutinee and store to local
+    compile_expr(fc, scrutinee_init)?;
+    fc.emit(Op::SetLocal(scrutinee.0 as u16));
+
+    // initialize ref local for writethrough if any
+    if let Some(wt) = write_through {
+        if fc.locals[wt.original.0 as usize].is_ref {
+            fc.emit(Op::GetLocal(wt.original.0 as u16));
+        } else {
+            fc.emit(Op::PushRef(wt.original.0 as u16));
+        }
+        fc.emit(Op::SetLocal(wt.ref_local.0 as u16));
+    }
+
+    // we collect patch positions for the "jump to end" after each matched arm
+    let mut end_jump_positions: Vec<usize> = vec![];
+
+    for arm in arms {
+        // check if variant matches, GetLocal scrutinee, GetEnumVariant, push expected, Eq, JumpIfFalse(skip)
+        fc.emit(Op::GetLocal(scrutinee.0 as u16));
+        fc.emit(Op::GetEnumVariant);
+        let variant_idx = fc.add_constant(Value::Int(arm.variant as i64))?;
+        fc.emit(Op::Constant(variant_idx));
+        fc.emit(Op::Eq);
+        let skip_pos = fc.emit_jump(Op::JumpIfFalse(0));
+
+        // bind fields to locals
+        for binding in &arm.bindings {
+            fc.emit(Op::GetLocal(scrutinee.0 as u16));
+            fc.emit(Op::GetField(binding.field_index));
+            fc.emit(Op::SetLocal(binding.local.0 as u16));
+            if binding.mutable
+                && let Some(wt) = write_through
+            {
+                fc.write_through_map.insert(
+                    binding.local,
+                    WriteThroughInfo {
+                        ref_local: wt.ref_local,
+                        kind: WriteThroughKind::Field(binding.field_index),
+                    },
+                );
+            }
+        }
+
+        compile_block(fc, &arm.body)?;
+
+        // remove writethrough entries for this arm's bindings
+        for binding in &arm.bindings {
+            if binding.mutable {
+                fc.write_through_map.remove(&binding.local);
+            }
+        }
+
+        // jump past all remaining arms
+        let end_pos = fc.emit_jump(Op::Jump(0));
+        end_jump_positions.push(end_pos);
+
+        // patch the skip jump to land here (after the arm body)
+        fc.patch_jump(skip_pos)?;
+    }
+
+    // else_body (wildcard / Ident catch-all)
+    if let Some(else_b) = else_body {
+        if let Some((binding_local, mutable)) = else_b.binding {
+            fc.emit(Op::GetLocal(scrutinee.0 as u16));
+            fc.emit(Op::SetLocal(binding_local.0 as u16));
+            if mutable && let Some(wt) = write_through {
+                fc.write_through_map.insert(
+                    binding_local,
+                    WriteThroughInfo {
+                        ref_local: wt.ref_local,
+                        kind: WriteThroughKind::Whole,
+                    },
+                );
+            }
+        }
+        compile_block(fc, &else_b.body)?;
+        if let Some((binding_local, mutable)) = else_b.binding
+            && mutable
+        {
+            fc.write_through_map.remove(&binding_local);
+        }
+    }
+
+    // patch all end-jumps to land after the whole match
+    for pos in end_jump_positions {
+        fc.patch_jump(pos)?;
     }
 
     Ok(())
@@ -548,6 +601,15 @@ fn compile_expr(fc: &mut FuncCompiler<'_>, expr: &hir::Expr) -> Result<(), Compi
         hir::ExprKind::CallBuiltin { builtin, args } => {
             for arg in args {
                 compile_expr(fc, arg)?;
+                if *builtin == Builtin::Println && arg.ty.is_optional() {
+                    let type_name = arg
+                        .ty
+                        .option_inner()
+                        .map(|t| t.to_string())
+                        .unwrap_or_default();
+                    let idx = fc.add_constant(Value::String(ManagedRc::new(type_name)))?;
+                    fc.emit(Op::OptionalToString(idx));
+                }
             }
             let builtin_idx = Builtin::all()
                 .iter()
@@ -691,7 +753,17 @@ fn compile_expr(fc: &mut FuncCompiler<'_>, expr: &hir::Expr) -> Result<(), Compi
 
         hir::ExprKind::ToString(inner) => {
             compile_expr(fc, inner)?;
-            fc.emit(Op::ToString);
+            if inner.ty.is_optional() {
+                let type_name = inner
+                    .ty
+                    .option_inner()
+                    .map(|t| t.to_string())
+                    .unwrap_or_default();
+                let idx = fc.add_constant(Value::String(ManagedRc::new(type_name)))?;
+                fc.emit(Op::OptionalToString(idx));
+            } else {
+                fc.emit(Op::ToString);
+            }
         }
 
         hir::ExprKind::Format(inner, spec) => {
@@ -741,6 +813,11 @@ fn compile_expr(fc: &mut FuncCompiler<'_>, expr: &hir::Expr) -> Result<(), Compi
             fc.emit(Op::GetLocal(collection.0 as u16));
             fc.emit(Op::ListSortBy(comparator.0 as u16));
             fc.emit(Op::SetLocal(collection.0 as u16));
+        }
+
+        hir::ExprKind::UnwrapOptional(inner) => {
+            compile_expr(fc, inner)?;
+            fc.emit(Op::UnwrapOptional);
         }
     }
 
@@ -1095,6 +1172,22 @@ mod tests {
         let chunk = &compiled.chunks[0];
         // Constant(0), GetField(2), Pop, Nil, Return
         assert_eq!(chunk.code[1], Op::GetField(2));
+    }
+
+    #[test]
+    fn unwrap_optional_emits_opcode() {
+        use crate::hir::ExprKind as EK;
+        let func = main_func(vec![stmt(StmtKind::Expr(Expr::new(
+            Type::Int,
+            dummy_span(),
+            EK::UnwrapOptional(Box::new(int_expr(42))),
+        )))]);
+        let compiled = compile(&prog(func)).unwrap();
+        let chunk = &compiled.chunks[0];
+        assert!(
+            chunk.code.iter().any(|op| *op == Op::UnwrapOptional),
+            "expected UnwrapOptional opcode"
+        );
     }
 
     #[test]

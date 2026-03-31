@@ -1,8 +1,8 @@
 // @mode: run
 // @expect: success
 // @match-begin
-// nil
-// hello
+// .None<string>
+// .Some(hello)
 // @match-end
 
 struct Query { 

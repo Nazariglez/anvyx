@@ -1,9 +1,8 @@
 // @mode: run
 // @expect: success
-// @skip: safe extend call wraps result in Option.Some() (findings.md #6)
 // @match-begin
-// 10
-// nil
+// .Some(10)
+// .None<int>
 // @match-end
 
 extend int {

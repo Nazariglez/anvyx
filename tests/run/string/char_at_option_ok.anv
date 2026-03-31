@@ -1,8 +1,8 @@
 // @mode: run
 // @expect: success
 // @match-begin
-// Option.Some(h)
-// Option.None
+// .Some(h)
+// .None<string>
 // h
 // @match-end
 

@@ -1,8 +1,8 @@
 // @mode: run
 // @expect: success
 // @match-begin
-// nil
-// nil
+// .None<int>
+// .None<int>
 // @match-end
 
 struct Point { x: int, y: int }

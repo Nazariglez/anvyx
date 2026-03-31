@@ -299,6 +299,8 @@ pub enum ExprKind {
         collection: LocalId,
         comparator: FuncId,
     },
+
+    UnwrapOptional(Box<Expr>),
 }
 
 impl Expr {
