@@ -5,4 +5,8 @@ fn main() {
     let x = 42;
     let 42 = x else { return; }
     println(x);
+
+    let t = (1, 2);
+    let (1, y) = t else { return; }
+    println(y);
 }

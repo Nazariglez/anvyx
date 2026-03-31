@@ -3,6 +3,8 @@
 // @match-begin
 // 42
 // none
+// 42
+// none
 // @match-end
 
 fn check(opt: int?) {
@@ -13,7 +15,17 @@ fn check(opt: int?) {
     }
 }
 
+fn check2(opt: int?) {
+    if let Option.Some(x) = opt {
+        println(x);
+    } else {
+        println("none");
+    }
+}
+
 fn main() {
     check(42);
     check(nil);
+    check2(42);
+    check2(nil);
 }

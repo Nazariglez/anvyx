@@ -9,4 +9,9 @@ fn main() {
     time.sleep(50);
     let after = time.elapsed();
     println(after - before >= 0.04d);
+
+    let before2 = time.elapsed();
+    time.sleep_secs(0.05d);
+    let after2 = time.elapsed();
+    println(after2 - before2 >= 0.04d);
 }

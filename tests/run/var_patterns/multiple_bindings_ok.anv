@@ -3,6 +3,8 @@
 // @match-begin
 // 10
 // 20
+// 10
+// 2
 // @match-end
 
 enum Pair { Both(int, int), None }
@@ -17,6 +19,21 @@ fn main() {
         Pair.None => {},
     }
     match p {
+        Pair.Both(x, y) => {
+            println(x);
+            println(y);
+        },
+        Pair.None => {},
+    }
+
+    var q = Pair.Both(1, 2);
+    match q {
+        Pair.Both(var a, b) => {
+            a = 10;
+        },
+        Pair.None => {},
+    }
+    match q {
         Pair.Both(x, y) => {
             println(x);
             println(y);

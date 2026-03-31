@@ -1,0 +1,30 @@
+// @mode: check
+// @expect: success
+
+fn my_fn() -> void {}
+
+struct Handler {
+    cb: fn() -> void,
+}
+
+enum Foo {
+    A(fn() -> void),
+}
+
+fn main() {
+    let a: [fn() -> void] = [my_fn];
+    let b: [fn() -> void] = [my_fn];
+    let eq1 = a == b;
+
+    let c: [int: fn() -> void] = [1: my_fn];
+    let d: [int: fn() -> void] = [1: my_fn];
+    let eq2 = c == d;
+
+    let e = Handler { cb: my_fn };
+    let f = Handler { cb: my_fn };
+    let eq3 = e == f;
+
+    let g = Foo.A(my_fn);
+    let h = Foo.A(my_fn);
+    let eq4 = g == h;
+}

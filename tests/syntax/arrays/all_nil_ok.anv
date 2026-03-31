@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    var a: [int?; _] = [nil, nil];
+    var b: [int?] = [nil, nil];
+}

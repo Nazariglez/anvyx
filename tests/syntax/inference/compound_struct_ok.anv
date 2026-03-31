@@ -1,0 +1,40 @@
+// @mode: check
+// @expect: success
+
+struct Container<T> {
+    items: [T],
+}
+
+struct Box<T> {
+    value: T,
+}
+
+fn unbox<T>(b: Box<T>) -> T {
+    b.value
+}
+
+fn rebox<T>(b: Box<T>) -> Box<T> {
+    Box { value: b.value }
+}
+
+fn main() {
+    let nums: [int] = [1, 2, 3];
+    let c = Container { items: nums };
+    let _: [int] = c.items;
+
+    let strs: [string] = ["a", "b"];
+    let d = Container { items: strs };
+    let _: [string] = d.items;
+
+    let b = Box { value: 42 };
+    let x = unbox(b);
+    let _: int = x;
+
+    let e = Box { value: "hello" };
+    let y = unbox(e);
+    let _: string = y;
+
+    let f = Box { value: true };
+    let g = rebox(f);
+    let _: bool = g.value;
+}

@@ -1,7 +1,9 @@
 // @mode: check
 // @expect: error
+// @contains: Invalid operand type
 // @contains: operator '<' cannot be applied to 'bool'
 // @contains: must be int, float, double, or string
+// @contains: where T = bool
 
 fn cmp<T>(a: T, b: T) -> bool {
     return a < b;

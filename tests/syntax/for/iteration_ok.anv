@@ -1,0 +1,34 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let arr: [int; 3] = [1, 2, 3];
+    for el in arr {
+        let _: int = el;
+    }
+
+    for (i, el) in arr {
+        let _: int = i;
+        let _: int = el;
+    }
+
+    let m = ["a": 1, "b": 2];
+    for (k, v) in m {
+        let _: string = k;
+        let _: int = v;
+    }
+
+    for (i, (k, v)) in m {
+        let _: int = i;
+        let _: string = k;
+        let _: int = v;
+    }
+
+    for (k, _) in m {
+        let _: string = k;
+    }
+
+    for (_, v) in m {
+        let _: int = v;
+    }
+}

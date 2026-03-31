@@ -3,6 +3,8 @@
 // @match-begin
 // 0
 // 42
+// default
+// hello
 // @match-end
 
 fn main() {
@@ -11,4 +13,10 @@ fn main() {
 
     let b: int? = 42;
     println(b ?? 0);
+
+    let c: string? = nil;
+    println(c ?? "default");
+
+    let d: string? = "hello";
+    println(d ?? "default");
 }

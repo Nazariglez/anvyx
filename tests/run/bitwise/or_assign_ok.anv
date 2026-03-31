@@ -1,9 +1,0 @@
-// @mode: run
-// @expect: success
-// @match: 255
-
-fn main() {
-    var x = 0;
-    x |= 255;
-    println(x);
-}

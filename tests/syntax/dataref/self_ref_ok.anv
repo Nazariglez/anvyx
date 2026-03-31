@@ -1,12 +1,19 @@
 // @mode: check
 // @expect: success
 
+dataref Tree {
+    left: Tree?,
+    right: Tree?,
+    value: int,
+}
+
 dataref Node {
     value: int,
-    child: Node?,
+    next: Node?,
 }
 
 fn main() {
-    let leaf = Node { value: 1, child: nil };
-    let root = Node { value: 0, child: leaf };
+    let n = Node { value: 1, next: nil };
+    let leaf = Node { value: 2, next: nil };
+    let root = Node { value: 0, next: leaf };
 }

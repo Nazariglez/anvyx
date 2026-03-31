@@ -1,11 +1,24 @@
 // @mode: check
 // @expect: success
 
+fn wrap<T>(x: T) -> T? {
+    x
+}
+
 fn unwrap_or<T>(opt: T?, default: T) -> T {
     opt ?? default
 }
 
 fn main() {
+    let a = wrap(42);
+    let _: int? = a;
+
+    let b = wrap("hello");
+    let _: string? = b;
+
+    let c = wrap(true);
+    let _: bool? = c;
+
     let x: int? = 42;
     let y = unwrap_or(x, 0);
     let _: int = y;

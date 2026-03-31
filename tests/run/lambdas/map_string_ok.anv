@@ -1,9 +1,0 @@
-// @mode: run
-// @expect: success
-// @match: [a!, b!]
-
-fn main() {
-    let xs: [string] = ["a", "b"];
-    let r = xs.map(|s| s + "!");
-    println(r);
-}

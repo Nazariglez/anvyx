@@ -1,0 +1,27 @@
+// @mode: check
+// @expect: success
+
+fn head(xs: [int; ..]) -> int {
+    xs[0]
+}
+
+fn get_second(xs: [int; ..]) -> int {
+    xs[1]
+}
+
+fn avg(xs: [float; ..]) -> float {
+    xs[0]
+}
+
+fn main() {
+    let lst: [int] = [1, 2, 3];
+    let _ = head(lst);
+
+    let arr = [1, 2, 3];
+    let _ = head(arr);
+    let arr2 = [10, 20, 30];
+    let _ = get_second(arr2);
+
+    let floats = [1.0, 2.0, 3.0];
+    let _ = avg(floats);
+}

@@ -1,9 +1,0 @@
-// @mode: check
-// @expect: success
-
-fn main() {
-    let m = ["a": 1, "b": 2];
-    for (_, v) in m {
-        let _: int = v;
-    }
-}

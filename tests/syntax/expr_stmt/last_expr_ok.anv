@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+fn f1() -> int {
+    { 1; 2 }
+}
+
+fn f2() -> int {
+    1 + 2
+}
+
+fn main() {
+    let _: int = f1();
+    let _: int = f2();
+}

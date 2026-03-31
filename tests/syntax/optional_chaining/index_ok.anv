@@ -1,0 +1,18 @@
+// @mode: check
+// @expect: success
+
+struct Data {
+    items: [int; 3],
+}
+
+fn main() {
+    let arr: [int; 3]? = [1, 2, 3];
+    let v: int? = arr?[0];
+
+    let list: [string]? = ["a", "b", "c"];
+    let w: string? = list?[1];
+    let x: string = list?[2] ?? "default";
+
+    let d: Data? = Data { items: [10, 20, 30] };
+    let y: int? = d?.items[1];
+}

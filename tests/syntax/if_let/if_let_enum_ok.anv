@@ -1,9 +1,0 @@
-// @mode: check
-// @expect: success
-
-fn main() {
-    let opt: int? = 42;
-    if let Option.Some(x) = opt {
-        let _y: int = x;
-    }
-}

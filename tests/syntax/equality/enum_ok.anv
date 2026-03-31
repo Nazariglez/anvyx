@@ -1,0 +1,34 @@
+// @mode: check
+// @expect: success
+
+enum Dir {
+    N,
+    S,
+    E,
+    W,
+}
+
+enum Bar {
+    X(int),
+    Y(string),
+}
+
+enum Baz {
+    M([int]),
+}
+
+fn main() {
+    let a = Dir.N;
+    let b = Dir.S;
+    let same = a == b;
+
+    let c = Bar.X(1);
+    let d = Bar.X(2);
+    let same2 = c == d;
+
+    let xs: [int] = [1, 2];
+    let ys: [int] = [3, 4];
+    let e = Baz.M(xs);
+    let f = Baz.M(ys);
+    let eq = e == f;
+}

@@ -7,7 +7,16 @@ extern type Point {
     y: float;
 }
 
+fn destructure_full(p: Point) {
+    let Point { x, y } = p;
+}
+
+fn destructure_partial(p: Point) {
+    let Point { x } = p;
+}
+
 fn main() {
     let p = Point { x: 1.0, y: 2.0 };
-    let Point { x, y } = p;
+    destructure_full(p);
+    destructure_partial(p);
 }

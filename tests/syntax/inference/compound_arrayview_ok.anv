@@ -1,0 +1,32 @@
+// @mode: check
+// @expect: success
+
+fn head<T>(xs: [T; ..]) -> T {
+    xs[0]
+}
+
+fn relay<T>(xs: [T; ..]) -> T {
+    xs[0]
+}
+
+fn pass_through<T>(xs: [T; ..]) -> T {
+    relay(xs)
+}
+
+fn main() {
+    let arr = [10, 20, 30];
+    let a = head(arr);
+    let _: int = a;
+
+    let lst: [string] = ["hello", "world"];
+    let b = head(lst);
+    let _: string = b;
+
+    let arr2 = [10, 20, 30];
+    let c = pass_through(arr2);
+    let _: int = c;
+
+    let lst2: [string] = ["hello", "world"];
+    let d = pass_through(lst2);
+    let _: string = d;
+}

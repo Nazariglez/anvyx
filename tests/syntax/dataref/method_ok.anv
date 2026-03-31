@@ -5,10 +5,19 @@ dataref Node {
     value: int,
 }
 
+extend Node {
+    fn get_value(self) -> int {
+        return self.value;
+    }
+}
+
 extend dataref Node {
     fn label(self) -> string {
         "node"
     }
 }
 
-fn main() {}
+fn main() {
+    let n = Node { value: 10 };
+    let v: int = n.get_value();
+}

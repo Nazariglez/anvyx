@@ -4,6 +4,8 @@
 // negative
 // small
 // big
+// up to ten
+// above ten
 // @match-end
 
 fn classify(n: int) -> string {
@@ -19,4 +21,7 @@ fn main() {
     println(classify(-5));
     println(classify(5));
     println(classify(100));
+
+    println(match 10 { ..=10 => "up to ten", _ => "above ten" });
+    println(match 11 { ..=10 => "up to ten", _ => "above ten" });
 }

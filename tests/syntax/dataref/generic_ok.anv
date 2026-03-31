@@ -1,8 +1,19 @@
 // @mode: check
 // @expect: success
 
-dataref Container<T> {
-    item: T,
+dataref Box<T> {
+    value: T,
 }
 
-fn main() {}
+dataref Node<T> {
+    value: T,
+    next: Node<T>?,
+}
+
+fn main() {
+    let n = Node { value: 1, next: nil };
+    let b = Box { value: 42 };
+    let v: int = b.value;
+    let s = Box { value: "hello" };
+    let w: string = s.value;
+}

@@ -1,6 +1,10 @@
 // @mode: run
 // @expect: success
-// @match: 20
+// @match-begin
+// 20
+// 15
+// 42
+// @match-end
 
 fn main() {
     var opt: int? = 10;
@@ -8,6 +12,22 @@ fn main() {
         n = 20;
     }
     if let Option.Some(v) = opt {
+        println(v);
+    }
+
+    var opt2: int? = 10;
+    if let Option.Some(var n) = opt2 {
+        n += 5;
+    }
+    if let Option.Some(v) = opt2 {
+        println(v);
+    }
+
+    var opt3: int? = 10;
+    if let var x = opt3 {
+        x = 42;
+    }
+    if let Option.Some(v) = opt3 {
         println(v);
     }
 }

@@ -1,9 +1,0 @@
-// @mode: run
-// @expect: success
-// @match: hello world
-
-const GREETING = "hello" + " " + "world";
-
-fn main() {
-    println(GREETING);
-}

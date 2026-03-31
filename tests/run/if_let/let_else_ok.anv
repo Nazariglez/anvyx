@@ -1,12 +1,25 @@
 // @mode: run
 // @expect: success
-// @match: 42
+// @match-begin
+// 42
+// 0
+// 42
+// 0
+// @match-end
 
-fn process(opt: int?) -> int {
+fn process1(opt: int?) -> int {
     let Option.Some(x) = opt else { return 0; }
     x
 }
 
+fn process2(opt: int?) -> int {
+    let v? = opt else { return 0; }
+    v
+}
+
 fn main() {
-    println(process(42));
+    println(process1(42));
+    println(process1(nil));
+    println(process2(42));
+    println(process2(nil));
 }

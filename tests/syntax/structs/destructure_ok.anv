@@ -3,7 +3,16 @@
 
 struct Point { x: int, y: int }
 
+fn use_full(p: Point) {
+    let Point { x, y } = p;
+}
+
+fn use_partial(p: Point) {
+    let Point { x } = p;
+}
+
 fn main() {
     let p = Point { x: 10, y: 20 };
-    let Point { x, y } = p;
+    use_full(p);
+    use_partial(p);
 }

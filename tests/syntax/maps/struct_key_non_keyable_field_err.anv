@@ -1,6 +1,7 @@
 // @mode: check
 // @expect: error
 // @contains: not keyable
+// @contains: field 'x'
 
 struct Pos {
     x: float,

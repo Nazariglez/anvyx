@@ -1,7 +1,0 @@
-// @mode: check
-// @expect: error
-// @contains: cannot infer
-
-fn main() {
-    let f = |x| x + 1;
-}

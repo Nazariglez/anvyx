@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+struct Foo {
+    fn bar<T>(self, x: T) -> T {
+        x
+    }
+}
+
+fn main() {
+    let f = Foo {};
+    let a: int = f.bar(42);
+    let b: string = f.bar("hello");
+    let c: int = f.bar<int>(42);
+    let d: string = f.bar<string>("hello");
+}

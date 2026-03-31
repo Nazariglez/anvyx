@@ -1,0 +1,52 @@
+// @mode: check
+// @expect: success
+
+import std.maps;
+
+fn make_map<K, V>() -> [K: V] {
+    [:]
+}
+
+fn identity<T>(x: T) -> T {
+    x
+}
+
+fn make_pair<T, U>(a: T, b: U) -> (T, U) {
+    (a, b)
+}
+
+fn dup<T>(x: T) -> (T, T) {
+    (x, x)
+}
+
+fn wrap<T>(x: T) -> T? {
+    x
+}
+
+fn make_ordered_map() -> [string: int] {
+    return maps.ordered();
+}
+
+fn make_ordered_map_tail() -> [string: int] {
+    maps.ordered()
+}
+
+fn main() {
+    let m: [string: int] = make_map();
+    let n: [int: bool] = make_map();
+    let x: int = identity(42);
+
+    var m2: [string: int] = maps.ordered();
+
+    var m3 = make_ordered_map();
+
+    var m4: [string: int] = make_ordered_map_tail();
+
+    let p: (int, string) = make_pair(1, "hello");
+    let _: int = p.0;
+    let _: string = p.1;
+
+    let d: (bool, bool) = dup(true);
+
+    let o: int? = wrap(42);
+}

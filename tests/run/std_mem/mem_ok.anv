@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @match: ok
+
+import std.mem;
+
+fn main() {
+    mem.auto_collect(false);
+    mem.auto_collect(true);
+    mem.collect_cycles();
+    println("ok");
+}
