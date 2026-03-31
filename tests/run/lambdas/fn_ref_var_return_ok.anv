@@ -1,7 +1,6 @@
 // @mode: run
-// @expect: error
-// @contains: contains 'return' and cannot be inlined
-// @skip: this should be easily fixable changing returns for "continue" on lower phase?
+// @expect: success
+// @match: [2, 20, 4]
 
 fn early_exit(var x: int) {
     if x > 10 {
@@ -13,4 +12,5 @@ fn early_exit(var x: int) {
 fn main() {
     var xs: [int] = [1, 20, 3];
     xs.for_each(early_exit);
+    println(xs);
 }

@@ -590,10 +590,6 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("Cannot pass same variable '{binding}' to 'var' parameters '{param_a}' and '{param_b}'"),
             "same variable would create aliased mutable references".to_string(),
         ),
-        TypeErrKind::VarParamIndexArg { param } => (
-            format!("Cannot pass indexed expression to 'var' parameter '{param}'"),
-            "index expressions cannot be passed by reference; extract to a variable first".to_string(),
-        ),
         TypeErrKind::MutatingMethodOnImmutable {
             struct_name,
             method,

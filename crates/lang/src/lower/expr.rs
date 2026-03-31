@@ -52,6 +52,118 @@ fn ensure_ref_target(
     }
 }
 
+struct IndexedVarWriteBack {
+    collection_local: hir::LocalId,
+    index_expr: hir::Expr,
+    elem_local: hir::LocalId,
+    elem_ty: Type,
+}
+
+fn spill_indexed_var_arg(
+    arg: hir::Expr,
+    span: Span,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> (hir::Expr, Vec<IndexedVarWriteBack>) {
+    let hir::ExprKind::IndexGet { target, index } = arg.kind else {
+        return (arg, vec![]);
+    };
+
+    let (collection_local, collection_ty, mut write_backs) = match target.kind {
+        hir::ExprKind::Local(id) => (id, target.ty.clone(), vec![]),
+        hir::ExprKind::IndexGet { .. } => {
+            let target_ty = target.ty.clone();
+            let (replacement, wbs) = spill_indexed_var_arg(*target, span, fc, out);
+            let hir::ExprKind::Local(id) = replacement.kind else {
+                return (
+                    hir::Expr::new(
+                        arg.ty,
+                        span,
+                        hir::ExprKind::IndexGet {
+                            target: Box::new(replacement),
+                            index,
+                        },
+                    ),
+                    vec![],
+                );
+            };
+            (id, target_ty, wbs)
+        }
+        _ => {
+            // Complex target (FieldGet, etc.) not supported, return as-is
+            return (
+                hir::Expr::new(arg.ty, span, hir::ExprKind::IndexGet { target, index }),
+                vec![],
+            );
+        }
+    };
+
+    let elem_ty = arg.ty.clone();
+    let idx_expr = *index;
+    let idx_ty = idx_expr.ty.clone();
+    let idx_local = alloc_and_bind(fc, span, out, idx_ty.clone(), idx_expr);
+    let idx_ref = hir::Expr::local(idx_ty, span, idx_local);
+
+    let elem_init = hir::Expr::new(
+        elem_ty.clone(),
+        span,
+        hir::ExprKind::IndexGet {
+            target: Box::new(hir::Expr::local(collection_ty, span, collection_local)),
+            index: Box::new(idx_ref.clone()),
+        },
+    );
+    let elem_local = alloc_and_bind(fc, span, out, elem_ty.clone(), elem_init);
+
+    write_backs.push(IndexedVarWriteBack {
+        collection_local,
+        index_expr: idx_ref,
+        elem_local,
+        elem_ty: elem_ty.clone(),
+    });
+
+    (hir::Expr::local(elem_ty, span, elem_local), write_backs)
+}
+
+fn process_indexed_var_args(
+    args: &mut [hir::Expr],
+    ref_mask: &[bool],
+    span: Span,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> Vec<IndexedVarWriteBack> {
+    let mut write_backs = vec![];
+    for (i, is_ref) in ref_mask.iter().enumerate() {
+        if !*is_ref || !matches!(args[i].kind, hir::ExprKind::IndexGet { .. }) {
+            continue;
+        }
+        let arg = std::mem::replace(
+            &mut args[i],
+            hir::Expr::new(Type::Void, span, hir::ExprKind::Nil),
+        );
+        let (replacement, wbs) = spill_indexed_var_arg(arg, span, fc, out);
+        args[i] = replacement;
+        write_backs.extend(wbs);
+    }
+    write_backs
+}
+
+fn emit_index_write_backs(
+    write_backs: &[IndexedVarWriteBack],
+    span: Span,
+    out: &mut Vec<hir::Stmt>,
+) {
+    for wb in write_backs.iter().rev() {
+        out.push(hir::Stmt {
+            span,
+            kind: hir::StmtKind::SetIndex {
+                object: wb.collection_local,
+                index: Box::new(wb.index_expr.clone()),
+                value: hir::Expr::local(wb.elem_ty.clone(), span, wb.elem_local),
+            },
+        });
+    }
+}
+
 fn const_value_to_expr_kind(val: &ConstValue) -> hir::ExprKind {
     match val {
         ConstValue::Int(n) => hir::ExprKind::Int(*n),
@@ -1342,7 +1454,22 @@ fn lower_call_expr(
         }
     }
     let kind = lower_direct_call(c, span, ctx, fc, out)?;
-    Ok(hir::Expr::new(ty, span, kind))
+    let mut call_expr = hir::Expr::new(ty.clone(), span, kind);
+    if let hir::ExprKind::Call {
+        ref mut args,
+        ref ref_mask,
+        ..
+    } = call_expr.kind
+    {
+        let ref_mask = ref_mask.clone();
+        let wbs = process_indexed_var_args(args, &ref_mask, span, fc, out);
+        if !wbs.is_empty() {
+            let result_local = alloc_and_bind(fc, span, out, ty.clone(), call_expr);
+            emit_index_write_backs(&wbs, span, out);
+            return Ok(hir::Expr::local(ty, span, result_local));
+        }
+    }
+    Ok(call_expr)
 }
 
 fn lower_closure_call(
@@ -1354,20 +1481,27 @@ fn lower_closure_call(
     out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::Expr, LowerError> {
     let callee = lower_expr(&c.node.func, ctx, fc, out)?;
-    let ref_mask = match &callee.ty {
+    let ref_mask: Vec<bool> = match &callee.ty {
         Type::Func { params, .. } => params.iter().map(|p| p.mutable).collect(),
         _ => vec![false; c.node.args.len()],
     };
-    let args = lower_args(&c.node.args, ctx, fc, out)?;
-    Ok(hir::Expr::new(
-        ty,
+    let mut args = lower_args(&c.node.args, ctx, fc, out)?;
+    let wbs = process_indexed_var_args(&mut args, &ref_mask, span, fc, out);
+    let mut call_expr = hir::Expr::new(
+        ty.clone(),
         span,
         hir::ExprKind::CallClosure {
             callee: Box::new(callee),
             args,
             ref_mask,
         },
-    ))
+    );
+    if !wbs.is_empty() {
+        let result_local = alloc_and_bind(fc, span, out, ty.clone(), call_expr);
+        emit_index_write_backs(&wbs, span, out);
+        call_expr = hir::Expr::local(ty, span, result_local);
+    }
+    Ok(call_expr)
 }
 
 fn lower_lambda(
@@ -1761,6 +1895,7 @@ fn lower_map_desugar(
 struct ListLoopCtx {
     xs_local: hir::LocalId,
     i_local: hir::LocalId,
+    step_local: hir::LocalId,
     collection_ty: Type,
     elem_ty: Type,
     span: Span,
@@ -1984,12 +2119,12 @@ fn desugar_list_for_each(
                 }
             })?;
 
-            if block_contains_return(&func_node.node.body) {
+            if stmts_have_return_in_loop(&func_node.node.body, false) {
                 return Err(LowerError::UnsupportedExprKind {
                     span,
                     kind: format!(
-                        "function '{fn_name}' contains 'return' and cannot be inlined \
-                         into for_each; use an inline lambda instead"
+                        "function '{fn_name}' contains 'return' inside a loop and cannot \
+                         be inlined into for_each; use an inline lambda instead"
                     ),
                 });
             }
@@ -2010,7 +2145,9 @@ fn desugar_list_for_each(
             });
 
             let block = lower_block(&func_node.node.body, ctx, fc, false, &Type::Void)?;
-            body_stmts.extend(block.stmts);
+            let mut fn_body_stmts = block.stmts;
+            rewrite_returns_to_continue(&mut fn_body_stmts, lc.i_local, lc.step_local, span);
+            body_stmts.extend(fn_body_stmts);
 
             body_stmts.push(hir::Stmt {
                 span,
@@ -2465,6 +2602,7 @@ fn lower_list_desugar(
     let lc = ListLoopCtx {
         xs_local,
         i_local,
+        step_local,
         collection_ty: collection_ty.clone(),
         elem_ty: elem_ty.clone(),
         span,
@@ -3212,57 +3350,128 @@ fn lower_field_expr(
     })
 }
 
-fn block_contains_return(block: &ast::BlockNode) -> bool {
-    block.node.stmts.iter().any(stmt_contains_return)
-        || block.node.tail.as_deref().is_some_and(expr_contains_return)
+fn rewrite_returns_to_continue(
+    stmts: &mut Vec<hir::Stmt>,
+    i_local: hir::LocalId,
+    step_local: hir::LocalId,
+    span: Span,
+) {
+    let mut i = 0;
+    while i < stmts.len() {
+        if matches!(stmts[i].kind, hir::StmtKind::Return(None)) {
+            let increment = hir::Stmt {
+                span,
+                kind: hir::StmtKind::Assign {
+                    local: i_local,
+                    value: hir::Expr::binary(
+                        Type::Int,
+                        span,
+                        BinaryOp::Add,
+                        hir::Expr::local(Type::Int, span, i_local),
+                        hir::Expr::local(Type::Int, span, step_local),
+                    ),
+                },
+            };
+            let cont = hir::Stmt {
+                span,
+                kind: hir::StmtKind::Continue,
+            };
+            stmts[i] = increment;
+            stmts.insert(i + 1, cont);
+            i += 2;
+        } else if let hir::StmtKind::If {
+            then_block,
+            else_block,
+            ..
+        } = &mut stmts[i].kind
+        {
+            rewrite_returns_to_continue(&mut then_block.stmts, i_local, step_local, span);
+            if let Some(eb) = else_block.as_mut() {
+                rewrite_returns_to_continue(&mut eb.stmts, i_local, step_local, span);
+            }
+            i += 1;
+        } else if let hir::StmtKind::Match {
+            arms, else_body, ..
+        } = &mut stmts[i].kind
+        {
+            for arm in arms.iter_mut() {
+                rewrite_returns_to_continue(&mut arm.body.stmts, i_local, step_local, span);
+            }
+            if let Some(eb) = else_body.as_mut() {
+                rewrite_returns_to_continue(&mut eb.body.stmts, i_local, step_local, span);
+            }
+            i += 1;
+        } else {
+            debug_assert!(
+                !matches!(stmts[i].kind, hir::StmtKind::Return(Some(_))),
+                "Return(Some(_)) in void function body — should be impossible"
+            );
+            i += 1;
+        }
+    }
 }
 
-fn stmt_contains_return(stmt: &ast::StmtNode) -> bool {
+fn stmt_has_return_in_loop(stmt: &ast::StmtNode, in_loop: bool) -> bool {
     match &stmt.node {
-        ast::Stmt::Return(_) => true,
-        ast::Stmt::Expr(e) => expr_contains_return(e),
-        ast::Stmt::Binding(b) => expr_contains_return(&b.node.value),
+        ast::Stmt::Return(_) => in_loop,
+        ast::Stmt::Expr(e) => expr_has_return_in_loop(e, in_loop),
+        ast::Stmt::Binding(b) => expr_has_return_in_loop(&b.node.value, in_loop),
         ast::Stmt::LetElse(le) => {
-            expr_contains_return(&le.node.value) || block_contains_return(&le.node.else_block)
+            expr_has_return_in_loop(&le.node.value, in_loop)
+                || stmts_have_return_in_loop(&le.node.else_block, in_loop)
         }
         ast::Stmt::While(w) => {
-            expr_contains_return(&w.node.cond) || block_contains_return(&w.node.body)
+            expr_has_return_in_loop(&w.node.cond, in_loop)
+                || stmts_have_return_in_loop(&w.node.body, true)
         }
         ast::Stmt::WhileLet(wl) => {
-            expr_contains_return(&wl.node.value) || block_contains_return(&wl.node.body)
+            expr_has_return_in_loop(&wl.node.value, in_loop)
+                || stmts_have_return_in_loop(&wl.node.body, true)
         }
         ast::Stmt::For(f) => {
-            expr_contains_return(&f.node.iterable) || block_contains_return(&f.node.body)
+            expr_has_return_in_loop(&f.node.iterable, in_loop)
+                || stmts_have_return_in_loop(&f.node.body, true)
         }
         _ => false,
     }
 }
 
-fn expr_contains_return(expr: &ast::ExprNode) -> bool {
+fn expr_has_return_in_loop(expr: &ast::ExprNode, in_loop: bool) -> bool {
     match &expr.node.kind {
-        ast::ExprKind::Block(b) => block_contains_return(b),
-        ast::ExprKind::If(if_node) => {
-            block_contains_return(&if_node.node.then_block)
-                || if_node
-                    .node
+        ast::ExprKind::Block(b) => stmts_have_return_in_loop(b, in_loop),
+        ast::ExprKind::If(n) => {
+            stmts_have_return_in_loop(&n.node.then_block, in_loop)
+                || n.node
                     .else_block
                     .as_ref()
-                    .is_some_and(block_contains_return)
+                    .is_some_and(|b| stmts_have_return_in_loop(b, in_loop))
         }
-        ast::ExprKind::IfLet(if_let) => {
-            block_contains_return(&if_let.node.then_block)
-                || if_let
-                    .node
+        ast::ExprKind::IfLet(n) => {
+            stmts_have_return_in_loop(&n.node.then_block, in_loop)
+                || n.node
                     .else_block
                     .as_ref()
-                    .is_some_and(block_contains_return)
+                    .is_some_and(|b| stmts_have_return_in_loop(b, in_loop))
         }
         ast::ExprKind::Match(m) => m
             .node
             .arms
             .iter()
-            .any(|arm| expr_contains_return(&arm.node.body)),
+            .any(|arm| expr_has_return_in_loop(&arm.node.body, in_loop)),
         ast::ExprKind::Lambda(_) => false,
         _ => false,
     }
+}
+
+fn stmts_have_return_in_loop(block: &ast::BlockNode, in_loop: bool) -> bool {
+    block
+        .node
+        .stmts
+        .iter()
+        .any(|s| stmt_has_return_in_loop(s, in_loop))
+        || block
+            .node
+            .tail
+            .as_deref()
+            .is_some_and(|e| expr_has_return_in_loop(e, in_loop))
 }

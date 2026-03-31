@@ -36,14 +36,6 @@ fn paths_alias(a: &[Ident], b: &[Ident]) -> bool {
     true
 }
 
-fn is_index_expr(expr: &ExprNode) -> bool {
-    match &expr.node.kind {
-        ExprKind::Index(_) => true,
-        ExprKind::Field(field) => is_index_expr(&field.node.target),
-        _ => false,
-    }
-}
-
 pub(super) fn check_var_param_args(
     params: impl IntoIterator<Item = (Ident, Mutability)>,
     args: &[ExprNode],
@@ -57,14 +49,59 @@ pub(super) fn check_var_param_args(
             continue;
         }
 
-        if is_index_expr(arg) {
-            errors.push(
-                TypeErr::new(
-                    arg.span,
-                    TypeErrKind::VarParamIndexArg { param: param_name },
-                )
-                .with_help("extract the indexed element to a 'var' variable first"),
-            );
+        if let ExprKind::Index(_) = &arg.node.kind {
+            let mut target = arg;
+            while let ExprKind::Index(idx) = &target.node.kind {
+                target = &idx.node.target;
+            }
+            let ExprKind::Ident(root) = &target.node.kind else {
+                errors.push(
+                    TypeErr::new(
+                        arg.span,
+                        TypeErrKind::VarParamNotLvalue { param: param_name },
+                    )
+                    .with_help(
+                        "only indexed variables (e.g., arr[i], matrix[i][j]) can be \
+                         passed to 'var' parameters; extract to a 'var' variable first",
+                    ),
+                );
+                continue;
+            };
+            let root = *root;
+            let Some(info) = type_checker.get_var(root) else {
+                continue;
+            };
+            if !info.mutable {
+                errors.push(
+                    TypeErr::new(
+                        arg.span,
+                        TypeErrKind::VarParamImmutableBinding {
+                            param: param_name,
+                            binding: root,
+                        },
+                    )
+                    .with_help("declare with 'var' to allow mutation"),
+                );
+                continue;
+            }
+            for (prev_param, prev_root, _) in &var_paths {
+                if root == *prev_root {
+                    errors.push(
+                        TypeErr::new(
+                            arg.span,
+                            TypeErrKind::VarParamAliasing {
+                                param_a: *prev_param,
+                                param_b: param_name,
+                                binding: root,
+                            },
+                        )
+                        .with_help(
+                            "each 'var' parameter must refer to a distinct variable or field",
+                        ),
+                    );
+                }
+            }
+            var_paths.push((param_name, root, vec![]));
             continue;
         }
 

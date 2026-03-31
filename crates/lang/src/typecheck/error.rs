@@ -337,9 +337,6 @@ pub enum TypeErrKind {
         param_b: Ident,
         binding: Ident,
     },
-    VarParamIndexArg {
-        param: Ident,
-    },
     MutatingMethodOnImmutable {
         struct_name: Ident,
         method: Ident,
