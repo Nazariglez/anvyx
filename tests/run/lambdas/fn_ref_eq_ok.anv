@@ -1,6 +1,5 @@
 // @mode: run
 // @expect: success
-// @skip: fn ref equality compares by identity, not function index (findings.md #8)
 // @match-begin
 // true
 // true

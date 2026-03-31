@@ -117,7 +117,7 @@ pub struct EnumData {
     pub fields: Vec<Value>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ClosureData {
     pub fn_id: u16,
     pub captures: Vec<Value>,
@@ -241,7 +241,7 @@ impl PartialEq for Value {
             (Value::Enum(a), Value::Enum(b)) => a == b,
             (Value::ExternHandle(a), Value::ExternHandle(b)) => a == b,
             (Value::DataRef(a), Value::DataRef(b)) => ManagedRc::ptr_eq(a, b),
-            (Value::Closure(a), Value::Closure(b)) => ManagedRc::ptr_eq(a, b),
+            (Value::Closure(a), Value::Closure(b)) => a == b,
             (
                 Value::ArrayView {
                     data: a,
@@ -283,7 +283,7 @@ impl Hash for Value {
             Value::Enum(e) => e.hash(state),
             Value::ExternHandle(data) => data.hash(state),
             Value::DataRef(s) => (s.as_ptr() as usize).hash(state),
-            Value::Closure(c) => (c.as_ptr() as usize).hash(state),
+            Value::Closure(c) => c.hash(state),
             Value::ArrayView { data, offset, len } => {
                 data[*offset..*offset + *len].hash(state);
             }
