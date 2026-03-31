@@ -332,6 +332,14 @@ pub enum TypeErrKind {
         param: Ident,
         binding: Ident,
     },
+    VarParamAliasing {
+        param_a: Ident,
+        param_b: Ident,
+        binding: Ident,
+    },
+    VarParamIndexArg {
+        param: Ident,
+    },
     MutatingMethodOnImmutable {
         struct_name: Ident,
         method: Ident,
@@ -461,6 +469,7 @@ pub enum TypeErrKind {
         name: Ident,
     },
     MutableFnParamRequiresVarTarget,
+    VarPatternOnImmutable,
     UnknownAnnotation {
         name: Ident,
     },

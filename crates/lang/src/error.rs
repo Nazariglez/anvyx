@@ -586,6 +586,14 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
             format!("Cannot pass immutable binding '{binding}' to 'var' parameter '{param}'"),
             format!("'{binding}' is declared with 'let'; use 'var' to allow mutation"),
         ),
+        TypeErrKind::VarParamAliasing { param_a, param_b, binding } => (
+            format!("Cannot pass same variable '{binding}' to 'var' parameters '{param_a}' and '{param_b}'"),
+            "same variable would create aliased mutable references".to_string(),
+        ),
+        TypeErrKind::VarParamIndexArg { param } => (
+            format!("Cannot pass indexed expression to 'var' parameter '{param}'"),
+            "index expressions cannot be passed by reference; extract to a variable first".to_string(),
+        ),
         TypeErrKind::MutatingMethodOnImmutable {
             struct_name,
             method,
@@ -781,6 +789,10 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
         TypeErrKind::MutableFnParamRequiresVarTarget => (
             "function with 'var' parameter requires the target to be declared with 'var'".to_string(),
             "declare the collection with 'var' to allow in-place mutation".to_string(),
+        ),
+        TypeErrKind::VarPatternOnImmutable => (
+            "var binding in pattern requires a mutable (var) scrutinee".to_string(),
+            "declare the scrutinee with 'var' to allow write-through".to_string(),
         ),
         TypeErrKind::UnknownAnnotation { name } => (
             format!("unknown annotation `@{name}`"),

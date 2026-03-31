@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ast::{self, BinaryOp, Ident, Stmt, Type, UnaryOp};
+use crate::ast::{self, BinaryOp, Ident, Mutability, Stmt, Type, UnaryOp};
 use crate::hir;
 use crate::span::Span;
 use crate::typecheck::ExternTypeDef;
@@ -338,7 +338,11 @@ pub(super) fn register_extend_declarations<'a>(
 
 pub(super) fn alloc_assign_temp(fc: &mut FuncLower, ty: Type) -> hir::LocalId {
     let id = hir::LocalId(fc.locals.len() as u32);
-    fc.locals.push(hir::Local { name: None, ty });
+    fc.locals.push(hir::Local {
+        name: None,
+        ty,
+        is_ref: false,
+    });
     id
 }
 
@@ -385,9 +389,39 @@ pub(super) fn register_named_local(fc: &mut FuncLower, name: Ident, ty: Type) ->
     fc.locals.push(hir::Local {
         name: Some(name),
         ty,
+        is_ref: false,
     });
     fc.bind_local(name, id);
     id
+}
+
+pub(super) fn register_param_local(
+    fc: &mut FuncLower,
+    name: Ident,
+    ty: Type,
+    mutability: Mutability,
+) {
+    let local_id = register_named_local(fc, name, ty);
+    if mutability == Mutability::Mutable {
+        fc.locals[local_id.0 as usize].is_ref = true;
+    }
+}
+
+pub(super) fn build_method_ref_mask(
+    is_var_self: bool,
+    method_params: &[ast::Param],
+    args_len: usize,
+) -> Vec<bool> {
+    let mut ref_mask = vec![false; args_len];
+    if is_var_self {
+        ref_mask[0] = true;
+    }
+    for (i, param) in method_params.iter().enumerate() {
+        if param.mutability == Mutability::Mutable && i + 1 < ref_mask.len() {
+            ref_mask[i + 1] = true;
+        }
+    }
+    ref_mask
 }
 
 pub(super) fn resolve_variant_index(

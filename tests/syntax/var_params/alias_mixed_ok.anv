@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: success
+
+fn add_to(var target: int, amount: int) {
+    target = target + amount;
+}
+
+fn main() {
+    var x = 10;
+    add_to(x, x);
+}

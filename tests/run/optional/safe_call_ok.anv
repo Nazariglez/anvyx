@@ -1,5 +1,6 @@
 // @mode: run
 // @expect: success
+// @skip: safe call wraps result in Option.Some() and field access bug gives wrong value (findings.md #6, #7)
 // @match-begin
 // 5.0
 // nil

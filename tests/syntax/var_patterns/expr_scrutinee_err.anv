@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: mutable
+
+fn get() -> int? { return 10; }
+
+fn main() {
+    if let Option.Some(var n) = get() {
+        n = 20;
+    }
+}

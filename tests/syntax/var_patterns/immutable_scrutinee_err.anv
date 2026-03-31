@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: mutable
+
+fn main() {
+    let opt: int? = 10;
+    if let Option.Some(var n) = opt {
+        n = 20;
+    }
+}

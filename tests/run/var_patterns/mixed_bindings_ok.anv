@@ -1,0 +1,25 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 10
+// 2
+// @match-end
+
+enum Pair { Both(int, int), None }
+
+fn main() {
+    var p = Pair.Both(1, 2);
+    match p {
+        Pair.Both(var a, b) => {
+            a = 10;
+        },
+        Pair.None => {},
+    }
+    match p {
+        Pair.Both(x, y) => {
+            println(x);
+            println(y);
+        },
+        Pair.None => {},
+    }
+}

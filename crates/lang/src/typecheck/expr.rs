@@ -107,6 +107,18 @@ pub(super) fn root_ident(expr: &ExprNode) -> Option<Ident> {
     }
 }
 
+pub(super) fn field_path(expr: &ExprNode) -> Option<(Ident, Vec<Ident>)> {
+    match &expr.node.kind {
+        ExprKind::Ident(name) => Some((*name, vec![])),
+        ExprKind::Field(field) => {
+            let (root, mut path) = field_path(&field.node.target)?;
+            path.push(field.node.field);
+            Some((root, path))
+        }
+        _ => None,
+    }
+}
+
 pub(super) fn type_from_lit(lit: &Lit) -> Type {
     match lit {
         Lit::Int(_) => Type::Int,

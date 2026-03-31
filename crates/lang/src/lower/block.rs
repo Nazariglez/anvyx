@@ -101,6 +101,7 @@ fn lower_stmt(
                     fc.locals.push(hir::Local {
                         name: Some(name),
                         ty,
+                        is_ref: false,
                     });
                     fc.bind_local(name, local_id);
 

@@ -9,10 +9,10 @@ use super::compiler::CompiledProgram;
 use super::managed_rc::ManagedRc;
 use super::meta::VariantMetaKind;
 use super::value::{
-    ClosureData, EnumData, MapStorage, RuntimeError, StructData, Value, type_name, value_add,
-    value_and, value_bit_and, value_bit_not, value_bit_or, value_div, value_eq, value_gt,
-    value_gte, value_lt, value_lte, value_mul, value_negate, value_neq, value_not, value_or,
-    value_rem, value_shl, value_shr, value_sub, value_xor,
+    ClosureData, EnumData, MapStorage, RefPath, RuntimeError, StructData, Value, type_name,
+    value_add, value_and, value_bit_and, value_bit_not, value_bit_or, value_div, value_eq,
+    value_gt, value_gte, value_lt, value_lte, value_mul, value_negate, value_neq, value_not,
+    value_or, value_rem, value_shl, value_shr, value_sub, value_xor,
 };
 
 pub type ExternHandler = Box<dyn Fn(Vec<Value>) -> Result<Value, RuntimeError>>;
@@ -21,6 +21,73 @@ fn as_usize_index(val: &Value) -> Result<usize, RuntimeError> {
     match val {
         Value::Int(i) => Ok(*i as usize),
         other => Err(RuntimeError::new(format!("index must be int, got {other}"))),
+    }
+}
+
+fn set_index_on_slot(
+    slot: &mut Value,
+    index_val: Value,
+    new_value: Value,
+) -> Result<(), RuntimeError> {
+    match slot {
+        Value::Array(a) => {
+            let idx = as_usize_index(&index_val)?;
+            let len = a.len();
+            if idx >= len {
+                return Err(RuntimeError::new(format!(
+                    "index {idx} out of bounds for array of length {len}"
+                )));
+            }
+            ManagedRc::make_mut(a)[idx] = new_value;
+        }
+        Value::List(l) => {
+            let idx = as_usize_index(&index_val)?;
+            let len = l.len();
+            if idx >= len {
+                return Err(RuntimeError::new(format!(
+                    "index {idx} out of bounds for list of length {len}"
+                )));
+            }
+            ManagedRc::make_mut(l)[idx] = new_value;
+        }
+        Value::Map(m) => {
+            ManagedRc::make_mut(m).insert(index_val, new_value);
+        }
+        other => {
+            return Err(RuntimeError::new(format!(
+                "SetIndexRef on non-indexable value: {other}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn resolve_path_ref<'a>(slot: &'a Value, segments: &[u16]) -> &'a Value {
+    let mut current = slot;
+    for &seg in segments {
+        current = match current {
+            Value::Struct(s) => &s.fields[seg as usize],
+            Value::DataRef(s) => &s.fields[seg as usize],
+            Value::Tuple(t) => &t[seg as usize],
+            Value::Enum(e) => &e.fields[seg as usize],
+            _ => panic!("resolve_path_ref: cannot index into {}", type_name(current)),
+        };
+    }
+    current
+}
+
+fn resolve_path_mut<'a>(slot: &'a mut Value, segments: &[u16]) -> &'a mut Value {
+    if segments.is_empty() {
+        return slot;
+    }
+    let seg = segments[0] as usize;
+    let rest = &segments[1..];
+    match slot {
+        Value::Struct(s) => resolve_path_mut(&mut ManagedRc::make_mut(s).fields[seg], rest),
+        Value::DataRef(s) => resolve_path_mut(&mut s.force_mut().fields[seg], rest),
+        Value::Tuple(t) => resolve_path_mut(&mut ManagedRc::make_mut(t)[seg], rest),
+        Value::Enum(e) => resolve_path_mut(&mut ManagedRc::make_mut(e).fields[seg], rest),
+        _ => panic!("resolve_path_mut: cannot index into {}", type_name(slot)),
     }
 }
 
@@ -121,6 +188,140 @@ impl<'a> VM<'a> {
                 Op::CloneLocal(idx) => {
                     let val = self.stack[stack_base + idx as usize].clone();
                     self.push(val);
+                }
+
+                Op::PushRef(idx) => {
+                    let abs_idx = (stack_base + idx as usize) as u32;
+                    self.push(Value::StackRef(abs_idx));
+                }
+
+                Op::PushPathRef(local_idx, depth, segments) => {
+                    let slot = &self.stack[stack_base + local_idx as usize];
+                    match slot {
+                        Value::StackRef(abs) => {
+                            let abs = *abs;
+                            self.push(Value::PathRef(RefPath::new(abs, depth, segments)));
+                        }
+                        Value::PathRef(rp) => {
+                            let rp = *rp;
+                            let new_depth = rp.depth + depth;
+                            assert!(new_depth <= 4, "PathRef depth overflow in PushPathRef");
+                            let mut new_segments = rp.segments;
+                            for i in 0..depth as usize {
+                                new_segments[rp.depth as usize + i] = segments[i];
+                            }
+                            self.push(Value::PathRef(RefPath::new(
+                                rp.root,
+                                new_depth,
+                                new_segments,
+                            )));
+                        }
+                        _ => {
+                            let abs_root = (stack_base + local_idx as usize) as u32;
+                            self.push(Value::PathRef(RefPath::new(abs_root, depth, segments)));
+                        }
+                    }
+                }
+
+                Op::DerefRead(idx) => {
+                    let ref_val = &self.stack[stack_base + idx as usize];
+                    match ref_val {
+                        Value::StackRef(abs_idx) => {
+                            let val = self.stack[*abs_idx as usize].clone();
+                            self.push(val);
+                        }
+                        Value::PathRef(rp) => {
+                            let rp = *rp;
+                            let val =
+                                resolve_path_ref(&self.stack[rp.root as usize], rp.path()).clone();
+                            self.push(val);
+                        }
+                        _ => panic!("DerefRead on non-ref local"),
+                    }
+                }
+
+                Op::DerefWrite(idx) => {
+                    let val = self.pop();
+                    let ref_val = &self.stack[stack_base + idx as usize];
+                    match ref_val {
+                        Value::StackRef(abs_idx) => {
+                            let abs = *abs_idx as usize;
+                            self.stack[abs] = val;
+                        }
+                        Value::PathRef(rp) => {
+                            let rp = *rp;
+                            let target =
+                                resolve_path_mut(&mut self.stack[rp.root as usize], rp.path());
+                            *target = val;
+                        }
+                        _ => panic!("DerefWrite on non-ref local"),
+                    }
+                }
+
+                Op::SetFieldRef(local_idx, field_idx) => {
+                    let new_value = self.pop();
+                    let ref_val = &self.stack[stack_base + local_idx as usize];
+                    match ref_val {
+                        Value::StackRef(abs_idx) => {
+                            let abs = *abs_idx as usize;
+                            let slot = &mut self.stack[abs];
+                            match slot {
+                                Value::Struct(s) => {
+                                    ManagedRc::make_mut(s).fields[field_idx as usize] = new_value;
+                                }
+                                Value::DataRef(s) => {
+                                    s.force_mut().fields[field_idx as usize] = new_value;
+                                }
+                                Value::Tuple(t) => {
+                                    ManagedRc::make_mut(t)[field_idx as usize] = new_value;
+                                }
+                                Value::Enum(e) => {
+                                    ManagedRc::make_mut(e).fields[field_idx as usize] = new_value;
+                                }
+                                // flat nullable representation where field 0 is the value itself,
+                                // mirroring GetField's "other -> other" fallback
+                                other => {
+                                    if field_idx == 0 {
+                                        *other = new_value;
+                                    } else {
+                                        return Err(RuntimeError::new(format!(
+                                            "SetFieldRef on unsupported type: {other}"
+                                        )));
+                                    }
+                                }
+                            }
+                        }
+                        Value::PathRef(rp) => {
+                            let mut rp = *rp;
+                            // extend the path with field_idx and navigate to the target
+                            assert!((rp.depth as usize) < 4, "PathRef depth overflow");
+                            rp.segments[rp.depth as usize] = field_idx;
+                            rp.depth += 1;
+                            let target =
+                                resolve_path_mut(&mut self.stack[rp.root as usize], rp.path());
+                            *target = new_value;
+                        }
+                        _ => panic!("SetFieldRef on non-ref local"),
+                    }
+                }
+
+                Op::SetIndexRef(local_idx) => {
+                    let new_value = self.pop();
+                    let index_val = self.pop();
+                    let ref_val = &self.stack[stack_base + local_idx as usize];
+                    match ref_val {
+                        Value::StackRef(abs_idx) => {
+                            let abs = *abs_idx as usize;
+                            set_index_on_slot(&mut self.stack[abs], index_val, new_value)?;
+                        }
+                        Value::PathRef(rp) => {
+                            let rp = *rp;
+                            let slot =
+                                resolve_path_mut(&mut self.stack[rp.root as usize], rp.path());
+                            set_index_on_slot(slot, index_val, new_value)?;
+                        }
+                        _ => panic!("SetIndexRef on non-ref local"),
+                    }
                 }
 
                 Op::SetLocal(idx) => {
@@ -1883,5 +2084,853 @@ mod tests {
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
         assert!(vm.run().is_ok());
+    }
+
+    #[test]
+    fn push_ref_creates_correct_absolute_index() {
+        // main: local_count=1, stack_base=0
+        // store Int(42) in local 0, PushRef(0) → StackRef(0), println it
+        // expected stdout: "<ref@0>"
+        let mut chunk = Chunk::new("main", 1, 0);
+        let i42 = chunk.add_constant(Value::Int(42));
+        chunk.emit(Op::Constant(i42));
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::PushRef(0));
+        chunk.emit(Op::CallBuiltin(0, 1)); // Println
+        chunk.emit(Op::Pop);
+        chunk.emit(Op::Nil);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "<ref@0>\n");
+    }
+
+    #[test]
+    fn push_ref_in_callee_accounts_for_stack_base() {
+        // main (chunk 1): local_count=1, stack_base=0; stores Int(42), calls callee
+        // callee (chunk 0): local_count=1, stack_base=1; PushRef(0) → StackRef(1), println
+        // expected stdout: "<ref@1>"
+        let mut callee = Chunk::new("callee", 1, 0);
+        callee.emit(Op::PushRef(0));
+        callee.emit(Op::CallBuiltin(0, 1)); // Println
+        callee.emit(Op::Pop);
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i42 = main_chunk.add_constant(Value::Int(42));
+        main_chunk.emit(Op::Constant(i42));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::Call(0, 0));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "<ref@1>\n");
+    }
+
+    #[test]
+    fn push_ref_arithmetic_errors() {
+        // PushRef(0) + Int(1) → runtime error (StackRef is not an arithmetic value)
+        let mut chunk = Chunk::new("main", 1, 0);
+        let i1 = chunk.add_constant(Value::Int(1));
+        chunk.emit(Op::PushRef(0));
+        chunk.emit(Op::Constant(i1));
+        chunk.emit(Op::Add);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_err());
+    }
+
+    #[test]
+    fn deref_read_retrieves_caller_value() {
+        // main: local 0 = Int(42); PushRef(0); Call callee
+        // callee: receives StackRef in local 0; DerefRead(0) → Int(42); println
+        let mut callee = Chunk::new("callee", 1, 1);
+        callee.emit(Op::DerefRead(0));
+        callee.emit(Op::CallBuiltin(0, 1)); // println
+        callee.emit(Op::Pop);
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i42 = main_chunk.add_constant(Value::Int(42));
+        main_chunk.emit(Op::Constant(i42));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushRef(0));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "42\n");
+    }
+
+    #[test]
+    fn deref_write_mutates_caller_local() {
+        // main: local 0 = Int(42); PushRef(0); Call callee; println(local 0)
+        // callee: DerefWrite(0) with Int(99) → main's local 0 becomes 99
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i99 = callee.add_constant(Value::Int(99));
+        callee.emit(Op::Constant(i99));
+        callee.emit(Op::DerefWrite(0));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i42 = main_chunk.add_constant(Value::Int(42));
+        main_chunk.emit(Op::Constant(i42));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushRef(0));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "99\n");
+    }
+
+    #[test]
+    fn set_field_ref_mutates_struct_in_place() {
+        // main: local 0 = Struct{[10, 20]}; PushRef(0); Call callee; println(local 0 field 1)
+        // callee: SetFieldRef(0, 1) with Int(99) → struct field 1 becomes 99
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i99 = callee.add_constant(Value::Int(99));
+        callee.emit(Op::Constant(i99));
+        callee.emit(Op::SetFieldRef(0, 1));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i10 = main_chunk.add_constant(Value::Int(10));
+        let i20 = main_chunk.add_constant(Value::Int(20));
+        main_chunk.emit(Op::Constant(i10));
+        main_chunk.emit(Op::Constant(i20));
+        main_chunk.emit(Op::ConstructStruct(0, 2));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushRef(0));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::GetField(1));
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "99\n");
+    }
+
+    #[test]
+    fn set_field_ref_cow_when_shared() {
+        // main: local 0 = Struct{[10, 20]}; local 1 = clone (refcount=2)
+        // PushRef(0); Call callee (sets field 1 to 99 through ref)
+        // local 0 field 1 → 99 (COW on the ref's struct)
+        // local 1 field 1 → 20 (untouched separate copy)
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i99 = callee.add_constant(Value::Int(99));
+        callee.emit(Op::Constant(i99));
+        callee.emit(Op::SetFieldRef(0, 1));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 2, 0);
+        let i10 = main_chunk.add_constant(Value::Int(10));
+        let i20 = main_chunk.add_constant(Value::Int(20));
+        main_chunk.emit(Op::Constant(i10));
+        main_chunk.emit(Op::Constant(i20));
+        main_chunk.emit(Op::ConstructStruct(0, 2));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::GetLocal(0)); // clone → refcount=2
+        main_chunk.emit(Op::SetLocal(1));
+        main_chunk.emit(Op::PushRef(0));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::GetField(1));
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println → "99"
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(1));
+        main_chunk.emit(Op::GetField(1));
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println → "20"
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "99\n20\n");
+    }
+
+    #[test]
+    fn set_field_ref_on_non_struct_errors() {
+        // main: local 0 = Int(42); PushRef(0); Call callee
+        // callee: SetFieldRef(0, 1) on an Int with field_idx > 0 → runtime error
+        // (field_idx == 0 on a flat value is valid: it replaces the whole slot)
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i0 = callee.add_constant(Value::Int(0));
+        callee.emit(Op::Constant(i0));
+        callee.emit(Op::SetFieldRef(0, 1));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i42 = main_chunk.add_constant(Value::Int(42));
+        main_chunk.emit(Op::Constant(i42));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushRef(0));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_err());
+    }
+
+    #[test]
+    fn set_index_ref_mutates_array() {
+        // main: local 0 = [10, 20, 30]; PushRef(0); Call callee; print local 0[1]
+        // callee: push Int(1) (index), push Int(99) (value), SetIndexRef(0) → array[1] = 99
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i1 = callee.add_constant(Value::Int(1));
+        let i99 = callee.add_constant(Value::Int(99));
+        callee.emit(Op::Constant(i1)); // index
+        callee.emit(Op::Constant(i99)); // new_value
+        callee.emit(Op::SetIndexRef(0));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i10 = main_chunk.add_constant(Value::Int(10));
+        let i20 = main_chunk.add_constant(Value::Int(20));
+        let i30 = main_chunk.add_constant(Value::Int(30));
+        let idx1 = main_chunk.add_constant(Value::Int(1));
+        main_chunk.emit(Op::Constant(i10));
+        main_chunk.emit(Op::Constant(i20));
+        main_chunk.emit(Op::Constant(i30));
+        main_chunk.emit(Op::ConstructArray(3));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushRef(0));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::Constant(idx1));
+        main_chunk.emit(Op::IndexGet);
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "99\n");
+    }
+
+    #[test]
+    fn set_index_ref_mutates_list() {
+        // same as array test but with ConstructList
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i1 = callee.add_constant(Value::Int(1));
+        let i99 = callee.add_constant(Value::Int(99));
+        callee.emit(Op::Constant(i1)); // index
+        callee.emit(Op::Constant(i99)); // new_value
+        callee.emit(Op::SetIndexRef(0));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i10 = main_chunk.add_constant(Value::Int(10));
+        let i20 = main_chunk.add_constant(Value::Int(20));
+        let i30 = main_chunk.add_constant(Value::Int(30));
+        let idx1 = main_chunk.add_constant(Value::Int(1));
+        main_chunk.emit(Op::Constant(i10));
+        main_chunk.emit(Op::Constant(i20));
+        main_chunk.emit(Op::Constant(i30));
+        main_chunk.emit(Op::ConstructList(3));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushRef(0));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::Constant(idx1));
+        main_chunk.emit(Op::IndexGet);
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "99\n");
+    }
+
+    #[test]
+    fn set_index_ref_mutates_map() {
+        // main: local 0 = {"a": 1}; PushRef(0); Call callee; print local 0["a"]
+        // callee: push Int(99), push "a", SetIndexRef(0) → map["a"] = 99
+        let mut callee = Chunk::new("callee", 1, 1);
+        let ka = callee.add_constant(str_val("a"));
+        let i99 = callee.add_constant(Value::Int(99));
+        callee.emit(Op::Constant(ka)); // index (key)
+        callee.emit(Op::Constant(i99)); // new_value
+        callee.emit(Op::SetIndexRef(0));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let ka = main_chunk.add_constant(str_val("a"));
+        let i1 = main_chunk.add_constant(Value::Int(1));
+        main_chunk.emit(Op::Constant(ka));
+        main_chunk.emit(Op::Constant(i1));
+        main_chunk.emit(Op::ConstructMap(1));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushRef(0));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::Constant(ka));
+        main_chunk.emit(Op::IndexGet);
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "99\n");
+    }
+
+    #[test]
+    fn set_index_ref_cow_array() {
+        // main: local 0 = [10, 20]; local 1 = clone (refcount=2)
+        // PushRef(0); call callee (sets index 0 to 99)
+        // local 0[0] → 99 (COW on the ref's array)
+        // local 1[0] → 10 (untouched)
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i0 = callee.add_constant(Value::Int(0));
+        let i99 = callee.add_constant(Value::Int(99));
+        callee.emit(Op::Constant(i0)); // index
+        callee.emit(Op::Constant(i99)); // new_value
+        callee.emit(Op::SetIndexRef(0));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 2, 0);
+        let i10 = main_chunk.add_constant(Value::Int(10));
+        let i20 = main_chunk.add_constant(Value::Int(20));
+        let idx0 = main_chunk.add_constant(Value::Int(0));
+        main_chunk.emit(Op::Constant(i10));
+        main_chunk.emit(Op::Constant(i20));
+        main_chunk.emit(Op::ConstructArray(2));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::GetLocal(0)); // clone → refcount=2
+        main_chunk.emit(Op::SetLocal(1));
+        main_chunk.emit(Op::PushRef(0));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::Constant(idx0));
+        main_chunk.emit(Op::IndexGet);
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println → "99"
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(1));
+        main_chunk.emit(Op::Constant(idx0));
+        main_chunk.emit(Op::IndexGet);
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println → "10"
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "99\n10\n");
+    }
+
+    #[test]
+    fn set_index_ref_out_of_bounds_errors() {
+        // main: local 0 = [10]; PushRef(0); call callee
+        // callee: SetIndexRef(0) with index 5 → out of bounds error
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i5 = callee.add_constant(Value::Int(5));
+        let i0 = callee.add_constant(Value::Int(0));
+        callee.emit(Op::Constant(i5)); // index (out of bounds)
+        callee.emit(Op::Constant(i0)); // new_value
+        callee.emit(Op::SetIndexRef(0));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i10 = main_chunk.add_constant(Value::Int(10));
+        main_chunk.emit(Op::Constant(i10));
+        main_chunk.emit(Op::ConstructArray(1));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushRef(0));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        assert!(vm.run().is_err());
+    }
+
+    #[test]
+    fn set_field_ref_on_tuple() {
+        // main: local 0 = Tuple(Int(10), Int(20)); PushRef(0); Call callee; print field 1
+        // callee: push Int(99), SetFieldRef(0, 1) → tuple field 1 = 99
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i99 = callee.add_constant(Value::Int(99));
+        callee.emit(Op::Constant(i99));
+        callee.emit(Op::SetFieldRef(0, 1));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i10 = main_chunk.add_constant(Value::Int(10));
+        let i20 = main_chunk.add_constant(Value::Int(20));
+        main_chunk.emit(Op::Constant(i10));
+        main_chunk.emit(Op::Constant(i20));
+        main_chunk.emit(Op::ConstructTuple(2));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushRef(0));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::GetField(1));
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "99\n");
+    }
+
+    #[test]
+    fn set_field_ref_dataref_shared_mutation() {
+        // DataRef uses force_mut (shared mutation), NOT make_mut (COW).
+        // main: local 0 = DataRef{[10, 20]}; local 1 = clone (refcount=2)
+        // PushRef(0); Call callee (sets field 1 to 99 through ref)
+        // Both local 0 AND local 1 see the change (shared allocation).
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i99 = callee.add_constant(Value::Int(99));
+        callee.emit(Op::Constant(i99));
+        callee.emit(Op::SetFieldRef(0, 1));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 2, 0);
+        let data_ref = Value::DataRef(ManagedRc::new(StructData {
+            type_id: 0,
+            fields: vec![Value::Int(10), Value::Int(20)],
+        }));
+        let cdr = main_chunk.add_constant(data_ref);
+        main_chunk.emit(Op::Constant(cdr));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::GetLocal(0)); // clone → refcount=2
+        main_chunk.emit(Op::SetLocal(1));
+        main_chunk.emit(Op::PushRef(0));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::GetField(1));
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println → "99"
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(1));
+        main_chunk.emit(Op::GetField(1));
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println → "99" (shared!)
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "99\n99\n");
+    }
+
+    #[test]
+    fn deref_write_full_reassignment() {
+        // main: local 0 = Int(42); PushRef(0); Call callee; print local 0 field 0
+        // callee: constructs Struct{[1, 2]}, DerefWrite(0) → main's local 0 is now the struct
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i1 = callee.add_constant(Value::Int(1));
+        let i2 = callee.add_constant(Value::Int(2));
+        callee.emit(Op::Constant(i1));
+        callee.emit(Op::Constant(i2));
+        callee.emit(Op::ConstructStruct(0, 2));
+        callee.emit(Op::DerefWrite(0));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i42 = main_chunk.add_constant(Value::Int(42));
+        main_chunk.emit(Op::Constant(i42));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushRef(0));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::GetField(0));
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println → "1"
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "1\n");
+    }
+
+    // ── PathRef tests ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn push_path_ref_creates_correct_value() {
+        // main: local 0 = Struct{[Int(42), Int(99)]}
+        //       PushPathRef(0, 1, [1,0,0,0]) → PathRef{root=0, depth=1}
+        //       println → "<pathref@0[1]>"
+        let mut chunk = Chunk::new("main", 1, 0);
+        let i42 = chunk.add_constant(Value::Int(42));
+        let i99 = chunk.add_constant(Value::Int(99));
+        chunk.emit(Op::Constant(i42));
+        chunk.emit(Op::Constant(i99));
+        chunk.emit(Op::ConstructStruct(0, 2));
+        chunk.emit(Op::SetLocal(0));
+        chunk.emit(Op::PushPathRef(0, 1, [1, 0, 0, 0]));
+        chunk.emit(Op::CallBuiltin(0, 1)); // println
+        chunk.emit(Op::Pop);
+        chunk.emit(Op::Nil);
+        chunk.emit(Op::Return);
+
+        let program = make_program(vec![chunk], 0);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "<pathref@0[1]>\n");
+    }
+
+    #[test]
+    fn path_ref_deref_read_single_level() {
+        // main: local 0 = Struct{[Int(42), Int(99)]}; PushPathRef(0, 1, [1,..]); Call callee
+        // callee: DerefRead(0) → Int(99); println
+        let mut callee = Chunk::new("callee", 1, 1);
+        callee.emit(Op::DerefRead(0));
+        callee.emit(Op::CallBuiltin(0, 1)); // println
+        callee.emit(Op::Pop);
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i42 = main_chunk.add_constant(Value::Int(42));
+        let i99 = main_chunk.add_constant(Value::Int(99));
+        main_chunk.emit(Op::Constant(i42));
+        main_chunk.emit(Op::Constant(i99));
+        main_chunk.emit(Op::ConstructStruct(0, 2));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushPathRef(0, 1, [1, 0, 0, 0]));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "99\n");
+    }
+
+    #[test]
+    fn path_ref_deref_read_two_levels() {
+        // main: local 0 = Struct{[Struct{[Int(7), Int(8)]}]}
+        //       PushPathRef(0, 2, [0, 1, 0, 0]); Call callee
+        // callee: DerefRead(0) → Int(8); println
+        let mut callee = Chunk::new("callee", 1, 1);
+        callee.emit(Op::DerefRead(0));
+        callee.emit(Op::CallBuiltin(0, 1)); // println
+        callee.emit(Op::Pop);
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i7 = main_chunk.add_constant(Value::Int(7));
+        let i8 = main_chunk.add_constant(Value::Int(8));
+        main_chunk.emit(Op::Constant(i7));
+        main_chunk.emit(Op::Constant(i8));
+        main_chunk.emit(Op::ConstructStruct(0, 2)); // inner = Struct{[7, 8]}
+        main_chunk.emit(Op::ConstructStruct(0, 1)); // outer = Struct{[inner]}
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushPathRef(0, 2, [0, 1, 0, 0])); // outer.inner.field[1]
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "8\n");
+    }
+
+    #[test]
+    fn path_ref_deref_write() {
+        // main: local 0 = Struct{[Int(10), Int(20)]}; PushPathRef(0, 1, [1,..]); Call callee
+        //       After call: println(local 0 field 1) → "99"
+        // callee: push Int(99); DerefWrite(0)
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i99 = callee.add_constant(Value::Int(99));
+        callee.emit(Op::Constant(i99));
+        callee.emit(Op::DerefWrite(0));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i10 = main_chunk.add_constant(Value::Int(10));
+        let i20 = main_chunk.add_constant(Value::Int(20));
+        main_chunk.emit(Op::Constant(i10));
+        main_chunk.emit(Op::Constant(i20));
+        main_chunk.emit(Op::ConstructStruct(0, 2));
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushPathRef(0, 1, [1, 0, 0, 0]));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::GetField(1));
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "99\n");
+    }
+
+    #[test]
+    fn path_ref_deref_write_nested() {
+        // main: local 0 = Struct{[Struct{[Int(1), Int(2)]}]}
+        //       PushPathRef(0, 2, [0, 0, ..]); Call callee
+        //       After call: GetLocal(0) GetField(0) GetField(0) → println → "42"
+        // callee: push Int(42); DerefWrite(0) — replaces outer.inner.field[0]
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i42 = callee.add_constant(Value::Int(42));
+        callee.emit(Op::Constant(i42));
+        callee.emit(Op::DerefWrite(0));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i1 = main_chunk.add_constant(Value::Int(1));
+        let i2 = main_chunk.add_constant(Value::Int(2));
+        main_chunk.emit(Op::Constant(i1));
+        main_chunk.emit(Op::Constant(i2));
+        main_chunk.emit(Op::ConstructStruct(0, 2)); // inner = Struct{[1, 2]}
+        main_chunk.emit(Op::ConstructStruct(0, 1)); // outer = Struct{[inner]}
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushPathRef(0, 2, [0, 0, 0, 0])); // outer.fields[0].fields[0]
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::GetField(0)); // get inner struct
+        main_chunk.emit(Op::GetField(0)); // get field 0 → should be 42
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "42\n");
+    }
+
+    #[test]
+    fn path_ref_set_field_ref() {
+        // main: local 0 = Struct{[Struct{[Int(1), Int(2)]}]}
+        //       PushPathRef(0, 1, [0, ..]); Call callee
+        //       After call: GetLocal(0) GetField(0) GetField(1) → println → "42"
+        // callee: push Int(42); SetFieldRef(0, 1) — sets inner.fields[1] via PathRef path+extension
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i42 = callee.add_constant(Value::Int(42));
+        callee.emit(Op::Constant(i42));
+        callee.emit(Op::SetFieldRef(0, 1)); // path=[0], extend with field_idx=1 → outer.fields[0].fields[1]
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i1 = main_chunk.add_constant(Value::Int(1));
+        let i2 = main_chunk.add_constant(Value::Int(2));
+        main_chunk.emit(Op::Constant(i1));
+        main_chunk.emit(Op::Constant(i2));
+        main_chunk.emit(Op::ConstructStruct(0, 2)); // inner = Struct{[1, 2]}
+        main_chunk.emit(Op::ConstructStruct(0, 1)); // outer = Struct{[inner]}
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushPathRef(0, 1, [0, 0, 0, 0])); // PathRef to outer.fields[0] (the inner struct)
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::GetField(0)); // get inner struct
+        main_chunk.emit(Op::GetField(1)); // get field 1 → should be 42
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "42\n");
+    }
+
+    #[test]
+    fn path_ref_set_index_ref() {
+        // main: local 0 = Struct{[Array([Int(10), Int(20), Int(30)])]}
+        //       PushPathRef(0, 1, [0, ..]); Call callee
+        //       After call: GetLocal(0) GetField(0) IndexGet(1) → println → "99"
+        // callee: push Int(1) (index), push Int(99) (value), SetIndexRef(0)
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i1 = callee.add_constant(Value::Int(1));
+        let i99 = callee.add_constant(Value::Int(99));
+        callee.emit(Op::Constant(i1)); // index
+        callee.emit(Op::Constant(i99)); // new_value
+        callee.emit(Op::SetIndexRef(0));
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i10 = main_chunk.add_constant(Value::Int(10));
+        let i20 = main_chunk.add_constant(Value::Int(20));
+        let i30 = main_chunk.add_constant(Value::Int(30));
+        let idx1 = main_chunk.add_constant(Value::Int(1));
+        main_chunk.emit(Op::Constant(i10));
+        main_chunk.emit(Op::Constant(i20));
+        main_chunk.emit(Op::Constant(i30));
+        main_chunk.emit(Op::ConstructArray(3));
+        main_chunk.emit(Op::ConstructStruct(0, 1)); // wrap array in a struct
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushPathRef(0, 1, [0, 0, 0, 0])); // PathRef to struct.fields[0] (the array)
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::GetField(0)); // get the array
+        main_chunk.emit(Op::Constant(idx1));
+        main_chunk.emit(Op::IndexGet);
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "99\n");
+    }
+
+    #[test]
+    fn path_ref_cow_when_shared() {
+        // main: local 0 = Struct{[Struct{[Int(10), Int(20)]}]}
+        //       local 1 = clone of local 0 (refcount=2)
+        //       PushPathRef(0, 1, [0,..]); Call callee (SetFieldRef(0,1) with 99)
+        //       After call: local 0 inner field 1 → 99 (COW); local 1 inner field 1 → 20 (unchanged)
+        let mut callee = Chunk::new("callee", 1, 1);
+        let i99 = callee.add_constant(Value::Int(99));
+        callee.emit(Op::Constant(i99));
+        callee.emit(Op::SetFieldRef(0, 1)); // sets inner.fields[1] via PathRef
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 2, 0);
+        let i10 = main_chunk.add_constant(Value::Int(10));
+        let i20 = main_chunk.add_constant(Value::Int(20));
+        main_chunk.emit(Op::Constant(i10));
+        main_chunk.emit(Op::Constant(i20));
+        main_chunk.emit(Op::ConstructStruct(0, 2)); // inner = Struct{[10, 20]}
+        main_chunk.emit(Op::ConstructStruct(0, 1)); // outer = Struct{[inner]}
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::GetLocal(0)); // clone outer → refcount=2 on outer (inner still refcount=1)
+        main_chunk.emit(Op::SetLocal(1));
+        main_chunk.emit(Op::PushPathRef(0, 1, [0, 0, 0, 0])); // PathRef to local0.fields[0]
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        // local 0 inner field 1 → 99
+        main_chunk.emit(Op::GetLocal(0));
+        main_chunk.emit(Op::GetField(0));
+        main_chunk.emit(Op::GetField(1));
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println → "99"
+        main_chunk.emit(Op::Pop);
+        // local 1 inner field 1 → 20 (COW ensured separate copy)
+        main_chunk.emit(Op::GetLocal(1));
+        main_chunk.emit(Op::GetField(0));
+        main_chunk.emit(Op::GetField(1));
+        main_chunk.emit(Op::CallBuiltin(0, 1)); // println → "20"
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "99\n20\n");
+    }
+
+    #[test]
+    fn path_ref_depth_4() {
+        // main: 4 levels of nesting: Struct{[Struct{[Struct{[Struct{[Int(42)]}]}]}]}
+        //       PushPathRef(0, 4, [0, 0, 0, 0]); Call callee
+        // callee: DerefRead(0) → Int(42); println
+        let mut callee = Chunk::new("callee", 1, 1);
+        callee.emit(Op::DerefRead(0));
+        callee.emit(Op::CallBuiltin(0, 1)); // println
+        callee.emit(Op::Pop);
+        callee.emit(Op::Nil);
+        callee.emit(Op::Return);
+
+        let mut main_chunk = Chunk::new("main", 1, 0);
+        let i42 = main_chunk.add_constant(Value::Int(42));
+        main_chunk.emit(Op::Constant(i42));
+        main_chunk.emit(Op::ConstructStruct(0, 1)); // level 4: Struct{[42]}
+        main_chunk.emit(Op::ConstructStruct(0, 1)); // level 3: Struct{[level4]}
+        main_chunk.emit(Op::ConstructStruct(0, 1)); // level 2: Struct{[level3]}
+        main_chunk.emit(Op::ConstructStruct(0, 1)); // level 1: Struct{[level2]}
+        main_chunk.emit(Op::SetLocal(0));
+        main_chunk.emit(Op::PushPathRef(0, 4, [0, 0, 0, 0]));
+        main_chunk.emit(Op::Call(0, 1));
+        main_chunk.emit(Op::Pop);
+        main_chunk.emit(Op::Nil);
+        main_chunk.emit(Op::Return);
+
+        let program = make_program(vec![callee, main_chunk], 1);
+        let mut vm = VM::new(&program);
+        vm.run().unwrap();
+        assert_eq!(vm.stdout, "42\n");
     }
 }

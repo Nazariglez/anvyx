@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: indexed expression
+// @skip: indexed lvalues should be valid var-param targets (like Nim); promote to run/ok once supported
+
+fn mutate(var x: int) {
+    x = x + 1;
+}
+
+fn main() {
+    var arr = [1, 2, 3];
+    mutate(arr[0]);
+}

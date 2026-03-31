@@ -24,7 +24,9 @@ use block::{lower_block, lower_block_to_target, lower_string_interp};
 use expr::lower_expr;
 use for_loop::lower_for;
 use helpers::*;
-use match_stmt::{lower_if_let, lower_let_else, lower_match_stmts, lower_while_let};
+use match_stmt::{
+    alloc_write_through, lower_if_let, lower_let_else, lower_match_stmts, lower_while_let,
+};
 
 #[derive(Debug)]
 pub enum LowerError {

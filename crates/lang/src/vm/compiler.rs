@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::ast::{BinaryOp, Type, UnaryOp};
@@ -43,16 +44,35 @@ struct LoopState {
     break_patches: Vec<usize>,
 }
 
-struct FuncCompiler {
-    chunk: Chunk,
-    loop_stack: Vec<LoopState>,
+enum WriteThroughKind {
+    Field(u16),
+    Whole,
 }
 
-impl FuncCompiler {
-    fn new(name: impl Into<String>, local_count: u16, params_count: u8) -> Self {
+struct WriteThroughInfo {
+    ref_local: hir::LocalId,
+    kind: WriteThroughKind,
+}
+
+struct FuncCompiler<'a> {
+    chunk: Chunk,
+    loop_stack: Vec<LoopState>,
+    locals: &'a [hir::Local],
+    write_through_map: HashMap<hir::LocalId, WriteThroughInfo>,
+}
+
+impl<'a> FuncCompiler<'a> {
+    fn new(
+        name: impl Into<String>,
+        local_count: u16,
+        params_count: u8,
+        locals: &'a [hir::Local],
+    ) -> Self {
         Self {
             chunk: Chunk::new(name, local_count, params_count),
             loop_stack: vec![],
+            locals,
+            write_through_map: HashMap::new(),
         }
     }
 
@@ -76,6 +96,24 @@ impl FuncCompiler {
             });
         }
         Ok(self.chunk.add_constant(value))
+    }
+
+    fn emit_write_through(&mut self, local: &hir::LocalId) {
+        let wt_data = self.write_through_map.get(local).map(|wt| {
+            let ref_local = wt.ref_local.0 as u16;
+            let field_idx = match &wt.kind {
+                WriteThroughKind::Field(f) => Some(*f),
+                WriteThroughKind::Whole => None,
+            };
+            (ref_local, field_idx)
+        });
+        if let Some((ref_local, field_idx)) = wt_data {
+            self.emit(Op::GetLocal(local.0 as u16));
+            match field_idx {
+                Some(f) => self.emit(Op::SetFieldRef(ref_local, f)),
+                None => self.emit(Op::DerefWrite(ref_local)),
+            }
+        }
     }
 }
 
@@ -115,6 +153,7 @@ fn compile_func(func: &hir::Func) -> Result<Chunk, CompileError> {
         func.name.to_string(),
         local_count as u16,
         func.params_len as u8,
+        &func.locals,
     );
 
     compile_block(&mut fc, &func.body)?;
@@ -126,14 +165,14 @@ fn compile_func(func: &hir::Func) -> Result<Chunk, CompileError> {
     Ok(fc.chunk)
 }
 
-fn compile_block(fc: &mut FuncCompiler, block: &hir::Block) -> Result<(), CompileError> {
+fn compile_block(fc: &mut FuncCompiler<'_>, block: &hir::Block) -> Result<(), CompileError> {
     for stmt in &block.stmts {
         compile_stmt(fc, stmt)?;
     }
     Ok(())
 }
 
-fn compile_stmt(fc: &mut FuncCompiler, stmt: &hir::Stmt) -> Result<(), CompileError> {
+fn compile_stmt(fc: &mut FuncCompiler<'_>, stmt: &hir::Stmt) -> Result<(), CompileError> {
     match &stmt.kind {
         hir::StmtKind::Let { local, init } => {
             compile_expr(fc, init)?;
@@ -142,7 +181,12 @@ fn compile_stmt(fc: &mut FuncCompiler, stmt: &hir::Stmt) -> Result<(), CompileEr
 
         hir::StmtKind::Assign { local, value } => {
             compile_expr(fc, value)?;
-            fc.emit(Op::SetLocal(local.0 as u16));
+            if fc.locals[local.0 as usize].is_ref {
+                fc.emit(Op::DerefWrite(local.0 as u16));
+            } else {
+                fc.emit(Op::SetLocal(local.0 as u16));
+            }
+            fc.emit_write_through(local);
         }
 
         hir::StmtKind::Expr(expr) => {
@@ -239,21 +283,38 @@ fn compile_stmt(fc: &mut FuncCompiler, stmt: &hir::Stmt) -> Result<(), CompileEr
             field_index,
             value,
         } => {
-            fc.emit(Op::GetLocal(object.0 as u16));
-            compile_expr(fc, value)?;
-            fc.emit(Op::SetField(*field_index));
-            fc.emit(Op::SetLocal(object.0 as u16));
+            if fc.locals[object.0 as usize].is_ref {
+                compile_expr(fc, value)?;
+                fc.emit(Op::SetFieldRef(object.0 as u16, *field_index));
+            } else {
+                fc.emit(Op::GetLocal(object.0 as u16));
+                compile_expr(fc, value)?;
+                fc.emit(Op::SetField(*field_index));
+                fc.emit(Op::SetLocal(object.0 as u16));
+            }
+            fc.emit_write_through(object);
         }
 
         hir::StmtKind::Match {
             scrutinee_init,
             scrutinee,
+            write_through,
             arms,
             else_body,
         } => {
             // evaluate scrutinee and store to local
             compile_expr(fc, scrutinee_init)?;
             fc.emit(Op::SetLocal(scrutinee.0 as u16));
+
+            // initialize ref local for writethrough if any
+            if let Some(wt) = write_through {
+                if fc.locals[wt.original.0 as usize].is_ref {
+                    fc.emit(Op::GetLocal(wt.original.0 as u16));
+                } else {
+                    fc.emit(Op::PushRef(wt.original.0 as u16));
+                }
+                fc.emit(Op::SetLocal(wt.ref_local.0 as u16));
+            }
 
             // we collect patch positions for the "jump to end" after each matched arm
             let mut end_jump_positions: Vec<usize> = vec![];
@@ -272,9 +333,27 @@ fn compile_stmt(fc: &mut FuncCompiler, stmt: &hir::Stmt) -> Result<(), CompileEr
                     fc.emit(Op::GetLocal(scrutinee.0 as u16));
                     fc.emit(Op::GetField(binding.field_index));
                     fc.emit(Op::SetLocal(binding.local.0 as u16));
+                    if binding.mutable
+                        && let Some(wt) = write_through
+                    {
+                        fc.write_through_map.insert(
+                            binding.local,
+                            WriteThroughInfo {
+                                ref_local: wt.ref_local,
+                                kind: WriteThroughKind::Field(binding.field_index),
+                            },
+                        );
+                    }
                 }
 
                 compile_block(fc, &arm.body)?;
+
+                // remove writethrough entries for this arm's bindings
+                for binding in &arm.bindings {
+                    if binding.mutable {
+                        fc.write_through_map.remove(&binding.local);
+                    }
+                }
 
                 // jump past all remaining arms
                 let end_pos = fc.emit_jump(Op::Jump(0));
@@ -286,11 +365,25 @@ fn compile_stmt(fc: &mut FuncCompiler, stmt: &hir::Stmt) -> Result<(), CompileEr
 
             // else_body (wildcard / Ident catch-all)
             if let Some(else_b) = else_body {
-                if let Some((binding_local, _)) = else_b.binding {
+                if let Some((binding_local, mutable)) = else_b.binding {
                     fc.emit(Op::GetLocal(scrutinee.0 as u16));
                     fc.emit(Op::SetLocal(binding_local.0 as u16));
+                    if mutable && let Some(wt) = write_through {
+                        fc.write_through_map.insert(
+                            binding_local,
+                            WriteThroughInfo {
+                                ref_local: wt.ref_local,
+                                kind: WriteThroughKind::Whole,
+                            },
+                        );
+                    }
                 }
                 compile_block(fc, &else_b.body)?;
+                if let Some((binding_local, mutable)) = else_b.binding
+                    && mutable
+                {
+                    fc.write_through_map.remove(&binding_local);
+                }
             }
 
             // patch all end-jumps to land after the whole match
@@ -304,25 +397,78 @@ fn compile_stmt(fc: &mut FuncCompiler, stmt: &hir::Stmt) -> Result<(), CompileEr
             index,
             value,
         } => {
-            fc.emit(Op::GetLocal(object.0 as u16));
-            compile_expr(fc, index)?;
-            compile_expr(fc, value)?;
-            fc.emit(Op::IndexSet);
-            fc.emit(Op::SetLocal(object.0 as u16));
+            if fc.locals[object.0 as usize].is_ref {
+                compile_expr(fc, index)?;
+                compile_expr(fc, value)?;
+                fc.emit(Op::SetIndexRef(object.0 as u16));
+            } else {
+                fc.emit(Op::GetLocal(object.0 as u16));
+                compile_expr(fc, index)?;
+                compile_expr(fc, value)?;
+                fc.emit(Op::IndexSet);
+                fc.emit(Op::SetLocal(object.0 as u16));
+            }
+            fc.emit_write_through(object);
         }
     }
 
     Ok(())
 }
 
-fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileError> {
+fn extract_ref_path(expr: &hir::Expr) -> (hir::LocalId, Vec<u16>) {
+    match &expr.kind {
+        hir::ExprKind::Local(id) => (*id, vec![]),
+        hir::ExprKind::FieldGet { object, index } => {
+            let (root, mut path) = extract_ref_path(object);
+            path.push(*index);
+            (root, path)
+        }
+        _ => panic!("ref arg must be a local or field access chain"),
+    }
+}
+
+fn compile_ref_args(
+    fc: &mut FuncCompiler<'_>,
+    args: &[hir::Expr],
+    ref_mask: &[bool],
+) -> Result<(), CompileError> {
+    for (arg, is_ref) in args.iter().zip(ref_mask.iter()) {
+        if *is_ref {
+            let (root_id, path) = extract_ref_path(arg);
+            if path.is_empty() {
+                if fc.locals[root_id.0 as usize].is_ref {
+                    fc.emit(Op::GetLocal(root_id.0 as u16));
+                } else {
+                    fc.emit(Op::PushRef(root_id.0 as u16));
+                }
+            } else {
+                let depth = path.len() as u8;
+                assert!(depth <= 4, "field path depth exceeds maximum of 4");
+                let mut segments = [0u16; 4];
+                for (i, &seg) in path.iter().enumerate() {
+                    segments[i] = seg;
+                }
+                fc.emit(Op::PushPathRef(root_id.0 as u16, depth, segments));
+            }
+        } else {
+            compile_expr(fc, arg)?;
+        }
+    }
+    Ok(())
+}
+
+fn compile_expr(fc: &mut FuncCompiler<'_>, expr: &hir::Expr) -> Result<(), CompileError> {
     match &expr.kind {
         hir::ExprKind::Local(id) => {
             let idx = id.0 as u16;
-            match expr.ownership {
-                hir::Ownership::Move => fc.emit(Op::MoveLocal(idx)),
-                hir::Ownership::Borrow => fc.emit(Op::GetLocal(idx)),
-                hir::Ownership::Own => fc.emit(Op::CloneLocal(idx)),
+            if fc.locals[id.0 as usize].is_ref {
+                fc.emit(Op::DerefRead(idx));
+            } else {
+                match expr.ownership {
+                    hir::Ownership::Move => fc.emit(Op::MoveLocal(idx)),
+                    hir::Ownership::Borrow => fc.emit(Op::GetLocal(idx)),
+                    hir::Ownership::Own => fc.emit(Op::CloneLocal(idx)),
+                }
             }
         }
 
@@ -390,10 +536,12 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             fc.emit(opcode);
         }
 
-        hir::ExprKind::Call { func, args } => {
-            for arg in args {
-                compile_expr(fc, arg)?;
-            }
+        hir::ExprKind::Call {
+            func,
+            args,
+            ref_mask,
+        } => {
+            compile_ref_args(fc, args, ref_mask)?;
             fc.emit(Op::Call(func.0 as u16, args.len() as u8));
         }
 
@@ -576,11 +724,13 @@ fn compile_expr(fc: &mut FuncCompiler, expr: &hir::Expr) -> Result<(), CompileEr
             fc.emit(Op::CreateClosure(func.0 as u16, captures.len() as u8));
         }
 
-        hir::ExprKind::CallClosure { callee, args } => {
+        hir::ExprKind::CallClosure {
+            callee,
+            args,
+            ref_mask,
+        } => {
             compile_expr(fc, callee)?;
-            for arg in args {
-                compile_expr(fc, arg)?;
-            }
+            compile_ref_args(fc, args, ref_mask)?;
             fc.emit(Op::CallClosure(args.len() as u8));
         }
 
@@ -626,6 +776,7 @@ mod tests {
             locals: vec![Local {
                 name: Some(dummy_ident("x")),
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Void,
@@ -768,6 +919,7 @@ mod tests {
             locals: vec![Local {
                 name: Some(dummy_ident("x")),
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Void,
@@ -815,6 +967,7 @@ mod tests {
                     ExprKind::Call {
                         func: FuncId(0),
                         args: vec![],
+                        ref_mask: vec![],
                     },
                 )))],
             },
@@ -888,6 +1041,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             ..func
         }))
@@ -917,6 +1071,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             ..func
         }))
@@ -951,6 +1106,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Void,
@@ -990,6 +1146,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             ..func
         }))
@@ -1019,6 +1176,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             ..func
         }))
@@ -1049,6 +1207,7 @@ mod tests {
             stmt(StmtKind::Match {
                 scrutinee_init: Box::new(Expr::new(Type::Int, dummy_span(), EK::Local(LocalId(0)))),
                 scrutinee: LocalId(1),
+                write_through: None,
                 arms: vec![MatchArm {
                     variant: 0,
                     bindings: vec![],
@@ -1065,10 +1224,12 @@ mod tests {
                 Local {
                     name: None,
                     ty: Type::Int,
+                    is_ref: false,
                 },
                 Local {
                     name: None,
                     ty: Type::Int,
+                    is_ref: false,
                 },
             ],
             ..func
@@ -1091,6 +1252,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Void,
@@ -1129,6 +1291,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Void,
@@ -1167,6 +1330,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Void,
@@ -1212,6 +1376,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Void,
@@ -1243,6 +1408,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Void,
@@ -1273,6 +1439,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Void,
@@ -1311,6 +1478,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Void,
@@ -1345,6 +1513,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Void,
@@ -1369,6 +1538,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Void,
@@ -1393,6 +1563,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Void,
@@ -1417,6 +1588,7 @@ mod tests {
             locals: vec![Local {
                 name: None,
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Int,

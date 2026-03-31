@@ -10,11 +10,39 @@ use internment::Intern;
 use super::{
     error::{TypeErr, TypeErrKind},
     expr::check_expr,
-    pattern::{check_match_pattern, check_pattern, check_pattern_in_match},
+    pattern::{
+        check_match_pattern, check_pattern, check_pattern_in_match, pattern_has_var_binding,
+    },
     stmt::{check_block_expr, check_block_stmts},
     types::{EnumDef, TypeChecker},
     unify::{contains_infer, unify_types},
 };
+
+fn validate_var_scrutinee(
+    scrutinee: &ExprNode,
+    type_checker: &TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) -> bool {
+    match &scrutinee.node.kind {
+        ExprKind::Ident(name) => match type_checker.get_var(*name) {
+            Some(info) if info.mutable => true,
+            _ => {
+                errors.push(
+                    TypeErr::new(scrutinee.span, TypeErrKind::VarPatternOnImmutable)
+                        .with_help("declare the scrutinee with 'var' to allow write-through"),
+                );
+                false
+            }
+        },
+        _ => {
+            errors.push(
+                TypeErr::new(scrutinee.span, TypeErrKind::VarPatternOnImmutable)
+                    .with_help("var binding in pattern requires a simple variable as scrutinee"),
+            );
+            false
+        }
+    }
+}
 
 pub(super) fn check_while(
     while_node: &WhileNode,
@@ -53,8 +81,14 @@ pub(super) fn check_while_let(
     let node = &while_let_node.node;
     let value_ty = check_expr(&node.value, type_checker, errors, None);
 
+    let mutable = if pattern_has_var_binding(&node.pattern) {
+        validate_var_scrutinee(&node.value, type_checker, errors)
+    } else {
+        false
+    };
+
     type_checker.push_scope();
-    check_pattern(&node.pattern, &value_ty, false, type_checker, errors);
+    check_pattern(&node.pattern, &value_ty, mutable, type_checker, errors);
 
     type_checker.enter_loop();
     let _ = check_block_stmts(
@@ -330,8 +364,14 @@ pub(super) fn check_if_let(
 
     let value_ty = check_expr(&node.value, type_checker, errors, None);
 
+    let mutable = if pattern_has_var_binding(&node.pattern) {
+        validate_var_scrutinee(&node.value, type_checker, errors)
+    } else {
+        false
+    };
+
     type_checker.push_scope();
-    check_pattern(&node.pattern, &value_ty, false, type_checker, errors);
+    check_pattern(&node.pattern, &value_ty, mutable, type_checker, errors);
     let (then_ty, then_expr_id) = check_block_expr(&node.then_block, type_checker, errors, None);
     type_checker.pop_scope();
 
@@ -392,6 +432,15 @@ pub(super) fn check_match(
 ) -> Type {
     let scrutinee = &match_node.node.scrutinee;
     let scrutinee_ty = check_expr(scrutinee, type_checker, errors, None);
+
+    let any_var = match_node
+        .node
+        .arms
+        .iter()
+        .any(|arm| pattern_has_var_binding(&arm.node.pattern));
+    if any_var {
+        validate_var_scrutinee(scrutinee, type_checker, errors);
+    }
 
     match &scrutinee_ty {
         Type::Enum {

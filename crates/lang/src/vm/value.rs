@@ -176,6 +176,28 @@ impl Hash for ExternHandleData {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RefPath {
+    pub root: u32,
+    pub depth: u8,
+    pub segments: [u16; 4],
+}
+
+impl RefPath {
+    pub fn new(root: u32, depth: u8, segments: [u16; 4]) -> Self {
+        assert!(depth <= 4, "RefPath depth exceeds maximum of 4");
+        Self {
+            root,
+            depth,
+            segments,
+        }
+    }
+
+    pub fn path(&self) -> &[u16] {
+        &self.segments[..self.depth as usize]
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
@@ -198,6 +220,8 @@ pub enum Value {
         offset: usize,
         len: usize,
     },
+    StackRef(u32), // absolute stack index of the referenced value
+    PathRef(RefPath),
 }
 
 impl PartialEq for Value {
@@ -230,6 +254,8 @@ impl PartialEq for Value {
                     len: bl,
                 },
             ) => al == bl && a[*ao..*ao + *al] == b[*bo..*bo + *bl],
+            (Value::StackRef(a), Value::StackRef(b)) => a == b,
+            (Value::PathRef(a), Value::PathRef(b)) => a == b,
             _ => false,
         }
     }
@@ -261,6 +287,8 @@ impl Hash for Value {
             Value::ArrayView { data, offset, len } => {
                 data[*offset..*offset + *len].hash(state);
             }
+            Value::StackRef(idx) => idx.hash(state),
+            Value::PathRef(p) => p.hash(state),
         }
     }
 }
@@ -352,6 +380,17 @@ impl fmt::Display for Value {
                 }
                 write!(f, "]")
             }
+            Value::StackRef(idx) => write!(f, "<ref@{idx}>"),
+            Value::PathRef(p) => {
+                write!(f, "<pathref@{}[", p.root)?;
+                for (i, seg) in p.path().iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ".")?;
+                    }
+                    write!(f, "{seg}")?;
+                }
+                write!(f, "]>")
+            }
         }
     }
 }
@@ -394,6 +433,8 @@ pub fn type_name(v: &Value) -> &'static str {
         Value::DataRef(_) => "dataref",
         Value::Closure(_) => "fn",
         Value::ArrayView { .. } => "array view",
+        Value::StackRef(_) => "stackref",
+        Value::PathRef(_) => "pathref",
     }
 }
 

@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: cannot mutate captured variable
+
+fn bad(var x: int) {
+    let f = || { x += 1; };
+}
+
+fn main() {
+    var n = 5;
+    bad(n);
+}

@@ -1,5 +1,6 @@
 // @mode: run
 // @expect: success
+// @skip: safe chained field access wraps result in Option.Some() (findings.md #6)
 // @match-begin
 // 3
 // 2

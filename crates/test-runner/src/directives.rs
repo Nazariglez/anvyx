@@ -20,9 +20,9 @@ impl Directives {
         for line in src.lines() {
             let trimmed = line.trim();
 
-            // maybe a bit fragile but I don't want to parse the whole file
-            // so we stop here on the first line that is not a directive
-            if !trimmed.starts_with("// @") && is_match_block {
+            // stop on the first non-comment line outside a match block
+            let should_break = !trimmed.starts_with("//") && !is_match_block;
+            if should_break {
                 break;
             }
 

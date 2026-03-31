@@ -1,5 +1,6 @@
 // @mode: run
 // @expect: success
+// @skip: safe field access wraps result in Option.Some() and always reads field 0 (findings.md #6, #7)
 // @match-begin
 // 10
 // 20

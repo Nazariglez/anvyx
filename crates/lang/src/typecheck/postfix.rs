@@ -1,5 +1,5 @@
 use crate::{
-    ast::{CallNode, ExprId, ExprKind, ExprNode, Ident, Mutability, Type},
+    ast::{CallNode, ExprId, ExprKind, ExprNode, FuncParam, Ident, Mutability, Type},
     span::Span,
 };
 use internment::Intern;
@@ -9,8 +9,9 @@ use super::{
     call::{
         check_call, check_call_signature, check_extern_instance_method_call,
         check_extern_static_method_call, check_instance_method_call, check_list_method,
-        check_map_method, check_module_func_call, check_var_param_args, report_cached_spec_error,
-        report_instantiation_errors, required_param_count, type_call_on_base,
+        check_map_method, check_module_func_call, check_receiver_mutability, check_var_param_args,
+        check_var_self_aliasing, report_cached_spec_error, report_instantiation_errors,
+        required_param_count, type_call_on_base,
     },
     decl::check_body_common,
     error::{TypeErr, TypeErrKind},
@@ -223,6 +224,7 @@ fn try_specialize_extend(
     template: &GenericExtendTemplate,
     method_name: Ident,
     call_node: &CallNode,
+    receiver: Option<&ExprNode>,
     span: Span,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
@@ -261,6 +263,8 @@ fn try_specialize_extend(
         type_checker
             .extend_call_targets
             .insert(call_node.node.func.node.id, mangled);
+        type_checker
+            .store_extend_ref_mask(call_node.node.func.node.id, &template.method.node.params);
         let specialized_params: Vec<Type> = {
             let subst = build_subst(&template.type_params, type_args);
             template
@@ -288,6 +292,14 @@ fn try_specialize_extend(
             specialized_params.len() - 1,
             &cached.ret_ty.clone(),
             &call_node.node.args,
+            type_checker,
+            errors,
+        );
+        check_extend_var_params(
+            &template.method.node.params,
+            receiver,
+            method_name,
+            call_node,
             type_checker,
             errors,
         );
@@ -386,6 +398,7 @@ fn try_specialize_extend(
     type_checker
         .extend_call_targets
         .insert(call_node.node.func.node.id, mangled);
+    type_checker.store_extend_ref_mask(call_node.node.func.node.id, &template.method.node.params);
 
     check_call_signature(
         call_node.span,
@@ -396,8 +409,46 @@ fn try_specialize_extend(
         type_checker,
         errors,
     );
+    check_extend_var_params(
+        &template.method.node.params,
+        receiver,
+        method_name,
+        call_node,
+        type_checker,
+        errors,
+    );
 
     specialized_ret
+}
+
+fn check_extend_var_params(
+    params: &[crate::ast::Param],
+    receiver: Option<&ExprNode>,
+    method_name: Ident,
+    call_node: &CallNode,
+    type_checker: &TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    check_var_param_args(
+        params[1..].iter().map(|p| (p.name, p.mutability)),
+        &call_node.node.args,
+        type_checker,
+        errors,
+    );
+    if params
+        .first()
+        .is_some_and(|p| p.mutability == Mutability::Mutable)
+        && let Some(recv) = receiver
+    {
+        let type_label = Ident(Intern::new(params[0].ty.to_string()));
+        check_receiver_mutability(recv, type_label, method_name, type_checker, errors);
+        check_var_self_aliasing(
+            recv,
+            params[1..].iter().map(|p| (p.name, p.mutability)),
+            &call_node.node.args,
+            errors,
+        );
+    }
 }
 
 /// Type-check an extend method call in receiver position: `receiver.method(args...)`.
@@ -405,6 +456,8 @@ fn try_specialize_extend(
 fn check_extend_call(
     def: &ExtendMethodDef,
     call_node: &CallNode,
+    receiver: Option<&ExprNode>,
+    method_name: Ident,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> Type {
@@ -412,7 +465,8 @@ fn check_extend_call(
     type_checker
         .extend_call_targets
         .insert(call_node.node.func.node.id, def.internal_name);
-    check_call_signature(
+    type_checker.store_extend_ref_mask(call_node.node.func.node.id, &def.params);
+    let result = check_call_signature(
         call_node.span,
         &param_types,
         param_types.len(),
@@ -420,7 +474,16 @@ fn check_extend_call(
         &call_node.node.args,
         type_checker,
         errors,
-    )
+    );
+    check_extend_var_params(
+        &def.params,
+        receiver,
+        method_name,
+        call_node,
+        type_checker,
+        errors,
+    );
+    result
 }
 
 /// Type-check an extend method in qualified call position: `module.method(receiver, args...)`.
@@ -435,7 +498,8 @@ fn check_extend_qualified_call(
     type_checker
         .extend_call_targets
         .insert(call_node.node.func.node.id, def.internal_name);
-    check_call_signature(
+    type_checker.store_extend_ref_mask(call_node.node.func.node.id, &def.params);
+    let result = check_call_signature(
         call_node.span,
         &param_types,
         param_types.len(),
@@ -443,7 +507,15 @@ fn check_extend_qualified_call(
         &call_node.node.args,
         type_checker,
         errors,
-    )
+    );
+
+    check_var_param_args(
+        def.params.iter().map(|p| (p.name, p.mutability)),
+        &call_node.node.args,
+        type_checker,
+        errors,
+    );
+    result
 }
 
 /// Look up extend methods for `receiver_ty.method_name(...)`. Returns Some(ty) if found,
@@ -452,6 +524,7 @@ fn resolve_extend_method(
     receiver_ty: &Type,
     method_name: Ident,
     call_node: &CallNode,
+    receiver: Option<&ExprNode>,
     span: Span,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
@@ -475,6 +548,7 @@ fn resolve_extend_method(
             receiver_ty,
             method_name,
             call_node,
+            receiver,
             span,
             type_checker,
             errors,
@@ -482,6 +556,8 @@ fn resolve_extend_method(
         [entry] => Some(check_extend_call(
             &entry.def,
             call_node,
+            receiver,
+            method_name,
             type_checker,
             errors,
         )),
@@ -504,6 +580,7 @@ fn try_resolve_generic_extend(
     receiver_ty: &Type,
     method_name: Ident,
     call_node: &CallNode,
+    receiver: Option<&ExprNode>,
     span: Span,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<TypeErr>,
@@ -537,6 +614,7 @@ fn try_resolve_generic_extend(
                 &template,
                 method_name,
                 call_node,
+                receiver,
                 span,
                 type_checker,
                 errors,
@@ -658,6 +736,14 @@ fn handle_method_call_if_applicable(
         if is_fn_field {
             return Some(MethodCallOutcome::NotMethod);
         }
+
+        // if a call precedes this method in the chain the effective receiver is
+        // an intermediate temporary. Temporaries are always valid "var self" targets,
+        // so skip the mutability check by passing None
+        let has_prior_call = chain[..index]
+            .iter()
+            .any(|op| matches!(op, PostfixNodeRef::Call { .. }));
+        let effective_receiver = if has_prior_call { None } else { Some(base) };
         let method_ret = if struct_def.methods.contains_key(&method_name) {
             // Native method exists — instance or static, let existing path handle it
             check_instance_method_call(
@@ -666,7 +752,7 @@ fn handle_method_call_if_applicable(
                 method_name,
                 &struct_type_args,
                 &struct_def,
-                Some(base),
+                effective_receiver,
                 type_checker,
                 errors,
             )
@@ -674,6 +760,7 @@ fn handle_method_call_if_applicable(
             detection_ty,
             method_name,
             call_node,
+            effective_receiver,
             field_node.span,
             type_checker,
             errors,
@@ -687,7 +774,7 @@ fn handle_method_call_if_applicable(
                 method_name,
                 &struct_type_args,
                 &struct_def,
-                Some(base),
+                effective_receiver,
                 type_checker,
                 errors,
             )
@@ -726,6 +813,7 @@ fn handle_method_call_if_applicable(
                 detection_ty,
                 method_name,
                 call_node,
+                Some(base),
                 field_node.span,
                 type_checker,
                 errors,
@@ -812,6 +900,7 @@ fn handle_method_call_if_applicable(
                 detection_ty,
                 method_name,
                 call_node,
+                Some(base),
                 field_node.span,
                 type_checker,
                 errors,
@@ -1176,6 +1265,24 @@ fn check_static_method_call_outer(
     )
 }
 
+fn check_closure_var_params(
+    params: &[FuncParam],
+    call_node: &CallNode,
+    type_checker: &TypeChecker,
+    errors: &mut Vec<TypeErr>,
+) {
+    let var_params = params.iter().enumerate().map(|(i, fp)| {
+        let name = Ident(Intern::new(format!("arg{i}")));
+        let mutability = if fp.mutable {
+            Mutability::Mutable
+        } else {
+            Mutability::Immutable
+        };
+        (name, mutability)
+    });
+    check_var_param_args(var_params, &call_node.node.args, type_checker, errors);
+}
+
 fn apply_postfix_op(
     op: &PostfixNodeRef<'_>,
     base_ty: &Type,
@@ -1237,6 +1344,8 @@ fn apply_postfix_op(
                     type_call_on_base(base_ty, call_node, required_count, type_checker, errors);
                 if let Some(param_info) = type_checker.func_param_info.get(name).cloned() {
                     check_var_param_args(param_info, &call_node.node.args, type_checker, errors);
+                } else if let Type::Func { params, .. } = base_ty {
+                    check_closure_var_params(params, call_node, type_checker, errors);
                 }
                 return result;
             }
@@ -1244,7 +1353,12 @@ fn apply_postfix_op(
                 Type::Func { params, .. } => params.len(),
                 _ => 0,
             };
-            type_call_on_base(base_ty, call_node, required_count, type_checker, errors)
+            let result =
+                type_call_on_base(base_ty, call_node, required_count, type_checker, errors);
+            if let Type::Func { params, .. } = base_ty {
+                check_closure_var_params(params, call_node, type_checker, errors);
+            }
+            result
         }
     }
 }

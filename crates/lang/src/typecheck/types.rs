@@ -423,6 +423,9 @@ pub struct TypeChecker {
     /// Maps call expression ExprId to resolved extend method internal_name (for lowering)
     pub(super) extend_call_targets: HashMap<ExprId, Ident>,
 
+    /// Per-call-site ref mask for extend methods (which params are var)
+    pub(super) extend_call_ref_masks: HashMap<ExprId, Vec<bool>>,
+
     /// Set of dataref type names that can form reference cycles
     pub(super) cycle_capable_types: HashSet<Ident>,
 
@@ -461,6 +464,13 @@ impl TypeChecker {
         self.method_contexts.last()
     }
 
+    pub fn func_param_info(&self, name: Ident) -> &[(Ident, Mutability)] {
+        self.func_param_info
+            .get(&name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
     pub fn func_param_defaults(&self, name: Ident) -> &[Option<ConstValue>] {
         self.func_param_defaults
             .get(&name)
@@ -477,6 +487,18 @@ impl TypeChecker {
             .get(&struct_name)
             .and_then(|sd| sd.methods.get(&method_name))
             .map(|m| m.param_defaults.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn module_func_param_info(
+        &self,
+        module_name: Ident,
+        func_name: Ident,
+    ) -> &[(Ident, Mutability)] {
+        self.module_defs
+            .get(&module_name)
+            .and_then(|m| m.func_param_info.get(&func_name))
+            .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
 
@@ -785,6 +807,33 @@ impl TypeChecker {
 
     pub fn extend_call_target(&self, id: ExprId) -> Option<Ident> {
         self.extend_call_targets.get(&id).copied()
+    }
+
+    pub fn extend_call_ref_mask(&self, id: ExprId) -> &[bool] {
+        self.extend_call_ref_masks
+            .get(&id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub(super) fn store_extend_ref_mask(&mut self, call_id: ExprId, params: &[Param]) {
+        let ref_mask = params
+            .iter()
+            .map(|p| p.mutability == Mutability::Mutable)
+            .collect();
+        self.extend_call_ref_masks.insert(call_id, ref_mask);
+    }
+
+    pub fn method_param_mutabilities(
+        &self,
+        struct_name: Ident,
+        method_name: Ident,
+    ) -> (Option<MethodReceiver>, &[Param]) {
+        self.struct_defs
+            .get(&struct_name)
+            .and_then(|s| s.methods.get(&method_name))
+            .map(|m| (m.receiver, m.params.as_slice()))
+            .unwrap_or((None, &[]))
     }
 
     pub fn extend_specializations(&self) -> &HashMap<ExtendSpecKey, SpecializationResult> {

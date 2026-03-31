@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use internment::Intern;
 
-use crate::ast::{self, Ident, Type, TypeVarId, VariantKind};
+use crate::ast::{self, Ident, MethodReceiver, Type, TypeVarId, VariantKind};
 use crate::hir;
 use crate::prelude_enums::OPTION_TYPE_ID;
 use crate::typecheck::{
@@ -15,7 +15,7 @@ use crate::vm::meta::{EnumMeta, StructMeta, VariantMeta, VariantMetaKind};
 use super::{
     FuncLower, LowerCtx, LowerError, SharedCtx, analyze_ownership, collect_declarations,
     lower_block, mangle_generic_name, mangle_method_spec_name, register_extend_declarations,
-    register_named_local,
+    register_named_local, register_param_local,
 };
 
 pub fn lower_program(
@@ -429,7 +429,7 @@ pub fn lower_program(
         };
 
         for (param, ty) in template.node.params.iter().zip(specialized_params.iter()) {
-            register_named_local(&mut fc, param.name, ty.clone());
+            register_param_local(&mut fc, param.name, ty.clone(), param.mutability);
         }
         let params_len = fc.locals.len() as u32;
 
@@ -499,9 +499,12 @@ pub fn lower_program(
 
         if method.receiver.is_some() {
             register_named_local(&mut fc, self_ident, self_type);
+            if matches!(method.receiver, Some(MethodReceiver::Var)) {
+                fc.locals[0].is_ref = true;
+            }
         }
         for (param, ty) in method.params.iter().zip(specialized_params.iter()) {
-            register_named_local(&mut fc, param.name, ty.clone());
+            register_param_local(&mut fc, param.name, ty.clone(), param.mutability);
         }
         let params_len = fc.locals.len() as u32;
 
@@ -543,9 +546,12 @@ pub fn lower_program(
             }
         };
         register_named_local(&mut fc, self_ident, self_type);
+        if matches!(method.receiver, Some(MethodReceiver::Var)) {
+            fc.locals[0].is_ref = true;
+        }
 
         for param in &method.params {
-            register_named_local(&mut fc, param.name, param.ty.clone());
+            register_param_local(&mut fc, param.name, param.ty.clone(), param.mutability);
         }
         let params_len = fc.locals.len() as u32;
 
@@ -712,7 +718,7 @@ pub fn lower_program(
         };
 
         for (param, ty) in method.params.iter().zip(specialized_params.iter()) {
-            register_named_local(&mut fc, param.name, ty.clone());
+            register_param_local(&mut fc, param.name, ty.clone(), param.mutability);
         }
         let params_len = fc.locals.len() as u32;
 
@@ -793,7 +799,7 @@ fn lower_extend_method(
         } else {
             param.ty.clone()
         };
-        register_named_local(&mut fc, param.name, ty);
+        register_param_local(&mut fc, param.name, ty, param.mutability);
     }
     let params_len = fc.locals.len() as u32;
 
@@ -827,7 +833,7 @@ fn lower_func(func_node: &ast::FuncNode, ctx: &LowerCtx) -> Result<hir::Func, Lo
 
     // register parameters as locals first
     for param in &func.params {
-        register_named_local(&mut fc, param.name, param.ty.clone());
+        register_param_local(&mut fc, param.name, param.ty.clone(), param.mutability);
     }
     let params_len = fc.locals.len() as u32;
 

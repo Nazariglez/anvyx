@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match: 11
+
+fn inc(var x: int) {
+    x = x + 1;
+}
+
+fn main() {
+    var n = 10;
+    inc(n);
+    println(n);
+}

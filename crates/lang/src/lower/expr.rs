@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{self, ArrayLen, BinaryOp, Ident, InferredEnumArgs, Lit, Type, UnaryOp},
+    ast::{
+        self, ArrayLen, BinaryOp, Ident, InferredEnumArgs, Lit, MethodReceiver, Mutability, Type,
+        UnaryOp,
+    },
     builtin::Builtin,
     hir,
     span::Span,
@@ -10,11 +13,11 @@ use crate::{
 use internment::Intern;
 
 use super::{
-    FuncLower, LowerCtx, LowerError, alloc_and_bind, alloc_assign_temp, emit_counter_increment,
-    extern_binary_op_key, extern_unary_op_key, lower_assign, lower_block, lower_block_to_target,
-    lower_if_let, lower_match_stmts, lower_string_interp, mangle_generic_name,
-    mangle_method_spec_name, register_named_local, resolve_enum_type_id, resolve_struct_type_id,
-    resolve_variant_index,
+    FuncLower, LowerCtx, LowerError, alloc_and_bind, alloc_assign_temp, alloc_write_through,
+    build_method_ref_mask, emit_counter_increment, extern_binary_op_key, extern_unary_op_key,
+    lower_assign, lower_block, lower_block_to_target, lower_if_let, lower_match_stmts,
+    lower_string_interp, mangle_generic_name, mangle_method_spec_name, register_named_local,
+    register_param_local, resolve_enum_type_id, resolve_struct_type_id, resolve_variant_index,
 };
 
 fn lower_args(
@@ -26,6 +29,27 @@ fn lower_args(
     args.iter()
         .map(|arg| lower_expr(arg, ctx, fc, out))
         .collect()
+}
+
+/// If `expr` is already a Local or FieldGet chain, return it as-is.
+/// Otherwise, spill it to a temp local so the compiler can emit PushRef.
+/// This is needed when a `var self` method is called on a temporary expression
+/// (function return, constructor, chain result) — the lowering must give the
+/// compiler a named local to take a reference to.
+fn ensure_ref_target(
+    expr: hir::Expr,
+    span: Span,
+    fc: &mut FuncLower,
+    out: &mut Vec<hir::Stmt>,
+) -> hir::Expr {
+    match &expr.kind {
+        hir::ExprKind::Local(_) | hir::ExprKind::FieldGet { .. } => expr,
+        _ => {
+            let ty = expr.ty.clone();
+            let local_id = alloc_and_bind(fc, span, out, ty.clone(), expr);
+            hir::Expr::local(ty, span, local_id)
+        }
+    }
 }
 
 fn const_value_to_hir_expr(val: &ConstValue, span: Span) -> hir::Expr {
@@ -537,12 +561,14 @@ fn lower_coalesce_expr(
     fc.locals.push(hir::Local {
         name: None,
         ty: scrutinee_ty,
+        is_ref: false,
     });
 
     let result_local = hir::LocalId(fc.locals.len() as u32);
     fc.locals.push(hir::Local {
         name: None,
         ty: ty.clone(),
+        is_ref: false,
     });
 
     let some_variant = ctx
@@ -554,6 +580,7 @@ fn lower_coalesce_expr(
     fc.locals.push(hir::Local {
         name: None,
         ty: inner_ty.clone(),
+        is_ref: false,
     });
 
     let some_arm = hir::MatchArm {
@@ -593,6 +620,7 @@ fn lower_coalesce_expr(
         kind: hir::StmtKind::Match {
             scrutinee_init: Box::new(scrutinee_expr),
             scrutinee: scrutinee_local,
+            write_through: None,
             arms: vec![some_arm],
             else_body: Some(none_else),
         },
@@ -634,12 +662,14 @@ fn lower_safe_field_expr(
     fc.locals.push(hir::Local {
         name: None,
         ty: scrutinee_ty,
+        is_ref: false,
     });
 
     let result_local = hir::LocalId(fc.locals.len() as u32);
     fc.locals.push(hir::Local {
         name: None,
         ty: ty.clone(),
+        is_ref: false,
     });
 
     let some_variant = ctx
@@ -652,6 +682,7 @@ fn lower_safe_field_expr(
     fc.locals.push(hir::Local {
         name: None,
         ty: inner_ty.clone(),
+        is_ref: false,
     });
 
     let field_name = field_access.node.field;
@@ -746,6 +777,7 @@ fn lower_safe_field_expr(
         kind: hir::StmtKind::Match {
             scrutinee_init: Box::new(scrutinee_expr),
             scrutinee: scrutinee_local,
+            write_through: None,
             arms: vec![some_arm],
             else_body: Some(none_else),
         },
@@ -788,12 +820,14 @@ fn lower_safe_index_expr(
     fc.locals.push(hir::Local {
         name: None,
         ty: scrutinee_ty,
+        is_ref: false,
     });
 
     let result_local = hir::LocalId(fc.locals.len() as u32);
     fc.locals.push(hir::Local {
         name: None,
         ty: ty.clone(),
+        is_ref: false,
     });
 
     let some_variant = ctx
@@ -806,6 +840,7 @@ fn lower_safe_index_expr(
     fc.locals.push(hir::Local {
         name: None,
         ty: inner_ty.clone(),
+        is_ref: false,
     });
 
     let elem_ty = ty.option_inner().cloned().unwrap_or(ty.clone());
@@ -867,6 +902,7 @@ fn lower_safe_index_expr(
         kind: hir::StmtKind::Match {
             scrutinee_init: Box::new(scrutinee_expr),
             scrutinee: scrutinee_local,
+            write_through: None,
             arms: vec![some_arm],
             else_body: Some(none_else),
         },
@@ -917,12 +953,14 @@ fn lower_safe_call_expr(
     fc.locals.push(hir::Local {
         name: None,
         ty: scrutinee_ty,
+        is_ref: false,
     });
 
     let result_local = hir::LocalId(fc.locals.len() as u32);
     fc.locals.push(hir::Local {
         name: None,
         ty: ty.clone(),
+        is_ref: false,
     });
 
     let some_variant = ctx
@@ -935,11 +973,14 @@ fn lower_safe_call_expr(
     fc.locals.push(hir::Local {
         name: None,
         ty: inner_ty.clone(),
+        is_ref: false,
     });
 
     let option_type_id = resolve_enum_type_id(ctx, span, enum_name)?;
     let method_name = field.node.field;
     let inner_result_ty = ty.option_inner().cloned().unwrap_or(ty.clone());
+
+    let mut is_var_self = false;
 
     let call_expr =
         if let Some(internal_name) = ctx.shared.tcx.extend_call_target(c.node.func.node.id) {
@@ -951,15 +992,19 @@ fn lower_safe_call_expr(
                     name: internal_name,
                     span,
                 })?;
+            let stored_mask = ctx.shared.tcx.extend_call_ref_mask(c.node.func.node.id);
+            is_var_self = stored_mask.first() == Some(&true);
             let receiver = hir::Expr::local(inner_ty.clone(), span, inner_local);
             let mut args = vec![receiver];
             args.extend(pre_args);
+            let ref_mask = stored_mask.to_vec();
             hir::Expr::new(
                 inner_result_ty,
                 span,
                 hir::ExprKind::Call {
                     func: func_id,
                     args,
+                    ref_mask,
                 },
             )
         } else if let Type::Extern { name: type_name } = &inner_ty {
@@ -992,6 +1037,11 @@ fn lower_safe_call_expr(
                         span,
                         kind: format!("unknown method '{method_name}' on struct '{struct_name}'"),
                     })?;
+            let (recv_kind, method_params) = ctx
+                .shared
+                .tcx
+                .method_param_mutabilities(*struct_name, method_name);
+            is_var_self = matches!(recv_kind, Some(MethodReceiver::Var));
             let receiver = hir::Expr::local(inner_ty.clone(), span, inner_local);
             let mut args = vec![receiver];
             args.extend(pre_args);
@@ -1002,12 +1052,14 @@ fn lower_safe_call_expr(
             for val in defaults.iter().skip(c.node.args.len()).flatten() {
                 args.push(const_value_to_hir_expr(val, span));
             }
+            let ref_mask = build_method_ref_mask(is_var_self, method_params, args.len());
             hir::Expr::new(
                 inner_result_ty,
                 span,
                 hir::ExprKind::Call {
                     func: func_id,
                     args,
+                    ref_mask,
                 },
             )
         } else {
@@ -1029,22 +1081,34 @@ fn lower_safe_call_expr(
         },
     );
 
+    // when is_var_self the call within "wrapped" mutates inner_local via re,.
+    // a follow up no-op assign to inner_local triggers the write through that
+    // flushes inner_local back to the original option variable
+    let mut arm_stmts = vec![hir::Stmt {
+        span,
+        kind: hir::StmtKind::Assign {
+            local: result_local,
+            value: wrapped,
+        },
+    }];
+    if is_var_self {
+        arm_stmts.push(hir::Stmt {
+            span,
+            kind: hir::StmtKind::Assign {
+                local: inner_local,
+                value: hir::Expr::local(inner_ty.clone(), span, inner_local),
+            },
+        });
+    }
+
     let some_arm = hir::MatchArm {
         variant: some_variant,
         bindings: vec![hir::MatchBinding {
             field_index: 0,
             local: inner_local,
-            mutable: false,
+            mutable: is_var_self,
         }],
-        body: hir::Block {
-            stmts: vec![hir::Stmt {
-                span,
-                kind: hir::StmtKind::Assign {
-                    local: result_local,
-                    value: wrapped,
-                },
-            }],
-        },
+        body: hir::Block { stmts: arm_stmts },
     };
 
     let none_expr = hir::Expr::new(ty.clone(), span, hir::ExprKind::Nil);
@@ -1061,11 +1125,18 @@ fn lower_safe_call_expr(
         },
     };
 
+    let write_through = if is_var_self {
+        alloc_write_through(&scrutinee_expr, fc)
+    } else {
+        None
+    };
+
     out.push(hir::Stmt {
         span,
         kind: hir::StmtKind::Match {
             scrutinee_init: Box::new(scrutinee_expr),
             scrutinee: scrutinee_local,
+            write_through,
             arms: vec![some_arm],
             else_body: Some(none_else),
         },
@@ -1162,6 +1233,7 @@ fn inject_assign_target(stmt: hir::Stmt, target: hir::LocalId) -> hir::Stmt {
         hir::StmtKind::Match {
             scrutinee_init,
             scrutinee,
+            write_through,
             arms,
             else_body,
         } => {
@@ -1180,6 +1252,7 @@ fn inject_assign_target(stmt: hir::Stmt, target: hir::LocalId) -> hir::Stmt {
             hir::StmtKind::Match {
                 scrutinee_init,
                 scrutinee,
+                write_through,
                 arms,
                 else_body,
             }
@@ -1253,6 +1326,10 @@ fn lower_closure_call(
     out: &mut Vec<hir::Stmt>,
 ) -> Result<hir::Expr, LowerError> {
     let callee = lower_expr(&c.node.func, ctx, fc, out)?;
+    let ref_mask = match &callee.ty {
+        Type::Func { params, .. } => params.iter().map(|p| p.mutable).collect(),
+        _ => vec![false; c.node.args.len()],
+    };
     let args = lower_args(&c.node.args, ctx, fc, out)?;
     Ok(hir::Expr::new(
         ty,
@@ -1260,6 +1337,7 @@ fn lower_closure_call(
         hir::ExprKind::CallClosure {
             callee: Box::new(callee),
             args,
+            ref_mask,
         },
     ))
 }
@@ -1273,10 +1351,7 @@ fn lower_lambda(
     fc: &FuncLower,
 ) -> Result<hir::Expr, LowerError> {
     let (func_params, func_ret) = match &ty {
-        Type::Func { params, ret } => (
-            params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>(),
-            (**ret).clone(),
-        ),
+        Type::Func { params, ret } => (params.clone(), (**ret).clone()),
         _ => unreachable!("lambda must have Type::Func"),
     };
 
@@ -1301,8 +1376,14 @@ fn lower_lambda(
     }
 
     for (i, param) in lambda.node.params.iter().enumerate() {
-        let param_ty = param.ty.clone().unwrap_or_else(|| func_params[i].clone());
-        register_named_local(&mut lambda_fc, param.name, param_ty);
+        let fp = &func_params[i];
+        let param_ty = param.ty.clone().unwrap_or_else(|| fp.ty.clone());
+        let mutability = if fp.mutable {
+            Mutability::Mutable
+        } else {
+            Mutability::Immutable
+        };
+        register_param_local(&mut lambda_fc, param.name, param_ty, mutability);
     }
 
     let params_len = lambda_fc.locals.len() as u32;
@@ -1387,7 +1468,14 @@ fn lower_extend_call(
             if is_qualified {
                 lower_args(&c.node.args, ctx, fc, out)?
             } else {
+                let stored_mask = ctx.shared.tcx.extend_call_ref_mask(c.node.func.node.id);
+                let is_var_self = stored_mask.first() == Some(&true);
                 let receiver = lower_expr(&field.node.target, ctx, fc, out)?;
+                let receiver = if is_var_self {
+                    ensure_ref_target(receiver, span, fc, out)
+                } else {
+                    receiver
+                };
                 let mut args = vec![receiver];
                 args.extend(lower_args(&c.node.args, ctx, fc, out)?);
                 args
@@ -1396,12 +1484,22 @@ fn lower_extend_call(
         _ => lower_args(&c.node.args, ctx, fc, out)?,
     };
 
+    let stored_mask = ctx.shared.tcx.extend_call_ref_mask(c.node.func.node.id);
+    debug_assert_eq!(
+        stored_mask.len(),
+        args.len(),
+        "extend ref_mask length mismatch: mask={}, args={}",
+        stored_mask.len(),
+        args.len()
+    );
+    let ref_mask = stored_mask.to_vec();
     Ok(hir::Expr::new(
         ty,
         span,
         hir::ExprKind::Call {
             func: func_id,
             args,
+            ref_mask,
         },
     ))
 }
@@ -1895,6 +1993,7 @@ fn lower_list_desugar(
                     fc.locals.push(hir::Local {
                         name: None,
                         ty: elem_ty.clone(),
+                        is_ref: false,
                     });
                     body_stmts.push(hir::Stmt {
                         span,
@@ -1911,6 +2010,7 @@ fn lower_list_desugar(
                             hir::ExprKind::CallClosure {
                                 callee: Box::new(fn_expr),
                                 args: vec![hir::Expr::local(elem_ty.clone(), span, param_local)],
+                                ref_mask: vec![false],
                             },
                         )),
                     });
@@ -2447,6 +2547,16 @@ fn try_lower_method_call(
         let mangled = mangle_method_spec_name(*struct_name, method_name, type_args);
         if let Some(&func_id) = ctx.shared.funcs.get(&mangled) {
             let receiver = lower_expr(&field.node.target, ctx, fc, out)?;
+            let (recv_kind, method_params) = ctx
+                .shared
+                .tcx
+                .method_param_mutabilities(*struct_name, method_name);
+            let is_var_self = matches!(recv_kind, Some(MethodReceiver::Var));
+            let receiver = if is_var_self {
+                ensure_ref_target(receiver, span, fc, out)
+            } else {
+                receiver
+            };
             let mut args = vec![receiver];
             args.extend(lower_args(&c.node.args, ctx, fc, out)?);
             let defaults = ctx
@@ -2456,12 +2566,14 @@ fn try_lower_method_call(
             for val in defaults.iter().skip(c.node.args.len()).flatten() {
                 args.push(const_value_to_hir_expr(val, span));
             }
+            let ref_mask = build_method_ref_mask(is_var_self, method_params, args.len());
             return Ok(Some(hir::Expr::new(
                 ty.clone(),
                 span,
                 hir::ExprKind::Call {
                     func: func_id,
                     args,
+                    ref_mask,
                 },
             )));
         }
@@ -2505,6 +2617,16 @@ fn try_lower_enum_constructor(
             fields,
         },
     )))
+}
+
+fn build_ref_mask(param_info: &[(Ident, Mutability)], args_len: usize) -> Vec<bool> {
+    let mut mask = vec![false; args_len];
+    for ((_, mutability), slot) in param_info.iter().zip(mask.iter_mut()) {
+        if *mutability == Mutability::Mutable {
+            *slot = true;
+        }
+    }
+    mask
 }
 
 fn lower_direct_call(
@@ -2564,9 +2686,15 @@ fn lower_direct_call(
             None => ctx.shared.tcx.func_param_defaults(callee_name),
         };
         inject_defaults(&mut args, defaults);
+        let param_info = match module_name {
+            Some(m) => ctx.shared.tcx.module_func_param_info(m, callee_name),
+            None => ctx.shared.tcx.func_param_info(callee_name),
+        };
+        let ref_mask = build_ref_mask(param_info, args.len());
         Ok(hir::ExprKind::Call {
             func: func_id,
             args,
+            ref_mask,
         })
     } else if let Some(&extern_id) = ctx.shared.externs.get(&callee_name) {
         Ok(hir::ExprKind::CallExtern { extern_id, args })
@@ -2583,9 +2711,12 @@ fn lower_direct_call(
                 name: callee_name,
                 span,
             })?;
+        let param_info = ctx.shared.tcx.func_param_info(*func_name);
+        let ref_mask = build_ref_mask(param_info, args.len());
         Ok(hir::ExprKind::Call {
             func: func_id,
             args,
+            ref_mask,
         })
     } else {
         Err(LowerError::UnknownFunc {

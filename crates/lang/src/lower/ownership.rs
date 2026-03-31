@@ -11,13 +11,22 @@ pub fn analyze_ownership(program: &mut hir::Program) {
 struct LivenessCtx {
     seen: HashSet<LocalId>,
     reassigned: HashSet<LocalId>,
+    ref_locals: HashSet<LocalId>,
 }
 
 fn analyze_func(func: &mut hir::Func) {
     let reassigned = collect_reassigned(&func.body);
+    let ref_locals = func
+        .locals
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.is_ref)
+        .map(|(i, _)| LocalId(i as u32))
+        .collect();
     let mut ctx = LivenessCtx {
         seen: HashSet::new(),
         reassigned,
+        ref_locals,
     };
     analyze_block(&mut func.body, &mut ctx);
 }
@@ -146,7 +155,7 @@ fn collect_reassigned_expr(expr: &Expr, set: &mut HashSet<LocalId>) {
                 collect_reassigned_expr(c, set);
             }
         }
-        ExprKind::CallClosure { callee, args } => {
+        ExprKind::CallClosure { callee, args, .. } => {
             collect_reassigned_expr(callee, set);
             for a in args {
                 collect_reassigned_expr(a, set);
@@ -205,12 +214,14 @@ fn analyze_stmt(stmt: &mut Stmt, ctx: &mut LivenessCtx) {
             let mut then_ctx = LivenessCtx {
                 seen: before.clone(),
                 reassigned: ctx.reassigned.clone(),
+                ref_locals: ctx.ref_locals.clone(),
             };
             analyze_block(then_block, &mut then_ctx);
 
             let mut else_ctx = LivenessCtx {
                 seen: before.clone(),
                 reassigned: ctx.reassigned.clone(),
+                ref_locals: ctx.ref_locals.clone(),
             };
             if let Some(eb) = else_block {
                 analyze_block(eb, &mut else_ctx);
@@ -232,6 +243,7 @@ fn analyze_stmt(stmt: &mut Stmt, ctx: &mut LivenessCtx) {
             let mut loop_ctx = LivenessCtx {
                 seen: pre_seen,
                 reassigned: ctx.reassigned.clone(),
+                ref_locals: ctx.ref_locals.clone(),
             };
             analyze_block(body, &mut loop_ctx);
             analyze_expr(cond, &mut loop_ctx);
@@ -243,6 +255,7 @@ fn analyze_stmt(stmt: &mut Stmt, ctx: &mut LivenessCtx) {
         StmtKind::Match {
             scrutinee_init,
             scrutinee,
+            write_through: _,
             arms,
             else_body,
         } => {
@@ -254,6 +267,7 @@ fn analyze_stmt(stmt: &mut Stmt, ctx: &mut LivenessCtx) {
                 let mut arm_ctx = LivenessCtx {
                     seen: before.clone(),
                     reassigned: ctx.reassigned.clone(),
+                    ref_locals: ctx.ref_locals.clone(),
                 };
                 analyze_block(&mut arm.body, &mut arm_ctx);
                 for id in &arm_ctx.seen {
@@ -265,6 +279,7 @@ fn analyze_stmt(stmt: &mut Stmt, ctx: &mut LivenessCtx) {
                 let mut else_ctx = LivenessCtx {
                     seen: before.clone(),
                     reassigned: ctx.reassigned.clone(),
+                    ref_locals: ctx.ref_locals.clone(),
                 };
                 analyze_else_body(eb, &mut else_ctx);
                 for id in &else_ctx.seen {
@@ -331,11 +346,15 @@ fn collect_locals_in_stmt(stmt: &Stmt, set: &mut HashSet<LocalId>) {
         StmtKind::Match {
             scrutinee_init,
             scrutinee,
+            write_through,
             arms,
             else_body,
         } => {
             collect_locals_in_expr(scrutinee_init, set);
             set.insert(*scrutinee);
+            if let Some(wt) = write_through {
+                set.insert(wt.ref_local);
+            }
             for arm in arms {
                 collect_locals_in_block(&arm.body, set);
             }
@@ -421,7 +440,7 @@ fn collect_locals_in_expr(expr: &Expr, set: &mut HashSet<LocalId>) {
                 collect_locals_in_expr(c, set);
             }
         }
-        ExprKind::CallClosure { callee, args } => {
+        ExprKind::CallClosure { callee, args, .. } => {
             collect_locals_in_expr(callee, set);
             for a in args {
                 collect_locals_in_expr(a, set);
@@ -441,7 +460,10 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut LivenessCtx) {
     match &mut expr.kind {
         ExprKind::Local(id) => {
             let id = *id;
-            if ctx.reassigned.contains(&id) || ctx.seen.contains(&id) {
+            if ctx.ref_locals.contains(&id)
+                || ctx.reassigned.contains(&id)
+                || ctx.seen.contains(&id)
+            {
                 expr.ownership = Ownership::Borrow;
             } else {
                 expr.ownership = Ownership::Move;
@@ -529,7 +551,7 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut LivenessCtx) {
                 analyze_expr(c, ctx);
             }
         }
-        ExprKind::CallClosure { callee, args } => {
+        ExprKind::CallClosure { callee, args, .. } => {
             for a in args.iter_mut().rev() {
                 analyze_expr(a, ctx);
             }

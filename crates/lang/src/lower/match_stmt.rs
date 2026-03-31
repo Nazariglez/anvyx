@@ -9,6 +9,33 @@ use super::{
     resolve_variant_index,
 };
 
+fn needs_write_through(arms: &[hir::MatchArm], else_body: &Option<hir::MatchElse>) -> bool {
+    let arms_have_var = arms.iter().any(|a| a.bindings.iter().any(|b| b.mutable));
+    let else_has_var = else_body
+        .as_ref()
+        .is_some_and(|e| matches!(e.binding, Some((_, true))));
+    arms_have_var || else_has_var
+}
+
+pub(super) fn alloc_write_through(
+    scrutinee_expr: &hir::Expr,
+    fc: &mut FuncLower,
+) -> Option<hir::MatchWriteThrough> {
+    let hir::ExprKind::Local(original) = scrutinee_expr.kind else {
+        return None;
+    };
+    let ref_local = hir::LocalId(fc.locals.len() as u32);
+    fc.locals.push(hir::Local {
+        name: None,
+        ty: Type::Void,
+        is_ref: false,
+    });
+    Some(hir::MatchWriteThrough {
+        original,
+        ref_local,
+    })
+}
+
 struct MatchLowerCtx<'a> {
     match_node: &'a ast::MatchNode,
     span: Span,
@@ -60,6 +87,7 @@ pub(super) fn lower_match_stmts(
     fc.locals.push(hir::Local {
         name: None,
         ty: scrutinee_ty.clone(),
+        is_ref: false,
     });
 
     match &scrutinee_ty {
@@ -572,11 +600,18 @@ fn lower_match_enum(
         fc.leave_scope(mark);
     }
 
+    let write_through = if needs_write_through(&arms, &else_body) {
+        alloc_write_through(&scrutinee_expr, fc)
+    } else {
+        None
+    };
+
     Ok(hir::Stmt {
         span,
         kind: hir::StmtKind::Match {
             scrutinee_init: Box::new(scrutinee_expr),
             scrutinee: scrutinee_local,
+            write_through,
             arms,
             else_body,
         },
@@ -1185,6 +1220,7 @@ pub(super) fn lower_if_let(
     fc.locals.push(hir::Local {
         name: None,
         ty: scrutinee_ty.clone(),
+        is_ref: false,
     });
 
     match &scrutinee_ty {
@@ -1206,6 +1242,7 @@ pub(super) fn lower_if_let(
                         kind: hir::StmtKind::Match {
                             scrutinee_init: Box::new(scrutinee_expr),
                             scrutinee: scrutinee_local,
+                            write_through: None,
                             arms: vec![],
                             else_body: Some(hir::MatchElse {
                                 binding: None,
@@ -1224,6 +1261,7 @@ pub(super) fn lower_if_let(
                         kind: hir::StmtKind::Match {
                             scrutinee_init: Box::new(scrutinee_expr),
                             scrutinee: scrutinee_local,
+                            write_through: None,
                             arms: vec![],
                             else_body: Some(hir::MatchElse {
                                 binding: Some((binding, false)),
@@ -1237,11 +1275,13 @@ pub(super) fn lower_if_let(
                     let body =
                         lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
                     fc.leave_scope(mark);
+                    let write_through = alloc_write_through(&scrutinee_expr, fc);
                     return Ok(hir::Stmt {
                         span,
                         kind: hir::StmtKind::Match {
                             scrutinee_init: Box::new(scrutinee_expr),
                             scrutinee: scrutinee_local,
+                            write_through,
                             arms: vec![],
                             else_body: Some(hir::MatchElse {
                                 binding: Some((binding, true)),
@@ -1452,11 +1492,19 @@ pub(super) fn lower_if_let(
                 },
             };
 
+            let has_var = arm.bindings.iter().any(|b| b.mutable);
+            let write_through = if has_var {
+                alloc_write_through(&scrutinee_expr, fc)
+            } else {
+                None
+            };
+
             Ok(hir::Stmt {
                 span,
                 kind: hir::StmtKind::Match {
                     scrutinee_init: Box::new(scrutinee_expr),
                     scrutinee: scrutinee_local,
+                    write_through,
                     arms: vec![arm],
                     else_body: Some(else_body),
                 },
@@ -1525,6 +1573,7 @@ pub(super) fn lower_let_else(
     fc.locals.push(hir::Local {
         name: None,
         ty: scrutinee_ty.clone(),
+        is_ref: false,
     });
 
     let pattern = &let_else_node.node.pattern.node;
@@ -1768,6 +1817,7 @@ pub(super) fn lower_let_else(
                 kind: hir::StmtKind::Match {
                     scrutinee_init: Box::new(scrutinee_expr),
                     scrutinee: scrutinee_local,
+                    write_through: None,
                     arms: vec![arm],
                     else_body: Some(hir::MatchElse {
                         binding: None,
@@ -1838,6 +1888,7 @@ pub(super) fn lower_while_let(
     fc.locals.push(hir::Local {
         name: None,
         ty: scrutinee_ty.clone(),
+        is_ref: false,
     });
 
     let cond = hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(true));
@@ -1915,6 +1966,7 @@ fn lower_while_let_enum(
                 kind: hir::StmtKind::Match {
                     scrutinee_init: Box::new(scrutinee_expr),
                     scrutinee: scrutinee_local,
+                    write_through: None,
                     arms: vec![],
                     else_body: Some(hir::MatchElse {
                         binding: None,
@@ -1932,6 +1984,7 @@ fn lower_while_let_enum(
                 kind: hir::StmtKind::Match {
                     scrutinee_init: Box::new(scrutinee_expr),
                     scrutinee: scrutinee_local,
+                    write_through: None,
                     arms: vec![],
                     else_body: Some(hir::MatchElse {
                         binding: Some((binding, false)),
@@ -1944,11 +1997,13 @@ fn lower_while_let_enum(
             let binding = register_named_local(fc, *name, scrutinee_ty.clone());
             let body = lower_block(&while_let_node.node.body, ctx, fc, false, &Type::Void)?;
             fc.leave_scope(mark);
+            let write_through = alloc_write_through(&scrutinee_expr, fc);
             return Ok(hir::Stmt {
                 span,
                 kind: hir::StmtKind::Match {
                     scrutinee_init: Box::new(scrutinee_expr),
                     scrutinee: scrutinee_local,
+                    write_through,
                     arms: vec![],
                     else_body: Some(hir::MatchElse {
                         binding: Some((binding, true)),
@@ -2142,11 +2197,19 @@ fn lower_while_let_enum(
 
     fc.leave_scope(mark);
 
+    let has_var = arm.bindings.iter().any(|b| b.mutable);
+    let write_through = if has_var {
+        alloc_write_through(&scrutinee_expr, fc)
+    } else {
+        None
+    };
+
     Ok(hir::Stmt {
         span,
         kind: hir::StmtKind::Match {
             scrutinee_init: Box::new(scrutinee_expr),
             scrutinee: scrutinee_local,
+            write_through,
             arms: vec![arm],
             else_body: Some(hir::MatchElse {
                 binding: None,

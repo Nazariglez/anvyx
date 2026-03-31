@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match: 20
+
+fn main() {
+    var opt: int? = 10;
+    match opt {
+        var n? => { n = 20; },
+        nil => {},
+    }
+    if let v? = opt {
+        println(v);
+    }
+}

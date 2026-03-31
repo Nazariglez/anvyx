@@ -55,6 +55,29 @@ pub(super) fn check_pattern_in_match(
     check_pattern_inner(pattern, value_ty, false, true, None, type_checker, errors);
 }
 
+pub(super) fn pattern_has_var_binding(pattern: &PatternNode) -> bool {
+    match &pattern.node {
+        Pattern::VarIdent(_) => true,
+        Pattern::Tuple(pats) | Pattern::Or(pats) => pats.iter().any(pattern_has_var_binding),
+        Pattern::NamedTuple(fields) => fields.iter().any(|(_, p)| pattern_has_var_binding(p)),
+        Pattern::EnumTuple { fields, .. } | Pattern::InferredEnumTuple { fields, .. } => {
+            fields.iter().any(pattern_has_var_binding)
+        }
+        Pattern::EnumStruct { fields, .. }
+        | Pattern::InferredEnumStruct { fields, .. }
+        | Pattern::Struct { fields, .. } => fields.iter().any(|(_, p)| pattern_has_var_binding(p)),
+        Pattern::Optional(inner) => pattern_has_var_binding(inner),
+        Pattern::Ident(_)
+        | Pattern::Wildcard
+        | Pattern::EnumUnit { .. }
+        | Pattern::InferredEnumUnit { .. }
+        | Pattern::Range { .. }
+        | Pattern::Lit(_)
+        | Pattern::Rest
+        | Pattern::Nil => false,
+    }
+}
+
 pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &TypeChecker) -> bool {
     match pattern {
         Pattern::Wildcard => false,

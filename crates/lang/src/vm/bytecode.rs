@@ -27,6 +27,12 @@ pub enum Op {
     SetLocal(u16),
     MoveLocal(u16),
     CloneLocal(u16),
+    PushRef(u16),                   // push StackRef(stack_base + idx) for local at idx
+    PushPathRef(u16, u8, [u16; 4]), // push PathRef(stack_base + idx, depth, segments)
+    DerefRead(u16),                 // read value through StackRef/PathRef at local[idx], push copy
+    DerefWrite(u16),                // pop value, write through StackRef at local[idx]
+    SetFieldRef(u16, u16),          // (local_idx, field_index): pop value, set field through ref
+    SetIndexRef(u16),               // local_idx: pop value, pop index, set element through ref
 
     // unary
     Negate,

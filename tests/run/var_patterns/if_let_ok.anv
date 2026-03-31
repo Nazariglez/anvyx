@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match: 20
+
+fn main() {
+    var opt: int? = 10;
+    if let Option.Some(var n) = opt {
+        n = 20;
+    }
+    if let Option.Some(v) = opt {
+        println(v);
+    }
+}

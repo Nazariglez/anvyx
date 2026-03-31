@@ -53,6 +53,7 @@ pub struct Func {
 pub struct Local {
     pub name: Option<Ident>,
     pub ty: Type,
+    pub is_ref: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,9 +109,16 @@ pub enum StmtKind {
     Match {
         scrutinee_init: Box<Expr>, // evaluated once and stored to scrutinee local
         scrutinee: LocalId,
+        write_through: Option<MatchWriteThrough>,
         arms: Vec<MatchArm>,
         else_body: Option<MatchElse>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchWriteThrough {
+    pub original: LocalId,
+    pub ref_local: LocalId,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -180,6 +188,7 @@ pub enum ExprKind {
     Call {
         func: FuncId,
         args: Vec<Expr>,
+        ref_mask: Vec<bool>,
     },
 
     CallBuiltin {
@@ -200,6 +209,7 @@ pub enum ExprKind {
     CallClosure {
         callee: Box<Expr>,
         args: Vec<Expr>,
+        ref_mask: Vec<bool>,
     },
 
     StructLiteral {
@@ -415,14 +425,17 @@ mod tests {
                 Local {
                     name: Some(dummy_ident("a")),
                     ty: Type::Int,
+                    is_ref: false,
                 },
                 Local {
                     name: Some(dummy_ident("b")),
                     ty: Type::Int,
+                    is_ref: false,
                 },
                 Local {
                     name: Some(dummy_ident("result")),
                     ty: Type::Int,
+                    is_ref: false,
                 },
             ],
             params_len: 2,
@@ -636,6 +649,7 @@ mod tests {
             ExprKind::Call {
                 func: FuncId(0),
                 args: vec![int_expr(1)],
+                ref_mask: vec![false],
             },
         );
         assert!(matches!(expr.kind, ExprKind::Call { .. }));
@@ -815,6 +829,7 @@ mod tests {
             kind: StmtKind::Match {
                 scrutinee_init: Box::new(int_expr(0)),
                 scrutinee: LocalId(0),
+                write_through: None,
                 arms: vec![arm],
                 else_body: None,
             },
@@ -997,6 +1012,7 @@ mod tests {
             locals: vec![Local {
                 name: Some(dummy_ident("x")),
                 ty: Type::Int,
+                is_ref: false,
             }],
             params_len: 0,
             ret: Type::Int,

@@ -13,7 +13,7 @@ use super::{
     constraint::{TypeRef, resolve_constraints},
     decl::{check_body_common, check_fn_body},
     error::{TypeErr, TypeErrKind},
-    expr::{check_expr, root_ident},
+    expr::{check_expr, field_path, root_ident},
     infer::{
         build_param_ref, build_subst, constrain_slots_from_type, create_inference_slots,
         infer_type_args_from_call, subst_type,
@@ -24,18 +24,51 @@ use super::{
     },
 };
 
+fn paths_alias(a: &[Ident], b: &[Ident]) -> bool {
+    for (x, y) in a.iter().zip(b.iter()) {
+        if x != y {
+            // if path diverges, the fields are distinct
+            return false;
+        }
+    }
+
+    // one is a prefix or identical to the other
+    true
+}
+
+fn is_index_expr(expr: &ExprNode) -> bool {
+    match &expr.node.kind {
+        ExprKind::Index(_) => true,
+        ExprKind::Field(field) => is_index_expr(&field.node.target),
+        _ => false,
+    }
+}
+
 pub(super) fn check_var_param_args(
     params: impl IntoIterator<Item = (Ident, Mutability)>,
     args: &[ExprNode],
     type_checker: &TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) {
+    let mut var_paths: Vec<(Ident, Ident, Vec<Ident>)> = vec![]; // (param_name, root, field_path)
+
     for ((param_name, mutability), arg) in params.into_iter().zip(args.iter()) {
         if mutability != Mutability::Mutable {
             continue;
         }
 
-        let Some(root) = root_ident(arg) else {
+        if is_index_expr(arg) {
+            errors.push(
+                TypeErr::new(
+                    arg.span,
+                    TypeErrKind::VarParamIndexArg { param: param_name },
+                )
+                .with_help("extract the indexed element to a 'var' variable first"),
+            );
+            continue;
+        }
+
+        let Some((root, path)) = field_path(arg) else {
             errors.push(
                 TypeErr::new(
                     arg.span,
@@ -61,11 +94,30 @@ pub(super) fn check_var_param_args(
                 )
                 .with_help("declare with 'var' to allow mutation"),
             );
+            continue;
         }
+
+        for (prev_param, prev_root, prev_path) in &var_paths {
+            if root == *prev_root && paths_alias(prev_path, &path) {
+                errors.push(
+                    TypeErr::new(
+                        arg.span,
+                        TypeErrKind::VarParamAliasing {
+                            param_a: *prev_param,
+                            param_b: param_name,
+                            binding: root,
+                        },
+                    )
+                    .with_help("each 'var' parameter must refer to a distinct variable or field"),
+                );
+            }
+        }
+
+        var_paths.push((param_name, root, path));
     }
 }
 
-fn check_receiver_mutability(
+pub(super) fn check_receiver_mutability(
     target: &ExprNode,
     type_label: Ident,
     method_name: Ident,
@@ -73,6 +125,9 @@ fn check_receiver_mutability(
     errors: &mut Vec<TypeErr>,
 ) {
     let Some(root) = root_ident(target) else {
+        // Receiver is a temporary (function return, constructor, etc.).
+        // Temporaries are implicitly mutable — they are unaliased owned
+        // values with no binding to protect. var self calls are always valid.
         return;
     };
     let Some(info) = type_checker.get_var(root) else {
@@ -89,6 +144,45 @@ fn check_receiver_mutability(
             )
             .with_help("declare with 'var' to allow calling mutating methods"),
         );
+    }
+}
+
+pub(super) fn check_var_self_aliasing(
+    receiver: &ExprNode,
+    params: impl IntoIterator<Item = (Ident, Mutability)>,
+    args: &[ExprNode],
+    errors: &mut Vec<TypeErr>,
+) {
+    let Some((receiver_root, receiver_path)) = field_path(receiver) else {
+        // receiver is a temporary, no named root, so it cannot alias any var parameter
+        // aliasing check is not needed
+        return;
+    };
+
+    let self_name = Ident(Intern::new("self".to_string()));
+
+    for ((param_name, mutability), arg) in params.into_iter().zip(args.iter()) {
+        if mutability != Mutability::Mutable {
+            continue;
+        }
+        let Some((arg_root, arg_path)) = field_path(arg) else {
+            continue;
+        };
+        if arg_root == receiver_root && paths_alias(&receiver_path, &arg_path) {
+            errors.push(
+                TypeErr::new(
+                    arg.span,
+                    TypeErrKind::VarParamAliasing {
+                        param_a: self_name,
+                        param_b: param_name,
+                        binding: receiver_root,
+                    },
+                )
+                .with_help(
+                    "receiver and argument refer to the same variable or overlapping fields",
+                ),
+            );
+        }
     }
 }
 
@@ -1502,6 +1596,12 @@ pub(super) fn check_instance_method_call(
         && matches!(method.receiver, Some(MethodReceiver::Var))
     {
         check_receiver_mutability(target, struct_name, method_name, type_checker, errors);
+        check_var_self_aliasing(
+            target,
+            method.params.iter().map(|p| (p.name, p.mutability)),
+            &call.node.args,
+            errors,
+        );
     }
 
     let node = &call.node;
@@ -1579,6 +1679,12 @@ pub(super) fn check_extern_instance_method_call(
         && matches!(method.receiver, Some(MethodReceiver::Var))
     {
         check_receiver_mutability(target, type_name, method_name, type_checker, errors);
+        check_var_self_aliasing(
+            target,
+            method.params.iter().map(|p| (p.name, p.mutability)),
+            &call.node.args,
+            errors,
+        );
     }
 
     let param_types: Vec<Type> = method.params.iter().map(|p| p.ty.clone()).collect();
