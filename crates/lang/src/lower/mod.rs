@@ -135,6 +135,8 @@ pub(super) struct FuncLower {
     pub(super) locals: Vec<hir::Local>,
     pub(super) local_map: HashMap<Ident, hir::LocalId>,
     scope_log: Vec<(Ident, Option<hir::LocalId>)>,
+    pub(super) defer_stack: Vec<Vec<Vec<hir::Stmt>>>,
+    pub(super) loop_defer_depth: Option<usize>,
 }
 
 impl FuncLower {
@@ -159,6 +161,74 @@ impl FuncLower {
     pub(super) fn bind_local(&mut self, name: Ident, id: hir::LocalId) {
         let prev = self.local_map.insert(name, id);
         self.scope_log.push((name, prev));
+    }
+
+    pub(super) fn push_defer_scope(&mut self) {
+        self.defer_stack.push(vec![]);
+    }
+
+    pub(super) fn pop_defer_scope(&mut self) -> Vec<Vec<hir::Stmt>> {
+        self.defer_stack.pop().expect("defer scope underflow")
+    }
+
+    pub(super) fn add_defer(&mut self, stmts: Vec<hir::Stmt>) {
+        if let Some(scope) = self.defer_stack.last_mut() {
+            scope.push(stmts);
+        }
+    }
+
+    pub(super) fn defers_from_depth(&self, from_depth: usize) -> Vec<hir::Stmt> {
+        self.defer_stack[from_depth..]
+            .iter()
+            .rev()
+            .flat_map(|scope| scope.iter().rev().flat_map(|d| d.iter().cloned()))
+            .collect()
+    }
+
+    pub(super) fn all_active_defers(&self) -> Vec<hir::Stmt> {
+        self.defers_from_depth(0)
+    }
+
+    pub(super) fn has_defers_from_depth(&self, from_depth: usize) -> bool {
+        self.defer_stack[from_depth..]
+            .iter()
+            .any(|scope| !scope.is_empty())
+    }
+
+    pub(super) fn has_any_defers(&self) -> bool {
+        self.has_defers_from_depth(0)
+    }
+}
+
+pub(super) fn flush_defer_scope(fc: &mut FuncLower, stmts: &mut Vec<hir::Stmt>) {
+    let defers = fc.pop_defer_scope();
+    if !defers.is_empty() {
+        let ends_with_exit = stmts.last().is_some_and(|s| {
+            matches!(
+                s.kind,
+                hir::StmtKind::Return(_) | hir::StmtKind::Break | hir::StmtKind::Continue
+            )
+        });
+        if !ends_with_exit {
+            for defer_group in defers.iter().rev() {
+                stmts.extend(defer_group.iter().cloned());
+            }
+        }
+    }
+}
+
+pub(super) fn emit_deferred_return(
+    fc: &mut FuncLower,
+    span: Span,
+    out: &mut Vec<hir::Stmt>,
+    hir_expr: hir::Expr,
+) -> hir::Stmt {
+    let expr_ty = hir_expr.ty.clone();
+    let temp = alloc_and_bind(fc, span, out, expr_ty.clone(), hir_expr);
+    out.extend(fc.all_active_defers());
+    hir::Stmt {
+        span,
+        kind: hir::StmtKind::Return(Some(hir::Expr::local(expr_ty, span, temp))),
     }
 }
 

@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: continue inside defer
+
+fn main() {
+    for i in 0..3 {
+        defer { continue; }
+    }
+}

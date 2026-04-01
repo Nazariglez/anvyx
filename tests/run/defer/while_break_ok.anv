@@ -1,0 +1,20 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 0
+// loop-defer
+// 1
+// loop-defer
+// done
+// @match-end
+
+fn main() {
+    var i = 0;
+    while i < 5 {
+        defer println("loop-defer");
+        println(i);
+        i += 1;
+        if i == 2 { break; }
+    }
+    println("done");
+}

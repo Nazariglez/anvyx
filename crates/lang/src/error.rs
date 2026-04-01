@@ -832,6 +832,18 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
             let label = reason.as_deref().unwrap_or("deprecated").to_string();
             (title, label)
         }
+        DiagnosticKind::ReturnInDefer => (
+            "return inside defer".to_string(),
+            "'return' is not allowed inside a defer body".to_string(),
+        ),
+        DiagnosticKind::BreakInDefer => (
+            "break inside defer".to_string(),
+            "'break' is not allowed inside a defer body".to_string(),
+        ),
+        DiagnosticKind::ContinueInDefer => (
+            "continue inside defer".to_string(),
+            "'continue' is not allowed inside a defer body".to_string(),
+        ),
     }
 }
 

@@ -502,6 +502,9 @@ pub enum DiagnosticKind {
         name: Ident,
         reason: Option<String>,
     },
+    ReturnInDefer,
+    BreakInDefer,
+    ContinueInDefer,
 }
 
 impl DiagnosticKind {

@@ -1,0 +1,17 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// inside
+// B
+// after
+// A
+// @match-end
+
+fn main() {
+    defer println("A");
+    if true {
+        defer println("B");
+        println("inside");
+    }
+    println("after");
+}

@@ -1524,6 +1524,8 @@ fn lower_lambda(
         locals: vec![],
         local_map: HashMap::new(),
         scope_log: vec![],
+        defer_stack: vec![],
+        loop_defer_depth: None,
     };
 
     for (name, capture_ty) in &captures {
@@ -2676,7 +2678,7 @@ fn lower_sort_by(
         .cloned()
         .unwrap_or_default();
 
-    // Captures not supported via the opcode path — no closure-based sort infrastructure.
+    // captures not supported via the opcode path , no closure-based sort infrastructure
     if !captures.is_empty() {
         return Ok(None);
     }
@@ -2687,6 +2689,8 @@ fn lower_sort_by(
         locals: vec![],
         local_map: HashMap::new(),
         scope_log: vec![],
+        defer_stack: vec![],
+        loop_defer_depth: None,
     };
 
     for param in &lambda.node.params {

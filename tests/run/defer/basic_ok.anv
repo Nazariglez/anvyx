@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// hello
+// cleanup
+// @match-end
+
+fn main() {
+    defer println("cleanup");
+    println("hello");
+}

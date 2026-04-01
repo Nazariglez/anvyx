@@ -439,6 +439,9 @@ pub struct TypeChecker {
     /// Tracks depth of nested loops to validate break/continue usage
     pub(super) loop_depth: usize,
 
+    /// True when type checking inside a defer body
+    pub(super) in_defer: bool,
+
     /// Stmts from resolved imported modules, keyed by import path segments
     pub(super) resolved_module_stmts: HashMap<Vec<String>, Vec<StmtNode>>,
 

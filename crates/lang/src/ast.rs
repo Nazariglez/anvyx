@@ -43,6 +43,7 @@ pub type ExternTypeNode = Spanned<ExternType>;
 pub type ImportNode = Spanned<Import>;
 pub type LambdaNode = Spanned<Lambda>;
 pub type AnnotationNode = Spanned<Annotation>;
+pub type DeferNode = Spanned<Defer>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -69,6 +70,7 @@ pub enum Stmt {
     For(Box<ForNode>),
     Break,
     Continue,
+    Defer(DeferNode),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Default)]
@@ -986,6 +988,17 @@ impl Display for AssignOp {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Return {
     pub value: Option<ExprNode>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Defer {
+    pub body: DeferBody,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DeferBody {
+    Expr(ExprNode),
+    Block(BlockNode),
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: Unexpected token
+
+defer println("bad");
+
+fn main() {}

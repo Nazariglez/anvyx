@@ -26,7 +26,7 @@ use super::{
 };
 use crate::{
     ast::{
-        ArrayLen, BlockNode, ConstDeclNode, ExprId, ExprKind, ExprNode, ExternFunc,
+        ArrayLen, BlockNode, ConstDeclNode, DeferBody, ExprId, ExprKind, ExprNode, ExternFunc,
         ExternTypeMember, Func, FuncNode, FuncParam, Ident, ImportKind, Mutability, Param,
         ReturnNode, Stmt, StmtNode, Type, TypeParam, VariantKind, Visibility,
     },
@@ -1207,6 +1207,7 @@ pub(super) fn check_stmt(
             }
         }
         Stmt::Extend(node) => check_extend_decl(node, type_checker, errors),
+        Stmt::Defer(node) => check_defer(node, type_checker, errors),
     }
 }
 
@@ -1702,6 +1703,11 @@ pub(super) fn check_ret(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) {
+    if type_checker.in_defer {
+        errors.push(Diagnostic::new(ret.span, DiagnosticKind::ReturnInDefer));
+        return;
+    }
+
     let node = &ret.node;
 
     // if return is outside a function then we just return (although this shouldn't happen)
@@ -1737,6 +1743,10 @@ pub(super) fn check_ret(
 }
 
 fn check_break(span: Span, type_checker: &mut TypeChecker, errors: &mut Vec<Diagnostic>) {
+    if type_checker.in_defer {
+        errors.push(Diagnostic::new(span, DiagnosticKind::BreakInDefer));
+        return;
+    }
     if !type_checker.in_loop() {
         errors.push(
             Diagnostic::new(span, DiagnosticKind::BreakOutsideLoop)
@@ -1746,10 +1756,40 @@ fn check_break(span: Span, type_checker: &mut TypeChecker, errors: &mut Vec<Diag
 }
 
 fn check_continue(span: Span, type_checker: &mut TypeChecker, errors: &mut Vec<Diagnostic>) {
+    if type_checker.in_defer {
+        errors.push(Diagnostic::new(span, DiagnosticKind::ContinueInDefer));
+        return;
+    }
     if !type_checker.in_loop() {
         errors.push(
             Diagnostic::new(span, DiagnosticKind::ContinueOutsideLoop)
                 .with_help("continue can only appear inside `while` or `for` loops"),
         );
     }
+}
+
+fn check_defer(
+    defer_node: &crate::ast::DeferNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) {
+    let prev_in_defer = type_checker.in_defer;
+    type_checker.in_defer = true;
+
+    match &defer_node.node.body {
+        DeferBody::Expr(expr) => {
+            check_expr(expr, type_checker, errors, None);
+        }
+        DeferBody::Block(block) => {
+            check_block_stmts(
+                &block.node.stmts,
+                block.node.tail.as_deref(),
+                type_checker,
+                errors,
+                None,
+            );
+        }
+    }
+
+    type_checker.in_defer = prev_in_defer;
 }

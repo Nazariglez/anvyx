@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: return inside defer
+
+fn main() {
+    defer {
+        return;
+    }
+}

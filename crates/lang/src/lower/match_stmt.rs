@@ -1,8 +1,8 @@
 use internment::Intern;
 
 use super::{
-    FuncLower, LowerCtx, LowerError, lower_block, lower_expr, register_named_local,
-    resolve_variant_index,
+    FuncLower, LowerCtx, LowerError, emit_deferred_return, lower_block, lower_expr,
+    register_named_local, resolve_variant_index,
 };
 use crate::{
     ast::{self, BinaryOp, FloatSuffix, Ident, Lit, Pattern, Type, UnaryOp},
@@ -61,12 +61,17 @@ fn lower_arm_body(
         let span = body_expr.span;
         let mut arm_stmts = vec![];
         let hir_expr = lower_expr(body_expr, ctx, fc, &mut arm_stmts)?;
-        let kind = if is_func_body && !ret_ty.is_void() {
-            hir::StmtKind::Return(Some(hir_expr))
+        if is_func_body && !ret_ty.is_void() && fc.has_any_defers() {
+            let ret_stmt = emit_deferred_return(fc, span, &mut arm_stmts, hir_expr);
+            arm_stmts.push(ret_stmt);
         } else {
-            hir::StmtKind::Expr(hir_expr)
-        };
-        arm_stmts.push(hir::Stmt { span, kind });
+            let kind = if is_func_body && !ret_ty.is_void() {
+                hir::StmtKind::Return(Some(hir_expr))
+            } else {
+                hir::StmtKind::Expr(hir_expr)
+            };
+            arm_stmts.push(hir::Stmt { span, kind });
+        }
         Ok(hir::Block { stmts: arm_stmts })
     }
 }
@@ -2033,7 +2038,10 @@ fn lower_while_let_enum(
 
     match pattern {
         Pattern::Wildcard => {
+            let old_loop_depth = fc.loop_defer_depth;
+            fc.loop_defer_depth = Some(fc.defer_stack.len());
             let body = lower_block(&while_let_node.node.body, ctx, fc, false, &Type::Void)?;
+            fc.loop_defer_depth = old_loop_depth;
             fc.leave_scope(mark);
             return Ok(hir::Stmt {
                 span,
@@ -2051,7 +2059,10 @@ fn lower_while_let_enum(
         }
         Pattern::Ident(name) => {
             let binding = register_named_local(fc, *name, scrutinee_ty.clone());
+            let old_loop_depth = fc.loop_defer_depth;
+            fc.loop_defer_depth = Some(fc.defer_stack.len());
             let body = lower_block(&while_let_node.node.body, ctx, fc, false, &Type::Void)?;
+            fc.loop_defer_depth = old_loop_depth;
             fc.leave_scope(mark);
             return Ok(hir::Stmt {
                 span,
@@ -2069,7 +2080,10 @@ fn lower_while_let_enum(
         }
         Pattern::VarIdent(name) => {
             let binding = register_named_local(fc, *name, scrutinee_ty.clone());
+            let old_loop_depth = fc.loop_defer_depth;
+            fc.loop_defer_depth = Some(fc.defer_stack.len());
             let body = lower_block(&while_let_node.node.body, ctx, fc, false, &Type::Void)?;
+            fc.loop_defer_depth = old_loop_depth;
             fc.leave_scope(mark);
             let write_through = alloc_write_through(&scrutinee_expr, fc);
             return Ok(hir::Stmt {
@@ -2092,7 +2106,10 @@ fn lower_while_let_enum(
     let arm = match pattern {
         Pattern::EnumUnit { variant, .. } | Pattern::InferredEnumUnit { variant } => {
             let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
+            let old_loop_depth = fc.loop_defer_depth;
+            fc.loop_defer_depth = Some(fc.defer_stack.len());
             let body = lower_block(&while_let_node.node.body, ctx, fc, false, &Type::Void)?;
+            fc.loop_defer_depth = old_loop_depth;
             hir::MatchArm {
                 variant: variant_idx,
                 bindings: vec![],
@@ -2139,7 +2156,10 @@ fn lower_while_let_enum(
                     _ => {}
                 }
             }
+            let old_loop_depth = fc.loop_defer_depth;
+            fc.loop_defer_depth = Some(fc.defer_stack.len());
             let body = lower_block(&while_let_node.node.body, ctx, fc, false, &Type::Void)?;
+            fc.loop_defer_depth = old_loop_depth;
             hir::MatchArm {
                 variant: variant_idx,
                 bindings,
@@ -2196,7 +2216,10 @@ fn lower_while_let_enum(
                     _ => {}
                 }
             }
+            let old_loop_depth = fc.loop_defer_depth;
+            fc.loop_defer_depth = Some(fc.defer_stack.len());
             let body = lower_block(&while_let_node.node.body, ctx, fc, false, &Type::Void)?;
+            fc.loop_defer_depth = old_loop_depth;
             hir::MatchArm {
                 variant: variant_idx,
                 bindings,
@@ -2208,7 +2231,10 @@ fn lower_while_let_enum(
         Pattern::Nil => {
             let none_ident = Ident(Intern::new("None".to_string()));
             let variant_idx = resolve_variant_index(ctx, span, enum_name, none_ident)?;
+            let old_loop_depth = fc.loop_defer_depth;
+            fc.loop_defer_depth = Some(fc.defer_stack.len());
             let body = lower_block(&while_let_node.node.body, ctx, fc, false, &Type::Void)?;
+            fc.loop_defer_depth = old_loop_depth;
             hir::MatchArm {
                 variant: variant_idx,
                 bindings: vec![],
@@ -2253,7 +2279,10 @@ fn lower_while_let_enum(
                     });
                 }
             }
+            let old_loop_depth = fc.loop_defer_depth;
+            fc.loop_defer_depth = Some(fc.defer_stack.len());
             let body = lower_block(&while_let_node.node.body, ctx, fc, false, &Type::Void)?;
+            fc.loop_defer_depth = old_loop_depth;
             hir::MatchArm {
                 variant: variant_idx,
                 bindings,
@@ -2332,7 +2361,10 @@ fn lower_while_let_non_enum(
         fc,
     )?;
 
+    let old_loop_depth = fc.loop_defer_depth;
+    fc.loop_defer_depth = Some(fc.defer_stack.len());
     let mut then_block = lower_block(&while_let_node.node.body, ctx, fc, false, &Type::Void)?;
+    fc.loop_defer_depth = old_loop_depth;
     for (i, stmt) in preamble.into_iter().enumerate() {
         then_block.stmts.insert(i, stmt);
     }

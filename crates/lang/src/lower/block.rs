@@ -1,11 +1,12 @@
 use internment::Intern;
 
 use super::{
-    FuncLower, LowerCtx, LowerError, alloc_and_bind, lower_assign, lower_expr, lower_for,
-    lower_if_let, lower_let_else, lower_match_stmts, lower_while_let, register_named_local,
+    FuncLower, LowerCtx, LowerError, alloc_and_bind, emit_deferred_return, flush_defer_scope,
+    lower_assign, lower_expr, lower_for, lower_if_let, lower_let_else, lower_match_stmts,
+    lower_while_let, register_named_local,
 };
 use crate::{
-    ast::{self, BinaryOp, Ident, Pattern, Stmt, StringPart, Type},
+    ast::{self, BinaryOp, DeferBody, Ident, Pattern, Stmt, StringPart, Type},
     hir,
     span::Span,
 };
@@ -22,6 +23,8 @@ pub(super) fn lower_block(
     } else {
         Some(fc.enter_scope())
     };
+
+    fc.push_defer_scope();
 
     let mut stmts = vec![];
 
@@ -43,6 +46,8 @@ pub(super) fn lower_block(
         )?;
         stmts.push(s);
     }
+
+    flush_defer_scope(fc, &mut stmts);
 
     if let Some(mark) = scope_mark {
         fc.leave_scope(mark);
@@ -71,12 +76,16 @@ fn lower_expr_as_stmt(
         }
         _ => {
             let hir_expr = lower_expr(expr_node, ctx, fc, out)?;
-            let kind = if is_func_body && !ret_ty.is_void() {
-                hir::StmtKind::Return(Some(hir_expr))
+            if is_func_body && !ret_ty.is_void() && fc.has_any_defers() {
+                Ok(emit_deferred_return(fc, span, out, hir_expr))
             } else {
-                hir::StmtKind::Expr(hir_expr)
-            };
-            Ok(hir::Stmt { span, kind })
+                let kind = if is_func_body && !ret_ty.is_void() {
+                    hir::StmtKind::Return(Some(hir_expr))
+                } else {
+                    hir::StmtKind::Expr(hir_expr)
+                };
+                Ok(hir::Stmt { span, kind })
+            }
         }
     }
 }
@@ -257,34 +266,75 @@ fn lower_stmt(
         )?)),
 
         Stmt::Return(return_node) => {
-            let value = match &return_node.node.value {
-                Some(expr) => Some(lower_expr(expr, ctx, fc, out)?),
-                None => None,
-            };
-            Ok(Some(hir::Stmt {
-                span,
-                kind: hir::StmtKind::Return(value),
-            }))
+            if fc.has_any_defers() {
+                let defers = fc.all_active_defers();
+                if let Some(expr) = &return_node.node.value {
+                    // evaluate return expression to a temp before running the defers
+                    // so "defer { x = 99; }; return x;" returns the original value
+                    let hir_expr = lower_expr(expr, ctx, fc, out)?;
+                    let ret_ty = hir_expr.ty.clone();
+                    let temp = alloc_and_bind(fc, span, out, ret_ty.clone(), hir_expr);
+                    out.extend(defers);
+                    Ok(Some(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Return(Some(hir::Expr::local(ret_ty, span, temp))),
+                    }))
+                } else {
+                    out.extend(defers);
+                    Ok(Some(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Return(None),
+                    }))
+                }
+            } else {
+                let value = return_node
+                    .node
+                    .value
+                    .as_ref()
+                    .map(|expr| lower_expr(expr, ctx, fc, out))
+                    .transpose()?;
+                Ok(Some(hir::Stmt {
+                    span,
+                    kind: hir::StmtKind::Return(value),
+                }))
+            }
         }
 
         Stmt::While(while_node) => {
             let cond = lower_expr(&while_node.node.cond, ctx, fc, out)?;
+            let old_loop_depth = fc.loop_defer_depth;
+            fc.loop_defer_depth = Some(fc.defer_stack.len());
             let body = lower_block(&while_node.node.body, ctx, fc, false, &Type::Void)?;
+            fc.loop_defer_depth = old_loop_depth;
             Ok(Some(hir::Stmt {
                 span,
                 kind: hir::StmtKind::While { cond, body },
             }))
         }
 
-        Stmt::Break => Ok(Some(hir::Stmt {
-            span,
-            kind: hir::StmtKind::Break,
-        })),
+        Stmt::Break => {
+            if let Some(depth) = fc.loop_defer_depth {
+                if fc.has_defers_from_depth(depth) {
+                    out.extend(fc.defers_from_depth(depth));
+                }
+            }
+            Ok(Some(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Break,
+            }))
+        }
 
-        Stmt::Continue => Ok(Some(hir::Stmt {
-            span,
-            kind: hir::StmtKind::Continue,
-        })),
+        Stmt::Continue => {
+            if let Some(depth) = fc.loop_defer_depth {
+                if fc.has_defers_from_depth(depth) {
+                    out.extend(fc.defers_from_depth(depth));
+                }
+            }
+            Ok(Some(hir::Stmt {
+                span,
+                kind: hir::StmtKind::Continue,
+            }))
+        }
 
         Stmt::For(for_node) => lower_for(for_node, span, ctx, fc, out),
 
@@ -296,6 +346,25 @@ fn lower_stmt(
         | Stmt::Enum(_)
         | Stmt::Extend(_)
         | Stmt::Const(_) => Ok(None),
+
+        Stmt::Defer(defer_node) => {
+            match &defer_node.node.body {
+                DeferBody::Expr(expr) => {
+                    let mut defer_stmts = vec![];
+                    let hir_expr = lower_expr(expr, ctx, fc, &mut defer_stmts)?;
+                    defer_stmts.push(hir::Stmt {
+                        span,
+                        kind: hir::StmtKind::Expr(hir_expr),
+                    });
+                    fc.add_defer(defer_stmts);
+                }
+                DeferBody::Block(block_node) => {
+                    let block = lower_block(block_node, ctx, fc, false, &Type::Void)?;
+                    fc.add_defer(block.stmts);
+                }
+            }
+            Ok(None)
+        }
 
         Stmt::Func(_) => Err(LowerError::UnsupportedStmtKind {
             span,
@@ -340,6 +409,8 @@ pub(super) fn lower_block_to_target(
     fc: &mut FuncLower,
 ) -> Result<hir::Block, LowerError> {
     let mark = fc.enter_scope();
+    fc.push_defer_scope();
+
     let mut stmts = vec![];
 
     for stmt_node in &block.node.stmts {
@@ -358,6 +429,8 @@ pub(super) fn lower_block_to_target(
             },
         });
     }
+
+    flush_defer_scope(fc, &mut stmts);
 
     fc.leave_scope(mark);
     Ok(hir::Block { stmts })

@@ -429,6 +429,8 @@ pub fn lower_program(
             locals: vec![],
             local_map: HashMap::new(),
             scope_log: vec![],
+            defer_stack: vec![],
+            loop_defer_depth: None,
         };
 
         for (param, ty) in template.node.params.iter().zip(specialized_params.iter()) {
@@ -498,6 +500,8 @@ pub fn lower_program(
             locals: vec![],
             local_map: HashMap::new(),
             scope_log: vec![],
+            defer_stack: vec![],
+            loop_defer_depth: None,
         };
 
         if method.receiver.is_some() {
@@ -535,6 +539,8 @@ pub fn lower_program(
             locals: vec![],
             local_map: HashMap::new(),
             scope_log: vec![],
+            defer_stack: vec![],
+            loop_defer_depth: None,
         };
 
         let self_type = if *is_dataref {
@@ -718,6 +724,8 @@ pub fn lower_program(
             locals: vec![],
             local_map: HashMap::new(),
             scope_log: vec![],
+            defer_stack: vec![],
+            loop_defer_depth: None,
         };
 
         for (param, ty) in method.params.iter().zip(specialized_params.iter()) {
@@ -794,6 +802,8 @@ fn lower_extend_method(
         locals: vec![],
         local_map: HashMap::new(),
         scope_log: vec![],
+        defer_stack: vec![],
+        loop_defer_depth: None,
     };
 
     for (i, param) in method.node.params.iter().enumerate() {
@@ -832,6 +842,8 @@ fn lower_func(func_node: &ast::FuncNode, ctx: &LowerCtx) -> Result<hir::Func, Lo
         locals: vec![],
         local_map: HashMap::new(),
         scope_log: vec![],
+        defer_stack: vec![],
+        loop_defer_depth: None,
     };
 
     // register parameters as locals first

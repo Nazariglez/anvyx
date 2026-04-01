@@ -437,7 +437,10 @@ fn lower_for_seq_body(
         inc_op,
     );
 
+    let old_loop_depth = fc.loop_defer_depth;
+    fc.loop_defer_depth = Some(fc.defer_stack.len());
     let user_body = lower_block(&for_node.node.body, ctx, fc, false, &Type::Void)?;
+    fc.loop_defer_depth = old_loop_depth;
     body_stmts.extend(user_body.stmts);
 
     Ok(body_stmts)
@@ -630,7 +633,10 @@ fn lower_for_map_body(
         BinaryOp::Add,
     );
 
+    let old_loop_depth = fc.loop_defer_depth;
+    fc.loop_defer_depth = Some(fc.defer_stack.len());
     let user_body = lower_block(&for_node.node.body, ctx, fc, false, &Type::Void)?;
+    fc.loop_defer_depth = old_loop_depth;
     body_stmts.extend(user_body.stmts);
 
     Ok(body_stmts)
@@ -673,7 +679,10 @@ fn lower_for_body(
         inc_op,
     );
 
+    let old_loop_depth = fc.loop_defer_depth;
+    fc.loop_defer_depth = Some(fc.defer_stack.len());
     let user_body = lower_block(&for_node.node.body, ctx, fc, false, &Type::Void)?;
+    fc.loop_defer_depth = old_loop_depth;
     body_stmts.extend(user_body.stmts);
 
     Ok(body_stmts)

@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    defer {
+        defer println("inner");
+        println("outer");
+    }
+}
