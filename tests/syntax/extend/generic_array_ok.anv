@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+extend<T> [T; 3] {
+    fn first(self) -> T { self[0] }
+}
+
+fn main() {}

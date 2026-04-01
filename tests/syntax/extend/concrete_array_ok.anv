@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+extend [int; 3] {
+    fn sum(self) -> int { 0 }
+}
+
+fn main() {}

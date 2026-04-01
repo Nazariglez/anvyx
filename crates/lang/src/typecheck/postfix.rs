@@ -1121,7 +1121,8 @@ pub(super) fn resolve_builtin_or_extend(
                 errors,
             )?)
         }
-        Type::Tuple { .. }
+        Type::Array { .. }
+        | Type::Tuple { .. }
         | Type::Float
         | Type::Double
         | Type::Int
@@ -1200,18 +1201,22 @@ fn try_builtin_or_extend_method(
 
     // emit UnknownMethod for types where a method was expected but not found
     match detection_ty {
-        Type::Float | Type::Double | Type::Int | Type::Bool | Type::String | Type::Enum { .. } => {
-            Some(emit_unknown_method(
-                detection_ty,
-                method_name,
-                field_node.span,
-                op_safe,
-                chain_is_optional,
-                index,
-                call_op,
-                errors,
-            ))
-        }
+        Type::Array { .. }
+        | Type::Float
+        | Type::Double
+        | Type::Int
+        | Type::Bool
+        | Type::String
+        | Type::Enum { .. } => Some(emit_unknown_method(
+            detection_ty,
+            method_name,
+            field_node.span,
+            op_safe,
+            chain_is_optional,
+            index,
+            call_op,
+            errors,
+        )),
         _ => None,
     }
 }

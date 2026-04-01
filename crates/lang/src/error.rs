@@ -739,7 +739,7 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
         ),
         DiagnosticKind::ExtendUnsupportedType { ty } => (
             format!("cannot extend type '{ty}'"),
-            "only concrete types (int, float, double, bool, string, structs, enums, extern types, options, lists, maps, tuples) can be extended".to_string(),
+            "only concrete types (int, float, double, bool, string, structs, enums, extern types, options, lists, arrays, maps, tuples) can be extended".to_string(),
         ),
         DiagnosticKind::ExtendTypeParamCountMismatch { ty_name, expected, found } => (
             format!("extend type '{ty_name}' expects {expected} type parameter{}, but {found} {} provided",

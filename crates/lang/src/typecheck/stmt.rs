@@ -1278,7 +1278,7 @@ fn is_valid_concrete_extend_type(ty: &Type) -> bool {
         Type::Struct { type_args, .. }
         | Type::DataRef { type_args, .. }
         | Type::Enum { type_args, .. } => type_args.iter().all(is_valid_concrete_extend_type),
-        Type::List { elem } => is_valid_concrete_extend_type(elem),
+        Type::List { elem } | Type::Array { elem, .. } => is_valid_concrete_extend_type(elem),
         Type::Map { key, value } => {
             is_valid_concrete_extend_type(key) && is_valid_concrete_extend_type(value)
         }
@@ -1502,17 +1502,9 @@ fn check_generic_extend_decl(
         return;
     };
 
-    // reject unresolved names in target type args unless they are declared type params.
-    let type_args_in_target: &[Type] = match &target_type {
-        Type::Struct { type_args, .. }
-        | Type::DataRef { type_args, .. }
-        | Type::Enum { type_args, .. } => type_args.as_slice(),
-        _ => &[],
-    };
+    // reject unresolved names in target type unless they are declared type params
     let mut undeclared = vec![];
-    for arg in type_args_in_target {
-        collect_undeclared_type_param_names(arg, &decl.type_params, &mut undeclared);
-    }
+    collect_undeclared_type_param_names(&target_type, &decl.type_params, &mut undeclared);
     for name in undeclared {
         errors.push(Diagnostic::new(
             node.span,

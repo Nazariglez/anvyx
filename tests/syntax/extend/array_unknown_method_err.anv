@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: no method named
+
+fn main() {
+    let a: [int; 3] = [1, 2, 3];
+    a.nonexistent();
+}
