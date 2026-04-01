@@ -16,26 +16,28 @@ mod range;
 mod stmt;
 mod types;
 mod unify;
+mod visit;
 
 #[cfg(test)]
 mod tests;
 
 pub use const_eval::ConstValue;
+use const_eval::evaluate_and_export_consts;
+use constraint::resolve_constraints;
 pub use error::{Diagnostic, DiagnosticKind, Severity};
 pub use infer::{resolve_type_param_names, subst_type};
+use internment::Intern;
+use stmt::{build_module_def_with_reexports, check_block_stmts};
+use types::{ExtendEntry, GenericExtendTemplate};
 pub use types::{
     ExtendSpecKey, ExternTypeDef, FieldDefault, MethodSpecKey, SpecializationKey, TypeChecker,
 };
-
-use internment::Intern;
-
-use crate::ast::{Ident, Program, Stmt, StmtNode, Visibility};
-use crate::builtin::Builtin;
-use const_eval::evaluate_and_export_consts;
-use constraint::resolve_constraints;
-use stmt::{build_module_def_with_reexports, check_block_stmts};
-use types::{ExtendEntry, GenericExtendTemplate};
 use unify::contains_infer;
+
+use crate::{
+    ast::{Ident, Program, Stmt, StmtNode, Visibility},
+    builtin::Builtin,
+};
 
 fn register_builtins(type_checker: &mut TypeChecker) {
     type_checker.push_scope();
@@ -160,25 +162,13 @@ pub fn check_program_with_modules(
         }
     }
 
-    let (errs, warns): (Vec<_>, Vec<_>) = errors
-        .drain(..)
-        .partition(|d| d.kind.severity() == Severity::Error);
-    type_checker.warnings.extend(warns);
-    if !errs.is_empty() {
-        return Err(errs);
-    }
+    flush_errors(&mut errors, &mut type_checker)?;
 
     // first pass we collect the types from the ast
     // we don't need the type of the file scope blocks
     let _ = check_block_stmts(&program.stmts, None, &mut type_checker, &mut errors, None);
 
-    let (errs, warns): (Vec<_>, Vec<_>) = errors
-        .drain(..)
-        .partition(|d| d.kind.severity() == Severity::Error);
-    type_checker.warnings.extend(warns);
-    if !errs.is_empty() {
-        return Err(errs);
-    }
+    flush_errors(&mut errors, &mut type_checker)?;
 
     let baseline_module_defs = type_checker.module_defs.clone();
     let baseline_struct_defs = type_checker.struct_defs.clone();
@@ -198,13 +188,7 @@ pub fn check_program_with_modules(
         type_checker.generic_extend_templates = baseline_generic_extend_templates.clone();
     }
 
-    let (errs, warns): (Vec<_>, Vec<_>) = errors
-        .drain(..)
-        .partition(|d| d.kind.severity() == Severity::Error);
-    type_checker.warnings.extend(warns);
-    if !errs.is_empty() {
-        return Err(errs);
-    }
+    flush_errors(&mut errors, &mut type_checker)?;
 
     // second pass we infer the types from the constraints
     resolve_constraints(&mut type_checker, &mut errors);
@@ -225,4 +209,15 @@ pub fn check_program_with_modules(
         cyclicity::analyze_cyclicity(&type_checker.struct_defs, &type_checker.enum_defs);
 
     Ok(type_checker)
+}
+
+fn flush_errors(
+    errors: &mut Vec<Diagnostic>,
+    type_checker: &mut TypeChecker,
+) -> Result<(), Vec<Diagnostic>> {
+    let (errs, warns): (Vec<_>, Vec<_>) = errors
+        .drain(..)
+        .partition(|d| d.kind.severity() == Severity::Error);
+    type_checker.warnings.extend(warns);
+    if errs.is_empty() { Ok(()) } else { Err(errs) }
 }

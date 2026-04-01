@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::ast::{Ident, Type, VariantKind};
-
 use super::{
     infer::{build_subst, subst_type},
     types::{EnumDef, StructDef},
+    visit::type_any,
 };
+use crate::ast::{Ident, Type, VariantKind};
 
 pub(super) fn analyze_cyclicity(
     struct_defs: &HashMap<Ident, StructDef>,
@@ -102,108 +102,66 @@ fn extract_dataref_refs(
     enum_defs: &HashMap<Ident, EnumDef>,
     out: &mut Vec<Ident>,
 ) {
-    match ty {
-        Type::DataRef { name, type_args } => {
-            if struct_defs.get(name).is_some_and(|d| d.is_dataref) {
-                out.push(*name);
+    type_any(ty, &mut |t| {
+        match t {
+            Type::DataRef { name, .. } | Type::Struct { name, .. } | Type::UnresolvedName(name) => {
+                if struct_defs.get(name).is_some_and(|d| d.is_dataref) {
+                    out.push(*name);
+                }
             }
-            for arg in type_args {
-                extract_dataref_refs(arg, struct_defs, enum_defs, out);
-            }
-        }
-        Type::UnresolvedName(name) => {
-            if struct_defs.get(name).is_some_and(|d| d.is_dataref) {
-                out.push(*name);
-            }
-        }
-        Type::Struct { name, type_args } => {
-            if struct_defs.get(name).is_some_and(|d| d.is_dataref) {
-                out.push(*name);
-            }
-            for arg in type_args {
-                extract_dataref_refs(arg, struct_defs, enum_defs, out);
-            }
-        }
-        Type::List { elem } => extract_dataref_refs(elem, struct_defs, enum_defs, out),
-        Type::Array { elem, .. } => extract_dataref_refs(elem, struct_defs, enum_defs, out),
-        Type::ArrayView { elem } => extract_dataref_refs(elem, struct_defs, enum_defs, out),
-        Type::Map { key, value } => {
-            extract_dataref_refs(key, struct_defs, enum_defs, out);
-            extract_dataref_refs(value, struct_defs, enum_defs, out);
-        }
-        Type::Tuple(elems) => {
-            for elem in elems {
-                extract_dataref_refs(elem, struct_defs, enum_defs, out);
-            }
-        }
-        Type::NamedTuple(elems) => {
-            for (_, ty) in elems {
-                extract_dataref_refs(ty, struct_defs, enum_defs, out);
-            }
-        }
-        Type::Enum { name, type_args } => {
-            // Recurse into generic args (covers Option<T> and similar).
-            for arg in type_args {
-                extract_dataref_refs(arg, struct_defs, enum_defs, out);
-            }
-            // Also inspect variant fields so enums with DataRef payloads produce edges.
-            if let Some(enum_def) = enum_defs.get(name) {
-                let subst = build_subst(&enum_def.type_params, type_args);
-                for variant in &enum_def.variants {
-                    match &variant.kind {
-                        VariantKind::Unit => {}
-                        VariantKind::Tuple(tys) => {
-                            for field_ty in tys {
-                                let resolved = subst_type(field_ty, &subst);
-                                extract_dataref_refs(&resolved, struct_defs, enum_defs, out);
+            Type::Enum { name, type_args } => {
+                // type_any handles type_args recursion automatically
+                // expand variant fields which are not part of the structural tree
+                if let Some(enum_def) = enum_defs.get(name) {
+                    let subst = build_subst(&enum_def.type_params, type_args);
+                    for variant in &enum_def.variants {
+                        match &variant.kind {
+                            VariantKind::Unit => {}
+                            VariantKind::Tuple(tys) => {
+                                for field_ty in tys {
+                                    let resolved = subst_type(field_ty, &subst);
+                                    extract_dataref_refs(&resolved, struct_defs, enum_defs, out);
+                                }
                             }
-                        }
-                        VariantKind::Struct(fields) => {
-                            for field in fields {
-                                let resolved = subst_type(&field.ty, &subst);
-                                extract_dataref_refs(&resolved, struct_defs, enum_defs, out);
+                            VariantKind::Struct(fields) => {
+                                for field in fields {
+                                    let resolved = subst_type(&field.ty, &subst);
+                                    extract_dataref_refs(&resolved, struct_defs, enum_defs, out);
+                                }
                             }
                         }
                     }
                 }
             }
+            _ => {}
         }
-        _ => {}
-    }
+        false // never short-circuit, collecting, not searching
+    });
 }
 
 fn type_contains_func(ty: &Type, enum_defs: &HashMap<Ident, EnumDef>) -> bool {
-    match ty {
+    type_any(ty, &mut |t| match t {
         Type::Func { .. } => true,
-        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
-            type_contains_func(elem, enum_defs)
-        }
-        Type::Map { key, value } => {
-            type_contains_func(key, enum_defs) || type_contains_func(value, enum_defs)
-        }
-        Type::Tuple(elems) => elems.iter().any(|e| type_contains_func(e, enum_defs)),
-        Type::NamedTuple(elems) => elems
-            .iter()
-            .any(|(_, ty)| type_contains_func(ty, enum_defs)),
         Type::Enum { name, type_args } => {
-            type_args.iter().any(|a| type_contains_func(a, enum_defs))
-                || enum_defs.get(name).is_some_and(|def| {
-                    let subst = build_subst(&def.type_params, type_args);
-                    def.variants.iter().any(|v| match &v.kind {
-                        VariantKind::Unit => false,
-                        VariantKind::Tuple(tys) => tys.iter().any(|t| {
-                            let resolved = subst_type(t, &subst);
-                            type_contains_func(&resolved, enum_defs)
-                        }),
-                        VariantKind::Struct(fields) => fields.iter().any(|f| {
-                            let resolved = subst_type(&f.ty, &subst);
-                            type_contains_func(&resolved, enum_defs)
-                        }),
-                    })
+            // type_any handles type_args recursion automatically
+            // expand variant fields which are not part of the structural tree
+            enum_defs.get(name).is_some_and(|def| {
+                let subst = build_subst(&def.type_params, type_args);
+                def.variants.iter().any(|v| match &v.kind {
+                    VariantKind::Unit => false,
+                    VariantKind::Tuple(tys) => tys.iter().any(|t| {
+                        let resolved = subst_type(t, &subst);
+                        type_contains_func(&resolved, enum_defs)
+                    }),
+                    VariantKind::Struct(fields) => fields.iter().any(|f| {
+                        let resolved = subst_type(&f.ty, &subst);
+                        type_contains_func(&resolved, enum_defs)
+                    }),
                 })
+            })
         }
         _ => false,
-    }
+    })
 }
 
 struct TarjanState {

@@ -2,17 +2,16 @@ use std::collections::HashSet;
 
 use internment::Intern;
 
-use crate::{
-    ast::{FloatSuffix, Ident, Lit, Pattern, PatternNode, Type, VariantKind},
-    span::Span,
-};
-
 use super::{
     composite::validate_field_names,
     error::{Diagnostic, DiagnosticKind},
     expr::type_from_lit,
     infer::{build_subst, subst_type},
     types::{EnumDef, TypeChecker},
+};
+use crate::{
+    ast::{FloatSuffix, Ident, Lit, Pattern, PatternNode, Type, VariantKind},
+    span::Span,
 };
 
 fn type_from_pattern_lit(lit: &Lit) -> Type {
@@ -25,6 +24,343 @@ fn type_from_pattern_lit(lit: &Lit) -> Type {
         Lit::Bool(_) => Type::Bool,
         Lit::String(_) => Type::String,
         Lit::Nil => Type::Void,
+    }
+}
+
+fn check_ident_pattern(
+    span: Span,
+    name: Ident,
+    value_ty: &Type,
+    mutable: bool,
+    in_match: bool,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) -> bool {
+    if in_match && let Some(const_def) = type_checker.get_const(name) {
+        let const_ty = const_def.ty.clone();
+        let const_val = const_def.value.clone();
+        if const_ty != *value_ty && !value_ty.is_infer() {
+            errors.push(Diagnostic::new(
+                span,
+                DiagnosticKind::InvalidLiteralPattern {
+                    expected: value_ty.clone(),
+                    found: const_ty,
+                },
+            ));
+        }
+        let span_key = (span.start, span.end);
+        type_checker
+            .const_pattern_values
+            .insert(span_key, const_val);
+        return false;
+    }
+    type_checker.set_var(name, value_ty.clone(), mutable);
+    true
+}
+
+fn check_tuple_pattern(
+    pattern: &PatternNode,
+    subpatterns: &[PatternNode],
+    value_ty: &Type,
+    mutable: bool,
+    in_match: bool,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) {
+    let Some(elem_types) = value_ty.tuple_element_types() else {
+        errors.push(Diagnostic::new(
+            pattern.span,
+            DiagnosticKind::NonTupleInTuplePattern {
+                found: value_ty.clone(),
+                pattern_arity: subpatterns.len(),
+            },
+        ));
+        return;
+    };
+
+    let same_arity = subpatterns.len() == elem_types.len();
+    if !same_arity {
+        errors.push(Diagnostic::new(
+            pattern.span,
+            DiagnosticKind::TuplePatternArityMismatch {
+                expected: elem_types.len(),
+                found: subpatterns.len(),
+            },
+        ));
+        return;
+    }
+
+    for (subpat, elem_ty) in subpatterns.iter().zip(elem_types.iter()) {
+        check_pattern_inner(
+            subpat,
+            elem_ty,
+            mutable,
+            in_match,
+            None,
+            type_checker,
+            errors,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_named_tuple_pattern(
+    pattern: &PatternNode,
+    elems: &[(Ident, PatternNode)],
+    value_ty: &Type,
+    mutable: bool,
+    in_match: bool,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) {
+    let Some(elem_types) = value_ty.tuple_element_types() else {
+        errors.push(Diagnostic::new(
+            pattern.span,
+            DiagnosticKind::NonTupleInTuplePattern {
+                found: value_ty.clone(),
+                pattern_arity: elems.len(),
+            },
+        ));
+        return;
+    };
+
+    let value_labels: Option<Vec<Ident>> = match value_ty {
+        Type::NamedTuple(fields) => Some(fields.iter().map(|(name, _)| *name).collect()),
+        _ => None,
+    };
+
+    let same_arity = elems.len() == elem_types.len();
+    if !same_arity {
+        errors.push(Diagnostic::new(
+            pattern.span,
+            DiagnosticKind::TuplePatternArityMismatch {
+                expected: elem_types.len(),
+                found: elems.len(),
+            },
+        ));
+        return;
+    }
+
+    let Some(labels) = value_labels else {
+        errors.push(
+            Diagnostic::new(pattern.span, DiagnosticKind::NamedPatternOnPositionalTuple)
+                .with_help("use positional pattern `(a, b, ...)` instead"),
+        );
+        return;
+    };
+
+    for ((pat_label, _), ty_label) in elems.iter().zip(labels.iter()) {
+        if *pat_label != *ty_label {
+            errors.push(Diagnostic::new(
+                pattern.span,
+                DiagnosticKind::TuplePatternLabelMismatch {
+                    expected: *ty_label,
+                    found: *pat_label,
+                },
+            ));
+        }
+    }
+
+    for ((_, subpat), elem_ty) in elems.iter().zip(elem_types.iter()) {
+        check_pattern_inner(
+            subpat,
+            elem_ty,
+            mutable,
+            in_match,
+            None,
+            type_checker,
+            errors,
+        );
+    }
+}
+
+fn check_literal_pattern(span: Span, lit: &Lit, value_ty: &Type, errors: &mut Vec<Diagnostic>) {
+    let is_valid = matches!(lit, Lit::Int(_) | Lit::Bool(_) | Lit::String(_));
+    if !is_valid {
+        errors.push(Diagnostic::new(
+            span,
+            DiagnosticKind::InvalidLiteralPattern {
+                expected: value_ty.clone(),
+                found: type_from_pattern_lit(lit),
+            },
+        ));
+        return;
+    }
+    let lit_ty = type_from_lit(lit);
+    if lit_ty != *value_ty && !value_ty.is_infer() {
+        errors.push(Diagnostic::new(
+            span,
+            DiagnosticKind::InvalidLiteralPattern {
+                expected: value_ty.clone(),
+                found: lit_ty,
+            },
+        ));
+    }
+}
+
+fn check_range_pattern(
+    span: Span,
+    start: &Option<Lit>,
+    end: &Option<Lit>,
+    inclusive: bool,
+    value_ty: &Type,
+    errors: &mut Vec<Diagnostic>,
+) {
+    match (start.as_ref(), end.as_ref()) {
+        (Some(start_lit), Some(end_lit)) => {
+            let start_ty = type_from_pattern_lit(start_lit);
+            let end_ty = type_from_pattern_lit(end_lit);
+
+            if start_ty != end_ty {
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::RangePatternBoundTypeMismatch {
+                        start: start_ty,
+                        end: end_ty,
+                    },
+                ));
+                return;
+            }
+
+            if !start_ty.is_num() {
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::NonNumericRangePattern { found: start_ty },
+                ));
+                return;
+            }
+
+            if start_ty != *value_ty && !value_ty.is_infer() {
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::InvalidLiteralPattern {
+                        expected: value_ty.clone(),
+                        found: start_ty,
+                    },
+                ));
+                return;
+            }
+
+            match (start_lit, end_lit) {
+                (Lit::Int(s), Lit::Int(e)) => {
+                    let empty = if inclusive { s > e } else { s >= e };
+                    if empty {
+                        errors.push(Diagnostic::new(span, DiagnosticKind::EmptyRangePattern));
+                    }
+                }
+                (Lit::Float { value: s, .. }, Lit::Float { value: e, .. }) => {
+                    let empty = if inclusive { s > e } else { s >= e };
+                    if empty {
+                        errors.push(Diagnostic::new(span, DiagnosticKind::EmptyRangePattern));
+                    }
+                }
+                _ => {}
+            }
+        }
+        (Some(bound_lit), None) | (None, Some(bound_lit)) => {
+            let bound_ty = type_from_pattern_lit(bound_lit);
+
+            if !bound_ty.is_num() {
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::NonNumericRangePattern { found: bound_ty },
+                ));
+                return;
+            }
+
+            if bound_ty != *value_ty && !value_ty.is_infer() {
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::InvalidLiteralPattern {
+                        expected: value_ty.clone(),
+                        found: bound_ty,
+                    },
+                ));
+            }
+        }
+        (None, None) => {}
+    }
+}
+
+fn check_optional_pattern(
+    pattern: &PatternNode,
+    inner: &PatternNode,
+    value_ty: &Type,
+    mutable: bool,
+    in_match: bool,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) {
+    if !value_ty.is_option() && !value_ty.is_infer() {
+        errors.push(Diagnostic::new(
+            pattern.span,
+            DiagnosticKind::OptionalPatternOnNonOptional {
+                found: value_ty.clone(),
+            },
+        ));
+        return;
+    }
+
+    if matches!(&inner.node, Pattern::Optional(_)) {
+        errors.push(Diagnostic::new(
+            pattern.span,
+            DiagnosticKind::NestedOptionalPattern,
+        ));
+        return;
+    }
+
+    let inner_ty = value_ty.option_inner().cloned().unwrap_or(Type::Infer);
+    check_pattern_inner(
+        inner,
+        &inner_ty,
+        mutable,
+        in_match,
+        None,
+        type_checker,
+        errors,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_or_pattern(
+    alternatives: &[PatternNode],
+    value_ty: &Type,
+    mutable: bool,
+    in_match: bool,
+    match_ctx: &mut Option<(&EnumDef, &mut HashSet<Ident>, &mut bool)>,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) {
+    let mut first_bindings: Option<Vec<(Ident, Type, bool)>> = None;
+
+    for alt in alternatives {
+        let inner_ctx = match_ctx
+            .as_mut()
+            .map(|(def, cov, wc)| (*def, &mut **cov, &mut **wc));
+        type_checker.push_scope();
+        check_pattern_inner(
+            alt,
+            value_ty,
+            mutable,
+            in_match,
+            inner_ctx,
+            type_checker,
+            errors,
+        );
+        let scope_bindings = type_checker.collect_current_scope_bindings();
+        type_checker.pop_scope();
+        match &first_bindings {
+            None => first_bindings = Some(scope_bindings),
+            Some(first) => {
+                validate_or_bindings(first, &scope_bindings, alt.span, errors);
+            }
+        }
+    }
+
+    if let Some(bindings) = first_bindings {
+        for (name, ty, is_mutable) in bindings {
+            type_checker.set_var(name, ty, is_mutable);
+        }
     }
 }
 
@@ -300,27 +636,17 @@ fn check_pattern_inner(
 ) {
     match &pattern.node {
         Pattern::Ident(name) => {
-            if in_match && let Some(const_def) = type_checker.get_const(*name) {
-                let const_ty = const_def.ty.clone();
-                let const_val = const_def.value.clone();
-                if const_ty != *value_ty && !value_ty.is_infer() {
-                    errors.push(Diagnostic::new(
-                        pattern.span,
-                        DiagnosticKind::InvalidLiteralPattern {
-                            expected: value_ty.clone(),
-                            found: const_ty,
-                        },
-                    ));
-                }
-                let span_key = (pattern.span.start, pattern.span.end);
-                type_checker
-                    .const_pattern_values
-                    .insert(span_key, const_val);
-                return;
-            }
-            type_checker.set_var(*name, value_ty.clone(), mutable);
-            if let Some((_, _, has_wildcard)) = match_ctx {
-                *has_wildcard = true;
+            let is_binding = check_ident_pattern(
+                pattern.span,
+                *name,
+                value_ty,
+                mutable,
+                in_match,
+                type_checker,
+                errors,
+            );
+            if is_binding && let Some((_, _, has_wildcard)) = &mut match_ctx {
+                **has_wildcard = true;
             }
         }
         Pattern::Wildcard => {
@@ -329,101 +655,26 @@ fn check_pattern_inner(
             }
         }
         Pattern::Tuple(subpatterns) => {
-            let Some(elem_types) = value_ty.tuple_element_types() else {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::NonTupleInTuplePattern {
-                        found: value_ty.clone(),
-                        pattern_arity: subpatterns.len(),
-                    },
-                ));
-                return;
-            };
-
-            let same_arity = subpatterns.len() == elem_types.len();
-            if !same_arity {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::TuplePatternArityMismatch {
-                        expected: elem_types.len(),
-                        found: subpatterns.len(),
-                    },
-                ));
-                return;
-            }
-
-            for (subpat, elem_ty) in subpatterns.iter().zip(elem_types.iter()) {
-                check_pattern_inner(
-                    subpat,
-                    elem_ty,
-                    mutable,
-                    in_match,
-                    None,
-                    type_checker,
-                    errors,
-                );
-            }
+            check_tuple_pattern(
+                pattern,
+                subpatterns,
+                value_ty,
+                mutable,
+                in_match,
+                type_checker,
+                errors,
+            );
         }
         Pattern::NamedTuple(elems) => {
-            let Some(elem_types) = value_ty.tuple_element_types() else {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::NonTupleInTuplePattern {
-                        found: value_ty.clone(),
-                        pattern_arity: elems.len(),
-                    },
-                ));
-                return;
-            };
-
-            let value_labels: Option<Vec<Ident>> = match value_ty {
-                Type::NamedTuple(fields) => Some(fields.iter().map(|(name, _)| *name).collect()),
-                _ => None,
-            };
-
-            let same_arity = elems.len() == elem_types.len();
-            if !same_arity {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::TuplePatternArityMismatch {
-                        expected: elem_types.len(),
-                        found: elems.len(),
-                    },
-                ));
-                return;
-            }
-
-            let Some(labels) = value_labels else {
-                errors.push(
-                    Diagnostic::new(pattern.span, DiagnosticKind::NamedPatternOnPositionalTuple)
-                        .with_help("use positional pattern `(a, b, ...)` instead"),
-                );
-                return;
-            };
-
-            for ((pat_label, _), ty_label) in elems.iter().zip(labels.iter()) {
-                if *pat_label != *ty_label {
-                    errors.push(Diagnostic::new(
-                        pattern.span,
-                        DiagnosticKind::TuplePatternLabelMismatch {
-                            expected: *ty_label,
-                            found: *pat_label,
-                        },
-                    ));
-                }
-            }
-
-            for ((_, subpat), elem_ty) in elems.iter().zip(elem_types.iter()) {
-                check_pattern_inner(
-                    subpat,
-                    elem_ty,
-                    mutable,
-                    in_match,
-                    None,
-                    type_checker,
-                    errors,
-                );
-            }
+            check_named_tuple_pattern(
+                pattern,
+                elems,
+                value_ty,
+                mutable,
+                in_match,
+                type_checker,
+                errors,
+            );
         }
         Pattern::Struct { name, fields } => {
             check_struct_destructure_pattern(
@@ -490,19 +741,14 @@ fn check_pattern_inner(
             );
         }
         Pattern::InferredEnumUnit { variant } => {
-            let Type::Enum {
-                name: enum_name, ..
-            } = value_ty
+            let Some(enum_name) =
+                resolve_inferred_enum_name(pattern.span, *variant, value_ty, errors)
             else {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::CannotInferEnumVariant { variant: *variant },
-                ));
                 return;
             };
             check_enum_pattern(
                 pattern,
-                *enum_name,
+                enum_name,
                 *variant,
                 &[],
                 value_ty,
@@ -514,19 +760,14 @@ fn check_pattern_inner(
             );
         }
         Pattern::InferredEnumTuple { variant, fields } => {
-            let Type::Enum {
-                name: enum_name, ..
-            } = value_ty
+            let Some(enum_name) =
+                resolve_inferred_enum_name(pattern.span, *variant, value_ty, errors)
             else {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::CannotInferEnumVariant { variant: *variant },
-                ));
                 return;
             };
             check_enum_pattern(
                 pattern,
-                *enum_name,
+                enum_name,
                 *variant,
                 fields,
                 value_ty,
@@ -542,19 +783,14 @@ fn check_pattern_inner(
             fields,
             has_rest,
         } => {
-            let Type::Enum {
-                name: enum_name, ..
-            } = value_ty
+            let Some(enum_name) =
+                resolve_inferred_enum_name(pattern.span, *variant, value_ty, errors)
             else {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::CannotInferEnumVariant { variant: *variant },
-                ));
                 return;
             };
             check_enum_struct_pattern(
                 pattern,
-                *enum_name,
+                enum_name,
                 *variant,
                 fields,
                 *has_rest,
@@ -567,27 +803,7 @@ fn check_pattern_inner(
             );
         }
         Pattern::Lit(lit) => {
-            let is_valid = matches!(lit, Lit::Int(_) | Lit::Bool(_) | Lit::String(_));
-            if !is_valid {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::InvalidLiteralPattern {
-                        expected: value_ty.clone(),
-                        found: type_from_pattern_lit(lit),
-                    },
-                ));
-                return;
-            }
-            let lit_ty = type_from_lit(lit);
-            if lit_ty != *value_ty && !value_ty.is_infer() {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::InvalidLiteralPattern {
-                        expected: value_ty.clone(),
-                        found: lit_ty,
-                    },
-                ));
-            }
+            check_literal_pattern(pattern.span, lit, value_ty, errors);
         }
         Pattern::VarIdent(name) => {
             type_checker.set_var(*name, value_ty.clone(), true);
@@ -617,156 +833,52 @@ fn check_pattern_inner(
             start,
             end,
             inclusive,
-        } => match (start.as_ref(), end.as_ref()) {
-            (Some(start_lit), Some(end_lit)) => {
-                let start_ty = type_from_pattern_lit(start_lit);
-                let end_ty = type_from_pattern_lit(end_lit);
-
-                if start_ty != end_ty {
-                    errors.push(Diagnostic::new(
-                        pattern.span,
-                        DiagnosticKind::RangePatternBoundTypeMismatch {
-                            start: start_ty,
-                            end: end_ty,
-                        },
-                    ));
-                    return;
-                }
-
-                if !start_ty.is_num() {
-                    errors.push(Diagnostic::new(
-                        pattern.span,
-                        DiagnosticKind::NonNumericRangePattern { found: start_ty },
-                    ));
-                    return;
-                }
-
-                if start_ty != *value_ty && !value_ty.is_infer() {
-                    errors.push(Diagnostic::new(
-                        pattern.span,
-                        DiagnosticKind::InvalidLiteralPattern {
-                            expected: value_ty.clone(),
-                            found: start_ty,
-                        },
-                    ));
-                    return;
-                }
-
-                match (start_lit, end_lit) {
-                    (Lit::Int(s), Lit::Int(e)) => {
-                        let empty = if *inclusive { s > e } else { s >= e };
-                        if empty {
-                            errors.push(Diagnostic::new(
-                                pattern.span,
-                                DiagnosticKind::EmptyRangePattern,
-                            ));
-                        }
-                    }
-                    (Lit::Float { value: s, .. }, Lit::Float { value: e, .. }) => {
-                        let empty = if *inclusive { s > e } else { s >= e };
-                        if empty {
-                            errors.push(Diagnostic::new(
-                                pattern.span,
-                                DiagnosticKind::EmptyRangePattern,
-                            ));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            (Some(bound_lit), None) | (None, Some(bound_lit)) => {
-                let bound_ty = type_from_pattern_lit(bound_lit);
-
-                if !bound_ty.is_num() {
-                    errors.push(Diagnostic::new(
-                        pattern.span,
-                        DiagnosticKind::NonNumericRangePattern { found: bound_ty },
-                    ));
-                    return;
-                }
-
-                if bound_ty != *value_ty && !value_ty.is_infer() {
-                    errors.push(Diagnostic::new(
-                        pattern.span,
-                        DiagnosticKind::InvalidLiteralPattern {
-                            expected: value_ty.clone(),
-                            found: bound_ty,
-                        },
-                    ));
-                }
-            }
-            (None, None) => {}
-        },
+        } => {
+            check_range_pattern(pattern.span, start, end, *inclusive, value_ty, errors);
+        }
         Pattern::Optional(inner) => {
-            if !value_ty.is_option() && !value_ty.is_infer() {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::OptionalPatternOnNonOptional {
-                        found: value_ty.clone(),
-                    },
-                ));
-                return;
-            }
-
-            if matches!(&inner.node, Pattern::Optional(_)) {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::NestedOptionalPattern,
-                ));
-                return;
-            }
-
-            let inner_ty = value_ty.option_inner().cloned().unwrap_or(Type::Infer);
-
-            if let Some((_, covered_variants, _)) = match_ctx {
+            if let Some((_, covered_variants, _)) = &mut match_ctx {
                 let some_ident = Ident(Intern::new("Some".to_string()));
                 covered_variants.insert(some_ident);
             }
-
-            check_pattern_inner(
+            check_optional_pattern(
+                pattern,
                 inner,
-                &inner_ty,
+                value_ty,
                 mutable,
                 in_match,
-                None,
                 type_checker,
                 errors,
             );
         }
         Pattern::Or(alternatives) => {
-            let mut first_bindings: Option<Vec<(Ident, Type, bool)>> = None;
-
-            for alt in alternatives {
-                let inner_ctx = match_ctx
-                    .as_mut()
-                    .map(|(def, cov, wc)| (*def, &mut **cov, &mut **wc));
-                type_checker.push_scope();
-                check_pattern_inner(
-                    alt,
-                    value_ty,
-                    mutable,
-                    in_match,
-                    inner_ctx,
-                    type_checker,
-                    errors,
-                );
-                let scope_bindings = type_checker.collect_current_scope_bindings();
-                type_checker.pop_scope();
-                match &first_bindings {
-                    None => first_bindings = Some(scope_bindings),
-                    Some(first) => {
-                        validate_or_bindings(first, &scope_bindings, alt.span, errors);
-                    }
-                }
-            }
-
-            if let Some(bindings) = first_bindings {
-                for (name, ty, is_mutable) in bindings {
-                    type_checker.set_var(name, ty, is_mutable);
-                }
-            }
+            check_or_pattern(
+                alternatives,
+                value_ty,
+                mutable,
+                in_match,
+                &mut match_ctx,
+                type_checker,
+                errors,
+            );
         }
     }
+}
+
+fn resolve_inferred_enum_name(
+    span: Span,
+    variant: Ident,
+    value_ty: &Type,
+    errors: &mut Vec<Diagnostic>,
+) -> Option<Ident> {
+    let Type::Enum { name, .. } = value_ty else {
+        errors.push(Diagnostic::new(
+            span,
+            DiagnosticKind::CannotInferEnumVariant { variant },
+        ));
+        return None;
+    };
+    Some(*name)
 }
 
 fn check_enum_preamble<'a>(
@@ -985,6 +1097,7 @@ fn check_enum_struct_pattern(
             variant_name,
             field,
         },
+        None,
         errors,
     );
 
@@ -1034,34 +1147,34 @@ fn check_struct_destructure_pattern(
             return;
         }
 
-        let mut seen = HashSet::new();
-        for (field_name, subpat) in fields {
-            if !seen.insert(*field_name) {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::StructDestructureDuplicateField {
-                        type_name,
-                        field: *field_name,
-                    },
-                ));
-                continue;
+        let provided: Vec<(Ident, Span)> = fields.iter().map(|(n, _)| (*n, pattern.span)).collect();
+        let matched = validate_field_names(
+            &provided,
+            pattern.span,
+            &struct_def.fields,
+            true,
+            |field| DiagnosticKind::StructDestructureDuplicateField { type_name, field },
+            |field| DiagnosticKind::StructDestructureUnknownField { type_name, field },
+            |_| unreachable!(),
+            None,
+            errors,
+        );
+
+        let subst = match value_ty {
+            Type::Struct { type_args, .. } | Type::DataRef { type_args, .. } => {
+                build_subst(&struct_def.type_params, type_args)
             }
-            let Some(field_def) = struct_def.fields.iter().find(|f| f.name == *field_name) else {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::StructDestructureUnknownField {
-                        type_name,
-                        field: *field_name,
-                    },
-                ));
+            _ => Default::default(),
+        };
+
+        for ((_, subpat), matched_def) in fields.iter().zip(matched.iter()) {
+            let Some(field_def) = matched_def else {
                 continue;
             };
-            let resolved_ty = match value_ty {
-                Type::Struct { type_args, .. } | Type::DataRef { type_args, .. } => {
-                    let subst = build_subst(&struct_def.type_params, type_args);
-                    subst_type(&field_def.ty, &subst)
-                }
-                _ => field_def.ty.clone(),
+            let resolved_ty = if subst.is_empty() {
+                field_def.ty.clone()
+            } else {
+                subst_type(&field_def.ty, &subst)
             };
             check_pattern_inner(
                 subpat,
@@ -1090,26 +1203,22 @@ fn check_struct_destructure_pattern(
             return;
         }
 
-        let mut seen = HashSet::new();
-        for (field_name, subpat) in fields {
-            if !seen.insert(*field_name) {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::StructDestructureDuplicateField {
-                        type_name,
-                        field: *field_name,
-                    },
-                ));
-                continue;
-            }
-            let Some(field_def) = extern_def.fields.get(field_name) else {
-                errors.push(Diagnostic::new(
-                    pattern.span,
-                    DiagnosticKind::StructDestructureUnknownField {
-                        type_name,
-                        field: *field_name,
-                    },
-                ));
+        let expected_fields = extern_def.as_struct_fields();
+        let provided: Vec<(Ident, Span)> = fields.iter().map(|(n, _)| (*n, pattern.span)).collect();
+        let matched = validate_field_names(
+            &provided,
+            pattern.span,
+            &expected_fields,
+            true,
+            |field| DiagnosticKind::StructDestructureDuplicateField { type_name, field },
+            |field| DiagnosticKind::StructDestructureUnknownField { type_name, field },
+            |_| unreachable!(),
+            None,
+            errors,
+        );
+
+        for ((_, subpat), matched_def) in fields.iter().zip(matched.iter()) {
+            let Some(field_def) = matched_def else {
                 continue;
             };
             check_pattern_inner(

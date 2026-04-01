@@ -15,18 +15,23 @@ repository = "https://github.com/Nazariglez/anvyx"
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 
+# allow cast to u16/u32 for VM instruction operands
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"
 cast_possible_wrap = "allow"
 
+# allow use functions that return Result/Option without checking the result
 must_use_candidate = "allow"
 
+# don't need to document all errors and panics
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 doc_markdown = "allow"
 
+# allow long match arms and lowering functions
 too_many_lines = "allow"
 
+# allow short names for compiler code (lhs/rhs, a/b, ty/tv, lo/hi)
 similar_names = "allow"
 
 # avoid polluting the namespace with explicit imports 

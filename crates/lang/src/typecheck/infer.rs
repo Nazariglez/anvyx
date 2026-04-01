@@ -1,9 +1,6 @@
-use crate::{
-    ast::{ExprNode, Func, FuncParam, Ident, Mutability, Type, TypeParam, TypeVarId},
-    span::Span,
-};
-use internment::Intern;
 use std::collections::HashMap;
+
+use internment::Intern;
 
 use super::{
     constraint::{TypeRef, resolve_constraints},
@@ -11,6 +8,11 @@ use super::{
     expr::check_expr,
     types::{InferenceSlots, TypeChecker},
     unify::contains_infer,
+    visit::fold_type,
+};
+use crate::{
+    ast::{ExprNode, Func, FuncParam, Ident, Mutability, Type, TypeParam, TypeVarId},
+    span::Span,
 };
 
 /// Builds a fucntion type from the AST node
@@ -33,51 +35,13 @@ pub(super) fn type_from_fn(func: &Func) -> Type {
 /// Substitutes type variables in a type with concrete types from the substitution map
 /// fn(T) -> T where "T = int" then fn(int) -> int
 pub fn subst_type(ty: &Type, subst: &HashMap<TypeVarId, Type>) -> Type {
-    use Type::*;
-    match ty {
-        Var(id) => subst.get(id).cloned().unwrap_or_else(|| ty.clone()),
-        Func { params, ret } => Func {
-            params: params
-                .iter()
-                .map(|p| FuncParam::new(subst_type(&p.ty, subst), p.mutable))
-                .collect(),
-            ret: subst_type(ret, subst).boxed(),
-        },
-        Tuple(elems) => Tuple(elems.iter().map(|e| subst_type(e, subst)).collect()),
-        NamedTuple(fields) => NamedTuple(
-            fields
-                .iter()
-                .map(|(n, t)| (*n, subst_type(t, subst)))
-                .collect(),
-        ),
-        Struct { name, type_args } => Struct {
-            name: *name,
-            type_args: type_args.iter().map(|a| subst_type(a, subst)).collect(),
-        },
-        DataRef { name, type_args } => DataRef {
-            name: *name,
-            type_args: type_args.iter().map(|a| subst_type(a, subst)).collect(),
-        },
-        Enum { name, type_args } => Enum {
-            name: *name,
-            type_args: type_args.iter().map(|a| subst_type(a, subst)).collect(),
-        },
-        Array { elem, len } => Array {
-            elem: subst_type(elem, subst).boxed(),
-            len: *len,
-        },
-        ArrayView { elem } => ArrayView {
-            elem: subst_type(elem, subst).boxed(),
-        },
-        List { elem } => List {
-            elem: subst_type(elem, subst).boxed(),
-        },
-        Map { key, value } => Map {
-            key: subst_type(key, subst).boxed(),
-            value: subst_type(value, subst).boxed(),
-        },
-        _ => ty.clone(),
+    if subst.is_empty() {
+        return ty.clone();
     }
+    fold_type(ty, &mut |t| match t {
+        Type::Var(id) => subst.get(&id).cloned().unwrap_or(Type::Var(id)),
+        other => other,
+    })
 }
 
 pub(super) fn build_subst(
@@ -360,59 +324,14 @@ pub(super) fn constrain_slots_from_type(
 }
 
 pub fn resolve_type_param_names(ty: &Type, type_params: &[TypeParam]) -> Type {
-    match ty {
+    fold_type(ty, &mut |t| match t {
         Type::UnresolvedName(name) => {
-            if let Some(param) = type_params.iter().find(|p| p.name == *name) {
+            if let Some(param) = type_params.iter().find(|p| p.name == name) {
                 Type::Var(param.id)
             } else {
-                ty.clone()
+                Type::UnresolvedName(name)
             }
         }
-        Type::Struct { name, type_args } => Type::Struct {
-            name: *name,
-            type_args: type_args
-                .iter()
-                .map(|a| resolve_type_param_names(a, type_params))
-                .collect(),
-        },
-        Type::DataRef { name, type_args } => Type::DataRef {
-            name: *name,
-            type_args: type_args
-                .iter()
-                .map(|a| resolve_type_param_names(a, type_params))
-                .collect(),
-        },
-        Type::Enum { name, type_args } => Type::Enum {
-            name: *name,
-            type_args: type_args
-                .iter()
-                .map(|a| resolve_type_param_names(a, type_params))
-                .collect(),
-        },
-        Type::Tuple(elems) => Type::Tuple(
-            elems
-                .iter()
-                .map(|e| resolve_type_param_names(e, type_params))
-                .collect(),
-        ),
-        Type::Func { params, ret } => Type::Func {
-            params: params
-                .iter()
-                .map(|p| FuncParam::new(resolve_type_param_names(&p.ty, type_params), p.mutable))
-                .collect(),
-            ret: resolve_type_param_names(ret, type_params).boxed(),
-        },
-        Type::List { elem } => Type::List {
-            elem: resolve_type_param_names(elem, type_params).boxed(),
-        },
-        Type::Array { elem, len } => Type::Array {
-            elem: resolve_type_param_names(elem, type_params).boxed(),
-            len: *len,
-        },
-        Type::Map { key, value } => Type::Map {
-            key: resolve_type_param_names(key, type_params).boxed(),
-            value: resolve_type_param_names(value, type_params).boxed(),
-        },
-        _ => ty.clone(),
-    }
+        other => other,
+    })
 }

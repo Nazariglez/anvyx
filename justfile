@@ -22,4 +22,4 @@ scan-tests threshold="75":
     python3 scan_tests.py -t {{threshold}}
 
 fmt:
-    rustup run nightly cargo fmt
+    cargo +nightly fmt

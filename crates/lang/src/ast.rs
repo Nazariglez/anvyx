@@ -1,6 +1,8 @@
-use crate::span::Spanned;
-use internment::Intern;
 use std::fmt::Display;
+
+use internment::Intern;
+
+use crate::span::Spanned;
 
 pub const OPTION_ENUM_NAME: &str = "Option";
 
@@ -414,7 +416,7 @@ impl Display for Type {
             Type::Tuple(elements) => {
                 let parts = elements
                     .iter()
-                    .map(|t| t.to_string())
+                    .map(ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, "({parts})")
@@ -433,7 +435,7 @@ impl Display for Type {
                 } else {
                     let args = type_args
                         .iter()
-                        .map(|t| t.to_string())
+                        .map(ToString::to_string)
                         .collect::<Vec<_>>()
                         .join(", ");
                     write!(f, "{name}<{args}>")
@@ -451,7 +453,7 @@ impl Display for Type {
                 } else {
                     let args = type_args
                         .iter()
-                        .map(|t| t.to_string())
+                        .map(ToString::to_string)
                         .collect::<Vec<_>>()
                         .join(", ");
                     write!(f, "{name}<{args}>")

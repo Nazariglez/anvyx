@@ -1,17 +1,11 @@
-use crate::{
-    ast::{
-        CallNode, ExprKind, ExprNode, FieldAccessNode, FuncNode, FuncParam, Ident, Lit,
-        MethodReceiver, Mutability, Type, TypeParam, VariantKind,
-    },
-    span::Span,
-};
-use internment::Intern;
 use std::collections::HashMap;
+
+use internment::Intern;
 
 use super::{
     const_eval::ConstValue,
     constraint::{TypeRef, resolve_constraints},
-    decl::{check_body_common, check_fn_body},
+    decl::check_body_common,
     error::{Diagnostic, DiagnosticKind},
     expr::{check_expr, field_path, root_ident},
     infer::{
@@ -22,6 +16,13 @@ use super::{
         EnumDef, ExternMethodDef, ExternTypeDef, MethodContext, MethodDef, MethodSpecKey,
         ModuleDef, SpecializationKey, SpecializationResult, StructDef, TypeChecker,
     },
+};
+use crate::{
+    ast::{
+        BlockNode, CallNode, ExprKind, ExprNode, FieldAccessNode, FuncNode, FuncParam, Ident, Lit,
+        MethodReceiver, Mutability, Type, TypeParam, VariantKind,
+    },
+    span::Span,
 };
 
 fn paths_alias(a: &[Ident], b: &[Ident]) -> bool {
@@ -235,6 +236,86 @@ fn map_type_label() -> Ident {
     *LABEL
 }
 
+fn check_predicate_combinator(
+    call: &CallNode,
+    elem: &Type,
+    ret_type: &Type,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) -> Type {
+    let func_param = Type::Func {
+        params: vec![FuncParam::immut(elem.clone())],
+        ret: Box::new(Type::Bool),
+    };
+    let param_types = [func_param];
+    check_call_signature(
+        call.span,
+        &param_types,
+        param_types.len(),
+        ret_type,
+        &call.node.args,
+        type_checker,
+        errors,
+    )
+}
+
+fn check_for_each_var_mutation(
+    target: &ExprNode,
+    args: &[ExprNode],
+    type_checker: &TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) {
+    let Some(first_arg) = args.first() else {
+        return;
+    };
+
+    if let ExprKind::Lambda(lambda) = &first_arg.node.kind {
+        if let Some(first_param) = lambda.node.params.first()
+            && first_param.mutable
+            && let Some(root) = root_ident(target)
+            && let Some(info) = type_checker.get_var(root)
+            && !info.mutable
+        {
+            errors.push(
+                Diagnostic::new(
+                    first_arg.span,
+                    DiagnosticKind::MutableParamRequiresVarTarget {
+                        name: first_param.name,
+                    },
+                )
+                .with_help("declare the collection with 'var' to allow in-place mutation"),
+            );
+        }
+        return;
+    }
+
+    if let Some((_, arg_ty)) = type_checker.get_type(first_arg.node.id) {
+        let arg_ty = arg_ty.clone();
+        if let Type::Func { params, .. } = &arg_ty
+            && let Some(first_fp) = params.first()
+            && first_fp.mutable
+            && let Some(root) = root_ident(target)
+            && let Some(info) = type_checker.get_var(root)
+            && !info.mutable
+        {
+            errors.push(
+                Diagnostic::new(
+                    first_arg.span,
+                    DiagnosticKind::MutableFnParamRequiresVarTarget,
+                )
+                .with_help("declare the collection with 'var' to allow in-place mutation"),
+            );
+        }
+    }
+}
+
+fn infer_lambda_return_type(args: &[ExprNode], type_checker: &TypeChecker) -> Type {
+    match args.first().and_then(|a| type_checker.get_type(a.node.id)) {
+        Some((_, Type::Func { ret, .. })) => (**ret).clone(),
+        _ => Type::Infer,
+    }
+}
+
 pub(super) fn check_list_method(
     call: &CallNode,
     target: &ExprNode,
@@ -286,36 +367,16 @@ pub(super) fn check_list_method(
                 type_checker,
                 errors,
             );
-            let result_elem = match node
-                .args
-                .first()
-                .and_then(|a| type_checker.get_type(a.node.id))
-            {
-                Some((_, Type::Func { ret, .. })) => (**ret).clone(),
-                _ => Type::Infer,
-            };
+            let result_elem = infer_lambda_return_type(&node.args, type_checker);
             Type::List {
                 elem: Box::new(result_elem),
             }
         }
         "filter" => {
-            let func_param = Type::Func {
-                params: vec![FuncParam::immut(elem.clone())],
-                ret: Box::new(Type::Bool),
-            };
-            let param_types = [func_param];
-            let ret_type = Type::List {
+            let ret = Type::List {
                 elem: Box::new(elem.clone()),
             };
-            check_call_signature(
-                call.span,
-                &param_types,
-                param_types.len(),
-                &ret_type,
-                &node.args,
-                type_checker,
-                errors,
-            )
+            check_predicate_combinator(call, elem, &ret, type_checker, errors)
         }
         "fold" => {
             if node.args.len() != 2 {
@@ -369,130 +430,19 @@ pub(super) fn check_list_method(
                 type_checker,
                 errors,
             );
-
-            if let Some(first_arg) = node.args.first()
-                && let ExprKind::Lambda(lambda) = &first_arg.node.kind
-                && let Some(first_param) = lambda.node.params.first()
-                && first_param.mutable
-                && let Some(root) = root_ident(target)
-                && let Some(info) = type_checker.get_var(root)
-                && !info.mutable
-            {
-                errors.push(
-                    Diagnostic::new(
-                        first_arg.span,
-                        DiagnosticKind::MutableParamRequiresVarTarget {
-                            name: first_param.name,
-                        },
-                    )
-                    .with_help("declare the collection with 'var' to allow in-place mutation"),
-                );
-            }
-
-            if let Some(first_arg) = node.args.first()
-                && !matches!(first_arg.node.kind, ExprKind::Lambda(_))
-                && let Some((_, arg_ty)) = type_checker.get_type(first_arg.node.id)
-            {
-                let arg_ty = arg_ty.clone();
-                if let Type::Func { params, .. } = &arg_ty
-                    && let Some(first_fp) = params.first()
-                    && first_fp.mutable
-                    && let Some(root) = root_ident(target)
-                    && let Some(info) = type_checker.get_var(root)
-                    && !info.mutable
-                {
-                    errors.push(
-                        Diagnostic::new(
-                            first_arg.span,
-                            DiagnosticKind::MutableFnParamRequiresVarTarget,
-                        )
-                        .with_help("declare the collection with 'var' to allow in-place mutation"),
-                    );
-                }
-            }
-
+            check_for_each_var_mutation(target, &node.args, type_checker, errors);
             result
         }
-        "any" => {
-            let func_param = Type::Func {
-                params: vec![FuncParam::immut(elem.clone())],
-                ret: Box::new(Type::Bool),
-            };
-            let param_types = [func_param];
-            check_call_signature(
-                call.span,
-                &param_types,
-                param_types.len(),
-                &Type::Bool,
-                &node.args,
-                type_checker,
-                errors,
-            )
-        }
-        "all" => {
-            let func_param = Type::Func {
-                params: vec![FuncParam::immut(elem.clone())],
-                ret: Box::new(Type::Bool),
-            };
-            let param_types = [func_param];
-            check_call_signature(
-                call.span,
-                &param_types,
-                param_types.len(),
-                &Type::Bool,
-                &node.args,
-                type_checker,
-                errors,
-            )
-        }
+        "any" | "all" => check_predicate_combinator(call, elem, &Type::Bool, type_checker, errors),
         "find" => {
-            let func_param = Type::Func {
-                params: vec![FuncParam::immut(elem.clone())],
-                ret: Box::new(Type::Bool),
-            };
-            let param_types = [func_param];
-            check_call_signature(
-                call.span,
-                &param_types,
-                param_types.len(),
-                &Type::option_of(elem.clone()),
-                &node.args,
-                type_checker,
-                errors,
-            )
+            let ret = Type::option_of(elem.clone());
+            check_predicate_combinator(call, elem, &ret, type_checker, errors)
         }
         "find_index" => {
-            let func_param = Type::Func {
-                params: vec![FuncParam::immut(elem.clone())],
-                ret: Box::new(Type::Bool),
-            };
-            let param_types = [func_param];
-            check_call_signature(
-                call.span,
-                &param_types,
-                param_types.len(),
-                &Type::option_of(Type::Int),
-                &node.args,
-                type_checker,
-                errors,
-            )
+            let ret = Type::option_of(Type::Int);
+            check_predicate_combinator(call, elem, &ret, type_checker, errors)
         }
-        "count" => {
-            let func_param = Type::Func {
-                params: vec![FuncParam::immut(elem.clone())],
-                ret: Box::new(Type::Bool),
-            };
-            let param_types = [func_param];
-            check_call_signature(
-                call.span,
-                &param_types,
-                param_types.len(),
-                &Type::Int,
-                &node.args,
-                type_checker,
-                errors,
-            )
-        }
+        "count" => check_predicate_combinator(call, elem, &Type::Int, type_checker, errors),
         "sort_by" => {
             check_receiver_mutability(target, label, method_name, type_checker, errors);
             let func_param = Type::Func {
@@ -579,14 +529,7 @@ pub(super) fn check_map_method(
                 type_checker,
                 errors,
             );
-            let result_value = match node
-                .args
-                .first()
-                .and_then(|a| type_checker.get_type(a.node.id))
-            {
-                Some((_, Type::Func { ret, .. })) => (**ret).clone(),
-                _ => Type::Infer,
-            };
+            let result_value = infer_lambda_return_type(&node.args, type_checker);
             Type::Map {
                 key: Box::new(key.clone()),
                 value: Box::new(result_value),
@@ -939,10 +882,8 @@ pub(super) fn check_module_func_call(
     };
 
     let type_params = module_def.func_type_params.get(&func_name).cloned();
-    let is_generic = type_params.as_ref().is_some_and(|tp| !tp.is_empty());
 
-    if is_generic {
-        let type_params = type_params.unwrap();
+    if let Some(type_params) = type_params.filter(|tp| !tp.is_empty()) {
         let template = module_def
             .generic_func_templates
             .get(&func_name)
@@ -1975,6 +1916,56 @@ pub(super) fn report_instantiation_errors(
     }
 }
 
+struct InstantiationConfig<'a> {
+    params: Vec<(Ident, Type, bool)>,
+    body: &'a BlockNode,
+    ret_ty: Type,
+    call_span: Span,
+    context_name: String,
+    type_params: Vec<TypeParam>,
+    type_args: Vec<Type>,
+}
+
+fn instantiate_generic_body(
+    config: InstantiationConfig,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) -> SpecializationResult {
+    let prev_snapshot = type_checker.spec_type_snapshot.take();
+    type_checker.spec_type_snapshot = Some(HashMap::new());
+
+    let mut body_errors = vec![];
+    check_body_common(
+        &config.params,
+        config.body,
+        &config.ret_ty,
+        config.call_span,
+        type_checker,
+        &mut body_errors,
+    );
+
+    let body_types = type_checker.spec_type_snapshot.take().unwrap_or_default();
+    type_checker.spec_type_snapshot = prev_snapshot;
+
+    let cached_err = body_errors.first().map(|err| (err.span, err.kind.clone()));
+    let result = SpecializationResult {
+        ret_ty: config.ret_ty,
+        err: cached_err,
+        body_types,
+    };
+
+    report_instantiation_errors(
+        body_errors,
+        &config.context_name,
+        &config.type_params,
+        &config.type_args,
+        config.call_span,
+        errors,
+    );
+
+    result
+}
+
 fn instantiate_and_check_fn(
     func_name: Ident,
     type_args: &[Type],
@@ -2036,17 +2027,18 @@ fn instantiate_and_check_fn(
 
     let func = &fn_template.node;
 
-    // compute the specialized parameter and return types
-    let specialized_param_types: Vec<Type> = func
+    let params: Vec<(Ident, Type, bool)> = func
         .params
         .iter()
-        .map(|p| subst_type(&type_checker.resolve_type(&p.ty), &subst))
+        .map(|p| {
+            (
+                p.name,
+                subst_type(&type_checker.resolve_type(&p.ty), &subst),
+                matches!(p.mutability, Mutability::Mutable),
+            )
+        })
         .collect();
-    let specialized_ret = subst_type(&type_checker.resolve_type(&func.ret), &subst);
-
-    // typecheck the body with specialized types, capturing expression types per specialization
-    let prev_snapshot = type_checker.spec_type_snapshot.take();
-    type_checker.spec_type_snapshot = Some(HashMap::new());
+    let ret_ty = subst_type(&type_checker.resolve_type(&func.ret), &subst);
 
     let module_scope = type_checker
         .generic_func_source_module
@@ -2061,45 +2053,24 @@ fn instantiate_and_check_fn(
         }
     }
 
-    let mut body_errors = vec![];
-    check_fn_body(
-        func,
-        &specialized_param_types,
-        specialized_ret.clone(),
+    let config = InstantiationConfig {
+        params,
+        body: &func.body,
+        ret_ty,
         call_span,
-        type_checker,
-        &mut body_errors,
-    );
+        context_name: func_name.to_string(),
+        type_params,
+        type_args: type_args.to_vec(),
+    };
+    let result = instantiate_generic_body(config, type_checker, errors);
 
     if module_scope.is_some() {
         type_checker.pop_scope();
     }
 
-    let body_types = type_checker.spec_type_snapshot.take().unwrap_or_default();
-    type_checker.spec_type_snapshot = prev_snapshot;
-
-    // cache the result preserving the body span of the first error
-    let cached_err = body_errors.first().map(|err| (err.span, err.kind.clone()));
-    type_checker.specialization_cache.insert(
-        cache_key,
-        SpecializationResult {
-            ret_ty: specialized_ret.clone(),
-            err: cached_err,
-            body_types,
-        },
-    );
-
-    // report body errors with original spans, attaching call-site context
-    report_instantiation_errors(
-        body_errors,
-        &func_name.to_string(),
-        &type_params,
-        type_args,
-        call_span,
-        errors,
-    );
-
-    specialized_ret
+    let ret = result.ret_ty.clone();
+    type_checker.specialization_cache.insert(cache_key, result);
+    ret
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2178,46 +2149,22 @@ fn instantiate_method_body(
         receiver: method.receiver,
     });
 
-    let prev_snapshot = type_checker.spec_type_snapshot.take();
-    type_checker.spec_type_snapshot = Some(HashMap::new());
-
-    let mut body_errors = vec![];
-    check_body_common(
-        &params,
-        &method.body,
-        &specialized_ret,
+    let config = InstantiationConfig {
+        params,
+        body: &method.body,
+        ret_ty: specialized_ret,
         call_span,
-        type_checker,
-        &mut body_errors,
-    );
-
-    let body_types = type_checker.spec_type_snapshot.take().unwrap_or_default();
-    type_checker.spec_type_snapshot = prev_snapshot;
+        context_name: format!("{struct_name}.{method_name}"),
+        type_params: all_type_params,
+        type_args: all_type_args,
+    };
+    let result = instantiate_generic_body(config, type_checker, errors);
 
     type_checker.pop_method_context();
 
-    let cached_err = body_errors.first().map(|err| (err.span, err.kind.clone()));
-    type_checker.method_spec_cache.insert(
-        cache_key,
-        SpecializationResult {
-            ret_ty: specialized_ret.clone(),
-            err: cached_err,
-            body_types,
-        },
-    );
-
-    // report body errors with original spans, attaching call-site context
-    let context_name = format!("{struct_name}.{method_name}");
-    report_instantiation_errors(
-        body_errors,
-        &context_name,
-        &all_type_params,
-        &all_type_args,
-        call_span,
-        errors,
-    );
-
-    specialized_ret
+    let ret = result.ret_ty.clone();
+    type_checker.method_spec_cache.insert(cache_key, result);
+    ret
 }
 
 pub(super) fn type_call_on_base(

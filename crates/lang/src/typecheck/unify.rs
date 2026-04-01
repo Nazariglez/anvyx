@@ -1,31 +1,16 @@
+use super::{
+    constraint::TypeRef,
+    error::{Diagnostic, DiagnosticKind},
+    types::TypeChecker,
+    visit::type_any,
+};
 use crate::{
     ast::{ArrayLen, FuncParam, Type},
     span::Span,
 };
 
-use super::{
-    constraint::TypeRef,
-    error::{Diagnostic, DiagnosticKind},
-    types::TypeChecker,
-};
-
 pub(super) fn contains_infer(ty: &Type) -> bool {
-    match ty {
-        Type::Infer => true,
-        Type::Func { params, ret } => {
-            params.iter().any(|p| contains_infer(&p.ty)) || contains_infer(ret)
-        }
-        Type::Tuple(elems) => elems.iter().any(contains_infer),
-        Type::NamedTuple(fields) => fields.iter().any(|(_, t)| contains_infer(t)),
-        Type::Struct { type_args, .. }
-        | Type::Enum { type_args, .. }
-        | Type::DataRef { type_args, .. } => type_args.iter().any(contains_infer),
-        Type::Array { elem, .. } => contains_infer(elem),
-        Type::ArrayView { elem } => contains_infer(elem),
-        Type::List { elem } => contains_infer(elem),
-        Type::Map { key, value } => contains_infer(key) || contains_infer(value),
-        _ => false,
-    }
+    type_any(ty, &mut |t| matches!(t, Type::Infer))
 }
 
 /// Checks if 'from' is assignable to 'to'

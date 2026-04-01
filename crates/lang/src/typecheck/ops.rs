@@ -1,7 +1,3 @@
-use crate::ast::{
-    AssignNode, AssignOp, BinaryNode, BinaryOp, ExprKind, MethodReceiver, Type, UnaryNode, UnaryOp,
-};
-
 use super::{
     constraint::TypeRef,
     error::{Diagnostic, DiagnosticKind},
@@ -9,13 +5,23 @@ use super::{
     types::{TypeChecker, equatable_reason, is_equatable},
     unify::unify_types,
 };
+use crate::{
+    ast::{
+        AssignNode, AssignOp, BinaryNode, BinaryOp, ExprKind, MethodReceiver, Type, UnaryNode,
+        UnaryOp,
+    },
+    span::Span,
+};
 
 pub(super) fn check_binary(
     bin: &BinaryNode,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
-    use BinaryOp::*;
+    use BinaryOp::{
+        Add, And, BitAnd, BitOr, Coalesce, Div, Eq, GreaterThan, GreaterThanEq, LessThan,
+        LessThanEq, Mul, NotEq, Or, Rem, Shl, Shr, Sub, Xor,
+    };
 
     let node = &bin.node;
     let left_ty = check_expr(&node.left, type_checker, errors, None);
@@ -66,19 +72,7 @@ pub(super) fn check_binary(
                     }
                 }
             } else {
-                let kind = if same_ty {
-                    DiagnosticKind::InvalidOperand {
-                        op: node.op.to_string(),
-                        operand_type: left_ty,
-                    }
-                } else {
-                    DiagnosticKind::MismatchedTypes {
-                        expected: left_ty,
-                        found: right_ty,
-                    }
-                };
-                errors.push(Diagnostic::new(bin.span, kind));
-                Type::Infer
+                binary_type_error(bin.span, node.op, same_ty, left_ty, right_ty, errors)
             }
         }
 
@@ -131,19 +125,7 @@ pub(super) fn check_binary(
             if is_comparable {
                 Type::Bool
             } else {
-                let kind = if same_ty {
-                    DiagnosticKind::InvalidOperand {
-                        op: node.op.to_string(),
-                        operand_type: left_ty,
-                    }
-                } else {
-                    DiagnosticKind::MismatchedTypes {
-                        expected: left_ty,
-                        found: right_ty,
-                    }
-                };
-                errors.push(Diagnostic::new(bin.span, kind));
-                Type::Infer
+                binary_type_error(bin.span, node.op, same_ty, left_ty, right_ty, errors)
             }
         }
 
@@ -170,19 +152,7 @@ pub(super) fn check_binary(
             } else if left_ty.is_bool() && same_ty {
                 Type::Bool
             } else {
-                let kind = if same_ty {
-                    DiagnosticKind::InvalidOperand {
-                        op: node.op.to_string(),
-                        operand_type: left_ty,
-                    }
-                } else {
-                    DiagnosticKind::MismatchedTypes {
-                        expected: left_ty,
-                        found: right_ty,
-                    }
-                };
-                errors.push(Diagnostic::new(bin.span, kind));
-                Type::Infer
+                binary_type_error(bin.span, node.op, same_ty, left_ty, right_ty, errors)
             }
         }
 
@@ -207,19 +177,7 @@ pub(super) fn check_binary(
                     }
                 }
             } else {
-                let kind = if same_ty {
-                    DiagnosticKind::InvalidOperand {
-                        op: node.op.to_string(),
-                        operand_type: left_ty,
-                    }
-                } else {
-                    DiagnosticKind::MismatchedTypes {
-                        expected: left_ty,
-                        found: right_ty,
-                    }
-                };
-                errors.push(Diagnostic::new(bin.span, kind));
-                Type::Infer
+                binary_type_error(bin.span, node.op, same_ty, left_ty, right_ty, errors)
             }
         }
 
@@ -227,24 +185,35 @@ pub(super) fn check_binary(
             if left_ty.is_int() && same_ty {
                 Type::Int
             } else {
-                let kind = if same_ty {
-                    DiagnosticKind::InvalidOperand {
-                        op: node.op.to_string(),
-                        operand_type: left_ty,
-                    }
-                } else {
-                    DiagnosticKind::MismatchedTypes {
-                        expected: left_ty,
-                        found: right_ty,
-                    }
-                };
-                errors.push(Diagnostic::new(bin.span, kind));
-                Type::Infer
+                binary_type_error(bin.span, node.op, same_ty, left_ty, right_ty, errors)
             }
         }
 
         Coalesce => check_coalesce(bin, left_ty, right_ty, type_checker, errors),
     }
+}
+
+fn binary_type_error(
+    span: Span,
+    op: BinaryOp,
+    same_ty: bool,
+    left_ty: Type,
+    right_ty: Type,
+    errors: &mut Vec<Diagnostic>,
+) -> Type {
+    let kind = if same_ty {
+        DiagnosticKind::InvalidOperand {
+            op: op.to_string(),
+            operand_type: left_ty,
+        }
+    } else {
+        DiagnosticKind::MismatchedTypes {
+            expected: left_ty,
+            found: right_ty,
+        }
+    };
+    errors.push(Diagnostic::new(span, kind));
+    Type::Infer
 }
 
 fn check_coalesce(

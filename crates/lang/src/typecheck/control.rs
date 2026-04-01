@@ -1,10 +1,5 @@
 use std::collections::HashSet;
 
-use crate::ast::{
-    self, BlockNode, ExprId, ExprKind, ExprNode, ForNode, Ident, IfLetNode, IfNode, Lit, MatchNode,
-    Pattern, Stmt, Type, WhileLetNode, WhileNode,
-};
-use crate::span::Span;
 use internment::Intern;
 
 use super::{
@@ -16,6 +11,13 @@ use super::{
     stmt::{check_block_expr, check_block_stmts},
     types::{EnumDef, TypeChecker},
     unify::{contains_infer, unify_types},
+};
+use crate::{
+    ast::{
+        self, BlockNode, ExprId, ExprKind, ExprNode, ForNode, Ident, IfLetNode, IfNode, Lit,
+        MatchNode, Pattern, Stmt, Type, WhileLetNode, WhileNode,
+    },
+    span::Span,
 };
 
 fn check_bare_catchall_on_optional(
@@ -116,6 +118,30 @@ fn validate_var_scrutinee(
                 .with_help("var binding in pattern requires a simple variable as scrutinee"),
         );
         false
+    }
+}
+
+fn pattern_is_catch_all(pattern: &Pattern, type_checker: &TypeChecker) -> bool {
+    match pattern {
+        Pattern::Wildcard | Pattern::VarIdent(_) => true,
+        Pattern::Ident(name) => type_checker.get_const(*name).is_none(),
+        Pattern::Or(alts) => alts
+            .iter()
+            .any(|alt| pattern_is_catch_all(&alt.node, type_checker)),
+        _ => false,
+    }
+}
+
+fn collect_bool_coverage(pattern: &Pattern, has_true: &mut bool, has_false: &mut bool) {
+    match pattern {
+        Pattern::Lit(Lit::Bool(true)) => *has_true = true,
+        Pattern::Lit(Lit::Bool(false)) => *has_false = true,
+        Pattern::Or(alts) => {
+            for alt in alts {
+                collect_bool_coverage(&alt.node, has_true, has_false);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -464,12 +490,14 @@ pub(super) fn check_match(
         Type::Enum {
             name: enum_name, ..
         } => check_match_enum(match_node, &scrutinee_ty, *enum_name, type_checker, errors),
-        Type::Bool => check_match_bool(match_node, &scrutinee_ty, type_checker, errors),
-        Type::Int | Type::Float | Type::Double | Type::String => {
-            check_match_scalar(match_node, &scrutinee_ty, type_checker, errors)
-        }
-        Type::Tuple(_) | Type::NamedTuple(_) => {
-            check_match_scalar(match_node, &scrutinee_ty, type_checker, errors)
+        Type::Bool
+        | Type::Int
+        | Type::Float
+        | Type::Double
+        | Type::String
+        | Type::Tuple(_)
+        | Type::NamedTuple(_) => {
+            check_match_non_enum(match_node, &scrutinee_ty, type_checker, errors)
         }
         Type::Infer => Type::Infer,
         _ => {
@@ -535,104 +563,49 @@ fn check_match_enum(
     unify_arm_types(&arm_types, match_node.span, errors)
 }
 
-fn check_match_bool(
+fn check_match_non_enum(
     match_node: &MatchNode,
     scrutinee_ty: &Type,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
+    let is_bool = scrutinee_ty.is_bool();
+    let mut has_wildcard = false;
     let mut has_true = false;
     let mut has_false = false;
-    let mut has_wildcard = false;
     let mut arm_types: Vec<Type> = vec![];
 
     for arm in &match_node.node.arms {
         type_checker.push_scope();
 
-        match &arm.node.pattern.node {
-            Pattern::Lit(Lit::Bool(true)) => has_true = true,
-            Pattern::Lit(Lit::Bool(false)) => has_false = true,
-            Pattern::Ident(name) => {
-                if type_checker.get_const(*name).is_none() {
-                    has_wildcard = true;
-                }
-            }
-            Pattern::Wildcard | Pattern::VarIdent(_) => has_wildcard = true,
-            Pattern::Or(alternatives) => {
-                for alt in alternatives {
-                    match &alt.node {
-                        Pattern::Lit(Lit::Bool(true)) => has_true = true,
-                        Pattern::Lit(Lit::Bool(false)) => has_false = true,
-                        Pattern::Wildcard | Pattern::VarIdent(_) => has_wildcard = true,
-                        Pattern::Ident(name) => {
-                            if type_checker.get_const(*name).is_none() {
-                                has_wildcard = true;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
+        has_wildcard |= pattern_is_catch_all(&arm.node.pattern.node, type_checker);
+        if is_bool {
+            collect_bool_coverage(&arm.node.pattern.node, &mut has_true, &mut has_false);
         }
 
         check_pattern_in_match(&arm.node.pattern, scrutinee_ty, type_checker, errors);
-
         let arm_ty = check_expr(&arm.node.body, type_checker, errors, None);
         arm_types.push(arm_ty);
 
         type_checker.pop_scope();
     }
 
-    let exhaustive = (has_true && has_false) || has_wildcard;
-    if !exhaustive {
-        let mut missing = vec![];
-        if !has_true {
-            missing.push(Ident(Intern::new("true".to_string())));
-        }
-        if !has_false {
-            missing.push(Ident(Intern::new("false".to_string())));
-        }
-        errors.push(Diagnostic::new(
-            match_node.span,
-            DiagnosticKind::NonExhaustiveMatch { missing },
-        ));
-    }
-
-    unify_arm_types(&arm_types, match_node.span, errors)
-}
-
-fn check_match_scalar(
-    match_node: &MatchNode,
-    scrutinee_ty: &Type,
-    type_checker: &mut TypeChecker,
-    errors: &mut Vec<Diagnostic>,
-) -> Type {
-    let mut has_wildcard = false;
-    let mut arm_types: Vec<Type> = vec![];
-
-    for arm in &match_node.node.arms {
-        type_checker.push_scope();
-
-        match &arm.node.pattern.node {
-            Pattern::Ident(name) => {
-                if type_checker.get_const(*name).is_none() {
-                    has_wildcard = true;
-                }
+    if is_bool {
+        let exhaustive = (has_true && has_false) || has_wildcard;
+        if !exhaustive {
+            let mut missing = vec![];
+            if !has_true {
+                missing.push(Ident(Intern::new("true".to_string())));
             }
-            Pattern::Wildcard | Pattern::VarIdent(_) => has_wildcard = true,
-            _ => {}
+            if !has_false {
+                missing.push(Ident(Intern::new("false".to_string())));
+            }
+            errors.push(Diagnostic::new(
+                match_node.span,
+                DiagnosticKind::NonExhaustiveMatch { missing },
+            ));
         }
-
-        check_pattern_in_match(&arm.node.pattern, scrutinee_ty, type_checker, errors);
-
-        let arm_ty = check_expr(&arm.node.body, type_checker, errors, None);
-        arm_types.push(arm_ty);
-
-        type_checker.pop_scope();
-    }
-
-    if !has_wildcard {
+    } else if !has_wildcard {
         errors.push(Diagnostic::new(
             match_node.span,
             DiagnosticKind::NonExhaustiveMatchNoCatchAll,

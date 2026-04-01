@@ -1,17 +1,19 @@
 use std::collections::HashMap;
 
-use crate::ast::{self, BinaryOp, Ident, Mutability, Stmt, Type, UnaryOp};
-use crate::hir;
-use crate::span::Span;
-use crate::typecheck::ExternTypeDef;
 use internment::Intern;
 
 use super::{FuncLower, LowerCtx, LowerError, SharedCtx};
+use crate::{
+    ast::{self, BinaryOp, Ident, Mutability, Stmt, Type, UnaryOp},
+    hir,
+    span::Span,
+    typecheck::ExternTypeDef,
+};
 
 pub(super) fn mangle_generic_name(name: Ident, type_args: &[Type]) -> Ident {
     let suffix = type_args
         .iter()
-        .map(|t| t.to_string())
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("$");
     Ident(Intern::new(format!("{name}${suffix}")))
@@ -27,7 +29,7 @@ pub(super) fn mangle_method_spec_name(
     }
     let suffix = type_args
         .iter()
-        .map(|t| t.to_string())
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("$");
     Ident(Intern::new(format!(

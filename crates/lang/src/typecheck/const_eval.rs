@@ -1,17 +1,17 @@
 #![allow(clippy::result_large_err)]
 
+use std::collections::{HashMap, HashSet, VecDeque};
+
+use super::{
+    error::{Diagnostic, DiagnosticKind},
+    types::ModuleDef,
+};
 use crate::{
     ast::{
         BinaryOp, ConstDeclNode, ExprKind, ExprNode, FloatSuffix, FormatKind, FormatSpec, Ident,
         ImportKind, Lit, Stmt, StmtNode, StringPart, Type, UnaryOp, Visibility,
     },
     span::Span,
-};
-use std::collections::{HashMap, HashSet, VecDeque};
-
-use super::{
-    error::{Diagnostic, DiagnosticKind},
-    types::ModuleDef,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -274,20 +274,38 @@ fn eval_lit(lit: &Lit) -> Result<ConstValue, Diagnostic> {
     }
 }
 
+macro_rules! const_binary_arms {
+    (
+        ($left:expr, $op:expr, $right:expr);
+        $( $variant:ident => $result:ident { $( $bin_op:ident => $rust_op:tt ),+ $(,)? } ),+
+        $(,)?
+    ) => {
+        match ($left, $op, $right) {
+            $($(
+                (ConstValue::$variant(l), BinaryOp::$bin_op, ConstValue::$variant(r)) =>
+                    Some(ConstValue::$result(l $rust_op r)),
+            )+)+
+            _ => None,
+        }
+    };
+}
+
 fn eval_binary(
     left: ConstValue,
     op: BinaryOp,
     right: ConstValue,
     span: Span,
 ) -> Result<ConstValue, Diagnostic> {
-    use BinaryOp::{
-        Add, And, BitAnd, BitOr, Div, Eq, GreaterThan, GreaterThanEq, LessThan, LessThanEq, Mul,
-        NotEq, Or, Rem, Shl, Shr, Sub, Xor,
-    };
-    use ConstValue::{Bool, Double, Float, Int, String};
+    use BinaryOp::{Add, Div, Mul, Rem, Shl, Shr, Sub};
+    use ConstValue::{Int, String};
 
     match (left, op, right) {
-        // Int arithmetic
+        // Int division by zero (must precede Div/Rem arms)
+        (Int(_), Div | Rem, Int(0)) => {
+            Err(Diagnostic::new(span, DiagnosticKind::ConstDivisionByZero))
+        }
+
+        // Int checked arithmetic (overflow detection)
         (Int(l), Add, Int(r)) => l
             .checked_add(r)
             .map(Int)
@@ -300,9 +318,6 @@ fn eval_binary(
             .checked_mul(r)
             .map(Int)
             .ok_or_else(|| Diagnostic::new(span, DiagnosticKind::ConstIntegerOverflow)),
-        (Int(_), Div | Rem, Int(0)) => {
-            Err(Diagnostic::new(span, DiagnosticKind::ConstDivisionByZero))
-        }
         (Int(l), Div, Int(r)) => l
             .checked_div(r)
             .map(Int)
@@ -311,63 +326,26 @@ fn eval_binary(
             .checked_rem(r)
             .map(Int)
             .ok_or_else(|| Diagnostic::new(span, DiagnosticKind::ConstIntegerOverflow)),
-        (Int(l), Xor, Int(r)) => Ok(Int(l ^ r)),
-        (Int(l), BitAnd, Int(r)) => Ok(Int(l & r)),
-        (Int(l), BitOr, Int(r)) => Ok(Int(l | r)),
+
+        // Int shifts (wrapping)
         (Int(l), Shl, Int(r)) => Ok(Int(l.wrapping_shl(r as u32))),
         (Int(l), Shr, Int(r)) => Ok(Int(l.wrapping_shr(r as u32))),
 
-        // Float arithmetic
-        (Float(l), Add, Float(r)) => Ok(Float(l + r)),
-        (Float(l), Sub, Float(r)) => Ok(Float(l - r)),
-        (Float(l), Mul, Float(r)) => Ok(Float(l * r)),
-        (Float(l), Div, Float(r)) => Ok(Float(l / r)),
-        (Float(l), Rem, Float(r)) => Ok(Float(l % r)),
-
-        // Double arithmetic
-        (Double(l), Add, Double(r)) => Ok(Double(l + r)),
-        (Double(l), Sub, Double(r)) => Ok(Double(l - r)),
-        (Double(l), Mul, Double(r)) => Ok(Double(l * r)),
-        (Double(l), Div, Double(r)) => Ok(Double(l / r)),
-        (Double(l), Rem, Double(r)) => Ok(Double(l % r)),
-
-        // Int comparisons
-        (Int(l), Eq, Int(r)) => Ok(Bool(l == r)),
-        (Int(l), NotEq, Int(r)) => Ok(Bool(l != r)),
-        (Int(l), LessThan, Int(r)) => Ok(Bool(l < r)),
-        (Int(l), GreaterThan, Int(r)) => Ok(Bool(l > r)),
-        (Int(l), LessThanEq, Int(r)) => Ok(Bool(l <= r)),
-        (Int(l), GreaterThanEq, Int(r)) => Ok(Bool(l >= r)),
-
-        // Float comparisons
-        (Float(l), Eq, Float(r)) => Ok(Bool(l == r)),
-        (Float(l), NotEq, Float(r)) => Ok(Bool(l != r)),
-        (Float(l), LessThan, Float(r)) => Ok(Bool(l < r)),
-        (Float(l), GreaterThan, Float(r)) => Ok(Bool(l > r)),
-        (Float(l), LessThanEq, Float(r)) => Ok(Bool(l <= r)),
-        (Float(l), GreaterThanEq, Float(r)) => Ok(Bool(l >= r)),
-
-        // Double comparisons
-        (Double(l), Eq, Double(r)) => Ok(Bool(l == r)),
-        (Double(l), NotEq, Double(r)) => Ok(Bool(l != r)),
-        (Double(l), LessThan, Double(r)) => Ok(Bool(l < r)),
-        (Double(l), GreaterThan, Double(r)) => Ok(Bool(l > r)),
-        (Double(l), LessThanEq, Double(r)) => Ok(Bool(l <= r)),
-        (Double(l), GreaterThanEq, Double(r)) => Ok(Bool(l >= r)),
-
-        // Bool comparisons and logical ops
-        (Bool(l), Eq, Bool(r)) => Ok(Bool(l == r)),
-        (Bool(l), NotEq, Bool(r)) => Ok(Bool(l != r)),
-        (Bool(l), And, Bool(r)) => Ok(Bool(l && r)),
-        (Bool(l), Or, Bool(r)) => Ok(Bool(l || r)),
-        (Bool(l), Xor, Bool(r)) => Ok(Bool(l ^ r)),
-
-        // String operations
+        // String concatenation
         (String(l), Add, String(r)) => Ok(String(l + &r)),
-        (String(l), Eq, String(r)) => Ok(Bool(l == r)),
-        (String(l), NotEq, String(r)) => Ok(Bool(l != r)),
 
-        _ => Err(Diagnostic::new(span, DiagnosticKind::NotConstantExpression)),
+        // All remaining simple operator cases
+        (left, op, right) => const_binary_arms!((left, op, right);
+            Int => Int { Xor => ^, BitAnd => &, BitOr => | },
+            Float => Float { Add => +, Sub => -, Mul => *, Div => /, Rem => % },
+            Double => Double { Add => +, Sub => -, Mul => *, Div => /, Rem => % },
+            Int => Bool { Eq => ==, NotEq => !=, LessThan => <, GreaterThan => >, LessThanEq => <=, GreaterThanEq => >= },
+            Float => Bool { Eq => ==, NotEq => !=, LessThan => <, GreaterThan => >, LessThanEq => <=, GreaterThanEq => >= },
+            Double => Bool { Eq => ==, NotEq => !=, LessThan => <, GreaterThan => >, LessThanEq => <=, GreaterThanEq => >= },
+            Bool => Bool { Eq => ==, NotEq => !=, And => &&, Or => ||, Xor => ^ },
+            String => Bool { Eq => ==, NotEq => != },
+        )
+        .ok_or_else(|| Diagnostic::new(span, DiagnosticKind::NotConstantExpression)),
     }
 }
 

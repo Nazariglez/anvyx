@@ -1,10 +1,3 @@
-use crate::{
-    ast::{
-        CastNode, ExprKind, ExprNode, FloatSuffix, FormatKind, FormatSign, FormatSpec, FuncParam,
-        Ident, InferredEnumArgs, InferredEnumNode, LambdaNode, Lit, StringPart, Type, VariantKind,
-    },
-    span::Span,
-};
 use std::collections::HashMap;
 
 use super::{
@@ -20,6 +13,13 @@ use super::{
     postfix::{check_postfix_chain, collect_postfix_chain},
     stmt::check_block_expr,
     types::TypeChecker,
+};
+use crate::{
+    ast::{
+        CastNode, ExprKind, ExprNode, FloatSuffix, FormatKind, FormatSign, FormatSpec, FuncParam,
+        Ident, InferredEnumArgs, InferredEnumNode, LambdaNode, Lit, StringPart, Type, VariantKind,
+    },
+    span::Span,
 };
 
 pub(super) fn check_expr(
@@ -548,6 +548,7 @@ fn check_inferred_enum(
                     variant_name,
                     field,
                 },
+                None,
                 errors,
             );
             for (name, field_expr) in fields {

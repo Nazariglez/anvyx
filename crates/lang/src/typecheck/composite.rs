@@ -1,16 +1,8 @@
-use super::const_eval::ConstValue;
-use crate::{
-    ast::{
-        ArrayFillNode, ArrayLen, ArrayLiteralNode, ExprKind, ExprNode, Ident, Lit, MapLiteralNode,
-        Range, RangeNode, StructField, StructLiteralNode, TupleIndexNode, Type, TypeParam,
-        VariantKind,
-    },
-    span::Span,
-};
 use std::collections::{HashMap, HashSet};
 
 use super::{
     annotations::extract_deprecated,
+    const_eval::ConstValue,
     constraint::TypeRef,
     error::{Diagnostic, DiagnosticKind},
     expr::check_expr,
@@ -18,7 +10,15 @@ use super::{
     range::{
         range_from_type, range_inclusive_type, range_to_inclusive_type, range_to_type, range_type,
     },
-    types::{ExternTypeDef, InferenceSlots, TypeChecker, validate_map_key_type},
+    types::{ExternTypeDef, FieldDefault, InferenceSlots, TypeChecker, validate_map_key_type},
+};
+use crate::{
+    ast::{
+        ArrayFillNode, ArrayLen, ArrayLiteralNode, ExprKind, ExprNode, Ident, Lit, MapLiteralNode,
+        Range, RangeNode, StructField, StructLiteralNode, TupleIndexNode, Type, TypeParam,
+        VariantKind,
+    },
+    span::Span,
 };
 
 pub(super) fn check_tuple(
@@ -68,6 +68,7 @@ pub(super) fn validate_field_names<'a>(
     on_duplicate: impl Fn(Ident) -> DiagnosticKind,
     on_unknown: impl Fn(Ident) -> DiagnosticKind,
     on_missing: impl Fn(Ident) -> DiagnosticKind,
+    defaults: Option<&HashMap<Ident, FieldDefault>>,
     errors: &mut Vec<Diagnostic>,
 ) -> Vec<Option<&'a StructField>> {
     let mut seen = HashSet::new();
@@ -96,7 +97,10 @@ pub(super) fn validate_field_names<'a>(
     if !allow_partial {
         for field in expected {
             if !matched_names.contains(&field.name) {
-                errors.push(Diagnostic::new(container_span, on_missing(field.name)));
+                let has_default = defaults.is_some_and(|d| d.contains_key(&field.name));
+                if !has_default {
+                    errors.push(Diagnostic::new(container_span, on_missing(field.name)));
+                }
             }
         }
     }
@@ -202,49 +206,37 @@ pub(super) fn check_struct_lit(
     for (name, field_expr) in &lit.fields {
         let expected = field_type_map.get(name).copied();
         check_expr(field_expr, type_checker, errors, expected);
-        if let Some(sf) = struct_def.fields.iter().find(|f| f.name == *name) {
-            if let Some(reason) = extract_deprecated(&sf.annotations) {
-                errors.push(Diagnostic::new(
-                    field_expr.span,
-                    DiagnosticKind::DeprecatedUsage {
-                        kind: "field",
-                        name: *name,
-                        reason,
-                    },
-                ));
-            }
+        if let Some(sf) = struct_def.fields.iter().find(|f| f.name == *name)
+            && let Some(reason) = extract_deprecated(&sf.annotations)
+        {
+            errors.push(Diagnostic::new(
+                field_expr.span,
+                DiagnosticKind::DeprecatedUsage {
+                    kind: "field",
+                    name: *name,
+                    reason,
+                },
+            ));
         }
     }
 
     let provided: Vec<(Ident, Span)> = lit.fields.iter().map(|(n, e)| (*n, e.span)).collect();
-    let has_defaults = !struct_def.field_defaults.is_empty();
+    let defaults = if struct_def.field_defaults.is_empty() {
+        None
+    } else {
+        Some(&struct_def.field_defaults)
+    };
     let matched = validate_field_names(
         &provided,
         lit_node.span,
         &struct_def.fields,
-        has_defaults,
+        false,
         |field| DiagnosticKind::StructDuplicateField { struct_name, field },
         |field| DiagnosticKind::StructUnknownField { struct_name, field },
         |field| DiagnosticKind::StructMissingField { struct_name, field },
+        defaults,
         errors,
     );
-
-    if has_defaults {
-        let provided_names: HashSet<Ident> = provided.iter().map(|(n, _)| *n).collect();
-        for field in &struct_def.fields {
-            let is_missing = !provided_names.contains(&field.name);
-            let has_default = struct_def.field_defaults.contains_key(&field.name);
-            if is_missing && !has_default {
-                errors.push(Diagnostic::new(
-                    lit_node.span,
-                    DiagnosticKind::StructMissingField {
-                        struct_name,
-                        field: field.name,
-                    },
-                ));
-            }
-        }
-    }
 
     let type_args = constrain_fields_and_extract_type_args(
         &lit.fields,
@@ -281,19 +273,7 @@ fn check_extern_init_lit(
         check_expr(field_expr, type_checker, errors, expected);
     }
 
-    let expected_fields: Vec<StructField> = extern_def
-        .field_order
-        .iter()
-        .map(|name| {
-            let def = &extern_def.fields[name];
-            StructField {
-                annotations: vec![],
-                name: *name,
-                ty: def.ty.clone(),
-                default: None,
-            }
-        })
-        .collect();
+    let expected_fields = extern_def.as_struct_fields();
 
     let provided: Vec<(Ident, Span)> = lit.fields.iter().map(|(n, e)| (*n, e.span)).collect();
     let matched = validate_field_names(
@@ -304,6 +284,7 @@ fn check_extern_init_lit(
         |field| DiagnosticKind::ExternInitDuplicateField { type_name, field },
         |field| DiagnosticKind::ExternInitUnknownField { type_name, field },
         |field| DiagnosticKind::ExternInitMissingField { type_name, field },
+        None,
         errors,
     );
 
@@ -652,6 +633,7 @@ fn check_enum_struct_variant(
             variant_name,
             field,
         },
+        None,
         errors,
     );
 

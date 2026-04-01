@@ -1,18 +1,9 @@
-use crate::{
-    ast::{CallNode, ExprId, ExprKind, ExprNode, FuncParam, Ident, Mutability, Type},
-    span::Span,
-};
-use internment::Intern;
 use std::collections::HashMap;
 
+use internment::Intern;
+
 use super::{
-    call::{
-        check_call, check_call_signature, check_extern_instance_method_call,
-        check_extern_static_method_call, check_instance_method_call, check_list_method,
-        check_map_method, check_module_func_call, check_receiver_mutability, check_var_param_args,
-        check_var_self_aliasing, report_cached_spec_error, report_instantiation_errors,
-        required_param_count, type_call_on_base,
-    },
+    call::*,
     decl::check_body_common,
     error::{Diagnostic, DiagnosticKind},
     expr::check_expr,
@@ -21,6 +12,10 @@ use super::{
         ExtendEntry, ExtendMethodDef, ExtendSpecKey, GenericExtendTemplate, PostfixNodeRef,
         SpecializationResult, TypeChecker, type_field_on_base, type_index_on_base, unwrap_opt_typ,
     },
+};
+use crate::{
+    ast::{CallNode, ExprId, ExprKind, ExprNode, FuncParam, Ident, Mutability, Type},
+    span::Span,
 };
 
 pub(super) fn collect_postfix_chain(expr: &ExprNode) -> (&ExprNode, Vec<PostfixNodeRef<'_>>) {
@@ -637,9 +632,250 @@ pub(super) enum MethodCallOutcome {
         chain_optional: bool,
         next_index: usize,
         call_expr: ExprId,
-        call_span: crate::span::Span,
+        call_span: Span,
     },
     Abort,
+}
+
+fn handled_method_result(
+    method_ret: Type,
+    op_safe: bool,
+    chain_is_optional: bool,
+    index: usize,
+    call_op: PostfixNodeRef<'_>,
+) -> Option<MethodCallOutcome> {
+    let mut result_ty = method_ret;
+    let mut chain_optional = chain_is_optional;
+    if op_safe || chain_is_optional {
+        chain_optional = true;
+        result_ty = Type::option_of(result_ty);
+    }
+    Some(MethodCallOutcome::Handled {
+        ty: result_ty,
+        chain_optional,
+        next_index: index + 2,
+        call_expr: call_op.expr_id(),
+        call_span: call_op.span(),
+    })
+}
+
+fn handled_infer(
+    op_safe: bool,
+    chain_is_optional: bool,
+    index: usize,
+    call_op: PostfixNodeRef<'_>,
+) -> Option<MethodCallOutcome> {
+    Some(MethodCallOutcome::Handled {
+        ty: Type::Infer,
+        chain_optional: chain_is_optional || op_safe,
+        next_index: index + 2,
+        call_expr: call_op.expr_id(),
+        call_span: call_op.span(),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_struct_method(
+    struct_name: Ident,
+    struct_type_args: &[Type],
+    detection_ty: &Type,
+    field_node: &crate::ast::FieldAccessNode,
+    call_node: &CallNode,
+    call_op: PostfixNodeRef<'_>,
+    op_safe: bool,
+    chain_is_optional: bool,
+    index: usize,
+    chain: &[PostfixNodeRef<'_>],
+    base: &ExprNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) -> Option<MethodCallOutcome> {
+    let Some(struct_def) = type_checker.get_struct(struct_name).cloned() else {
+        errors.push(Diagnostic::new(
+            field_node.span,
+            DiagnosticKind::UnknownStruct { name: struct_name },
+        ));
+        return handled_infer(op_safe, chain_is_optional, index, call_op);
+    };
+
+    let method_name = field_node.node.field;
+    let is_fn_field = struct_def
+        .fields
+        .iter()
+        .any(|f| f.name == method_name && f.ty.is_func());
+    if is_fn_field {
+        return None;
+    }
+
+    let has_prior_call = chain[..index]
+        .iter()
+        .any(|op| matches!(op, PostfixNodeRef::Call { .. }));
+    let effective_receiver = if has_prior_call { None } else { Some(base) };
+
+    let method_ret = if struct_def.methods.contains_key(&method_name) {
+        check_instance_method_call(
+            call_node,
+            struct_name,
+            method_name,
+            struct_type_args,
+            &struct_def,
+            effective_receiver,
+            type_checker,
+            errors,
+        )
+    } else if let Some(extend_ret) = resolve_extend_method(
+        detection_ty,
+        method_name,
+        call_node,
+        effective_receiver,
+        field_node.span,
+        type_checker,
+        errors,
+    ) {
+        extend_ret
+    } else {
+        check_instance_method_call(
+            call_node,
+            struct_name,
+            method_name,
+            struct_type_args,
+            &struct_def,
+            effective_receiver,
+            type_checker,
+            errors,
+        )
+    };
+
+    handled_method_result(method_ret, op_safe, chain_is_optional, index, call_op)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_extern_method(
+    extern_name: Ident,
+    detection_ty: &Type,
+    field_node: &crate::ast::FieldAccessNode,
+    call_node: &CallNode,
+    call_op: PostfixNodeRef<'_>,
+    op_safe: bool,
+    chain_is_optional: bool,
+    index: usize,
+    base: &ExprNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) -> Option<MethodCallOutcome> {
+    let extern_def = type_checker.get_extern_type(extern_name).cloned()?;
+
+    let method_name = field_node.node.field;
+    let Some(method) = extern_def.methods.get(&method_name) else {
+        if extern_def.statics.contains_key(&method_name) {
+            errors.push(Diagnostic::new(
+                call_node.span,
+                DiagnosticKind::StaticMethodOnValue {
+                    struct_name: extern_name,
+                    method: method_name,
+                },
+            ));
+        } else if let Some(extend_ret) = resolve_extend_method(
+            detection_ty,
+            method_name,
+            call_node,
+            Some(base),
+            field_node.span,
+            type_checker,
+            errors,
+        ) {
+            return handled_method_result(extend_ret, op_safe, chain_is_optional, index, call_op);
+        } else {
+            errors.push(Diagnostic::new(
+                field_node.span,
+                DiagnosticKind::ExternUnknownMethod {
+                    type_name: extern_name,
+                    method: method_name,
+                },
+            ));
+        }
+        return handled_infer(op_safe, chain_is_optional, index, call_op);
+    };
+
+    let method_ret = check_extern_instance_method_call(
+        call_node,
+        extern_name,
+        method_name,
+        method,
+        Some(base),
+        type_checker,
+        errors,
+    );
+
+    handled_method_result(method_ret, op_safe, chain_is_optional, index, call_op)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_builtin_or_extend_method(
+    detection_ty: &Type,
+    field_node: &crate::ast::FieldAccessNode,
+    call_node: &CallNode,
+    call_op: PostfixNodeRef<'_>,
+    op_safe: bool,
+    chain_is_optional: bool,
+    index: usize,
+    base: &ExprNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) -> Option<MethodCallOutcome> {
+    let method_target = field_node.node.target.as_ref();
+    let method_name = field_node.node.field;
+
+    let method_ret = match detection_ty {
+        Type::List { elem } => check_list_method(
+            call_node,
+            method_target,
+            method_name,
+            elem.as_ref(),
+            type_checker,
+            errors,
+        ),
+        Type::Map { key, value } => check_map_method(
+            call_node,
+            method_target,
+            method_name,
+            key.as_ref(),
+            value.as_ref(),
+            type_checker,
+            errors,
+        ),
+        Type::Float | Type::Double | Type::Int | Type::Bool | Type::String | Type::Enum { .. } => {
+            if let Some(extend_ret) = resolve_extend_method(
+                detection_ty,
+                method_name,
+                call_node,
+                Some(base),
+                field_node.span,
+                type_checker,
+                errors,
+            ) {
+                return handled_method_result(
+                    extend_ret,
+                    op_safe,
+                    chain_is_optional,
+                    index,
+                    call_op,
+                );
+            }
+            let type_ident = Ident(Intern::new(format!("{detection_ty}")));
+            errors.push(Diagnostic::new(
+                field_node.span,
+                DiagnosticKind::UnknownMethod {
+                    struct_name: type_ident,
+                    method: method_name,
+                },
+            ));
+            return handled_infer(op_safe, chain_is_optional, index, call_op);
+        }
+        _ => return None,
+    };
+
+    handled_method_result(method_ret, op_safe, chain_is_optional, index, call_op)
 }
 
 fn handle_method_call_if_applicable(
@@ -682,21 +918,14 @@ fn handle_method_call_if_applicable(
     }
 
     let detection_ty = unwrap_opt_typ(current_ty);
-    let struct_info = match &detection_ty {
-        Type::Struct { name, type_args } | Type::DataRef { name, type_args } => {
-            Some((*name, type_args.clone()))
-        }
-        _ => None,
-    };
-
     let op_safe = field_op.safe() || call_op.safe();
+
     if op_safe {
         let error_span = if field_op.safe() {
             field_node.span
         } else {
             call_op.span()
         };
-
         if !current_ty.is_option() {
             errors.push(
                 Diagnostic::new(
@@ -712,246 +941,63 @@ fn handle_method_call_if_applicable(
         }
     }
 
-    if let Some((struct_name, struct_type_args)) = struct_info {
-        let Some(struct_def) = type_checker.get_struct(struct_name).cloned() else {
-            errors.push(Diagnostic::new(
-                field_node.span,
-                DiagnosticKind::UnknownStruct { name: struct_name },
-            ));
-            return Some(MethodCallOutcome::Handled {
-                ty: Type::Infer,
-                chain_optional: chain_is_optional || op_safe,
-                next_index: index + 2,
-                call_expr: call_op.expr_id(),
-                call_span: call_op.span(),
-            });
-        };
-
-        let method_name = field_node.node.field;
-        let is_fn_field = struct_def
-            .fields
-            .iter()
-            .any(|f| f.name == method_name && f.ty.is_func());
-        if is_fn_field {
-            return Some(MethodCallOutcome::NotMethod);
-        }
-
-        // if a call precedes this method in the chain the effective receiver is
-        // an intermediate temporary. Temporaries are always valid "var self" targets,
-        // so skip the mutability check by passing None
-        let has_prior_call = chain[..index]
-            .iter()
-            .any(|op| matches!(op, PostfixNodeRef::Call { .. }));
-        let effective_receiver = if has_prior_call { None } else { Some(base) };
-        let method_ret = if struct_def.methods.contains_key(&method_name) {
-            // Native method exists — instance or static, let existing path handle it
-            check_instance_method_call(
-                call_node,
-                struct_name,
-                method_name,
-                &struct_type_args,
-                &struct_def,
-                effective_receiver,
-                type_checker,
-                errors,
-            )
-        } else if let Some(extend_ret) = resolve_extend_method(
+    // struct and dataref method dispatch
+    if let Type::Struct { name, type_args } | Type::DataRef { name, type_args } = detection_ty {
+        return match try_struct_method(
+            *name,
+            type_args,
             detection_ty,
-            method_name,
+            field_node,
             call_node,
-            effective_receiver,
-            field_node.span,
+            call_op,
+            op_safe,
+            chain_is_optional,
+            index,
+            chain,
+            base,
             type_checker,
             errors,
         ) {
-            extend_ret
-        } else {
-            // Not found — reuse existing path to emit UnknownMethod
-            check_instance_method_call(
-                call_node,
-                struct_name,
-                method_name,
-                &struct_type_args,
-                &struct_def,
-                effective_receiver,
-                type_checker,
-                errors,
-            )
+            Some(outcome) => Some(outcome),
+            None => Some(MethodCallOutcome::NotMethod),
         };
-
-        let mut result_ty = method_ret;
-        let mut chain_optional = chain_is_optional;
-        if op_safe || chain_is_optional {
-            chain_optional = true;
-            result_ty = Type::option_of(result_ty);
-        }
-
-        return Some(MethodCallOutcome::Handled {
-            ty: result_ty,
-            chain_optional,
-            next_index: index + 2,
-            call_expr: call_op.expr_id(),
-            call_span: call_op.span(),
-        });
     }
 
-    if let Type::Extern { name } = &detection_ty
-        && let Some(extern_def) = type_checker.get_extern_type(*name).cloned()
-    {
-        let method_name = field_node.node.field;
-        let Some(method) = extern_def.methods.get(&method_name) else {
-            if extern_def.statics.contains_key(&method_name) {
-                errors.push(Diagnostic::new(
-                    call_node.span,
-                    DiagnosticKind::StaticMethodOnValue {
-                        struct_name: *name,
-                        method: method_name,
-                    },
-                ));
-            } else if let Some(extend_ret) = resolve_extend_method(
-                detection_ty,
-                method_name,
-                call_node,
-                Some(base),
-                field_node.span,
-                type_checker,
-                errors,
-            ) {
-                let mut result_ty = extend_ret;
-                let mut chain_optional = chain_is_optional;
-                if op_safe || chain_is_optional {
-                    chain_optional = true;
-                    result_ty = Type::option_of(result_ty);
-                }
-                return Some(MethodCallOutcome::Handled {
-                    ty: result_ty,
-                    chain_optional,
-                    next_index: index + 2,
-                    call_expr: call_op.expr_id(),
-                    call_span: call_op.span(),
-                });
-            } else {
-                errors.push(Diagnostic::new(
-                    field_node.span,
-                    DiagnosticKind::ExternUnknownMethod {
-                        type_name: *name,
-                        method: method_name,
-                    },
-                ));
-            }
-            return Some(MethodCallOutcome::Handled {
-                ty: Type::Infer,
-                chain_optional: chain_is_optional || op_safe,
-                next_index: index + 2,
-                call_expr: call_op.expr_id(),
-                call_span: call_op.span(),
-            });
-        };
-
-        let method_ret = check_extern_instance_method_call(
-            call_node,
+    // extern type method dispatch
+    if let Type::Extern { name } = detection_ty
+        && let Some(outcome) = try_extern_method(
             *name,
-            method_name,
-            method,
-            Some(base),
+            detection_ty,
+            field_node,
+            call_node,
+            call_op,
+            op_safe,
+            chain_is_optional,
+            index,
+            base,
             type_checker,
             errors,
-        );
-
-        let mut result_ty = method_ret;
-        let mut chain_optional = chain_is_optional;
-        if op_safe || chain_is_optional {
-            chain_optional = true;
-            result_ty = Type::option_of(result_ty);
-        }
-
-        return Some(MethodCallOutcome::Handled {
-            ty: result_ty,
-            chain_optional,
-            next_index: index + 2,
-            call_expr: call_op.expr_id(),
-            call_span: call_op.span(),
-        });
+        )
+    {
+        return Some(outcome);
     }
 
-    let method_target = field_node.node.target.as_ref();
-    let method_name = field_node.node.field;
-    let method_ret = match &detection_ty {
-        Type::List { elem } => check_list_method(
-            call_node,
-            method_target,
-            method_name,
-            elem.as_ref(),
-            type_checker,
-            errors,
-        ),
-        Type::Map { key, value } => check_map_method(
-            call_node,
-            method_target,
-            method_name,
-            key.as_ref(),
-            value.as_ref(),
-            type_checker,
-            errors,
-        ),
-        Type::Float | Type::Double | Type::Int | Type::Bool | Type::String | Type::Enum { .. } => {
-            if let Some(extend_ret) = resolve_extend_method(
-                detection_ty,
-                method_name,
-                call_node,
-                Some(base),
-                field_node.span,
-                type_checker,
-                errors,
-            ) {
-                let mut result_ty = extend_ret;
-                let mut chain_optional = chain_is_optional;
-                if op_safe || chain_is_optional {
-                    chain_optional = true;
-                    result_ty = Type::option_of(result_ty);
-                }
-                return Some(MethodCallOutcome::Handled {
-                    ty: result_ty,
-                    chain_optional,
-                    next_index: index + 2,
-                    call_expr: call_op.expr_id(),
-                    call_span: call_op.span(),
-                });
-            }
-            // No native methods and no extend method found — emit a clear error
-            let type_ident = Ident(Intern::new(format!("{detection_ty}")));
-            errors.push(Diagnostic::new(
-                field_node.span,
-                DiagnosticKind::UnknownMethod {
-                    struct_name: type_ident,
-                    method: method_name,
-                },
-            ));
-            return Some(MethodCallOutcome::Handled {
-                ty: Type::Infer,
-                chain_optional: chain_is_optional || op_safe,
-                next_index: index + 2,
-                call_expr: call_op.expr_id(),
-                call_span: call_op.span(),
-            });
-        }
-        _ => return Some(MethodCallOutcome::NotMethod),
-    };
-
-    let mut result_ty = method_ret;
-    let mut chain_optional = chain_is_optional;
-    if op_safe || chain_is_optional {
-        chain_optional = true;
-        result_ty = Type::option_of(result_ty);
+    // built-in list/map and extend methods on primitives/enums
+    match try_builtin_or_extend_method(
+        detection_ty,
+        field_node,
+        call_node,
+        call_op,
+        op_safe,
+        chain_is_optional,
+        index,
+        base,
+        type_checker,
+        errors,
+    ) {
+        Some(outcome) => Some(outcome),
+        None => Some(MethodCallOutcome::NotMethod),
     }
-
-    Some(MethodCallOutcome::Handled {
-        ty: result_ty,
-        chain_optional,
-        next_index: index + 2,
-        call_expr: call_op.expr_id(),
-        call_span: call_op.span(),
-    })
 }
 
 fn mark_remaining_ops_infer(
@@ -968,9 +1014,226 @@ fn set_op_type(op: &PostfixNodeRef<'_>, ty: Type, type_checker: &mut TypeChecker
     type_checker.set_type(op.expr_id(), ty, op.span());
 }
 
-/// For chains that start with a type-name identifier (enum or struct), dispatches
-/// without evaluating the identifier as a value variable. Returns the result type,
-/// the number of chain steps consumed, and whether any safe operator was used.
+#[allow(clippy::too_many_arguments)]
+fn try_module_dispatch(
+    type_name: Ident,
+    module_def: &super::types::ModuleDef,
+    chain: &[PostfixNodeRef<'_>],
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+    expected: Option<&Type>,
+) -> Option<(Type, usize, bool)> {
+    let [
+        PostfixNodeRef::Field {
+            expr_id: field_expr_id,
+            node: field_node,
+        },
+        rest @ ..,
+    ] = chain
+    else {
+        return None;
+    };
+
+    let member_name = field_node.node.field;
+    let op_safe = field_node.node.safe;
+
+    // nested facade.submodule.func()
+    if let Some(sub_def) = module_def.re_exported_modules.get(&member_name).cloned() {
+        if let [
+            PostfixNodeRef::Field {
+                node: sub_field_node,
+                ..
+            },
+            sub_rest @ ..,
+        ] = rest
+        {
+            let sub_member = sub_field_node.node.field;
+            let sub_op_safe = op_safe || sub_field_node.node.safe;
+            let call_follows = matches!(sub_rest.first(), Some(PostfixNodeRef::Call { .. }));
+
+            if call_follows {
+                let call_op = sub_rest[0];
+                let PostfixNodeRef::Call {
+                    node: call_node, ..
+                } = call_op
+                else {
+                    unreachable!()
+                };
+                let sub_op_safe = sub_op_safe || call_op.safe();
+                let ty = check_module_func_call(
+                    call_node,
+                    member_name,
+                    sub_member,
+                    &sub_def,
+                    type_checker,
+                    errors,
+                    expected,
+                );
+                return Some((ty, 3, sub_op_safe));
+            }
+        }
+        let err_kind = DiagnosticKind::UnknownModuleMember {
+            module: type_name,
+            member: member_name,
+        };
+        errors.push(Diagnostic::new(field_node.span, err_kind));
+        return Some((Type::Infer, 1, op_safe));
+    }
+
+    let call_follows = matches!(rest.first(), Some(PostfixNodeRef::Call { .. }));
+
+    if call_follows {
+        let call_op = rest[0];
+        let PostfixNodeRef::Call {
+            node: call_node, ..
+        } = call_op
+        else {
+            unreachable!()
+        };
+        let op_safe = op_safe || call_op.safe();
+
+        let is_regular_func = module_def.funcs.contains_key(&member_name)
+            || module_def.generic_func_templates.contains_key(&member_name);
+
+        if is_regular_func {
+            let ty = check_module_func_call(
+                call_node,
+                type_name,
+                member_name,
+                module_def,
+                type_checker,
+                errors,
+                expected,
+            );
+            return Some((ty, 2, op_safe));
+        }
+
+        let extend_entries: Vec<_> = module_def
+            .extend_methods
+            .iter()
+            .filter(|e| e.name == member_name)
+            .collect();
+
+        if !extend_entries.is_empty() {
+            let def = if extend_entries.len() == 1 {
+                &extend_entries[0].def
+            } else {
+                let first_arg_ty = call_node.node.args.first().map_or(Type::Infer, |arg| {
+                    check_expr(arg, type_checker, errors, None)
+                });
+                extend_entries
+                    .iter()
+                    .find(|e| e.ty == first_arg_ty)
+                    .map_or(&extend_entries[0].def, |e| &e.def)
+            };
+            let ty = check_extend_qualified_call(def, call_node, type_checker, errors);
+            return Some((ty, 2, op_safe));
+        }
+
+        let ty = check_module_func_call(
+            call_node,
+            type_name,
+            member_name,
+            module_def,
+            type_checker,
+            errors,
+            expected,
+        );
+        return Some((ty, 2, op_safe));
+    }
+
+    // module.MemberName without a call — check for const access
+    if let Some(const_def) = module_def.const_defs.get(&member_name) {
+        type_checker
+            .const_values
+            .insert(*field_expr_id, const_def.value.clone());
+        return Some((const_def.ty.clone(), 1, op_safe));
+    }
+
+    let err_kind = if module_def.all_names.contains(&member_name) {
+        DiagnosticKind::PrivateModuleMember {
+            module: type_name,
+            member: member_name,
+        }
+    } else {
+        DiagnosticKind::UnknownModuleMember {
+            module: type_name,
+            member: member_name,
+        }
+    };
+    errors.push(Diagnostic::new(field_node.span, err_kind));
+    Some((Type::Infer, 1, op_safe))
+}
+
+fn try_enum_or_static_dispatch(
+    type_name: Ident,
+    chain: &[PostfixNodeRef<'_>],
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+    expected: Option<&Type>,
+) -> Option<(Type, usize, bool)> {
+    let [
+        PostfixNodeRef::Field {
+            node: field_node, ..
+        },
+        rest @ ..,
+    ] = chain
+    else {
+        return None;
+    };
+
+    let call_follows = matches!(rest.first(), Some(PostfixNodeRef::Call { .. }));
+
+    if !call_follows {
+        // enum unit variant: EnumName.Variant
+        let enum_def = type_checker.get_enum(type_name).cloned()?;
+        let ty = resolve_enum_unit_variant(type_name, field_node, &enum_def, errors);
+        let safe = field_node.node.safe;
+        return Some((ty, 1, safe));
+    }
+
+    // Field+Call: enum tuple variant or static method
+    let call_op = rest[0];
+    let PostfixNodeRef::Call {
+        node: call_node, ..
+    } = call_op
+    else {
+        unreachable!()
+    };
+    let op_safe = field_node.node.safe || call_op.safe();
+
+    if type_checker.get_enum(type_name).is_some() {
+        let ty = check_call(call_node, type_checker, errors, expected);
+        return Some((ty, 2, op_safe));
+    }
+
+    if let Some(struct_def) = type_checker.get_struct(type_name).cloned() {
+        let ty = check_static_method_call(
+            call_node,
+            type_name,
+            field_node.node.field,
+            &struct_def,
+            type_checker,
+            errors,
+        );
+        return Some((ty, 2, op_safe));
+    }
+
+    if let Some(extern_def) = type_checker.get_extern_type(type_name).cloned() {
+        let ty = check_extern_static_method_call(
+            call_node,
+            type_name,
+            field_node.node.field,
+            &extern_def,
+            type_checker,
+            errors,
+        );
+        return Some((ty, 2, op_safe));
+    }
+
+    None
+}
+
 fn try_type_name_dispatch(
     base: &ExprNode,
     chain: &[PostfixNodeRef<'_>],
@@ -982,218 +1245,20 @@ fn try_type_name_dispatch(
         return None;
     };
 
-    // handle module qualified access before enum/struct dispatch
+    // module qualified access
     if let Some(module_def) = type_checker.get_module(*type_name).cloned() {
-        if let [
-            PostfixNodeRef::Field {
-                expr_id: field_expr_id,
-                node: field_node,
-            },
-            rest @ ..,
-        ] = chain
-        {
-            let member_name = field_node.node.field;
-            let op_safe = field_node.node.safe;
-
-            // nested facade.submodule.func(), submodule is a re-exported module
-            if let Some(sub_def) = module_def.re_exported_modules.get(&member_name).cloned() {
-                if let [
-                    PostfixNodeRef::Field {
-                        node: sub_field_node,
-                        ..
-                    },
-                    sub_rest @ ..,
-                ] = rest
-                {
-                    let sub_member = sub_field_node.node.field;
-                    let sub_op_safe = op_safe || sub_field_node.node.safe;
-                    let call_follows =
-                        matches!(sub_rest.first(), Some(PostfixNodeRef::Call { .. }));
-
-                    if call_follows {
-                        let call_op = sub_rest[0];
-                        let PostfixNodeRef::Call {
-                            node: call_node, ..
-                        } = call_op
-                        else {
-                            unreachable!()
-                        };
-                        let sub_op_safe = sub_op_safe || call_op.safe();
-                        let ty = check_module_func_call(
-                            call_node,
-                            member_name,
-                            sub_member,
-                            &sub_def,
-                            type_checker,
-                            errors,
-                            expected,
-                        );
-                        return Some((ty, 3, sub_op_safe));
-                    }
-                }
-                // facade.submodule without further chaining, not a valid expression
-                let err_kind = DiagnosticKind::UnknownModuleMember {
-                    module: *type_name,
-                    member: member_name,
-                };
-                errors.push(Diagnostic::new(field_node.span, err_kind));
-                return Some((Type::Infer, 1, op_safe));
-            }
-
-            let call_follows = matches!(rest.first(), Some(PostfixNodeRef::Call { .. }));
-
-            if call_follows {
-                let call_op = rest[0];
-                let PostfixNodeRef::Call {
-                    node: call_node, ..
-                } = call_op
-                else {
-                    unreachable!()
-                };
-                let op_safe = op_safe || call_op.safe();
-
-                // Regular functions take precedence over extend methods
-                let is_regular_func = module_def.funcs.contains_key(&member_name)
-                    || module_def.generic_func_templates.contains_key(&member_name);
-
-                if is_regular_func {
-                    let ty = check_module_func_call(
-                        call_node,
-                        *type_name,
-                        member_name,
-                        &module_def,
-                        type_checker,
-                        errors,
-                        expected,
-                    );
-                    return Some((ty, 2, op_safe));
-                }
-
-                // Try extend method: find entry matching member_name
-                let extend_entries: Vec<_> = module_def
-                    .extend_methods
-                    .iter()
-                    .filter(|e| e.name == member_name)
-                    .collect();
-
-                if !extend_entries.is_empty() {
-                    // Disambiguate by type-checking first arg if multiple entries
-                    let def = if extend_entries.len() == 1 {
-                        &extend_entries[0].def
-                    } else {
-                        let first_arg_ty = call_node.node.args.first().map_or(Type::Infer, |arg| {
-                            check_expr(arg, type_checker, errors, None)
-                        });
-                        extend_entries
-                            .iter()
-                            .find(|e| e.ty == first_arg_ty)
-                            .map_or(&extend_entries[0].def, |e| &e.def)
-                    };
-                    let ty = check_extend_qualified_call(def, call_node, type_checker, errors);
-                    return Some((ty, 2, op_safe));
-                }
-
-                // Not a regular func or extend method — emit unknown member error
-                let ty = check_module_func_call(
-                    call_node,
-                    *type_name,
-                    member_name,
-                    &module_def,
-                    type_checker,
-                    errors,
-                    expected,
-                );
-                return Some((ty, 2, op_safe));
-            } else {
-                // module.MemberName without a call — check for const access
-                if let Some(const_def) = module_def.const_defs.get(&member_name) {
-                    type_checker
-                        .const_values
-                        .insert(*field_expr_id, const_def.value.clone());
-                    return Some((const_def.ty.clone(), 1, op_safe));
-                }
-
-                let err_kind = if module_def.all_names.contains(&member_name) {
-                    DiagnosticKind::PrivateModuleMember {
-                        module: *type_name,
-                        member: member_name,
-                    }
-                } else {
-                    DiagnosticKind::UnknownModuleMember {
-                        module: *type_name,
-                        member: member_name,
-                    }
-                };
-                errors.push(Diagnostic::new(field_node.span, err_kind));
-                return Some((Type::Infer, 1, op_safe));
-            }
-        }
-        return None;
+        return try_module_dispatch(
+            *type_name,
+            &module_def,
+            chain,
+            type_checker,
+            errors,
+            expected,
+        );
     }
 
-    // single Field step: may be an enum unit variant access
-    if let [
-        PostfixNodeRef::Field {
-            node: field_node, ..
-        },
-        rest @ ..,
-    ] = chain
-    {
-        let call_follows = matches!(rest.first(), Some(PostfixNodeRef::Call { .. }));
-
-        if !call_follows {
-            // enum unit variant: EnumName.Variant
-            if let Some(enum_def) = type_checker.get_enum(*type_name).cloned() {
-                let ty = resolve_enum_unit_variant(*type_name, field_node, &enum_def, errors);
-                let safe = field_node.node.safe;
-                return Some((ty, 1, safe));
-            }
-            return None;
-        }
-
-        // Field+Call: enum tuple variant or static method
-        let call_op = rest[0];
-        let PostfixNodeRef::Call {
-            node: call_node, ..
-        } = call_op
-        else {
-            unreachable!()
-        };
-
-        let op_safe = field_node.node.safe || call_op.safe();
-
-        if let Some(enum_def) = type_checker.get_enum(*type_name).cloned() {
-            let ty = check_call(call_node, type_checker, errors, expected);
-            let _ = enum_def;
-            return Some((ty, 2, op_safe));
-        }
-
-        if let Some(struct_def) = type_checker.get_struct(*type_name).cloned() {
-            let ty = check_static_method_call_outer(
-                call_node,
-                *type_name,
-                field_node.node.field,
-                &struct_def,
-                type_checker,
-                errors,
-            );
-            return Some((ty, 2, op_safe));
-        }
-
-        if let Some(extern_def) = type_checker.get_extern_type(*type_name).cloned() {
-            let ty = check_extern_static_method_call(
-                call_node,
-                *type_name,
-                field_node.node.field,
-                &extern_def,
-                type_checker,
-                errors,
-            );
-            return Some((ty, 2, op_safe));
-        }
-    }
-
-    None
+    // enum variant or static method dispatch
+    try_enum_or_static_dispatch(*type_name, chain, type_checker, errors, expected)
 }
 
 fn resolve_enum_unit_variant(
@@ -1242,24 +1307,6 @@ fn resolve_enum_unit_variant(
             Type::Infer
         }
     }
-}
-
-fn check_static_method_call_outer(
-    call_node: &CallNode,
-    struct_name: Ident,
-    method_name: Ident,
-    struct_def: &super::types::StructDef,
-    type_checker: &mut TypeChecker,
-    errors: &mut Vec<Diagnostic>,
-) -> Type {
-    super::call::check_static_method_call(
-        call_node,
-        struct_name,
-        method_name,
-        struct_def,
-        type_checker,
-        errors,
-    )
 }
 
 fn check_closure_var_params(

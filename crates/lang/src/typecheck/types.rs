@@ -1,3 +1,14 @@
+use std::collections::{HashMap, HashSet};
+
+use super::{
+    annotations::extract_deprecated,
+    const_eval::{ConstDef, ConstValue},
+    constraint::{Constraint, TypeRef},
+    error::{Diagnostic, DiagnosticKind},
+    infer::{build_subst, subst_type},
+    range::range_element_type,
+    unify::{contains_infer, is_assignable, unify_equal},
+};
 use crate::{
     ast::{
         ArrayLen, BinaryOp, BlockNode, CallNode, EnumDecl, ExprId, ExtendMethodNode,
@@ -5,18 +16,6 @@ use crate::{
         Param, StmtNode, StructDecl, StructField, Type, TypeParam, TypeVarId, UnaryOp, VariantKind,
     },
     span::Span,
-};
-
-use super::const_eval::{ConstDef, ConstValue};
-use std::collections::{HashMap, HashSet};
-
-use super::{
-    annotations::extract_deprecated,
-    constraint::{Constraint, TypeRef},
-    error::{Diagnostic, DiagnosticKind},
-    infer::{build_subst, subst_type},
-    range::range_element_type,
-    unify::{contains_infer, is_assignable, unify_equal},
 };
 
 #[derive(Debug, Clone)]
@@ -211,6 +210,23 @@ pub struct ExternTypeDef {
     pub statics: HashMap<Ident, ExternMethodDef>,
     pub operators: Vec<ExternOpDef>,
     pub unary_operators: Vec<ExternUnaryOpDef>,
+}
+
+impl ExternTypeDef {
+    pub fn as_struct_fields(&self) -> Vec<StructField> {
+        self.field_order
+            .iter()
+            .map(|name| {
+                let def = &self.fields[name];
+                StructField {
+                    annotations: vec![],
+                    name: *name,
+                    ty: def.ty.clone(),
+                    default: None,
+                }
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1416,85 +1432,121 @@ pub(super) fn unwrap_opt_typ(ty: &Type) -> &Type {
     ty.option_inner().unwrap_or(ty)
 }
 
-fn check_enum_property(
-    name: Ident,
-    type_args: &[Type],
-    tc: &TypeChecker,
-    check: impl Fn(&Type, &TypeChecker) -> Result<(), String>,
-) -> Result<(), String> {
-    let Some(enum_def) = tc.enum_defs.get(&name) else {
-        return Err(format!("enum '{name}' is not known"));
-    };
-    let subst = build_subst(&enum_def.type_params, type_args);
-    for v in &enum_def.variants {
-        let resolved_types: Vec<Type> = match &v.kind {
-            VariantKind::Unit => continue,
-            VariantKind::Tuple(types) => types.iter().map(|t| subst_type(t, &subst)).collect(),
-            VariantKind::Struct(fields) => {
-                fields.iter().map(|f| subst_type(&f.ty, &subst)).collect()
-            }
-        };
-        for resolved in &resolved_types {
-            check(resolved, tc).map_err(|msg| {
-                format!("variant '{}' has payload type '{resolved}': {msg}", v.name)
-            })?;
+#[derive(Clone, Copy)]
+enum TypeProperty {
+    Keyable,
+    Equatable,
+}
+
+impl TypeProperty {
+    fn name(self) -> &'static str {
+        match self {
+            TypeProperty::Keyable => "keyable",
+            TypeProperty::Equatable => "equatable",
         }
     }
-    Ok(())
 }
 
-fn check_struct_property(
-    name: Ident,
-    type_args: &[Type],
-    tc: &TypeChecker,
-    check: impl Fn(&Type, &TypeChecker) -> Result<(), String>,
-) -> Result<(), String> {
-    let Some(struct_def) = tc.struct_defs.get(&name) else {
-        return Err(format!("struct '{name}' is not known"));
-    };
-    let subst = build_subst(&struct_def.type_params, type_args);
-    for f in &struct_def.fields {
-        let resolved = subst_type(&f.ty, &subst);
-        check(&resolved, tc)
-            .map_err(|msg| format!("field '{}' has type '{resolved}': {msg}", f.name))?;
-    }
-    Ok(())
-}
-
-fn check_keyable(ty: &Type, tc: &TypeChecker) -> Result<(), String> {
+fn check_type_property(ty: &Type, tc: &TypeChecker, prop: TypeProperty) -> Result<(), String> {
+    let prop_name = prop.name();
     match ty {
-        Type::Int | Type::Bool | Type::String => Ok(()),
-        Type::Float | Type::Double => Err(
-            "float is not keyable due to NaN and precision issues; use int or string instead"
-                .to_string(),
-        ),
         Type::Tuple(elems) => {
             for (i, t) in elems.iter().enumerate() {
-                check_keyable(t, tc).map_err(|_| {
-                    format!("tuple element {i} has type '{t}' which is not keyable")
+                check_type_property(t, tc, prop).map_err(|_| {
+                    format!("tuple element {i} has type '{t}' which is not {prop_name}")
                 })?;
             }
             Ok(())
         }
         Type::NamedTuple(fields) => {
             for (label, t) in fields {
-                check_keyable(t, tc)
-                    .map_err(|_| format!("field '{label}' has type '{t}' which is not keyable"))?;
+                check_type_property(t, tc, prop).map_err(|_| {
+                    format!("field '{label}' has type '{t}' which is not {prop_name}")
+                })?;
             }
             Ok(())
         }
         Type::Enum { name, type_args } => {
             if ty.is_option() {
-                return Err("optional types cannot be used as map keys".to_string());
+                return match prop {
+                    TypeProperty::Keyable => {
+                        Err("optional types cannot be used as map keys".to_string())
+                    }
+                    TypeProperty::Equatable => {
+                        let inner = ty.option_inner().cloned().unwrap_or(Type::Infer);
+                        check_type_property(&inner, tc, prop)
+                    }
+                };
             }
-            check_enum_property(*name, type_args, tc, check_keyable)
+            let Some(enum_def) = tc.enum_defs.get(name) else {
+                return Err(format!("enum '{name}' is not known"));
+            };
+            let subst = build_subst(&enum_def.type_params, type_args);
+            for v in &enum_def.variants {
+                let resolved_types: Vec<Type> = match &v.kind {
+                    VariantKind::Unit => continue,
+                    VariantKind::Tuple(types) => {
+                        types.iter().map(|t| subst_type(t, &subst)).collect()
+                    }
+                    VariantKind::Struct(fields) => {
+                        fields.iter().map(|f| subst_type(&f.ty, &subst)).collect()
+                    }
+                };
+                for resolved in &resolved_types {
+                    check_type_property(resolved, tc, prop).map_err(|msg| {
+                        format!("variant '{}' has payload type '{resolved}': {msg}", v.name)
+                    })?;
+                }
+            }
+            Ok(())
         }
         Type::Struct { name, type_args } => {
-            check_struct_property(*name, type_args, tc, check_keyable)
+            let Some(struct_def) = tc.struct_defs.get(name) else {
+                return Err(format!("struct '{name}' is not known"));
+            };
+            let subst = build_subst(&struct_def.type_params, type_args);
+            for f in &struct_def.fields {
+                let resolved = subst_type(&f.ty, &subst);
+                check_type_property(&resolved, tc, prop)
+                    .map_err(|msg| format!("field '{}' has type '{resolved}': {msg}", f.name))?;
+            }
+            Ok(())
         }
-        Type::DataRef { .. } => Ok(()),
-        other => Err(format!("type '{other}' is not keyable")),
+        _ => check_type_property_leaf(ty, tc, prop),
     }
+}
+
+fn check_type_property_leaf(ty: &Type, tc: &TypeChecker, prop: TypeProperty) -> Result<(), String> {
+    match prop {
+        TypeProperty::Keyable => match ty {
+            Type::Int | Type::Bool | Type::String => Ok(()),
+            Type::Float | Type::Double => Err(
+                "float is not keyable due to NaN and precision issues; use int or string instead"
+                    .to_string(),
+            ),
+            Type::DataRef { .. } => Ok(()),
+            other => Err(format!("type '{other}' is not keyable")),
+        },
+        TypeProperty::Equatable => match ty {
+            Type::Infer | Type::Int | Type::Float | Type::Double | Type::Bool | Type::String => {
+                Ok(())
+            }
+            Type::Func { .. } | Type::DataRef { .. } => Ok(()),
+            Type::List { elem } | Type::Array { elem, .. } => check_type_property(elem, tc, prop)
+                .map_err(|_| format!("element type '{elem}' is not equatable")),
+            Type::Map { key, value } => {
+                check_type_property(key, tc, prop)
+                    .map_err(|_| format!("key type '{key}' is not equatable"))?;
+                check_type_property(value, tc, prop)
+                    .map_err(|_| format!("value type '{value}' is not equatable"))
+            }
+            other => Err(format!("type '{other}' is not equatable")),
+        },
+    }
+}
+
+fn check_keyable(ty: &Type, tc: &TypeChecker) -> Result<(), String> {
+    check_type_property(ty, tc, TypeProperty::Keyable)
 }
 
 pub(super) fn is_keyable(ty: &Type, tc: &TypeChecker) -> bool {
@@ -1502,45 +1554,7 @@ pub(super) fn is_keyable(ty: &Type, tc: &TypeChecker) -> bool {
 }
 
 fn check_equatable(ty: &Type, tc: &TypeChecker) -> Result<(), String> {
-    match ty {
-        Type::Infer | Type::Int | Type::Float | Type::Double | Type::Bool | Type::String => Ok(()),
-        Type::Tuple(elems) => {
-            for (i, t) in elems.iter().enumerate() {
-                check_equatable(t, tc).map_err(|_| {
-                    format!("tuple element {i} has type '{t}' which is not equatable")
-                })?;
-            }
-            Ok(())
-        }
-        Type::NamedTuple(fields) => {
-            for (label, t) in fields {
-                check_equatable(t, tc).map_err(|_| {
-                    format!("field '{label}' has type '{t}' which is not equatable")
-                })?;
-            }
-            Ok(())
-        }
-        Type::Enum { name, type_args } => {
-            if ty.is_option() {
-                let inner = ty.option_inner().cloned().unwrap_or(Type::Infer);
-                return check_equatable(&inner, tc);
-            }
-            check_enum_property(*name, type_args, tc, check_equatable)
-        }
-        Type::Struct { name, type_args } => {
-            check_struct_property(*name, type_args, tc, check_equatable)
-        }
-        Type::Func { .. } => Ok(()),
-        Type::DataRef { .. } => Ok(()),
-        Type::List { elem } | Type::Array { elem, .. } => {
-            check_equatable(elem, tc).map_err(|_| format!("element type '{elem}' is not equatable"))
-        }
-        Type::Map { key, value } => {
-            check_equatable(key, tc).map_err(|_| format!("key type '{key}' is not equatable"))?;
-            check_equatable(value, tc).map_err(|_| format!("value type '{value}' is not equatable"))
-        }
-        other => Err(format!("type '{other}' is not equatable")),
-    }
+    check_type_property(ty, tc, TypeProperty::Equatable)
 }
 
 pub(super) fn is_equatable(ty: &Type, tc: &TypeChecker) -> bool {
