@@ -751,6 +751,10 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
             format!("type '{ty_name}' is not generic, but type parameters were provided on extend"),
             "remove the type parameters from the extend head".to_string(),
         ),
+        DiagnosticKind::ExtendUndeclaredTypeParam { name } => (
+            format!("undeclared type parameter '{name}' used in extend target type"),
+            "type parameters used in the extend target must be declared in the extend<...> head".to_string(),
+        ),
         DiagnosticKind::ExtendUnusedTypeParam { param_name } => (
             format!("unused type parameter '{param_name}' in extend declaration"),
             "every declared type parameter must appear in the target type".to_string(),

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use internment::Intern;
 
 use super::*;
@@ -1520,13 +1518,7 @@ fn lower_lambda(
 
     let lambda_func_id = ctx.shared.alloc_func_id();
 
-    let mut lambda_fc = FuncLower {
-        locals: vec![],
-        local_map: HashMap::new(),
-        scope_log: vec![],
-        defer_stack: vec![],
-        loop_defer_depth: None,
-    };
+    let mut lambda_fc = FuncLower::new();
 
     for (name, capture_ty) in &captures {
         register_named_local(&mut lambda_fc, *name, capture_ty.clone());
@@ -2685,13 +2677,7 @@ fn lower_sort_by(
 
     let lambda_func_id = ctx.shared.alloc_func_id();
 
-    let mut lambda_fc = FuncLower {
-        locals: vec![],
-        local_map: HashMap::new(),
-        scope_log: vec![],
-        defer_stack: vec![],
-        loop_defer_depth: None,
-    };
+    let mut lambda_fc = FuncLower::new();
 
     for param in &lambda.node.params {
         let param_ty = param.ty.clone().unwrap_or_else(|| elem_ty.clone());

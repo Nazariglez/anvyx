@@ -817,7 +817,22 @@ fn try_resolve_generic_extend(
             &matches[i].0.target_type,
             &matches[i].0.type_params,
         ) {
-            Specificity::MoreSpecific | Specificity::Equal => {}
+            Specificity::MoreSpecific => {}
+            Specificity::Equal => {
+                // if two matches are equally specific only cross-module ties are ambiguous
+                if matches[best_idx].0.source_module != matches[i].0.source_module {
+                    let candidates = matches.iter().map(|(t, _)| t.binding).collect();
+                    errors.push(Diagnostic::new(
+                        span,
+                        DiagnosticKind::AmbiguousExtendMethod {
+                            ty: receiver_ty.clone(),
+                            method: method_name,
+                            candidates,
+                        },
+                    ));
+                    return Some(Type::Infer);
+                }
+            }
             _ => {
                 let candidates = matches.iter().map(|(t, _)| t.binding).collect();
                 errors.push(Diagnostic::new(
@@ -1051,10 +1066,104 @@ fn try_extern_method(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(super) fn resolve_builtin_or_extend(
+    target_ty: &Type,
+    method_name: Ident,
+    call_node: &CallNode,
+    base: Option<&ExprNode>,
+    span: Span,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    match target_ty {
+        Type::List { elem } => {
+            // extend-first so "extend [int]" methods shadow builtins when defined
+            if let Some(ty) = resolve_extend_method(
+                target_ty,
+                method_name,
+                call_node,
+                base,
+                span,
+                type_checker,
+                errors,
+            ) {
+                return Some(ty);
+            }
+            Some(check_list_method(
+                call_node,
+                base.unwrap_or(call_node.node.func.as_ref()),
+                method_name,
+                elem.as_ref(),
+                type_checker,
+                errors,
+            )?)
+        }
+        Type::Map { key, value } => {
+            // extend-first so "extend {K: V}" methods shadow builtins when defined
+            if let Some(ty) = resolve_extend_method(
+                target_ty,
+                method_name,
+                call_node,
+                base,
+                span,
+                type_checker,
+                errors,
+            ) {
+                return Some(ty);
+            }
+            Some(check_map_method(
+                call_node,
+                base.unwrap_or(call_node.node.func.as_ref()),
+                method_name,
+                key.as_ref(),
+                value.as_ref(),
+                type_checker,
+                errors,
+            )?)
+        }
+        Type::Tuple { .. }
+        | Type::Float
+        | Type::Double
+        | Type::Int
+        | Type::Bool
+        | Type::String
+        | Type::Enum { .. } => resolve_extend_method(
+            target_ty,
+            method_name,
+            call_node,
+            base,
+            span,
+            type_checker,
+            errors,
+        ),
+        _ => None,
+    }
+}
+
+fn emit_unknown_method(
+    ty: &Type,
+    method_name: Ident,
+    span: Span,
+    op_safe: bool,
+    chain_is_optional: bool,
+    index: usize,
+    call_op: PostfixNodeRef<'_>,
+    errors: &mut Vec<Diagnostic>,
+) -> MethodCallOutcome {
+    let type_ident = Ident(Intern::new(format!("{ty}")));
+    errors.push(Diagnostic::new(
+        span,
+        DiagnosticKind::UnknownMethod {
+            struct_name: type_ident,
+            method: method_name,
+        },
+    ));
+    handled_infer(op_safe, chain_is_optional, index, call_op)
+}
+
 fn try_builtin_or_extend_method(
     detection_ty: &Type,
     field_node: &crate::ast::FieldAccessNode,
-    call_node: &CallNode,
     call_op: PostfixNodeRef<'_>,
     op_safe: bool,
     chain_is_optional: bool,
@@ -1063,146 +1172,45 @@ fn try_builtin_or_extend_method(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Option<MethodCallOutcome> {
-    let method_target = field_node.node.target.as_ref();
+    let PostfixNodeRef::Call {
+        node: call_node, ..
+    } = call_op
+    else {
+        unreachable!()
+    };
     let method_name = field_node.node.field;
 
+    if let Some(ret) = resolve_builtin_or_extend(
+        detection_ty,
+        method_name,
+        call_node,
+        Some(base),
+        field_node.span,
+        type_checker,
+        errors,
+    ) {
+        return Some(handled_method_result(
+            ret,
+            op_safe,
+            chain_is_optional,
+            index,
+            call_op,
+        ));
+    }
+
+    // emit UnknownMethod for types where a method was expected but not found
     match detection_ty {
-        Type::List { elem } => {
-            if let Some(ret) = check_list_method(
-                call_node,
-                method_target,
-                method_name,
-                elem.as_ref(),
-                type_checker,
-                errors,
-            ) {
-                return Some(handled_method_result(
-                    ret,
-                    op_safe,
-                    chain_is_optional,
-                    index,
-                    call_op,
-                ));
-            }
-            if let Some(extend_ret) = resolve_extend_method(
-                detection_ty,
-                method_name,
-                call_node,
-                Some(base),
-                field_node.span,
-                type_checker,
-                errors,
-            ) {
-                return Some(handled_method_result(
-                    extend_ret,
-                    op_safe,
-                    chain_is_optional,
-                    index,
-                    call_op,
-                ));
-            }
-            let type_ident = Ident(Intern::new(format!("{detection_ty}")));
-            errors.push(Diagnostic::new(
-                field_node.span,
-                DiagnosticKind::UnknownMethod {
-                    struct_name: type_ident,
-                    method: method_name,
-                },
-            ));
-            Some(handled_infer(op_safe, chain_is_optional, index, call_op))
-        }
-        Type::Map { key, value } => {
-            if let Some(ret) = check_map_method(
-                call_node,
-                method_target,
-                method_name,
-                key.as_ref(),
-                value.as_ref(),
-                type_checker,
-                errors,
-            ) {
-                return Some(handled_method_result(
-                    ret,
-                    op_safe,
-                    chain_is_optional,
-                    index,
-                    call_op,
-                ));
-            }
-            if let Some(extend_ret) = resolve_extend_method(
-                detection_ty,
-                method_name,
-                call_node,
-                Some(base),
-                field_node.span,
-                type_checker,
-                errors,
-            ) {
-                return Some(handled_method_result(
-                    extend_ret,
-                    op_safe,
-                    chain_is_optional,
-                    index,
-                    call_op,
-                ));
-            }
-            let type_ident = Ident(Intern::new(format!("{detection_ty}")));
-            errors.push(Diagnostic::new(
-                field_node.span,
-                DiagnosticKind::UnknownMethod {
-                    struct_name: type_ident,
-                    method: method_name,
-                },
-            ));
-            Some(handled_infer(op_safe, chain_is_optional, index, call_op))
-        }
-        Type::Tuple(_) => {
-            if let Some(extend_ret) = resolve_extend_method(
-                detection_ty,
-                method_name,
-                call_node,
-                Some(base),
-                field_node.span,
-                type_checker,
-                errors,
-            ) {
-                return Some(handled_method_result(
-                    extend_ret,
-                    op_safe,
-                    chain_is_optional,
-                    index,
-                    call_op,
-                ));
-            }
-            None
-        }
         Type::Float | Type::Double | Type::Int | Type::Bool | Type::String | Type::Enum { .. } => {
-            if let Some(extend_ret) = resolve_extend_method(
+            Some(emit_unknown_method(
                 detection_ty,
                 method_name,
-                call_node,
-                Some(base),
                 field_node.span,
-                type_checker,
+                op_safe,
+                chain_is_optional,
+                index,
+                call_op,
                 errors,
-            ) {
-                return Some(handled_method_result(
-                    extend_ret,
-                    op_safe,
-                    chain_is_optional,
-                    index,
-                    call_op,
-                ));
-            }
-            let type_ident = Ident(Intern::new(format!("{detection_ty}")));
-            errors.push(Diagnostic::new(
-                field_node.span,
-                DiagnosticKind::UnknownMethod {
-                    struct_name: type_ident,
-                    method: method_name,
-                },
-            ));
-            Some(handled_infer(op_safe, chain_is_optional, index, call_op))
+            ))
         }
         _ => None,
     }
@@ -1338,7 +1346,6 @@ fn handle_method_call_if_applicable(
     match try_builtin_or_extend_method(
         detection_ty,
         field_node,
-        call_node,
         call_op,
         op_safe,
         chain_is_optional,
@@ -1467,19 +1474,120 @@ fn try_module_dispatch(
             .collect();
 
         if !extend_entries.is_empty() {
-            let def = if extend_entries.len() == 1 {
-                &extend_entries[0].def
-            } else {
-                let first_arg_ty = call_node.node.args.first().map_or(Type::Infer, |arg| {
-                    check_expr(arg, type_checker, errors, None)
-                });
-                extend_entries
-                    .iter()
-                    .find(|e| e.ty == first_arg_ty)
-                    .map_or(&extend_entries[0].def, |e| &e.def)
-            };
-            let ty = check_extend_qualified_call(def, call_node, type_checker, errors);
-            return Some((ty, 2, op_safe));
+            let first_arg_ty = call_node.node.args.first().map_or(Type::Infer, |arg| {
+                check_expr(arg, type_checker, errors, None)
+            });
+            let def = extend_entries
+                .iter()
+                .find(|e| e.ty == first_arg_ty)
+                .map(|e| &e.def);
+            if let Some(def) = def {
+                let ty = check_extend_qualified_call(def, call_node, type_checker, errors);
+                return Some((ty, 2, op_safe));
+            }
+        }
+
+        // try generic extend methods from this module
+        let generic_entries: Vec<_> = module_def
+            .generic_extend_methods
+            .iter()
+            .filter(|e| e.method_name == member_name)
+            .collect();
+
+        if !generic_entries.is_empty() {
+            let first_arg_ty = call_node.node.args.first().map_or(Type::Infer, |arg| {
+                check_expr(arg, type_checker, errors, None)
+            });
+            let first_arg_expr = call_node.node.args.first();
+
+            let mut matches: Vec<(GenericExtendTemplate, Vec<Type>)> = vec![];
+            for entry in &generic_entries {
+                let mut bindings = HashMap::new();
+                if match_type_pattern(
+                    &first_arg_ty,
+                    &entry.target_type,
+                    &entry.type_params,
+                    &mut bindings,
+                ) {
+                    let type_args: Vec<Type> = entry
+                        .type_params
+                        .iter()
+                        .map(|p| bindings.get(&p.name).cloned().unwrap_or(Type::Infer))
+                        .collect();
+
+                    // rebuild a temporary GenericExtendTemplate from the module entry
+                    let base_key = extend_base_key(&first_arg_ty);
+                    let stored = base_key.and_then(|k| {
+                        type_checker
+                            .generic_extend_templates
+                            .get(&(k, member_name))
+                            .and_then(|templates| {
+                                templates
+                                    .iter()
+                                    .find(|t| t.target_type == entry.target_type)
+                                    .cloned()
+                            })
+                    });
+                    if let Some(template) = stored {
+                        matches.push((template, type_args));
+                    }
+                }
+            }
+
+            if matches.len() == 1 {
+                let (template, type_args) = matches.remove(0);
+                let ty = try_specialize_extend(
+                    &first_arg_ty,
+                    &type_args,
+                    &template,
+                    member_name,
+                    call_node,
+                    first_arg_expr,
+                    field_node.span,
+                    type_checker,
+                    errors,
+                );
+                return Some((ty, 2, op_safe));
+            } else if matches.len() > 1 {
+                // specificity tournament
+                let mut best_idx = 0;
+                for i in 1..matches.len() {
+                    match compare_specificity(
+                        &matches[best_idx].0.target_type,
+                        &matches[best_idx].0.type_params,
+                        &matches[i].0.target_type,
+                        &matches[i].0.type_params,
+                    ) {
+                        Specificity::LessSpecific | Specificity::Equal => best_idx = i,
+                        Specificity::MoreSpecific => {}
+                        Specificity::Incomparable => {
+                            let candidates = matches.iter().map(|(t, _)| t.binding).collect();
+                            errors.push(Diagnostic::new(
+                                field_node.span,
+                                DiagnosticKind::AmbiguousExtendMethod {
+                                    ty: first_arg_ty.clone(),
+                                    method: member_name,
+                                    candidates,
+                                },
+                            ));
+                            return Some((Type::Infer, 2, op_safe));
+                        }
+                    }
+                }
+                let (template, type_args) = matches.swap_remove(best_idx);
+                let ty = try_specialize_extend(
+                    &first_arg_ty,
+                    &type_args,
+                    &template,
+                    member_name,
+                    call_node,
+                    first_arg_expr,
+                    field_node.span,
+                    type_checker,
+                    errors,
+                );
+                return Some((ty, 2, op_safe));
+            }
         }
 
         let ty = check_module_func_call(

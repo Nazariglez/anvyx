@@ -273,6 +273,51 @@ pub(super) fn collect_declarations<'a>(
     }
 }
 
+pub(super) fn resolve_extend_ty(ty: &Type, ctx: &SharedCtx) -> Option<Type> {
+    match ty {
+        Type::UnresolvedName(name) => {
+            if ctx.struct_type_ids.contains_key(name) {
+                if ctx.tcx.is_dataref(*name) {
+                    Some(Type::DataRef {
+                        name: *name,
+                        type_args: vec![],
+                    })
+                } else {
+                    Some(Type::Struct {
+                        name: *name,
+                        type_args: vec![],
+                    })
+                }
+            } else if ctx.enum_type_ids.contains_key(name) {
+                Some(Type::Enum {
+                    name: *name,
+                    type_args: vec![],
+                })
+            } else if ctx.tcx.get_extern_type(*name).is_some() {
+                Some(Type::Extern { name: *name })
+            } else {
+                None
+            }
+        }
+        Type::Struct { name, type_args } if !type_args.is_empty() => {
+            if ctx.enum_type_ids.contains_key(name) {
+                Some(Type::Enum {
+                    name: *name,
+                    type_args: type_args.clone(),
+                })
+            } else if ctx.tcx.is_dataref(*name) {
+                Some(Type::DataRef {
+                    name: *name,
+                    type_args: type_args.clone(),
+                })
+            } else {
+                Some(ty.clone())
+            }
+        }
+        other => Some(other.clone()),
+    }
+}
+
 pub(super) fn register_extend_declarations<'a>(
     stmts: impl Iterator<Item = &'a ast::StmtNode>,
     module_path: &[String],
@@ -288,47 +333,8 @@ pub(super) fn register_extend_declarations<'a>(
         if !node.node.type_params.is_empty() {
             continue;
         }
-        let resolved_ty = match &node.node.ty {
-            Type::UnresolvedName(name) => {
-                if ctx.struct_type_ids.contains_key(name) {
-                    if ctx.tcx.is_dataref(*name) {
-                        Type::DataRef {
-                            name: *name,
-                            type_args: vec![],
-                        }
-                    } else {
-                        Type::Struct {
-                            name: *name,
-                            type_args: vec![],
-                        }
-                    }
-                } else if ctx.enum_type_ids.contains_key(name) {
-                    Type::Enum {
-                        name: *name,
-                        type_args: vec![],
-                    }
-                } else if ctx.tcx.get_extern_type(*name).is_some() {
-                    Type::Extern { name: *name }
-                } else {
-                    continue;
-                }
-            }
-            Type::Struct { name, type_args } if !type_args.is_empty() => {
-                if ctx.enum_type_ids.contains_key(name) {
-                    Type::Enum {
-                        name: *name,
-                        type_args: type_args.clone(),
-                    }
-                } else if ctx.tcx.is_dataref(*name) {
-                    Type::DataRef {
-                        name: *name,
-                        type_args: type_args.clone(),
-                    }
-                } else {
-                    node.node.ty.clone()
-                }
-            }
-            other => other.clone(),
+        let Some(resolved_ty) = resolve_extend_ty(&node.node.ty, ctx) else {
+            continue;
         };
         let type_str = format!("{resolved_ty}");
         for method in &node.node.methods {

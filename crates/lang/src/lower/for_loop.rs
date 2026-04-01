@@ -2,6 +2,58 @@ use super::{
     FuncLower, LowerCtx, LowerError, alloc_and_bind, emit_counter_increment, lower_block,
     lower_expr, register_named_local,
 };
+
+fn destructure_map_entry_tuple(
+    subs: &[ast::PatternNode],
+    entry_ty: &Type,
+    entry_local: hir::LocalId,
+    types: &[&Type; 2],
+    span: Span,
+    fc: &mut FuncLower,
+    body_stmts: &mut Vec<hir::Stmt>,
+) -> Result<(), LowerError> {
+    for (k, sub) in subs.iter().enumerate() {
+        match &sub.node {
+            Pattern::Ident(name) => {
+                let local_id = register_named_local(fc, *name, types[k].clone());
+                body_stmts.push(hir::Stmt {
+                    span,
+                    kind: hir::StmtKind::Let {
+                        local: local_id,
+                        init: hir::Expr::new(
+                            types[k].clone(),
+                            span,
+                            hir::ExprKind::TupleIndex {
+                                tuple: Box::new(hir::Expr::local(
+                                    entry_ty.clone(),
+                                    span,
+                                    entry_local,
+                                )),
+                                index: k as u16,
+                            },
+                        ),
+                    },
+                });
+            }
+            Pattern::Wildcard => {}
+            _ => return Err(LowerError::UnsupportedPattern { span }),
+        }
+    }
+    Ok(())
+}
+
+fn lower_for_user_body(
+    for_node: &ast::ForNode,
+    ctx: &LowerCtx,
+    fc: &mut FuncLower,
+    body_stmts: &mut Vec<hir::Stmt>,
+) -> Result<(), LowerError> {
+    let old = fc.enter_loop_defer();
+    let user_body = lower_block(&for_node.node.body, ctx, fc, false, &Type::Void)?;
+    fc.leave_loop_defer(old);
+    body_stmts.extend(user_body.stmts);
+    Ok(())
+}
 use crate::{
     ast::{self, BinaryOp, Pattern, Type},
     hir,
@@ -437,11 +489,7 @@ fn lower_for_seq_body(
         inc_op,
     );
 
-    let old_loop_depth = fc.loop_defer_depth;
-    fc.loop_defer_depth = Some(fc.defer_stack.len());
-    let user_body = lower_block(&for_node.node.body, ctx, fc, false, &Type::Void)?;
-    fc.loop_defer_depth = old_loop_depth;
-    body_stmts.extend(user_body.stmts);
+    lower_for_user_body(for_node, ctx, fc, &mut body_stmts)?;
 
     Ok(body_stmts)
 }
@@ -540,6 +588,7 @@ fn lower_for_map_body(
                     .is_none_or(|t2_elems| t2_elems.len() != inner_subs.len())
             });
 
+            let types = [key_ty, value_ty];
             if is_enumerate {
                 if let Pattern::Ident(name) = &subs[0].node {
                     let local_id = register_named_local(fc, *name, Type::Int);
@@ -559,66 +608,28 @@ fn lower_for_map_body(
                     return Err(LowerError::UnsupportedPattern { span });
                 };
 
-                let types = [key_ty, value_ty];
-                for (k, sub) in inner_subs.iter().enumerate() {
-                    match &sub.node {
-                        Pattern::Ident(name) => {
-                            let local_id = register_named_local(fc, *name, types[k].clone());
-                            body_stmts.push(hir::Stmt {
-                                span,
-                                kind: hir::StmtKind::Let {
-                                    local: local_id,
-                                    init: hir::Expr::new(
-                                        types[k].clone(),
-                                        span,
-                                        hir::ExprKind::TupleIndex {
-                                            tuple: Box::new(hir::Expr::local(
-                                                entry_ty.clone(),
-                                                span,
-                                                entry_local,
-                                            )),
-                                            index: k as u16,
-                                        },
-                                    ),
-                                },
-                            });
-                        }
-                        Pattern::Wildcard => {}
-                        _ => return Err(LowerError::UnsupportedPattern { span }),
-                    }
-                }
+                destructure_map_entry_tuple(
+                    inner_subs,
+                    entry_ty,
+                    entry_local,
+                    &types,
+                    span,
+                    fc,
+                    &mut body_stmts,
+                )?;
             } else {
                 let entry_local =
                     alloc_and_bind(fc, span, &mut body_stmts, entry_ty.clone(), entry_at_expr());
 
-                let types = [key_ty, value_ty];
-                for (k, sub) in subs.iter().enumerate() {
-                    match &sub.node {
-                        Pattern::Ident(name) => {
-                            let local_id = register_named_local(fc, *name, types[k].clone());
-                            body_stmts.push(hir::Stmt {
-                                span,
-                                kind: hir::StmtKind::Let {
-                                    local: local_id,
-                                    init: hir::Expr::new(
-                                        types[k].clone(),
-                                        span,
-                                        hir::ExprKind::TupleIndex {
-                                            tuple: Box::new(hir::Expr::local(
-                                                entry_ty.clone(),
-                                                span,
-                                                entry_local,
-                                            )),
-                                            index: k as u16,
-                                        },
-                                    ),
-                                },
-                            });
-                        }
-                        Pattern::Wildcard => {}
-                        _ => return Err(LowerError::UnsupportedPattern { span }),
-                    }
-                }
+                destructure_map_entry_tuple(
+                    subs,
+                    entry_ty,
+                    entry_local,
+                    &types,
+                    span,
+                    fc,
+                    &mut body_stmts,
+                )?;
             }
         }
         _ => return Err(LowerError::UnsupportedPattern { span }),
@@ -633,11 +644,7 @@ fn lower_for_map_body(
         BinaryOp::Add,
     );
 
-    let old_loop_depth = fc.loop_defer_depth;
-    fc.loop_defer_depth = Some(fc.defer_stack.len());
-    let user_body = lower_block(&for_node.node.body, ctx, fc, false, &Type::Void)?;
-    fc.loop_defer_depth = old_loop_depth;
-    body_stmts.extend(user_body.stmts);
+    lower_for_user_body(for_node, ctx, fc, &mut body_stmts)?;
 
     Ok(body_stmts)
 }
@@ -679,11 +686,7 @@ fn lower_for_body(
         inc_op,
     );
 
-    let old_loop_depth = fc.loop_defer_depth;
-    fc.loop_defer_depth = Some(fc.defer_stack.len());
-    let user_body = lower_block(&for_node.node.body, ctx, fc, false, &Type::Void)?;
-    fc.loop_defer_depth = old_loop_depth;
-    body_stmts.extend(user_body.stmts);
+    lower_for_user_body(for_node, ctx, fc, &mut body_stmts)?;
 
     Ok(body_stmts)
 }

@@ -963,16 +963,28 @@ pub(super) fn build_module_def_with_reexports(
 
                 if !decl.type_params.is_empty() {
                     // build the exported extend target, unresolved names
-                    // use a name-based "Struct", while typed targets resolve directly
+                    // use the correct concrete type variant while typed targets resolve directly
                     let target_type = if let Type::UnresolvedName(name) = &decl.ty {
                         let type_args: Vec<Type> = decl
                             .type_params
                             .iter()
                             .map(|p| Type::UnresolvedName(p.name))
                             .collect();
-                        Type::Struct {
-                            name: *name,
-                            type_args,
+                        if type_checker.get_enum(*name).is_some() {
+                            Type::Enum {
+                                name: *name,
+                                type_args,
+                            }
+                        } else if type_checker.is_dataref(*name) {
+                            Type::DataRef {
+                                name: *name,
+                                type_args,
+                            }
+                        } else {
+                            Type::Struct {
+                                name: *name,
+                                type_args,
+                            }
                         }
                     } else {
                         resolve(&decl.ty)
@@ -1219,6 +1231,42 @@ pub(super) fn extend_base_key(ty: &Type) -> Option<Ident> {
     }
 }
 
+fn collect_undeclared_type_param_names(ty: &Type, declared: &[TypeParam], out: &mut Vec<Ident>) {
+    match ty {
+        Type::UnresolvedName(name) => {
+            if !declared.iter().any(|tp| tp.name == *name) {
+                out.push(*name);
+            }
+        }
+        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+            collect_undeclared_type_param_names(elem, declared, out);
+        }
+        Type::Map { key, value } => {
+            collect_undeclared_type_param_names(key, declared, out);
+            collect_undeclared_type_param_names(value, declared, out);
+        }
+        Type::Tuple(elems) => {
+            for elem in elems {
+                collect_undeclared_type_param_names(elem, declared, out);
+            }
+        }
+        Type::Struct { type_args, .. }
+        | Type::DataRef { type_args, .. }
+        | Type::Enum { type_args, .. } => {
+            for arg in type_args {
+                collect_undeclared_type_param_names(arg, declared, out);
+            }
+        }
+        Type::Func { params, ret } => {
+            for p in params {
+                collect_undeclared_type_param_names(&p.ty, declared, out);
+            }
+            collect_undeclared_type_param_names(ret, declared, out);
+        }
+        _ => {}
+    }
+}
+
 fn is_valid_concrete_extend_type(ty: &Type) -> bool {
     match ty {
         Type::Int
@@ -1348,6 +1396,60 @@ fn check_extend_decl(
     }
 }
 
+fn resolve_generic_extend_named_type(
+    type_checker: &TypeChecker,
+    ty_name: Ident,
+    name: Ident,
+    type_args: Vec<Type>,
+    declared_param_count: usize,
+    span: Span,
+    errors: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    type MakeTy = fn(Ident, Vec<Type>) -> Type;
+    let (def_tp, make_ty): (usize, MakeTy) = if let Some(def) = type_checker.get_enum(name) {
+        (def.type_params.len(), |n, a| Type::Enum {
+            name: n,
+            type_args: a,
+        })
+    } else if type_checker.is_dataref(name) {
+        let def_tp = type_checker
+            .get_struct(name)
+            .map_or(0, |d| d.type_params.len());
+        (def_tp, |n, a| Type::DataRef {
+            name: n,
+            type_args: a,
+        })
+    } else {
+        let def_tp = type_checker
+            .get_struct(name)
+            .map_or(0, |d| d.type_params.len());
+        (def_tp, |n, a| Type::Struct {
+            name: n,
+            type_args: a,
+        })
+    };
+
+    if def_tp == 0 {
+        errors.push(Diagnostic::new(
+            span,
+            DiagnosticKind::ExtendTypeParamsOnNonGeneric { ty_name },
+        ));
+        return None;
+    }
+    if declared_param_count != def_tp {
+        errors.push(Diagnostic::new(
+            span,
+            DiagnosticKind::ExtendTypeParamCountMismatch {
+                ty_name,
+                expected: def_tp,
+                found: declared_param_count,
+            },
+        ));
+        return None;
+    }
+    Some(make_ty(name, type_args))
+}
+
 fn check_generic_extend_decl(
     node: &crate::ast::ExtendDeclNode,
     type_checker: &mut TypeChecker,
@@ -1364,92 +1466,19 @@ fn check_generic_extend_decl(
             .map(|p| Type::UnresolvedName(p.name))
             .collect();
         match &resolved {
-            Type::Struct { name, .. } => {
-                let def_tp = type_checker
-                    .get_struct(*name)
-                    .map_or(0, |d| d.type_params.len());
-                if def_tp == 0 {
-                    errors.push(Diagnostic::new(
-                        node.span,
-                        DiagnosticKind::ExtendTypeParamsOnNonGeneric {
-                            ty_name: *base_name,
-                        },
-                    ));
-                    return;
-                }
-                if decl.type_params.len() != def_tp {
-                    errors.push(Diagnostic::new(
-                        node.span,
-                        DiagnosticKind::ExtendTypeParamCountMismatch {
-                            ty_name: *base_name,
-                            expected: def_tp,
-                            found: decl.type_params.len(),
-                        },
-                    ));
-                    return;
-                }
-                Type::Struct {
-                    name: *name,
+            Type::Struct { name, .. } | Type::DataRef { name, .. } | Type::Enum { name, .. } => {
+                let Some(ty) = resolve_generic_extend_named_type(
+                    type_checker,
+                    *base_name,
+                    *name,
                     type_args,
-                }
-            }
-            Type::DataRef { name, .. } => {
-                let def_tp = type_checker
-                    .get_struct(*name)
-                    .map_or(0, |d| d.type_params.len());
-                if def_tp == 0 {
-                    errors.push(Diagnostic::new(
-                        node.span,
-                        DiagnosticKind::ExtendTypeParamsOnNonGeneric {
-                            ty_name: *base_name,
-                        },
-                    ));
+                    decl.type_params.len(),
+                    node.span,
+                    errors,
+                ) else {
                     return;
-                }
-                if decl.type_params.len() != def_tp {
-                    errors.push(Diagnostic::new(
-                        node.span,
-                        DiagnosticKind::ExtendTypeParamCountMismatch {
-                            ty_name: *base_name,
-                            expected: def_tp,
-                            found: decl.type_params.len(),
-                        },
-                    ));
-                    return;
-                }
-                Type::DataRef {
-                    name: *name,
-                    type_args,
-                }
-            }
-            Type::Enum { name, .. } => {
-                let def_tp = type_checker
-                    .get_enum(*name)
-                    .map_or(0, |d| d.type_params.len());
-                if def_tp == 0 {
-                    errors.push(Diagnostic::new(
-                        node.span,
-                        DiagnosticKind::ExtendTypeParamsOnNonGeneric {
-                            ty_name: *base_name,
-                        },
-                    ));
-                    return;
-                }
-                if decl.type_params.len() != def_tp {
-                    errors.push(Diagnostic::new(
-                        node.span,
-                        DiagnosticKind::ExtendTypeParamCountMismatch {
-                            ty_name: *base_name,
-                            expected: def_tp,
-                            found: decl.type_params.len(),
-                        },
-                    ));
-                    return;
-                }
-                Type::Enum {
-                    name: *name,
-                    type_args,
-                }
+                };
+                ty
             }
             _ => {
                 errors.push(Diagnostic::new(
@@ -1472,6 +1501,24 @@ fn check_generic_extend_decl(
         ));
         return;
     };
+
+    // reject unresolved names in target type args unless they are declared type params.
+    let type_args_in_target: &[Type] = match &target_type {
+        Type::Struct { type_args, .. }
+        | Type::DataRef { type_args, .. }
+        | Type::Enum { type_args, .. } => type_args.as_slice(),
+        _ => &[],
+    };
+    let mut undeclared = vec![];
+    for arg in type_args_in_target {
+        collect_undeclared_type_param_names(arg, &decl.type_params, &mut undeclared);
+    }
+    for name in undeclared {
+        errors.push(Diagnostic::new(
+            node.span,
+            DiagnosticKind::ExtendUndeclaredTypeParam { name },
+        ));
+    }
 
     // validate all declared type params appear somewhere in target_type
     for param in &decl.type_params {

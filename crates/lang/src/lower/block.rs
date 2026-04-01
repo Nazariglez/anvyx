@@ -302,38 +302,25 @@ fn lower_stmt(
 
         Stmt::While(while_node) => {
             let cond = lower_expr(&while_node.node.cond, ctx, fc, out)?;
-            let old_loop_depth = fc.loop_defer_depth;
-            fc.loop_defer_depth = Some(fc.defer_stack.len());
+            let old = fc.enter_loop_defer();
             let body = lower_block(&while_node.node.body, ctx, fc, false, &Type::Void)?;
-            fc.loop_defer_depth = old_loop_depth;
+            fc.leave_loop_defer(old);
             Ok(Some(hir::Stmt {
                 span,
                 kind: hir::StmtKind::While { cond, body },
             }))
         }
 
-        Stmt::Break => {
-            if let Some(depth) = fc.loop_defer_depth
-                && fc.has_defers_from_depth(depth)
-            {
+        Stmt::Break | Stmt::Continue => {
+            if let Some(depth) = fc.loop_defer_depth {
                 out.extend(fc.defers_from_depth(depth));
             }
-            Ok(Some(hir::Stmt {
-                span,
-                kind: hir::StmtKind::Break,
-            }))
-        }
-
-        Stmt::Continue => {
-            if let Some(depth) = fc.loop_defer_depth
-                && fc.has_defers_from_depth(depth)
-            {
-                out.extend(fc.defers_from_depth(depth));
-            }
-            Ok(Some(hir::Stmt {
-                span,
-                kind: hir::StmtKind::Continue,
-            }))
+            let kind = if matches!(&stmt_node.node, Stmt::Break) {
+                hir::StmtKind::Break
+            } else {
+                hir::StmtKind::Continue
+            };
+            Ok(Some(hir::Stmt { span, kind }))
         }
 
         Stmt::For(for_node) => lower_for(for_node, span, ctx, fc, out),

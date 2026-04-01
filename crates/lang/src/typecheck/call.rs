@@ -12,6 +12,7 @@ use super::{
         build_param_ref, build_subst, constrain_slots_from_type, create_inference_slots,
         infer_type_args_from_call, subst_type,
     },
+    postfix::resolve_builtin_or_extend,
     types::{
         EnumDef, ExternMethodDef, ExternTypeDef, MethodContext, MethodDef, MethodSpecKey,
         ModuleDef, SpecializationKey, SpecializationResult, StructDef, TypeChecker,
@@ -1041,36 +1042,15 @@ fn try_check_method_call(
         ));
     }
 
-    match &target_ty {
-        Type::List { elem } => {
-            if let Some(ret) = check_list_method(
-                call,
-                target,
-                method_name,
-                elem.as_ref(),
-                type_checker,
-                errors,
-            ) {
-                return Some(ret);
-            }
-        }
-        Type::Map { key, value } => {
-            if let Some(ret) = check_map_method(
-                call,
-                target,
-                method_name,
-                key.as_ref(),
-                value.as_ref(),
-                type_checker,
-                errors,
-            ) {
-                return Some(ret);
-            }
-        }
-        _ => {}
-    }
-
-    None
+    resolve_builtin_or_extend(
+        &target_ty,
+        method_name,
+        call,
+        Some(target),
+        field_access.span,
+        type_checker,
+        errors,
+    )
 }
 
 fn check_enum_tuple_variant(

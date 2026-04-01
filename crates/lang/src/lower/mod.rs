@@ -140,6 +140,16 @@ pub(super) struct FuncLower {
 }
 
 impl FuncLower {
+    pub(super) fn new() -> Self {
+        Self {
+            locals: vec![],
+            local_map: HashMap::new(),
+            scope_log: vec![],
+            defer_stack: vec![],
+            loop_defer_depth: None,
+        }
+    }
+
     pub(super) fn enter_scope(&mut self) -> usize {
         self.scope_log.len()
     }
@@ -198,6 +208,16 @@ impl FuncLower {
     pub(super) fn has_any_defers(&self) -> bool {
         self.has_defers_from_depth(0)
     }
+
+    pub(super) fn enter_loop_defer(&mut self) -> Option<usize> {
+        let old = self.loop_defer_depth;
+        self.loop_defer_depth = Some(self.defer_stack.len());
+        old
+    }
+
+    pub(super) fn leave_loop_defer(&mut self, old: Option<usize>) {
+        self.loop_defer_depth = old;
+    }
 }
 
 pub(super) fn flush_defer_scope(fc: &mut FuncLower, stmts: &mut Vec<hir::Stmt>) {
@@ -210,8 +230,8 @@ pub(super) fn flush_defer_scope(fc: &mut FuncLower, stmts: &mut Vec<hir::Stmt>) 
             )
         });
         if !ends_with_exit {
-            for defer_group in defers.iter().rev() {
-                stmts.extend(defer_group.iter().cloned());
+            for defer_group in defers.into_iter().rev() {
+                stmts.extend(defer_group);
             }
         }
     }

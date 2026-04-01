@@ -8,165 +8,36 @@ use internment::Intern;
 use super::{
     FuncLower, LowerCtx, LowerError, SharedCtx, analyze_ownership, collect_declarations,
     lower_block, mangle_generic_name, mangle_method_spec_name, register_extend_declarations,
-    register_named_local, register_param_local,
+    register_named_local, register_param_local, resolve_extend_ty,
 };
 use crate::{
     ast::{self, Ident, MethodReceiver, Type, TypeVarId, VariantKind},
     hir,
     prelude_enums::OPTION_TYPE_ID,
-    typecheck::{ExtendSpecKey, MethodSpecKey, TypeChecker, resolve_type_param_names, subst_type},
+    typecheck::{
+        ExtendSpecKey, MethodSpecKey, SpecializationKey, TypeChecker, resolve_type_param_names,
+        subst_type,
+    },
     vm::{
         cycle_collector::make_dataref_vtable,
         meta::{EnumMeta, StructMeta, VariantMeta, VariantMetaKind},
     },
 };
 
+type SpecRegistrations = (
+    Vec<(Ident, SpecializationKey)>,
+    Vec<(Ident, MethodSpecKey)>,
+    Vec<(Ident, ExtendSpecKey)>,
+);
+
 pub fn lower_program(
     ast: &ast::Program,
     tcx: &TypeChecker,
     module_list: &[(Vec<String>, Vec<ast::StmtNode>)],
 ) -> Result<hir::Program, LowerError> {
-    let mut qualified_names: HashMap<Ident, String> = HashMap::new();
-    for (path, stmts) in module_list {
-        let prefix = path.join("::");
-        for stmt_node in stmts {
-            match &stmt_node.node {
-                ast::Stmt::Struct(s) => {
-                    qualified_names
-                        .entry(s.node.name)
-                        .or_insert_with(|| format!("{}::{}", prefix, s.node.name));
-                }
-                ast::Stmt::DataRef(s) => {
-                    qualified_names
-                        .entry(s.node.name)
-                        .or_insert_with(|| format!("{}::{}", prefix, s.node.name));
-                }
-                ast::Stmt::Enum(e) => {
-                    qualified_names
-                        .entry(e.node.name)
-                        .or_insert_with(|| format!("{}::{}", prefix, e.node.name));
-                }
-                _ => {}
-            }
-        }
-    }
-
-    let mut struct_type_ids: HashMap<Ident, u32> = HashMap::new();
-    let mut struct_next_id = 0u32;
-    for name in tcx.struct_names() {
-        struct_type_ids.entry(name).or_insert_with(|| {
-            let id = struct_next_id;
-            struct_next_id += 1;
-            id
-        });
-    }
-    for (_path, stmts) in module_list {
-        for stmt_node in stmts {
-            if let ast::Stmt::Struct(s) = &stmt_node.node {
-                struct_type_ids.entry(s.node.name).or_insert_with(|| {
-                    let id = struct_next_id;
-                    struct_next_id += 1;
-                    id
-                });
-            }
-            if let ast::Stmt::DataRef(s) = &stmt_node.node {
-                struct_type_ids.entry(s.node.name).or_insert_with(|| {
-                    let id = struct_next_id;
-                    struct_next_id += 1;
-                    id
-                });
-            }
-        }
-    }
-
-    let mut enum_type_ids: HashMap<Ident, u32> = HashMap::new();
-
-    // Reserve well-known ID for Option
-    let option_ident = Ident(Intern::new("Option".to_string()));
-    enum_type_ids.insert(option_ident, OPTION_TYPE_ID);
-    let mut enum_next_id = OPTION_TYPE_ID + 1;
-
-    for name in tcx.enum_names() {
-        enum_type_ids.entry(name).or_insert_with(|| {
-            let id = enum_next_id;
-            enum_next_id += 1;
-            id
-        });
-    }
-    for (_path, stmts) in module_list {
-        for stmt_node in stmts {
-            if let ast::Stmt::Enum(e) = &stmt_node.node {
-                enum_type_ids.entry(e.node.name).or_insert_with(|| {
-                    let id = enum_next_id;
-                    enum_next_id += 1;
-                    id
-                });
-            }
-        }
-    }
-
-    let struct_count = struct_type_ids.len();
-
-    let mut struct_meta_slots = vec![None; struct_count];
-    for (name, &type_id) in &struct_type_ids {
-        let field_names = tcx
-            .struct_field_names(*name)
-            .unwrap_or_default()
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        let is_dataref = tcx.is_dataref(*name);
-        let cycle_capable = tcx.is_cycle_capable(*name);
-        let short_name = name.to_string();
-        let vtable = if is_dataref {
-            let vtable_name = qualified_names
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| short_name.clone());
-            Some(make_dataref_vtable(&vtable_name, cycle_capable))
-        } else {
-            None
-        };
-        struct_meta_slots[type_id as usize] = Some(StructMeta {
-            name: short_name,
-            field_names,
-            to_string_fn: None,
-            is_dataref,
-            cycle_capable,
-            vtable,
-        });
-    }
-    let mut struct_meta: Vec<StructMeta> =
-        struct_meta_slots.into_iter().map(|m| m.unwrap()).collect();
-
-    let enum_count = enum_type_ids.len();
-    let mut enum_meta_slots = vec![None; enum_count];
-    for (name, &type_id) in &enum_type_ids {
-        let variants = tcx
-            .enum_variant_kinds(*name)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(vname, vkind)| {
-                let kind = match vkind {
-                    VariantKind::Unit => VariantMetaKind::Unit,
-                    VariantKind::Tuple(types) => VariantMetaKind::Tuple(types.len()),
-                    VariantKind::Struct(fields) => {
-                        VariantMetaKind::Struct(fields.iter().map(|f| f.name.to_string()).collect())
-                    }
-                };
-                VariantMeta {
-                    name: vname.to_string(),
-                    kind,
-                }
-            })
-            .collect();
-        let idx = type_id as usize;
-        enum_meta_slots[idx] = Some(EnumMeta {
-            name: name.to_string(),
-            variants,
-        });
-    }
-    let enum_meta: Vec<EnumMeta> = enum_meta_slots.into_iter().map(|m| m.unwrap()).collect();
+    let (qualified_names, struct_type_ids, enum_type_ids) = assign_type_ids(tcx, module_list);
+    let (mut struct_meta, enum_meta) =
+        build_type_metadata(tcx, &struct_type_ids, &enum_type_ids, &qualified_names);
 
     let mut shared = SharedCtx {
         tcx,
@@ -208,179 +79,25 @@ pub fn lower_program(
     );
     register_extend_declarations(ast.stmts.iter(), &[], &mut shared, &mut next_func_id, false);
 
-    let mut spec_registrations: Vec<(Ident, crate::typecheck::SpecializationKey)> = vec![];
-    for spec_key in shared.tcx.specializations().keys() {
-        let spec_result = &shared.tcx.specializations()[spec_key];
-        if spec_result.err.is_some() {
-            continue;
-        }
-        if shared.tcx.generic_template(spec_key.func_name).is_none() {
-            continue;
-        }
-        let mangled = mangle_generic_name(spec_key.func_name, &spec_key.type_args);
-        if shared.funcs.contains_key(&mangled) {
-            continue;
-        }
-        let id = hir::FuncId(next_func_id);
-        next_func_id += 1;
-        shared.funcs.insert(mangled, id);
-        spec_registrations.push((mangled, spec_key.clone()));
-    }
-
-    let mut method_spec_registrations: Vec<(Ident, MethodSpecKey)> = vec![];
-    for (spec_key, spec_result) in shared.tcx.method_specializations() {
-        if spec_result.err.is_some() {
-            continue;
-        }
-        if spec_key.type_args.is_empty() {
-            continue;
-        }
-        let mangled = mangle_method_spec_name(
-            spec_key.struct_name,
-            spec_key.method_name,
-            &spec_key.type_args,
-        );
-        if shared.funcs.contains_key(&mangled) {
-            continue;
-        }
-        let id = hir::FuncId(next_func_id);
-        next_func_id += 1;
-        shared.funcs.insert(mangled, id);
-        method_spec_registrations.push((mangled, spec_key.clone()));
-    }
-
-    let mut extend_spec_registrations: Vec<(Ident, ExtendSpecKey)> = vec![];
-    for (spec_key, spec_result) in shared.tcx.extend_specializations() {
-        if spec_result.err.is_some() {
-            continue;
-        }
-
-        let template = shared.tcx.get_generic_extend_template(
-            spec_key.base_name,
-            spec_key.method_name,
-            &spec_key.target_type,
-        );
-        let Some(template) = template else { continue };
-
-        let mangled = spec_key.mangle(&template.source_module);
-        if shared.funcs.contains_key(&mangled) {
-            continue;
-        }
-
-        let id = hir::FuncId(next_func_id);
-        next_func_id += 1;
-        shared.funcs.insert(mangled, id);
-        extend_spec_registrations.push((mangled, spec_key.clone()));
-    }
+    let (spec_registrations, method_spec_registrations, extend_spec_registrations) =
+        lower_all_specializations(&mut shared, &mut next_func_id);
 
     let mut struct_methods: Vec<(Ident, u32, &ast::Method, bool)> = vec![];
     let to_string_name = Ident(Intern::new("to_string".to_string()));
     let self_ident = Ident(Intern::new("self".to_string()));
-    for stmt_node in &ast.stmts {
-        if let ast::Stmt::Struct(s) = &stmt_node.node {
-            let struct_name = s.node.name;
-            let Some(&type_id) = shared.struct_type_ids.get(&struct_name) else {
-                continue;
-            };
-            if !s.node.type_params.is_empty() {
-                continue;
-            }
-            for method in &s.node.methods {
-                if method.receiver.is_none() {
-                    continue;
-                }
-                if !method.type_params.is_empty() {
-                    continue;
-                }
-                let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
-                if let std::collections::hash_map::Entry::Vacant(e) = shared.funcs.entry(mangled) {
-                    let id = hir::FuncId(next_func_id);
-                    next_func_id += 1;
-                    e.insert(id);
-                    struct_methods.push((struct_name, type_id, method, false));
-                }
-            }
-        }
-        if let ast::Stmt::DataRef(s) = &stmt_node.node {
-            let struct_name = s.node.name;
-            let Some(&type_id) = shared.struct_type_ids.get(&struct_name) else {
-                continue;
-            };
-            if !s.node.type_params.is_empty() {
-                continue;
-            }
-            for method in &s.node.methods {
-                if method.receiver.is_none() {
-                    continue;
-                }
-                if !method.type_params.is_empty() {
-                    continue;
-                }
-                let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
-                if let std::collections::hash_map::Entry::Vacant(e) = shared.funcs.entry(mangled) {
-                    let id = hir::FuncId(next_func_id);
-                    next_func_id += 1;
-                    e.insert(id);
-                    struct_methods.push((struct_name, type_id, method, true));
-                }
-            }
-        }
-    }
+    collect_struct_methods_from(
+        ast.stmts.iter(),
+        &mut shared,
+        &mut next_func_id,
+        &mut struct_methods,
+    );
     for (_path, stmts) in module_list {
-        for stmt_node in stmts {
-            if let ast::Stmt::Struct(s) = &stmt_node.node {
-                let struct_name = s.node.name;
-                let Some(&type_id) = shared.struct_type_ids.get(&struct_name) else {
-                    continue;
-                };
-                if !s.node.type_params.is_empty() {
-                    continue;
-                }
-                for method in &s.node.methods {
-                    if method.receiver.is_none() {
-                        continue;
-                    }
-                    if !method.type_params.is_empty() {
-                        continue;
-                    }
-                    let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
-                    if let std::collections::hash_map::Entry::Vacant(e) =
-                        shared.funcs.entry(mangled)
-                    {
-                        let id = hir::FuncId(next_func_id);
-                        next_func_id += 1;
-                        e.insert(id);
-                        struct_methods.push((struct_name, type_id, method, false));
-                    }
-                }
-            }
-            if let ast::Stmt::DataRef(s) = &stmt_node.node {
-                let struct_name = s.node.name;
-                let Some(&type_id) = shared.struct_type_ids.get(&struct_name) else {
-                    continue;
-                };
-                if !s.node.type_params.is_empty() {
-                    continue;
-                }
-                for method in &s.node.methods {
-                    if method.receiver.is_none() {
-                        continue;
-                    }
-                    if !method.type_params.is_empty() {
-                        continue;
-                    }
-                    let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
-                    if let std::collections::hash_map::Entry::Vacant(e) =
-                        shared.funcs.entry(mangled)
-                    {
-                        let id = hir::FuncId(next_func_id);
-                        next_func_id += 1;
-                        e.insert(id);
-                        struct_methods.push((struct_name, type_id, method, true));
-                    }
-                }
-            }
-        }
+        collect_struct_methods_from(
+            stmts.iter(),
+            &mut shared,
+            &mut next_func_id,
+            &mut struct_methods,
+        );
     }
 
     shared.next_func_id.set(next_func_id);
@@ -427,13 +144,7 @@ pub fn lower_program(
             type_overrides: Some(&spec_result.body_types),
         };
 
-        let mut fc = FuncLower {
-            locals: vec![],
-            local_map: HashMap::new(),
-            scope_log: vec![],
-            defer_stack: vec![],
-            loop_defer_depth: None,
-        };
+        let mut fc = FuncLower::new();
 
         for (param, ty) in template.node.params.iter().zip(specialized_params.iter()) {
             register_param_local(&mut fc, param.name, ty.clone(), param.mutability);
@@ -498,13 +209,7 @@ pub fn lower_program(
             type_overrides: Some(&spec_result.body_types),
         };
 
-        let mut fc = FuncLower {
-            locals: vec![],
-            local_map: HashMap::new(),
-            scope_log: vec![],
-            defer_stack: vec![],
-            loop_defer_depth: None,
-        };
+        let mut fc = FuncLower::new();
 
         if method.receiver.is_some() {
             register_named_local(&mut fc, self_ident, self_type);
@@ -537,13 +242,7 @@ pub fn lower_program(
             .get(&mangled)
             .expect("struct method func id must exist");
 
-        let mut fc = FuncLower {
-            locals: vec![],
-            local_map: HashMap::new(),
-            scope_log: vec![],
-            defer_stack: vec![],
-            loop_defer_depth: None,
-        };
+        let mut fc = FuncLower::new();
 
         let self_type = if *is_dataref {
             Type::DataRef {
@@ -586,80 +285,9 @@ pub fn lower_program(
 
     for (path, stmts) in module_list {
         let module_str = path.join("::");
-        for stmt_node in stmts {
-            let ast::Stmt::Extend(node) = &stmt_node.node else {
-                continue;
-            };
-            if !node.node.type_params.is_empty() {
-                continue;
-            }
-            let resolved_ty = resolve_extend_ty(&node.node.ty, &shared);
-            let Some(resolved_ty) = resolved_ty else {
-                continue;
-            };
-            let type_str = format!("{resolved_ty}");
-            for method in &node.node.methods {
-                if method.node.params.is_empty() {
-                    continue;
-                }
-                if method.node.params[0].name.0.as_ref() != "self" {
-                    continue;
-                }
-                let internal_name = Ident(Intern::new(format!(
-                    "__extend::{}::{}::{}",
-                    module_str, type_str, method.node.name
-                )));
-                let &id = shared
-                    .funcs
-                    .get(&internal_name)
-                    .expect("extend method registered in collect_declarations");
-                funcs.push(lower_extend_method(
-                    method,
-                    &resolved_ty,
-                    id,
-                    internal_name,
-                    &ctx,
-                )?);
-            }
-        }
+        lower_extend_methods_from(stmts.iter(), &module_str, &shared, &ctx, &mut funcs)?;
     }
-
-    for stmt_node in &ast.stmts {
-        let ast::Stmt::Extend(node) = &stmt_node.node else {
-            continue;
-        };
-        if !node.node.type_params.is_empty() {
-            continue;
-        }
-        let resolved_ty = resolve_extend_ty(&node.node.ty, &shared);
-        let Some(resolved_ty) = resolved_ty else {
-            continue;
-        };
-        let type_str = format!("{resolved_ty}");
-        for method in &node.node.methods {
-            if method.node.params.is_empty() {
-                continue;
-            }
-            if method.node.params[0].name.0.as_ref() != "self" {
-                continue;
-            }
-            let internal_name = Ident(Intern::new(format!(
-                "__extend::::{}::{}",
-                type_str, method.node.name
-            )));
-            let &id = shared
-                .funcs
-                .get(&internal_name)
-                .expect("extend method registered in collect_declarations");
-            funcs.push(lower_extend_method(
-                method,
-                &resolved_ty,
-                id,
-                internal_name,
-                &ctx,
-            )?);
-        }
-    }
+    lower_extend_methods_from(ast.stmts.iter(), "", &shared, &ctx, &mut funcs)?;
 
     for (mangled, spec_key) in &extend_spec_registrations {
         let spec_result = &shared.tcx.extend_specializations()[spec_key];
@@ -710,13 +338,7 @@ pub fn lower_program(
             type_overrides: Some(&spec_result.body_types),
         };
 
-        let mut fc = FuncLower {
-            locals: vec![],
-            local_map: HashMap::new(),
-            scope_log: vec![],
-            defer_stack: vec![],
-            loop_defer_depth: None,
-        };
+        let mut fc = FuncLower::new();
 
         for (param, ty) in method.params.iter().zip(specialized_params.iter()) {
             register_param_local(&mut fc, param.name, ty.clone(), param.mutability);
@@ -751,49 +373,231 @@ pub fn lower_program(
     Ok(program)
 }
 
-fn resolve_extend_ty(ty: &Type, shared: &SharedCtx) -> Option<Type> {
-    match ty {
-        Type::UnresolvedName(name) => {
-            if shared.struct_type_ids.contains_key(name) {
-                if shared.tcx.is_dataref(*name) {
-                    Some(Type::DataRef {
-                        name: *name,
-                        type_args: vec![],
-                    })
-                } else {
-                    Some(Type::Struct {
-                        name: *name,
-                        type_args: vec![],
-                    })
+fn assign_type_ids(
+    tcx: &TypeChecker,
+    module_list: &[(Vec<String>, Vec<ast::StmtNode>)],
+) -> (
+    HashMap<Ident, String>,
+    HashMap<Ident, u32>,
+    HashMap<Ident, u32>,
+) {
+    let mut qualified_names: HashMap<Ident, String> = HashMap::new();
+    for (path, stmts) in module_list {
+        let prefix = path.join("::");
+        for stmt_node in stmts {
+            match &stmt_node.node {
+                ast::Stmt::Struct(s) => {
+                    qualified_names
+                        .entry(s.node.name)
+                        .or_insert_with(|| format!("{}::{}", prefix, s.node.name));
                 }
-            } else if shared.enum_type_ids.contains_key(name) {
-                Some(Type::Enum {
-                    name: *name,
-                    type_args: vec![],
-                })
-            } else if shared.tcx.get_extern_type(*name).is_some() {
-                Some(Type::Extern { name: *name })
-            } else {
-                None
+                ast::Stmt::DataRef(s) => {
+                    qualified_names
+                        .entry(s.node.name)
+                        .or_insert_with(|| format!("{}::{}", prefix, s.node.name));
+                }
+                ast::Stmt::Enum(e) => {
+                    qualified_names
+                        .entry(e.node.name)
+                        .or_insert_with(|| format!("{}::{}", prefix, e.node.name));
+                }
+                _ => {}
             }
         }
-        Type::Struct { name, type_args } if !type_args.is_empty() => {
-            if shared.enum_type_ids.contains_key(name) {
-                Some(Type::Enum {
-                    name: *name,
-                    type_args: type_args.clone(),
-                })
-            } else if shared.tcx.is_dataref(*name) {
-                Some(Type::DataRef {
-                    name: *name,
-                    type_args: type_args.clone(),
-                })
-            } else {
-                Some(ty.clone())
-            }
-        }
-        other => Some(other.clone()),
     }
+
+    let mut struct_type_ids: HashMap<Ident, u32> = HashMap::new();
+    let mut struct_next_id = 0u32;
+    for name in tcx.struct_names() {
+        struct_type_ids.entry(name).or_insert_with(|| {
+            let id = struct_next_id;
+            struct_next_id += 1;
+            id
+        });
+    }
+    for (_path, stmts) in module_list {
+        for stmt_node in stmts {
+            if let ast::Stmt::Struct(s) = &stmt_node.node {
+                struct_type_ids.entry(s.node.name).or_insert_with(|| {
+                    let id = struct_next_id;
+                    struct_next_id += 1;
+                    id
+                });
+            }
+            if let ast::Stmt::DataRef(s) = &stmt_node.node {
+                struct_type_ids.entry(s.node.name).or_insert_with(|| {
+                    let id = struct_next_id;
+                    struct_next_id += 1;
+                    id
+                });
+            }
+        }
+    }
+
+    let mut enum_type_ids: HashMap<Ident, u32> = HashMap::new();
+    let option_ident = Ident(Intern::new("Option".to_string()));
+    enum_type_ids.insert(option_ident, OPTION_TYPE_ID);
+    let mut enum_next_id = OPTION_TYPE_ID + 1;
+
+    for name in tcx.enum_names() {
+        enum_type_ids.entry(name).or_insert_with(|| {
+            let id = enum_next_id;
+            enum_next_id += 1;
+            id
+        });
+    }
+    for (_path, stmts) in module_list {
+        for stmt_node in stmts {
+            if let ast::Stmt::Enum(e) = &stmt_node.node {
+                enum_type_ids.entry(e.node.name).or_insert_with(|| {
+                    let id = enum_next_id;
+                    enum_next_id += 1;
+                    id
+                });
+            }
+        }
+    }
+
+    (qualified_names, struct_type_ids, enum_type_ids)
+}
+
+fn build_type_metadata(
+    tcx: &TypeChecker,
+    struct_type_ids: &HashMap<Ident, u32>,
+    enum_type_ids: &HashMap<Ident, u32>,
+    qualified_names: &HashMap<Ident, String>,
+) -> (Vec<StructMeta>, Vec<EnumMeta>) {
+    let struct_count = struct_type_ids.len();
+    let mut struct_meta_slots = vec![None; struct_count];
+    for (name, &type_id) in struct_type_ids {
+        let field_names = tcx
+            .struct_field_names(*name)
+            .unwrap_or_default()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let is_dataref = tcx.is_dataref(*name);
+        let cycle_capable = tcx.is_cycle_capable(*name);
+        let short_name = name.to_string();
+        let vtable = if is_dataref {
+            let vtable_name = qualified_names
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| short_name.clone());
+            Some(make_dataref_vtable(&vtable_name, cycle_capable))
+        } else {
+            None
+        };
+        struct_meta_slots[type_id as usize] = Some(StructMeta {
+            name: short_name,
+            field_names,
+            to_string_fn: None,
+            is_dataref,
+            cycle_capable,
+            vtable,
+        });
+    }
+    let struct_meta = struct_meta_slots.into_iter().map(|m| m.unwrap()).collect();
+
+    let enum_count = enum_type_ids.len();
+    let mut enum_meta_slots = vec![None; enum_count];
+    for (name, &type_id) in enum_type_ids {
+        let variants = tcx
+            .enum_variant_kinds(*name)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(vname, vkind)| {
+                let kind = match vkind {
+                    VariantKind::Unit => VariantMetaKind::Unit,
+                    VariantKind::Tuple(types) => VariantMetaKind::Tuple(types.len()),
+                    VariantKind::Struct(fields) => {
+                        VariantMetaKind::Struct(fields.iter().map(|f| f.name.to_string()).collect())
+                    }
+                };
+                VariantMeta {
+                    name: vname.to_string(),
+                    kind,
+                }
+            })
+            .collect();
+        enum_meta_slots[type_id as usize] = Some(EnumMeta {
+            name: name.to_string(),
+            variants,
+        });
+    }
+    let enum_meta = enum_meta_slots.into_iter().map(|m| m.unwrap()).collect();
+
+    (struct_meta, enum_meta)
+}
+
+fn lower_all_specializations(shared: &mut SharedCtx, next_func_id: &mut u32) -> SpecRegistrations {
+    let mut spec_registrations: Vec<(Ident, SpecializationKey)> = vec![];
+    for spec_key in shared.tcx.specializations().keys() {
+        let spec_result = &shared.tcx.specializations()[spec_key];
+        if spec_result.err.is_some() {
+            continue;
+        }
+        if shared.tcx.generic_template(spec_key.func_name).is_none() {
+            continue;
+        }
+        let mangled = mangle_generic_name(spec_key.func_name, &spec_key.type_args);
+        if shared.funcs.contains_key(&mangled) {
+            continue;
+        }
+        let id = hir::FuncId(*next_func_id);
+        *next_func_id += 1;
+        shared.funcs.insert(mangled, id);
+        spec_registrations.push((mangled, spec_key.clone()));
+    }
+
+    let mut method_spec_registrations: Vec<(Ident, MethodSpecKey)> = vec![];
+    for (spec_key, spec_result) in shared.tcx.method_specializations() {
+        if spec_result.err.is_some() {
+            continue;
+        }
+        if spec_key.type_args.is_empty() {
+            continue;
+        }
+        let mangled = mangle_method_spec_name(
+            spec_key.struct_name,
+            spec_key.method_name,
+            &spec_key.type_args,
+        );
+        if shared.funcs.contains_key(&mangled) {
+            continue;
+        }
+        let id = hir::FuncId(*next_func_id);
+        *next_func_id += 1;
+        shared.funcs.insert(mangled, id);
+        method_spec_registrations.push((mangled, spec_key.clone()));
+    }
+
+    let mut extend_spec_registrations: Vec<(Ident, ExtendSpecKey)> = vec![];
+    for (spec_key, spec_result) in shared.tcx.extend_specializations() {
+        if spec_result.err.is_some() {
+            continue;
+        }
+        let template = shared.tcx.get_generic_extend_template(
+            spec_key.base_name,
+            spec_key.method_name,
+            &spec_key.target_type,
+        );
+        let Some(template) = template else { continue };
+        let mangled = spec_key.mangle(&template.source_module);
+        if shared.funcs.contains_key(&mangled) {
+            continue;
+        }
+        let id = hir::FuncId(*next_func_id);
+        *next_func_id += 1;
+        shared.funcs.insert(mangled, id);
+        extend_spec_registrations.push((mangled, spec_key.clone()));
+    }
+
+    (
+        spec_registrations,
+        method_spec_registrations,
+        extend_spec_registrations,
+    )
 }
 
 fn lower_extend_method(
@@ -803,13 +607,7 @@ fn lower_extend_method(
     name: Ident,
     ctx: &LowerCtx,
 ) -> Result<hir::Func, LowerError> {
-    let mut fc = FuncLower {
-        locals: vec![],
-        local_map: HashMap::new(),
-        scope_log: vec![],
-        defer_stack: vec![],
-        loop_defer_depth: None,
-    };
+    let mut fc = FuncLower::new();
 
     for (i, param) in method.node.params.iter().enumerate() {
         let ty = if i == 0 {
@@ -835,6 +633,81 @@ fn lower_extend_method(
     })
 }
 
+fn collect_struct_methods_from<'a>(
+    stmts: impl Iterator<Item = &'a ast::StmtNode>,
+    shared: &mut SharedCtx,
+    next_func_id: &mut u32,
+    struct_methods: &mut Vec<(Ident, u32, &'a ast::Method, bool)>,
+) {
+    for stmt_node in stmts {
+        let (struct_name, type_params, methods, is_dataref) = match &stmt_node.node {
+            ast::Stmt::Struct(s) => (s.node.name, &s.node.type_params, &s.node.methods, false),
+            ast::Stmt::DataRef(s) => (s.node.name, &s.node.type_params, &s.node.methods, true),
+            _ => continue,
+        };
+        let Some(&type_id) = shared.struct_type_ids.get(&struct_name) else {
+            continue;
+        };
+        if !type_params.is_empty() {
+            continue;
+        }
+        for method in methods {
+            if method.receiver.is_none() || !method.type_params.is_empty() {
+                continue;
+            }
+            let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
+            if let std::collections::hash_map::Entry::Vacant(e) = shared.funcs.entry(mangled) {
+                let id = hir::FuncId(*next_func_id);
+                *next_func_id += 1;
+                e.insert(id);
+                struct_methods.push((struct_name, type_id, method, is_dataref));
+            }
+        }
+    }
+}
+
+fn lower_extend_methods_from<'a>(
+    stmts: impl Iterator<Item = &'a ast::StmtNode>,
+    module_prefix: &str,
+    shared: &SharedCtx,
+    ctx: &LowerCtx,
+    funcs: &mut Vec<hir::Func>,
+) -> Result<(), LowerError> {
+    for stmt_node in stmts {
+        let ast::Stmt::Extend(node) = &stmt_node.node else {
+            continue;
+        };
+        if !node.node.type_params.is_empty() {
+            continue;
+        }
+        let Some(resolved_ty) = resolve_extend_ty(&node.node.ty, shared) else {
+            continue;
+        };
+        let type_str = format!("{resolved_ty}");
+        for method in &node.node.methods {
+            if method.node.params.is_empty() || method.node.params[0].name.0.as_ref() != "self" {
+                continue;
+            }
+            let internal_name = Ident(Intern::new(format!(
+                "__extend::{}::{}::{}",
+                module_prefix, type_str, method.node.name
+            )));
+            let &id = shared
+                .funcs
+                .get(&internal_name)
+                .expect("extend method registered in collect_declarations");
+            funcs.push(lower_extend_method(
+                method,
+                &resolved_ty,
+                id,
+                internal_name,
+                ctx,
+            )?);
+        }
+    }
+    Ok(())
+}
+
 fn lower_func(func_node: &ast::FuncNode, ctx: &LowerCtx) -> Result<hir::Func, LowerError> {
     let func = &func_node.node;
     let id = *ctx
@@ -843,13 +716,7 @@ fn lower_func(func_node: &ast::FuncNode, ctx: &LowerCtx) -> Result<hir::Func, Lo
         .get(&func.name)
         .expect("func id must exist after pass 1");
 
-    let mut fc = FuncLower {
-        locals: vec![],
-        local_map: HashMap::new(),
-        scope_log: vec![],
-        defer_stack: vec![],
-        loop_defer_depth: None,
-    };
+    let mut fc = FuncLower::new();
 
     // register parameters as locals first
     for param in &func.params {
