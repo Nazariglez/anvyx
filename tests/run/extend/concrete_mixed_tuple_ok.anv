@@ -1,0 +1,14 @@
+// @mode: run
+// @expect: success
+// @match: hello 42
+
+extend (string, int) {
+    fn display(self) -> string {
+        f"{self.0} {self.1}"
+    }
+}
+
+fn main() {
+    let t = ("hello", 42);
+    println(t.display());
+}

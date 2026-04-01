@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+extend<T> T? {
+    fn is_present(self) -> bool {
+        match self {
+            _? => true,
+            nil => false,
+        }
+    }
+}
+
+fn main() {
+    let a: int? = 42;
+    a.is_present();
+}

@@ -323,10 +323,10 @@ pub(super) fn check_list_method(
     elem: &Type,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
-) -> Type {
+) -> Option<Type> {
     let label = list_type_label();
     let node = &call.node;
-    match method_name.0.as_ref().as_str() {
+    Some(match method_name.0.as_ref().as_str() {
         "push" => {
             check_receiver_mutability(target, label, method_name, type_checker, errors);
             let param_types = std::slice::from_ref(elem);
@@ -393,7 +393,7 @@ pub(super) fn check_list_method(
                         DiagnosticKind::TooManyArguments { expected, found },
                     ));
                 }
-                return Type::Infer;
+                return Some(Type::Infer);
             }
             // typecheck the init value first so we can use its concrete type
             // for the accumulator parameter in the lambda's expected type
@@ -463,17 +463,8 @@ pub(super) fn check_list_method(
                 errors,
             )
         }
-        _ => {
-            errors.push(Diagnostic::new(
-                call.span,
-                DiagnosticKind::UnknownMethod {
-                    struct_name: label,
-                    method: method_name,
-                },
-            ));
-            Type::Infer
-        }
-    }
+        _ => return None,
+    })
 }
 
 pub(super) fn check_map_method(
@@ -484,10 +475,10 @@ pub(super) fn check_map_method(
     value: &Type,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
-) -> Type {
+) -> Option<Type> {
     let label = map_type_label();
     let node = &call.node;
-    match method_name.0.as_ref().as_str() {
+    Some(match method_name.0.as_ref().as_str() {
         "insert" => {
             check_receiver_mutability(target, label, method_name, type_checker, errors);
             let param_types = [key.clone(), value.clone()];
@@ -558,17 +549,8 @@ pub(super) fn check_map_method(
                 errors,
             )
         }
-        _ => {
-            errors.push(Diagnostic::new(
-                call.span,
-                DiagnosticKind::UnknownMethod {
-                    struct_name: label,
-                    method: method_name,
-                },
-            ));
-            Type::Infer
-        }
-    }
+        _ => return None,
+    })
 }
 
 fn check_generic_call(
@@ -1061,17 +1043,19 @@ fn try_check_method_call(
 
     match &target_ty {
         Type::List { elem } => {
-            return Some(check_list_method(
+            if let Some(ret) = check_list_method(
                 call,
                 target,
                 method_name,
                 elem.as_ref(),
                 type_checker,
                 errors,
-            ));
+            ) {
+                return Some(ret);
+            }
         }
         Type::Map { key, value } => {
-            return Some(check_map_method(
+            if let Some(ret) = check_map_method(
                 call,
                 target,
                 method_name,
@@ -1079,7 +1063,9 @@ fn try_check_method_call(
                 value.as_ref(),
                 type_checker,
                 errors,
-            ));
+            ) {
+                return Some(ret);
+            }
         }
         _ => {}
     }

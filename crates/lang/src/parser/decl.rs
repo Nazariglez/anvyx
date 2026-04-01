@@ -86,6 +86,30 @@ pub(super) fn doc_comment_block<'src>() -> BoxedParser<'src, Option<String>> {
         .boxed()
 }
 
+fn required_type_params<'src>() -> BoxedParser<'src, Vec<ast::TypeParam>> {
+    select! {
+        (Token::Op(Op::LessThan), _) => (),
+    }
+    .ignore_then(
+        identifier()
+            .map_with(|name, e| {
+                let id = e.state().new_type_var_id();
+                ast::TypeParam { name, id }
+            })
+            .separated_by(select! {
+                (Token::Comma, _) => (),
+            })
+            .allow_trailing()
+            .collect::<Vec<_>>(),
+    )
+    .then_ignore(select! {
+        (Token::Op(Op::GreaterThan), _) => (),
+    })
+    .labelled("type parameters")
+    .as_context()
+    .boxed()
+}
+
 fn type_params<'src>() -> BoxedParser<'src, Vec<ast::TypeParam>> {
     select! {
         (Token::Op(Op::LessThan), _) => (),
@@ -1094,6 +1118,10 @@ pub(super) fn extend_declaration<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::ExtendDeclNode> {
     let extend_head = choice((
+        // extend<T, ...> type_expr, explicit type params followed by any type expression
+        required_type_params()
+            .then(type_ident())
+            .map(|(tp, ty)| (ty, tp)),
         // dataref keyword followed by identifier produces Type::DataRef directly
         select! { (Token::Keyword(Keyword::DataRef), _) => () }
             .ignore_then(identifier())

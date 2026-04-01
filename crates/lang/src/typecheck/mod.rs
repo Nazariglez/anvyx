@@ -154,6 +154,7 @@ pub fn check_program_with_modules(
                     .or_default()
                     .push(GenericExtendTemplate {
                         type_params: entry.type_params.clone(),
+                        target_type: entry.target_type.clone(),
                         method: entry.method.clone(),
                         source_module: path.clone(),
                         binding,

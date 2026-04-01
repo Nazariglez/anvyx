@@ -259,6 +259,7 @@ pub struct ModuleExtendEntry {
 #[derive(Debug, Clone)]
 pub struct GenericExtendTemplate {
     pub type_params: Vec<TypeParam>,
+    pub target_type: Type,
     pub method: ExtendMethodNode,
     pub source_module: Vec<String>,
     pub binding: Ident,
@@ -269,6 +270,7 @@ pub struct ExtendSpecKey {
     pub base_name: Ident,
     pub method_name: Ident,
     pub type_args: Vec<Type>,
+    pub target_type: Type,
 }
 
 impl ExtendSpecKey {
@@ -285,7 +287,7 @@ impl ExtendSpecKey {
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(", ");
-        let type_str = format!("{}<{}>", self.base_name, args_str);
+        let type_str = format!("{}[{}]", self.target_type, args_str);
         let name = format!(
             "__extend::{}::{}::{}",
             module_part, type_str, self.method_name
@@ -298,6 +300,7 @@ impl ExtendSpecKey {
 pub struct ModuleGenericExtendEntry {
     pub base_name: Ident,
     pub type_params: Vec<TypeParam>,
+    pub target_type: Type,
     pub method_name: Ident,
     pub method: ExtendMethodNode,
 }
@@ -912,10 +915,11 @@ impl TypeChecker {
         &self,
         base_name: Ident,
         method_name: Ident,
+        target_type: &Type,
     ) -> Option<&GenericExtendTemplate> {
         self.generic_extend_templates
             .get(&(base_name, method_name))
-            .and_then(|v| v.first())
+            .and_then(|v| v.iter().find(|t| &t.target_type == target_type))
     }
 
     pub(super) fn set_var(&mut self, name: Ident, ty: Type, mutable: bool) {

@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: error
+// @contains: ambiguous
+
+extend<T> (T, int) {
+    fn foo(self) -> int { 0 }
+}
+
+extend<T> (string, T) {
+    fn foo(self) -> int { 0 }
+}
+
+fn main() {
+    let t = ("hello", 42);
+    t.foo();
+}

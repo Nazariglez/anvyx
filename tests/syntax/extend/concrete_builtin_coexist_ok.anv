@@ -1,0 +1,18 @@
+// @mode: check
+// @expect: success
+
+extend [int] {
+    fn sum(self) -> int {
+        var total = 0;
+        for v in self {
+            total += v;
+        }
+        total
+    }
+}
+
+fn main() {
+    var nums: [int] = [1, 2, 3];
+    nums.push(4);
+    let s = nums.sum();
+}

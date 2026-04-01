@@ -1,0 +1,5 @@
+// @helper
+
+pub extend<T> (T, int) {
+    fn val(self) -> int { 0 }
+}

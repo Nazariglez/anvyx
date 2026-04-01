@@ -1,0 +1,17 @@
+// @mode: check
+// @expect: success
+
+extend<T> [T] {
+    fn my_len(self) -> int {
+        var count = 0;
+        for item in self {
+            count = count + 1;
+        }
+        count
+    }
+}
+
+fn main() {
+    let nums: [int] = [1, 2, 3];
+    nums.my_len();
+}

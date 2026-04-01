@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: success
+
+extend<K> [K: int] {
+    fn set_val(var self, k: K, v: int) {
+        self.insert(k, v);
+    }
+}
+
+fn main() {
+    var m: [string: int] = ["a": 1];
+    m.set_val("b", 2);
+}

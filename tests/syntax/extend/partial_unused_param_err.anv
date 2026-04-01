@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: unused type parameter
+
+extend<T, U> [T] {
+    fn noop(self) {}
+}
+
+fn main() {}

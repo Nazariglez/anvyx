@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+import gen;
+import spec;
+
+fn main() {
+    let a: [int] = [1, 2];
+    let b: [string] = ["x"];
+    a.my_len();
+    b.my_len();
+}

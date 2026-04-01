@@ -255,9 +255,11 @@ pub fn lower_program(
             continue;
         }
 
-        let template = shared
-            .tcx
-            .get_generic_extend_template(spec_key.base_name, spec_key.method_name);
+        let template = shared.tcx.get_generic_extend_template(
+            spec_key.base_name,
+            spec_key.method_name,
+            &spec_key.target_type,
+        );
         let Some(template) = template else { continue };
 
         let mangled = spec_key.mangle(&template.source_module);
@@ -663,7 +665,11 @@ pub fn lower_program(
         let spec_result = &shared.tcx.extend_specializations()[spec_key];
         let template = shared
             .tcx
-            .get_generic_extend_template(spec_key.base_name, spec_key.method_name)
+            .get_generic_extend_template(
+                spec_key.base_name,
+                spec_key.method_name,
+                &spec_key.target_type,
+            )
             .expect("template must exist — registered during pre-registration");
 
         let &id = shared
@@ -677,25 +683,9 @@ pub fn lower_program(
             .zip(spec_key.type_args.iter())
             .map(|(param, arg)| (param.id, arg.clone()))
             .collect();
-
-        let self_ty = if shared.struct_type_ids.contains_key(&spec_key.base_name) {
-            if shared.tcx.is_dataref(spec_key.base_name) {
-                Type::DataRef {
-                    name: spec_key.base_name,
-                    type_args: spec_key.type_args.clone(),
-                }
-            } else {
-                Type::Struct {
-                    name: spec_key.base_name,
-                    type_args: spec_key.type_args.clone(),
-                }
-            }
-        } else {
-            Type::Enum {
-                name: spec_key.base_name,
-                type_args: spec_key.type_args.clone(),
-            }
-        };
+        let target_resolved =
+            resolve_type_param_names(&template.target_type, &template.type_params);
+        let self_ty = subst_type(&target_resolved, &subst);
 
         let method = &template.method.node;
 
@@ -785,6 +775,21 @@ fn resolve_extend_ty(ty: &Type, shared: &SharedCtx) -> Option<Type> {
                 Some(Type::Extern { name: *name })
             } else {
                 None
+            }
+        }
+        Type::Struct { name, type_args } if !type_args.is_empty() => {
+            if shared.enum_type_ids.contains_key(name) {
+                Some(Type::Enum {
+                    name: *name,
+                    type_args: type_args.clone(),
+                })
+            } else if shared.tcx.is_dataref(*name) {
+                Some(Type::DataRef {
+                    name: *name,
+                    type_args: type_args.clone(),
+                })
+            } else {
+                Some(ty.clone())
             }
         }
         other => Some(other.clone()),

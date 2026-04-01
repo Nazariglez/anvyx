@@ -8,13 +8,14 @@ use super::{
     error::{Diagnostic, DiagnosticKind},
     expr::check_expr,
     infer::{build_subst, resolve_type_param_names, subst_type},
+    stmt::extend_base_key,
     types::{
         ExtendEntry, ExtendMethodDef, ExtendSpecKey, GenericExtendTemplate, PostfixNodeRef,
         SpecializationResult, TypeChecker, type_field_on_base, type_index_on_base, unwrap_opt_typ,
     },
 };
 use crate::{
-    ast::{CallNode, ExprId, ExprKind, ExprNode, FuncParam, Ident, Mutability, Type},
+    ast::{CallNode, ExprId, ExprKind, ExprNode, FuncParam, Ident, Mutability, Type, TypeParam},
     span::Span,
 };
 
@@ -207,6 +208,168 @@ fn continue_postfix_chain(
     current_ty
 }
 
+fn is_named_type(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Struct { .. } | Type::DataRef { .. } | Type::Enum { .. }
+    )
+}
+
+fn named_type_parts(ty: &Type) -> (Ident, &[Type]) {
+    match ty {
+        Type::Struct { name, type_args }
+        | Type::DataRef { name, type_args }
+        | Type::Enum { name, type_args } => (*name, type_args.as_slice()),
+        _ => unreachable!("called named_type_parts on non-named type"),
+    }
+}
+
+/// Checks whether "receiver" fits "pattern", recording any type parameter bindings along the way
+fn match_type_pattern(
+    receiver: &Type,
+    pattern: &Type,
+    type_params: &[TypeParam],
+    bindings: &mut HashMap<Ident, Type>,
+) -> bool {
+    // pattern is a type variable, bind or check consistency
+    if let Type::UnresolvedName(name) = pattern {
+        if type_params.iter().any(|p| p.name == *name) {
+            if let Some(existing) = bindings.get(name) {
+                return existing == receiver;
+            }
+            bindings.insert(*name, receiver.clone());
+            return true;
+        }
+        // unresolved name that is not a declared type param, treat as mismatch
+        return false;
+    }
+
+    match (receiver, pattern) {
+        // leaf types
+        (Type::Int, Type::Int)
+        | (Type::Float, Type::Float)
+        | (Type::Double, Type::Double)
+        | (Type::Bool, Type::Bool)
+        | (Type::String, Type::String)
+        | (Type::Void, Type::Void)
+        | (Type::Any, Type::Any) => true,
+
+        (Type::Extern { name: n1 }, Type::Extern { name: n2 }) => n1 == n2,
+
+        // match named types by name and type args only, since the concrete variant may not be resolved yet
+        (r, p) if is_named_type(r) && is_named_type(p) => {
+            let (n1, a1) = named_type_parts(r);
+            let (n2, a2) = named_type_parts(p);
+            n1 == n2
+                && a1.len() == a2.len()
+                && a1
+                    .iter()
+                    .zip(a2.iter())
+                    .all(|(rv, pv)| match_type_pattern(rv, pv, type_params, bindings))
+        }
+
+        (Type::List { elem: e1 }, Type::List { elem: e2 }) => {
+            match_type_pattern(e1, e2, type_params, bindings)
+        }
+
+        (Type::Map { key: k1, value: v1 }, Type::Map { key: k2, value: v2 }) => {
+            match_type_pattern(k1, k2, type_params, bindings)
+                && match_type_pattern(v1, v2, type_params, bindings)
+        }
+
+        (Type::Tuple(f1), Type::Tuple(f2)) => {
+            f1.len() == f2.len()
+                && f1
+                    .iter()
+                    .zip(f2.iter())
+                    .all(|(r, p)| match_type_pattern(r, p, type_params, bindings))
+        }
+
+        (Type::Array { elem: e1, len: l1 }, Type::Array { elem: e2, len: l2 }) => {
+            l1 == l2 && match_type_pattern(e1, e2, type_params, bindings)
+        }
+
+        _ => false,
+    }
+}
+
+enum Specificity {
+    MoreSpecific,
+    LessSpecific,
+    Equal,
+    Incomparable,
+}
+
+fn substitute_fresh(pattern: &Type, type_params: &[TypeParam]) -> Type {
+    match pattern {
+        Type::UnresolvedName(name) if type_params.iter().any(|p| p.name == *name) => Type::Extern {
+            name: Ident(Intern::new(format!("__Fresh_{name}"))),
+        },
+        Type::List { elem } => Type::List {
+            elem: Box::new(substitute_fresh(elem, type_params)),
+        },
+        Type::Map { key, value } => Type::Map {
+            key: Box::new(substitute_fresh(key, type_params)),
+            value: Box::new(substitute_fresh(value, type_params)),
+        },
+        Type::Tuple(fields) => Type::Tuple(
+            fields
+                .iter()
+                .map(|f| substitute_fresh(f, type_params))
+                .collect(),
+        ),
+        Type::Array { elem, len } => Type::Array {
+            elem: Box::new(substitute_fresh(elem, type_params)),
+            len: *len,
+        },
+        Type::Struct { name, type_args } => Type::Struct {
+            name: *name,
+            type_args: type_args
+                .iter()
+                .map(|a| substitute_fresh(a, type_params))
+                .collect(),
+        },
+        Type::DataRef { name, type_args } => Type::DataRef {
+            name: *name,
+            type_args: type_args
+                .iter()
+                .map(|a| substitute_fresh(a, type_params))
+                .collect(),
+        },
+        Type::Enum { name, type_args } => Type::Enum {
+            name: *name,
+            type_args: type_args
+                .iter()
+                .map(|a| substitute_fresh(a, type_params))
+                .collect(),
+        },
+        other => other.clone(),
+    }
+}
+
+fn compare_specificity(
+    a_target: &Type,
+    a_params: &[TypeParam],
+    b_target: &Type,
+    b_params: &[TypeParam],
+) -> Specificity {
+    let a_concrete = substitute_fresh(a_target, a_params);
+    let b_concrete = substitute_fresh(b_target, b_params);
+
+    let mut a_bindings = HashMap::new();
+    let a_fits_b = match_type_pattern(&a_concrete, b_target, b_params, &mut a_bindings);
+
+    let mut b_bindings = HashMap::new();
+    let b_fits_a = match_type_pattern(&b_concrete, a_target, a_params, &mut b_bindings);
+
+    match (a_fits_b, b_fits_a) {
+        (true, true) => Specificity::Equal,
+        (true, false) => Specificity::MoreSpecific,
+        (false, true) => Specificity::LessSpecific,
+        (false, false) => Specificity::Incomparable,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn try_specialize_extend(
     receiver_ty: &Type,
@@ -219,15 +382,15 @@ fn try_specialize_extend(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
-    let base_name = match receiver_ty {
-        Type::Struct { name, .. } | Type::Enum { name, .. } | Type::DataRef { name, .. } => *name,
-        _ => return Type::Infer,
+    let Some(base_name) = extend_base_key(receiver_ty) else {
+        return Type::Infer;
     };
 
     let cache_key = ExtendSpecKey {
         base_name,
         method_name,
         type_args: type_args.to_vec(),
+        target_type: template.target_type.clone(),
     };
 
     let context_name = format!(
@@ -575,54 +738,113 @@ fn try_resolve_generic_extend(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Option<Type> {
-    let (base_name, type_args) = match receiver_ty {
-        Type::Struct { name, type_args } if !type_args.is_empty() => (*name, type_args.as_slice()),
-        Type::Enum { name, type_args } if !type_args.is_empty() => (*name, type_args.as_slice()),
-        Type::DataRef { name, type_args } if !type_args.is_empty() => (*name, type_args.as_slice()),
-        _ => return None,
-    };
+    let base_key = extend_base_key(receiver_ty)?;
 
-    let key = (base_name, method_name);
+    let key = (base_key, method_name);
     let templates = type_checker.generic_extend_templates.get(&key)?.clone();
 
-    let mut unique: Vec<&GenericExtendTemplate> = vec![];
-    let mut seen: Vec<&Vec<String>> = vec![];
-    for tmpl in &templates {
-        if !seen.contains(&&tmpl.source_module) {
-            seen.push(&tmpl.source_module);
-            unique.push(tmpl);
+    // try matching each templates target_type pattern against the receiver
+    let mut matches: Vec<(GenericExtendTemplate, Vec<Type>)> = vec![];
+    for template in &templates {
+        let mut bindings = HashMap::new();
+        if match_type_pattern(
+            receiver_ty,
+            &template.target_type,
+            &template.type_params,
+            &mut bindings,
+        ) {
+            let type_args: Vec<Type> = template
+                .type_params
+                .iter()
+                .map(|p| bindings.get(&p.name).cloned().unwrap_or(Type::Infer))
+                .collect();
+            matches.push((template.clone(), type_args));
         }
     }
 
-    match unique.as_slice() {
-        [] => None,
-        [template] => {
-            let template = (*template).clone();
-            Some(try_specialize_extend(
-                receiver_ty,
-                type_args,
-                &template,
-                method_name,
-                call_node,
-                receiver,
-                span,
-                type_checker,
-                errors,
-            ))
-        }
-        _ => {
-            let candidates = unique.iter().map(|t| t.binding).collect();
-            errors.push(Diagnostic::new(
-                span,
-                DiagnosticKind::AmbiguousExtendMethod {
-                    ty: receiver_ty.clone(),
-                    method: method_name,
-                    candidates,
-                },
-            ));
-            Some(Type::Infer)
+    if matches.is_empty() {
+        return None;
+    }
+    if matches.len() == 1 {
+        let (template, type_args) = matches.remove(0);
+        return Some(try_specialize_extend(
+            receiver_ty,
+            &type_args,
+            &template,
+            method_name,
+            call_node,
+            receiver,
+            span,
+            type_checker,
+            errors,
+        ));
+    }
+
+    // find the most specific match via tournament
+    let mut best_idx = 0;
+    for i in 1..matches.len() {
+        match compare_specificity(
+            &matches[best_idx].0.target_type,
+            &matches[best_idx].0.type_params,
+            &matches[i].0.target_type,
+            &matches[i].0.type_params,
+        ) {
+            Specificity::LessSpecific | Specificity::Equal => best_idx = i,
+            Specificity::MoreSpecific => {}
+            Specificity::Incomparable => {
+                let candidates = matches.iter().map(|(t, _)| t.binding).collect();
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::AmbiguousExtendMethod {
+                        ty: receiver_ty.clone(),
+                        method: method_name,
+                        candidates,
+                    },
+                ));
+                return Some(Type::Infer);
+            }
         }
     }
+
+    // pairwise verification, tournament may miss transitive incomparability
+    for i in 0..matches.len() {
+        if i == best_idx {
+            continue;
+        }
+        match compare_specificity(
+            &matches[best_idx].0.target_type,
+            &matches[best_idx].0.type_params,
+            &matches[i].0.target_type,
+            &matches[i].0.type_params,
+        ) {
+            Specificity::MoreSpecific | Specificity::Equal => {}
+            _ => {
+                let candidates = matches.iter().map(|(t, _)| t.binding).collect();
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::AmbiguousExtendMethod {
+                        ty: receiver_ty.clone(),
+                        method: method_name,
+                        candidates,
+                    },
+                ));
+                return Some(Type::Infer);
+            }
+        }
+    }
+
+    let (template, type_args) = matches.swap_remove(best_idx);
+    Some(try_specialize_extend(
+        receiver_ty,
+        &type_args,
+        &template,
+        method_name,
+        call_node,
+        receiver,
+        span,
+        type_checker,
+        errors,
+    ))
 }
 
 pub(super) enum MethodCallOutcome {
@@ -844,24 +1066,116 @@ fn try_builtin_or_extend_method(
     let method_target = field_node.node.target.as_ref();
     let method_name = field_node.node.field;
 
-    let method_ret = match detection_ty {
-        Type::List { elem } => check_list_method(
-            call_node,
-            method_target,
-            method_name,
-            elem.as_ref(),
-            type_checker,
-            errors,
-        ),
-        Type::Map { key, value } => check_map_method(
-            call_node,
-            method_target,
-            method_name,
-            key.as_ref(),
-            value.as_ref(),
-            type_checker,
-            errors,
-        ),
+    match detection_ty {
+        Type::List { elem } => {
+            if let Some(ret) = check_list_method(
+                call_node,
+                method_target,
+                method_name,
+                elem.as_ref(),
+                type_checker,
+                errors,
+            ) {
+                return Some(handled_method_result(
+                    ret,
+                    op_safe,
+                    chain_is_optional,
+                    index,
+                    call_op,
+                ));
+            }
+            if let Some(extend_ret) = resolve_extend_method(
+                detection_ty,
+                method_name,
+                call_node,
+                Some(base),
+                field_node.span,
+                type_checker,
+                errors,
+            ) {
+                return Some(handled_method_result(
+                    extend_ret,
+                    op_safe,
+                    chain_is_optional,
+                    index,
+                    call_op,
+                ));
+            }
+            let type_ident = Ident(Intern::new(format!("{detection_ty}")));
+            errors.push(Diagnostic::new(
+                field_node.span,
+                DiagnosticKind::UnknownMethod {
+                    struct_name: type_ident,
+                    method: method_name,
+                },
+            ));
+            Some(handled_infer(op_safe, chain_is_optional, index, call_op))
+        }
+        Type::Map { key, value } => {
+            if let Some(ret) = check_map_method(
+                call_node,
+                method_target,
+                method_name,
+                key.as_ref(),
+                value.as_ref(),
+                type_checker,
+                errors,
+            ) {
+                return Some(handled_method_result(
+                    ret,
+                    op_safe,
+                    chain_is_optional,
+                    index,
+                    call_op,
+                ));
+            }
+            if let Some(extend_ret) = resolve_extend_method(
+                detection_ty,
+                method_name,
+                call_node,
+                Some(base),
+                field_node.span,
+                type_checker,
+                errors,
+            ) {
+                return Some(handled_method_result(
+                    extend_ret,
+                    op_safe,
+                    chain_is_optional,
+                    index,
+                    call_op,
+                ));
+            }
+            let type_ident = Ident(Intern::new(format!("{detection_ty}")));
+            errors.push(Diagnostic::new(
+                field_node.span,
+                DiagnosticKind::UnknownMethod {
+                    struct_name: type_ident,
+                    method: method_name,
+                },
+            ));
+            Some(handled_infer(op_safe, chain_is_optional, index, call_op))
+        }
+        Type::Tuple(_) => {
+            if let Some(extend_ret) = resolve_extend_method(
+                detection_ty,
+                method_name,
+                call_node,
+                Some(base),
+                field_node.span,
+                type_checker,
+                errors,
+            ) {
+                return Some(handled_method_result(
+                    extend_ret,
+                    op_safe,
+                    chain_is_optional,
+                    index,
+                    call_op,
+                ));
+            }
+            None
+        }
         Type::Float | Type::Double | Type::Int | Type::Bool | Type::String | Type::Enum { .. } => {
             if let Some(extend_ret) = resolve_extend_method(
                 detection_ty,
@@ -888,18 +1202,10 @@ fn try_builtin_or_extend_method(
                     method: method_name,
                 },
             ));
-            return Some(handled_infer(op_safe, chain_is_optional, index, call_op));
+            Some(handled_infer(op_safe, chain_is_optional, index, call_op))
         }
-        _ => return None,
-    };
-
-    Some(handled_method_result(
-        method_ret,
-        op_safe,
-        chain_is_optional,
-        index,
-        call_op,
-    ))
+        _ => None,
+    }
 }
 
 fn handle_method_call_if_applicable(
@@ -962,6 +1268,28 @@ fn handle_method_call_if_applicable(
             );
             mark_remaining_ops_infer(chain, index, type_checker);
             return Some(MethodCallOutcome::Abort);
+        }
+    }
+
+    // check "extend T?"" methods before unwrapping so they can be called on "T?" directly
+    if !op_safe && current_ty.is_option() {
+        let method_name = field_node.node.field;
+        if let Some(extend_ret) = resolve_extend_method(
+            current_ty,
+            method_name,
+            call_node,
+            Some(base),
+            field_node.span,
+            type_checker,
+            errors,
+        ) {
+            return Some(handled_method_result(
+                extend_ret,
+                op_safe,
+                chain_is_optional,
+                index,
+                call_op,
+            ));
         }
     }
 
@@ -1438,5 +1766,103 @@ fn apply_postfix_op(
             }
             result
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use internment::Intern;
+
+    use super::*;
+    use crate::ast::{TypeParam, TypeVarId};
+
+    fn ident(s: &str) -> Ident {
+        Ident(Intern::new(s.to_string()))
+    }
+
+    fn tp(name: &str, id: u32) -> TypeParam {
+        TypeParam {
+            name: ident(name),
+            id: TypeVarId(id),
+        }
+    }
+
+    fn unresolved(name: &str) -> Type {
+        Type::UnresolvedName(ident(name))
+    }
+
+    #[test]
+    fn specificity_list_vs_nested_list() {
+        let list_t = Type::List {
+            elem: Box::new(unresolved("T")),
+        };
+        let nested_t = Type::List {
+            elem: Box::new(Type::List {
+                elem: Box::new(unresolved("T")),
+            }),
+        };
+        let params = vec![tp("T", 0)];
+
+        // [T] vs [[T]]: [T] is less specific, [[T]] is more specific
+        assert!(matches!(
+            compare_specificity(&list_t, &params, &nested_t, &params),
+            Specificity::LessSpecific
+        ));
+        assert!(matches!(
+            compare_specificity(&nested_t, &params, &list_t, &params),
+            Specificity::MoreSpecific
+        ));
+    }
+
+    #[test]
+    fn specificity_equal_patterns() {
+        let list_t = Type::List {
+            elem: Box::new(unresolved("T")),
+        };
+        let list_u = Type::List {
+            elem: Box::new(unresolved("U")),
+        };
+        let t_params = vec![tp("T", 0)];
+        let u_params = vec![tp("U", 1)];
+
+        // [T] vs [U] — structurally identical, just different param names
+        assert!(matches!(
+            compare_specificity(&list_t, &t_params, &list_u, &u_params),
+            Specificity::Equal
+        ));
+    }
+
+    #[test]
+    fn specificity_incomparable() {
+        let tuple_t_int = Type::Tuple(vec![unresolved("T"), Type::Int]);
+        let tuple_str_t = Type::Tuple(vec![Type::String, unresolved("T")]);
+        let params = vec![tp("T", 0)];
+
+        // (T, int) vs (string, T) — incomparable
+        assert!(matches!(
+            compare_specificity(&tuple_t_int, &params, &tuple_str_t, &params),
+            Specificity::Incomparable
+        ));
+    }
+
+    #[test]
+    fn specificity_option_generic_vs_option_list() {
+        let opt_t = Type::Enum {
+            name: ident("Option"),
+            type_args: vec![unresolved("T")],
+        };
+        let opt_list_t = Type::Enum {
+            name: ident("Option"),
+            type_args: vec![Type::List {
+                elem: Box::new(unresolved("T")),
+            }],
+        };
+        let params = vec![tp("T", 0)];
+
+        // Option<T> is less specific than Option<[T]>
+        assert!(matches!(
+            compare_specificity(&opt_t, &params, &opt_list_t, &params),
+            Specificity::LessSpecific
+        ));
     }
 }

@@ -313,10 +313,10 @@ fn lower_stmt(
         }
 
         Stmt::Break => {
-            if let Some(depth) = fc.loop_defer_depth {
-                if fc.has_defers_from_depth(depth) {
-                    out.extend(fc.defers_from_depth(depth));
-                }
+            if let Some(depth) = fc.loop_defer_depth
+                && fc.has_defers_from_depth(depth)
+            {
+                out.extend(fc.defers_from_depth(depth));
             }
             Ok(Some(hir::Stmt {
                 span,
@@ -325,10 +325,10 @@ fn lower_stmt(
         }
 
         Stmt::Continue => {
-            if let Some(depth) = fc.loop_defer_depth {
-                if fc.has_defers_from_depth(depth) {
-                    out.extend(fc.defers_from_depth(depth));
-                }
+            if let Some(depth) = fc.loop_defer_depth
+                && fc.has_defers_from_depth(depth)
+            {
+                out.extend(fc.defers_from_depth(depth));
             }
             Ok(Some(hir::Stmt {
                 span,

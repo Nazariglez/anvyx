@@ -739,7 +739,7 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
         ),
         DiagnosticKind::ExtendUnsupportedType { ty } => (
             format!("cannot extend type '{ty}'"),
-            "only named types (int, float, double, bool, string, structs, enums, extern types) can be extended".to_string(),
+            "only concrete types (int, float, double, bool, string, structs, enums, extern types, options, lists, maps, tuples) can be extended".to_string(),
         ),
         DiagnosticKind::ExtendTypeParamCountMismatch { ty_name, expected, found } => (
             format!("extend type '{ty_name}' expects {expected} type parameter{}, but {found} {} provided",
@@ -750,6 +750,10 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
         DiagnosticKind::ExtendTypeParamsOnNonGeneric { ty_name } => (
             format!("type '{ty_name}' is not generic, but type parameters were provided on extend"),
             "remove the type parameters from the extend head".to_string(),
+        ),
+        DiagnosticKind::ExtendUnusedTypeParam { param_name } => (
+            format!("unused type parameter '{param_name}' in extend declaration"),
+            "every declared type parameter must appear in the target type".to_string(),
         ),
         DiagnosticKind::RequiredParamAfterOptional { func, param } => (
             format!("required parameter '{param}' cannot follow a parameter with a default value"),

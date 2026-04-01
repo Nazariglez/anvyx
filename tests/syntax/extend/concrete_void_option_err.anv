@@ -2,8 +2,8 @@
 // @expect: error
 // @contains: cannot extend
 
-extend int? {
-    fn unwrap(self) -> int { 0 }
+extend void? {
+    fn noop(self) {}
 }
 
 fn main() {}

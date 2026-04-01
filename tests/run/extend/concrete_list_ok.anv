@@ -1,0 +1,18 @@
+// @mode: run
+// @expect: success
+// @match: 6
+
+extend [int] {
+    fn sum(self) -> int {
+        var total = 0;
+        for v in self {
+            total += v;
+        }
+        total
+    }
+}
+
+fn main() {
+    let nums: [int] = [1, 2, 3];
+    println(nums.sum());
+}

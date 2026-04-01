@@ -457,6 +457,9 @@ pub enum DiagnosticKind {
     ExtendTypeParamsOnNonGeneric {
         ty_name: Ident,
     },
+    ExtendUnusedTypeParam {
+        param_name: Ident,
+    },
 
     CannotInferLambdaParam {
         name: Ident,

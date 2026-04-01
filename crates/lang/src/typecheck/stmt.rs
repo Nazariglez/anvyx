@@ -23,6 +23,7 @@ use super::{
         unwrap_opt_typ, validate_map_key_type,
     },
     unify::contains_infer,
+    visit::type_any,
 };
 use crate::{
     ast::{
@@ -570,10 +571,13 @@ pub(super) fn collect_scope_types(
                         .generic_extend_templates
                         .entry(key)
                         .or_default();
-                    let already_registered = entries.iter().any(|e| e.source_module == path_key);
+                    let already_registered = entries
+                        .iter()
+                        .any(|e| e.source_module == path_key && e.target_type == entry.target_type);
                     if !already_registered {
                         entries.push(GenericExtendTemplate {
                             type_params: entry.type_params.clone(),
+                            target_type: entry.target_type.clone(),
                             method: entry.method.clone(),
                             source_module: path_key.clone(),
                             binding: binding_name,
@@ -701,19 +705,7 @@ pub(super) fn collect_scope_types(
                     continue;
                 }
                 let resolved_ty = type_checker.resolve_type(&decl.ty);
-                let valid = matches!(
-                    resolved_ty,
-                    Type::Float
-                        | Type::Double
-                        | Type::Int
-                        | Type::Bool
-                        | Type::String
-                        | Type::Struct { .. }
-                        | Type::DataRef { .. }
-                        | Type::Enum { .. }
-                        | Type::Extern { .. }
-                );
-                if !valid {
+                if !is_valid_concrete_extend_type(&resolved_ty) {
                     continue;
                 }
 
@@ -970,10 +962,23 @@ pub(super) fn build_module_def_with_reexports(
                 }
 
                 if !decl.type_params.is_empty() {
-                    // generic extend export base name extracted from UnresolvedName
-                    let base_name = match &decl.ty {
-                        Type::UnresolvedName(name) => *name,
-                        _ => continue, // primitives can't be generic
+                    // build the exported extend target, unresolved names
+                    // use a name-based "Struct", while typed targets resolve directly
+                    let target_type = if let Type::UnresolvedName(name) = &decl.ty {
+                        let type_args: Vec<Type> = decl
+                            .type_params
+                            .iter()
+                            .map(|p| Type::UnresolvedName(p.name))
+                            .collect();
+                        Type::Struct {
+                            name: *name,
+                            type_args,
+                        }
+                    } else {
+                        resolve(&decl.ty)
+                    };
+                    let Some(base_key) = extend_base_key(&target_type) else {
+                        continue;
                     };
                     for method in &decl.methods {
                         if method.node.params.is_empty() {
@@ -985,8 +990,9 @@ pub(super) fn build_module_def_with_reexports(
                         module_def
                             .generic_extend_methods
                             .push(ModuleGenericExtendEntry {
-                                base_name,
+                                base_name: base_key,
                                 type_params: decl.type_params.clone(),
+                                target_type: target_type.clone(),
                                 method_name: method.node.name,
                                 method: method.clone(),
                             });
@@ -995,19 +1001,7 @@ pub(super) fn build_module_def_with_reexports(
                 }
 
                 let resolved_ty = resolve(&decl.ty);
-                let valid = matches!(
-                    resolved_ty,
-                    Type::Float
-                        | Type::Double
-                        | Type::Int
-                        | Type::Bool
-                        | Type::String
-                        | Type::Struct { .. }
-                        | Type::DataRef { .. }
-                        | Type::Enum { .. }
-                        | Type::Extern { .. }
-                );
-                if !valid {
+                if !is_valid_concrete_extend_type(&resolved_ty) {
                     continue;
                 }
                 let module_str = module_path.join("::");
@@ -1211,6 +1205,40 @@ pub(super) fn check_stmt(
     }
 }
 
+pub(super) fn extend_base_key(ty: &Type) -> Option<Ident> {
+    match ty {
+        Type::Struct { name, .. }
+        | Type::DataRef { name, .. }
+        | Type::Enum { name, .. }
+        | Type::Extern { name } => Some(*name),
+        Type::List { .. } => Some(Ident(Intern::new("__List".to_string()))),
+        Type::Map { .. } => Some(Ident(Intern::new("__Map".to_string()))),
+        Type::Tuple(_) => Some(Ident(Intern::new("__Tuple".to_string()))),
+        Type::Array { .. } => Some(Ident(Intern::new("__Array".to_string()))),
+        _ => None,
+    }
+}
+
+fn is_valid_concrete_extend_type(ty: &Type) -> bool {
+    match ty {
+        Type::Int
+        | Type::Float
+        | Type::Double
+        | Type::Bool
+        | Type::String
+        | Type::Extern { .. } => true,
+        Type::Struct { type_args, .. }
+        | Type::DataRef { type_args, .. }
+        | Type::Enum { type_args, .. } => type_args.iter().all(is_valid_concrete_extend_type),
+        Type::List { elem } => is_valid_concrete_extend_type(elem),
+        Type::Map { key, value } => {
+            is_valid_concrete_extend_type(key) && is_valid_concrete_extend_type(value)
+        }
+        Type::Tuple(fields) => fields.iter().all(is_valid_concrete_extend_type),
+        _ => false,
+    }
+}
+
 fn check_extend_decl(
     node: &crate::ast::ExtendDeclNode,
     type_checker: &mut TypeChecker,
@@ -1225,19 +1253,7 @@ fn check_extend_decl(
 
     let resolved_ty = type_checker.resolve_type(&decl.ty);
 
-    let valid = match &resolved_ty {
-        Type::Float
-        | Type::Double
-        | Type::Int
-        | Type::Bool
-        | Type::String
-        | Type::Extern { .. } => true,
-        Type::Struct { type_args, .. }
-        | Type::DataRef { type_args, .. }
-        | Type::Enum { type_args, .. } => type_args.is_empty(),
-        _ => false,
-    };
-    if !valid {
+    if !is_valid_concrete_extend_type(&resolved_ty) {
         errors.push(Diagnostic::new(
             node.span,
             DiagnosticKind::ExtendUnsupportedType { ty: resolved_ty },
@@ -1339,67 +1355,143 @@ fn check_generic_extend_decl(
 ) {
     let decl = &node.node;
 
-    // base type must be an unresolved name (primitives can't be generic)
-    let base_name = if let Type::UnresolvedName(name) = &decl.ty {
-        *name
+    // build the full extend target type, constructing legacy name-based forms manually and resolving typed forms directly
+    let target_type = if let Type::UnresolvedName(base_name) = &decl.ty {
+        let resolved = type_checker.resolve_type(&decl.ty);
+        let type_args: Vec<Type> = decl
+            .type_params
+            .iter()
+            .map(|p| Type::UnresolvedName(p.name))
+            .collect();
+        match &resolved {
+            Type::Struct { name, .. } => {
+                let def_tp = type_checker
+                    .get_struct(*name)
+                    .map_or(0, |d| d.type_params.len());
+                if def_tp == 0 {
+                    errors.push(Diagnostic::new(
+                        node.span,
+                        DiagnosticKind::ExtendTypeParamsOnNonGeneric {
+                            ty_name: *base_name,
+                        },
+                    ));
+                    return;
+                }
+                if decl.type_params.len() != def_tp {
+                    errors.push(Diagnostic::new(
+                        node.span,
+                        DiagnosticKind::ExtendTypeParamCountMismatch {
+                            ty_name: *base_name,
+                            expected: def_tp,
+                            found: decl.type_params.len(),
+                        },
+                    ));
+                    return;
+                }
+                Type::Struct {
+                    name: *name,
+                    type_args,
+                }
+            }
+            Type::DataRef { name, .. } => {
+                let def_tp = type_checker
+                    .get_struct(*name)
+                    .map_or(0, |d| d.type_params.len());
+                if def_tp == 0 {
+                    errors.push(Diagnostic::new(
+                        node.span,
+                        DiagnosticKind::ExtendTypeParamsOnNonGeneric {
+                            ty_name: *base_name,
+                        },
+                    ));
+                    return;
+                }
+                if decl.type_params.len() != def_tp {
+                    errors.push(Diagnostic::new(
+                        node.span,
+                        DiagnosticKind::ExtendTypeParamCountMismatch {
+                            ty_name: *base_name,
+                            expected: def_tp,
+                            found: decl.type_params.len(),
+                        },
+                    ));
+                    return;
+                }
+                Type::DataRef {
+                    name: *name,
+                    type_args,
+                }
+            }
+            Type::Enum { name, .. } => {
+                let def_tp = type_checker
+                    .get_enum(*name)
+                    .map_or(0, |d| d.type_params.len());
+                if def_tp == 0 {
+                    errors.push(Diagnostic::new(
+                        node.span,
+                        DiagnosticKind::ExtendTypeParamsOnNonGeneric {
+                            ty_name: *base_name,
+                        },
+                    ));
+                    return;
+                }
+                if decl.type_params.len() != def_tp {
+                    errors.push(Diagnostic::new(
+                        node.span,
+                        DiagnosticKind::ExtendTypeParamCountMismatch {
+                            ty_name: *base_name,
+                            expected: def_tp,
+                            found: decl.type_params.len(),
+                        },
+                    ));
+                    return;
+                }
+                Type::Enum {
+                    name: *name,
+                    type_args,
+                }
+            }
+            _ => {
+                errors.push(Diagnostic::new(
+                    node.span,
+                    DiagnosticKind::ExtendUnsupportedType { ty: resolved },
+                ));
+                return;
+            }
+        }
     } else {
+        // new path: "extend<T> type_expr", resolve concrete parts, type params stay as UnresolvedName
+        type_checker.resolve_type(&decl.ty)
+    };
+
+    // extract the base key for hashmap lookup
+    let Some(base_key) = extend_base_key(&target_type) else {
         errors.push(Diagnostic::new(
             node.span,
-            DiagnosticKind::ExtendUnsupportedType {
-                ty: type_checker.resolve_type(&decl.ty),
-            },
+            DiagnosticKind::ExtendUnsupportedType { ty: target_type },
         ));
         return;
     };
 
-    // resolve to find the actual struct/enum definition
-    let resolved_ty = type_checker.resolve_type(&decl.ty);
-    let (def_type_params, resolved_base_name) = match &resolved_ty {
-        Type::Struct { name, .. } | Type::DataRef { name, .. } => {
-            let tp = type_checker
-                .get_struct(*name)
-                .map(|d| d.type_params.clone())
-                .unwrap_or_default();
-            (tp, *name)
-        }
-        Type::Enum { name, .. } => {
-            let tp = type_checker
-                .get_enum(*name)
-                .map(|d| d.type_params.clone())
-                .unwrap_or_default();
-            (tp, *name)
-        }
-        _ => {
+    // validate all declared type params appear somewhere in target_type
+    for param in &decl.type_params {
+        let used = type_any(
+            &target_type,
+            &mut |t| matches!(t, Type::UnresolvedName(n) if *n == param.name),
+        );
+        if !used {
             errors.push(Diagnostic::new(
                 node.span,
-                DiagnosticKind::ExtendUnsupportedType { ty: resolved_ty },
+                DiagnosticKind::ExtendUnusedTypeParam {
+                    param_name: param.name,
+                },
             ));
             return;
         }
-    };
-
-    if def_type_params.is_empty() {
-        errors.push(Diagnostic::new(
-            node.span,
-            DiagnosticKind::ExtendTypeParamsOnNonGeneric { ty_name: base_name },
-        ));
-        return;
-    }
-
-    if decl.type_params.len() != def_type_params.len() {
-        errors.push(Diagnostic::new(
-            node.span,
-            DiagnosticKind::ExtendTypeParamCountMismatch {
-                ty_name: base_name,
-                expected: def_type_params.len(),
-                found: decl.type_params.len(),
-            },
-        ));
-        return;
     }
 
     for method in &decl.methods {
-        // vlidate self param exists
+        // validate self param exists
         if method.node.params.is_empty() || method.node.params[0].name.0.as_ref() != "self" {
             errors.push(Diagnostic::new(
                 method.span,
@@ -1421,37 +1513,40 @@ fn check_generic_extend_decl(
             continue;
         }
 
-        // native conflict check
-        let has_native_conflict = type_checker
-            .get_struct(resolved_base_name)
-            .is_some_and(|def| def.methods.contains_key(&method.node.name));
+        // native conflict check (only for named struct/dataref types)
+        let has_native_conflict = match &target_type {
+            Type::Struct { name, .. } | Type::DataRef { name, .. } => type_checker
+                .get_struct(*name)
+                .is_some_and(|def| def.methods.contains_key(&method.node.name)),
+            _ => false,
+        };
         if has_native_conflict {
             errors.push(Diagnostic::new(
                 method.span,
                 DiagnosticKind::ExtendMethodConflict {
-                    ty: resolved_ty.clone(),
+                    ty: target_type.clone(),
                     method: method.node.name,
                 },
             ));
             continue;
         }
 
-        // checl is there already a local template for this (base, method) pair?
-        let key = (resolved_base_name, method.node.name);
-        let local_count = type_checker
-            .generic_extend_templates
-            .get(&key)
-            .map_or(0, |entries| {
-                entries
-                    .iter()
-                    .filter(|e| e.source_module.is_empty())
-                    .count()
-            });
-        if local_count > 0 {
+        // duplicate check, reject only if there's already a local template with the same pattern
+        let key = (base_key, method.node.name);
+        let has_same_pattern =
+            type_checker
+                .generic_extend_templates
+                .get(&key)
+                .is_some_and(|entries| {
+                    entries
+                        .iter()
+                        .any(|e| e.source_module.is_empty() && e.target_type == target_type)
+                });
+        if has_same_pattern {
             errors.push(Diagnostic::new(
                 method.span,
                 DiagnosticKind::DuplicateExtendMethod {
-                    ty: resolved_ty.clone(),
+                    ty: target_type.clone(),
                     method: method.node.name,
                 },
             ));
@@ -1465,6 +1560,7 @@ fn check_generic_extend_decl(
             .or_default()
             .push(GenericExtendTemplate {
                 type_params: decl.type_params.clone(),
+                target_type: target_type.clone(),
                 method: method.clone(),
                 source_module: vec![],
                 binding: Ident(Intern::new(String::new())),

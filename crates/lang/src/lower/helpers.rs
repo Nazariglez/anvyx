@@ -313,6 +313,21 @@ pub(super) fn register_extend_declarations<'a>(
                     continue;
                 }
             }
+            Type::Struct { name, type_args } if !type_args.is_empty() => {
+                if ctx.enum_type_ids.contains_key(name) {
+                    Type::Enum {
+                        name: *name,
+                        type_args: type_args.clone(),
+                    }
+                } else if ctx.tcx.is_dataref(*name) {
+                    Type::DataRef {
+                        name: *name,
+                        type_args: type_args.clone(),
+                    }
+                } else {
+                    node.node.ty.clone()
+                }
+            }
             other => other.clone(),
         };
         let type_str = format!("{resolved_ty}");

@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+extend int? {
+    fn unwrap(self) -> int { 0 }
+}
+
+fn main() {}

@@ -1,0 +1,5 @@
+// @helper
+
+pub extend [int] {
+    fn my_len(self) -> int { 0 }
+}

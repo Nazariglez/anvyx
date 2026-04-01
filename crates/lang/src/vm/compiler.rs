@@ -126,6 +126,22 @@ impl<'a> FuncCompiler<'a> {
         Ok(self.chunk.add_constant(value))
     }
 
+    fn emit_load_local_or_deref(&mut self, local_id: hir::LocalId) {
+        if self.locals[local_id.0 as usize].is_ref {
+            self.emit(Op::DerefRead(local_id.0 as u16));
+        } else {
+            self.emit(Op::GetLocal(local_id.0 as u16));
+        }
+    }
+
+    fn emit_store_local_or_deref(&mut self, local_id: hir::LocalId) {
+        if self.locals[local_id.0 as usize].is_ref {
+            self.emit(Op::DerefWrite(local_id.0 as u16));
+        } else {
+            self.emit(Op::SetLocal(local_id.0 as u16));
+        }
+    }
+
     fn emit_write_through(&mut self, local: hir::LocalId) {
         let wt_data = self.write_through_map.get(&local).map(|wt| {
             let ref_local = wt.ref_local.0 as u16;
@@ -769,7 +785,7 @@ fn compile_expr(fc: &mut FuncCompiler<'_>, expr: &hir::Expr) -> Result<(), Compi
             method,
             args,
         } => {
-            fc.emit(Op::GetLocal(object.0 as u16));
+            fc.emit_load_local_or_deref(*object);
             for arg in args {
                 compile_expr(fc, arg)?;
             }
@@ -779,7 +795,7 @@ fn compile_expr(fc: &mut FuncCompiler<'_>, expr: &hir::Expr) -> Result<(), Compi
                 hir::CollectionMethod::MapInsert => Op::MapInsert,
                 hir::CollectionMethod::MapRemove => Op::MapRemove,
             });
-            fc.emit(Op::SetLocal(object.0 as u16));
+            fc.emit_store_local_or_deref(*object);
         }
 
         hir::ExprKind::CreateClosure { func, captures } => {
@@ -803,9 +819,9 @@ fn compile_expr(fc: &mut FuncCompiler<'_>, expr: &hir::Expr) -> Result<(), Compi
             collection,
             comparator,
         } => {
-            fc.emit(Op::GetLocal(collection.0 as u16));
+            fc.emit_load_local_or_deref(*collection);
             fc.emit(Op::ListSortBy(comparator.0 as u16));
-            fc.emit(Op::SetLocal(collection.0 as u16));
+            fc.emit_store_local_or_deref(*collection);
         }
 
         hir::ExprKind::UnwrapOptional(inner) => {
