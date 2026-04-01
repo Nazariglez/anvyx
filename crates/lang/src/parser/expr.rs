@@ -451,7 +451,7 @@ fn string_interp<'src>(
         (Token::Interp(InterpToken::Text(s)), _) => ast::StringPart::Text(s.to_string()),
     };
     let fmt_spec = select! {
-        (Token::Interp(InterpToken::FormatSpec(s)), _) => s.to_string(),
+        (Token::Interp(InterpToken::FormatSpec(s)), _) => s.clone(),
     }
     .map_with(|s, e| (s, e.span()))
     .or_not();
@@ -521,7 +521,7 @@ fn lambda_expr<'src>(
         )
         .then_ignore(pipe);
 
-    let zero_params = or_op.map(|_| vec![]);
+    let zero_params = or_op.map(|()| vec![]);
 
     let params = choice((zero_params, with_params));
 
@@ -788,7 +788,7 @@ fn fn_call_args<'src>(
         .allow_trailing()
         .collect::<Vec<_>>()
         .or_not()
-        .map(|opt| opt.unwrap_or_default()),
+        .map(std::option::Option::unwrap_or_default),
     )
     .then_ignore(select! {
         (Token::Close(Delimiter::Parent), _) => (),
@@ -838,7 +838,7 @@ fn call_type_args<'src>() -> BoxedParser<'src, Vec<ast::Type>> {
     generic_lookahead
         .ignore_then(generic_list)
         .or_not()
-        .map(|opt| opt.unwrap_or_default())
+        .map(Option::unwrap_or_default)
         .labelled("type arguments")
         .as_context()
         .boxed()
@@ -956,7 +956,7 @@ fn postfix_expr<'src>(
                 safe,
             } => {
                 let start = target.span.start;
-                let end = args.last().map(|a| a.span.end).unwrap_or(target.span.end);
+                let end = args.last().map_or(target.span.end, |a| a.span.end);
                 let call_span = Span::new(start, end);
 
                 let call_node = Spanned::new(
@@ -1144,8 +1144,8 @@ fn range_expr<'src>(
 
     let op_rhs = choice((op_rhs_inclusive, op_rhs_exclusive));
 
-    let infix_range = lower.foldl_with(op_rhs.repeated(), |start, (inclusive, end), e| match end {
-        Some(end) => {
+    let infix_range = lower.foldl_with(op_rhs.repeated(), |start, (inclusive, end), e| {
+        if let Some(end) = end {
             let span = Span::new(start.span.start, end.span.end);
             let range_node = Spanned::new(
                 ast::Range::Bounded {
@@ -1158,8 +1158,7 @@ fn range_expr<'src>(
             let expr_id = e.state().new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::Range(range_node), expr_id);
             Spanned::new(expr, span)
-        }
-        None => {
+        } else {
             let s = e.span();
             let span = Span::new(s.start, s.end);
             let expr_id = e.state().new_expr_id();

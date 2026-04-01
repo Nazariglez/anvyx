@@ -44,12 +44,12 @@ pub(super) fn pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
                 .or_not()
                 .then(literal())
                 .try_map(|(neg, lit), span| match (&neg, &lit) {
-                    (Some(_), ast::Lit::Int(n)) => Ok(ast::Lit::Int(-n)),
-                    (Some(_), ast::Lit::Float { value, suffix }) => Ok(ast::Lit::Float {
+                    (Some(()), ast::Lit::Int(n)) => Ok(ast::Lit::Int(-n)),
+                    (Some(()), ast::Lit::Float { value, suffix }) => Ok(ast::Lit::Float {
                         value: -value,
                         suffix: *suffix,
                     }),
-                    (Some(_), _) => Err(Rich::custom(span, "cannot negate non-numeric literal")),
+                    (Some(()), _) => Err(Rich::custom(span, "cannot negate non-numeric literal")),
                     (None, _) => Ok(lit),
                 });
 

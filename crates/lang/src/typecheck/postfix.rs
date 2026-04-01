@@ -23,9 +23,7 @@ use super::{
     },
 };
 
-pub(super) fn collect_postfix_chain<'a>(
-    expr: &'a ExprNode,
-) -> (&'a ExprNode, Vec<PostfixNodeRef<'a>>) {
+pub(super) fn collect_postfix_chain(expr: &ExprNode) -> (&ExprNode, Vec<PostfixNodeRef<'_>>) {
     let mut chain = vec![];
     let mut current = expr;
 
@@ -169,24 +167,21 @@ fn continue_postfix_chain(
         };
 
         if op_safe {
-            match current_ty.option_inner() {
-                Some(inner) => {
-                    base_ty = inner.clone();
-                }
-                None => {
-                    errors.push(
-                        TypeErr::new(
-                            op.span(),
-                            TypeErrKind::OptionalChainingOnNonOpt {
-                                found: current_ty.clone(),
-                            },
-                        )
-                        .with_help("remove the `?` or make the base type optional"),
-                    );
-                    mark_remaining_ops_infer(chain, i, type_checker);
-                    type_checker.set_type(expr_node.node.id, Type::Infer, expr_node.span);
-                    return Type::Infer;
-                }
+            if let Some(inner) = current_ty.option_inner() {
+                base_ty = inner.clone();
+            } else {
+                errors.push(
+                    TypeErr::new(
+                        op.span(),
+                        TypeErrKind::OptionalChainingOnNonOpt {
+                            found: current_ty.clone(),
+                        },
+                    )
+                    .with_help("remove the `?` or make the base type optional"),
+                );
+                mark_remaining_ops_infer(chain, i, type_checker);
+                type_checker.set_type(expr_node.node.id, Type::Infer, expr_node.span);
+                return Type::Infer;
             }
         }
 
@@ -245,7 +240,7 @@ fn try_specialize_extend(
         base_name,
         type_args
             .iter()
-            .map(|t| t.to_string())
+            .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(", ")
     );
@@ -669,13 +664,17 @@ fn handle_method_call_if_applicable(
         _ => return None,
     };
 
-    let call_node = match call_op {
-        PostfixNodeRef::Call { node, .. } => node,
-        _ => unreachable!(),
+    let PostfixNodeRef::Call {
+        node: call_node, ..
+    } = call_op
+    else {
+        unreachable!()
     };
-    let field_node = match field_op {
-        PostfixNodeRef::Field { node, .. } => node,
-        _ => unreachable!(),
+    let PostfixNodeRef::Field {
+        node: field_node, ..
+    } = field_op
+    else {
+        unreachable!()
     };
 
     if call_node.node.func.node.id != field_op.expr_id() {
@@ -1082,17 +1081,13 @@ fn try_type_name_dispatch(
                     let def = if extend_entries.len() == 1 {
                         &extend_entries[0].def
                     } else {
-                        let first_arg_ty = call_node
-                            .node
-                            .args
-                            .first()
-                            .map(|arg| check_expr(arg, type_checker, errors, None))
-                            .unwrap_or(Type::Infer);
+                        let first_arg_ty = call_node.node.args.first().map_or(Type::Infer, |arg| {
+                            check_expr(arg, type_checker, errors, None)
+                        });
                         extend_entries
                             .iter()
                             .find(|e| e.ty == first_arg_ty)
-                            .map(|e| &e.def)
-                            .unwrap_or(&extend_entries[0].def)
+                            .map_or(&extend_entries[0].def, |e| &e.def)
                     };
                     let ty = check_extend_qualified_call(def, call_node, type_checker, errors);
                     return Some((ty, 2, op_safe));

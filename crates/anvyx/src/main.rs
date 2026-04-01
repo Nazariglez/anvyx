@@ -54,7 +54,9 @@ fn run(cli: Cli) -> Result<(), String> {
             let manifest = manifest::parse_manifest()?;
             let path = resolve_entry(file, &manifest)?;
 
-            let has_externs = manifest.as_ref().is_some_and(|m| m.has_externs());
+            let has_externs = manifest
+                .as_ref()
+                .is_some_and(manifest::Manifest::has_externs);
             if has_externs {
                 let manifest = manifest.as_ref().unwrap();
                 let ctx = prepare_externs(manifest)?;
@@ -72,7 +74,9 @@ fn run(cli: Cli) -> Result<(), String> {
             let manifest = manifest::parse_manifest()?;
             let path = resolve_entry(file, &manifest)?;
 
-            let has_externs = manifest.as_ref().is_some_and(|m| m.has_externs());
+            let has_externs = manifest
+                .as_ref()
+                .is_some_and(manifest::Manifest::has_externs);
             let extern_meta = if has_externs {
                 let manifest = manifest.as_ref().unwrap();
                 let ctx = prepare_externs(manifest)?;
@@ -119,14 +123,13 @@ fn run(cli: Cli) -> Result<(), String> {
 }
 
 fn resolve_entry(file: Option<PathBuf>, manifest: &Option<Manifest>) -> Result<PathBuf, String> {
-    match file {
-        Some(f) => Ok(f),
-        None => {
-            let m = manifest
-                .as_ref()
-                .ok_or("No file provided and no anvyx.toml found in the current directory")?;
-            Ok(PathBuf::from(&m.project.entry))
-        }
+    if let Some(f) = file {
+        Ok(f)
+    } else {
+        let m = manifest
+            .as_ref()
+            .ok_or("No file provided and no anvyx.toml found in the current directory")?;
+        Ok(PathBuf::from(&m.project.entry))
     }
 }
 

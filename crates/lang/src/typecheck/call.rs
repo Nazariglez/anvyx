@@ -889,26 +889,23 @@ fn check_call_with_type(
 ) -> Type {
     let node = &call.node;
 
-    match &func_ty {
-        Type::Func { params, ret } => {
-            let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
-            check_call_signature(
-                call.span,
-                &param_tys,
-                required_count,
-                ret,
-                &node.args,
-                type_checker,
-                errors,
-            )
-        }
-        _ => {
-            errors.push(TypeErr::new(
-                call.span,
-                TypeErrKind::NotAFunction { expr_type: func_ty },
-            ));
-            Type::Infer
-        }
+    if let Type::Func { params, ret } = &func_ty {
+        let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
+        check_call_signature(
+            call.span,
+            &param_tys,
+            required_count,
+            ret,
+            &node.args,
+            type_checker,
+            errors,
+        )
+    } else {
+        errors.push(TypeErr::new(
+            call.span,
+            TypeErrKind::NotAFunction { expr_type: func_ty },
+        ));
+        Type::Infer
     }
 }
 
@@ -1027,8 +1024,8 @@ pub(super) fn check_module_func_call(
     let defaults = module_def
         .func_param_defaults
         .get(&func_name)
-        .map(|v| v.as_slice())
-        .unwrap_or(&[]);
+        .map(Vec::as_slice)
+        .unwrap_or_default();
     let required_count = match &func_ty {
         Type::Func { params, .. } => required_param_count(defaults, params.len()),
         _ => 0,
@@ -1254,8 +1251,7 @@ fn check_enum_tuple_variant(
                 let slot_name = slots.get(&param.id).expect("slot exists");
                 type_checker
                     .get_var(*slot_name)
-                    .map(|info| info.ty.clone())
-                    .unwrap_or(Type::Infer)
+                    .map_or(Type::Infer, |info| info.ty.clone())
             })
             .collect()
     } else {
@@ -1804,7 +1800,7 @@ pub(super) fn generic_context_strings(
 ) -> (String, String) {
     let args_str = type_args
         .iter()
-        .map(|t| t.to_string())
+        .map(std::string::ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ");
     let label = format!("in this instantiation of '{name}<{args_str}>'");

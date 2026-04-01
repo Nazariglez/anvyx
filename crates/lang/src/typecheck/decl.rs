@@ -302,53 +302,47 @@ fn validate_param_defaults(
                     continue;
                 }
 
-                let value = match eval_const_expr(expr, &type_checker.const_defs) {
-                    Ok(val) => val,
-                    Err(_) => {
+                let Ok(value) = eval_const_expr(expr, &type_checker.const_defs) else {
+                    errors.push(TypeErr::new(
+                        expr.span,
+                        TypeErrKind::ParamDefaultNotConst {
+                            func: owner_name,
+                            param: param.name,
+                        },
+                    ));
+                    defaults.push(None);
+                    continue;
+                };
+
+                let resolved_ty = type_checker.resolve_type(&param.ty);
+                if value == ConstValue::Nil {
+                    if !resolved_ty.is_option() {
                         errors.push(TypeErr::new(
                             expr.span,
-                            TypeErrKind::ParamDefaultNotConst {
+                            TypeErrKind::ParamDefaultTypeMismatch {
                                 func: owner_name,
                                 param: param.name,
+                                expected: resolved_ty,
+                                found: Type::Void,
                             },
                         ));
                         defaults.push(None);
                         continue;
                     }
-                };
-
-                let resolved_ty = type_checker.resolve_type(&param.ty);
-                match &value {
-                    ConstValue::Nil => {
-                        if !resolved_ty.is_option() {
-                            errors.push(TypeErr::new(
-                                expr.span,
-                                TypeErrKind::ParamDefaultTypeMismatch {
-                                    func: owner_name,
-                                    param: param.name,
-                                    expected: resolved_ty,
-                                    found: Type::Void,
-                                },
-                            ));
-                            defaults.push(None);
-                            continue;
-                        }
-                    }
-                    _ => {
-                        let value_ty = value.ty();
-                        if value_ty != resolved_ty {
-                            errors.push(TypeErr::new(
-                                expr.span,
-                                TypeErrKind::ParamDefaultTypeMismatch {
-                                    func: owner_name,
-                                    param: param.name,
-                                    expected: resolved_ty,
-                                    found: value_ty,
-                                },
-                            ));
-                            defaults.push(None);
-                            continue;
-                        }
+                } else {
+                    let value_ty = value.ty();
+                    if value_ty != resolved_ty {
+                        errors.push(TypeErr::new(
+                            expr.span,
+                            TypeErrKind::ParamDefaultTypeMismatch {
+                                func: owner_name,
+                                param: param.name,
+                                expected: resolved_ty,
+                                found: value_ty,
+                            },
+                        ));
+                        defaults.push(None);
+                        continue;
                     }
                 }
 
@@ -405,7 +399,11 @@ pub(super) fn check_struct(
             && arr.node.elements.is_empty()
         {
             let is_array_or_list = matches!(resolved_ty, Type::Array { .. } | Type::List { .. });
-            if !is_array_or_list {
+            if is_array_or_list {
+                struct_def
+                    .field_defaults
+                    .insert(field.name, FieldDefault::EmptyArray);
+            } else {
                 errors.push(TypeErr::new(
                     expr.span,
                     TypeErrKind::FieldDefaultTypeMismatch {
@@ -418,10 +416,6 @@ pub(super) fn check_struct(
                         },
                     },
                 ));
-            } else {
-                struct_def
-                    .field_defaults
-                    .insert(field.name, FieldDefault::EmptyArray);
             }
             continue;
         }
@@ -430,7 +424,11 @@ pub(super) fn check_struct(
             && map.node.entries.is_empty()
         {
             let is_map = matches!(resolved_ty, Type::Map { .. });
-            if !is_map {
+            if is_map {
+                struct_def
+                    .field_defaults
+                    .insert(field.name, FieldDefault::EmptyMap);
+            } else {
                 errors.push(TypeErr::new(
                     expr.span,
                     TypeErrKind::FieldDefaultTypeMismatch {
@@ -443,10 +441,6 @@ pub(super) fn check_struct(
                         },
                     },
                 ));
-            } else {
-                struct_def
-                    .field_defaults
-                    .insert(field.name, FieldDefault::EmptyMap);
             }
             continue;
         }
@@ -462,49 +456,43 @@ pub(super) fn check_struct(
             continue;
         }
 
-        let value = match eval_const_expr(expr, &type_checker.const_defs) {
-            Ok(val) => val,
-            Err(_) => {
+        let Ok(value) = eval_const_expr(expr, &type_checker.const_defs) else {
+            errors.push(TypeErr::new(
+                expr.span,
+                TypeErrKind::FieldDefaultNotConst {
+                    struct_name,
+                    field: field.name,
+                },
+            ));
+            continue;
+        };
+
+        if value == ConstValue::Nil {
+            if !resolved_ty.is_option() {
                 errors.push(TypeErr::new(
                     expr.span,
-                    TypeErrKind::FieldDefaultNotConst {
+                    TypeErrKind::FieldDefaultTypeMismatch {
                         struct_name,
                         field: field.name,
+                        expected: resolved_ty,
+                        found: Type::Void,
                     },
                 ));
                 continue;
             }
-        };
-
-        match &value {
-            ConstValue::Nil => {
-                if !resolved_ty.is_option() {
-                    errors.push(TypeErr::new(
-                        expr.span,
-                        TypeErrKind::FieldDefaultTypeMismatch {
-                            struct_name,
-                            field: field.name,
-                            expected: resolved_ty,
-                            found: Type::Void,
-                        },
-                    ));
-                    continue;
-                }
-            }
-            _ => {
-                let value_ty = value.ty();
-                if value_ty != resolved_ty {
-                    errors.push(TypeErr::new(
-                        expr.span,
-                        TypeErrKind::FieldDefaultTypeMismatch {
-                            struct_name,
-                            field: field.name,
-                            expected: resolved_ty,
-                            found: value_ty,
-                        },
-                    ));
-                    continue;
-                }
+        } else {
+            let value_ty = value.ty();
+            if value_ty != resolved_ty {
+                errors.push(TypeErr::new(
+                    expr.span,
+                    TypeErrKind::FieldDefaultTypeMismatch {
+                        struct_name,
+                        field: field.name,
+                        expected: resolved_ty,
+                        found: value_ty,
+                    },
+                ));
+                continue;
             }
         }
 

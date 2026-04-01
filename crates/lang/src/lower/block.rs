@@ -15,10 +15,10 @@ pub(super) fn lower_block(
     is_func_body: bool,
     ret_ty: &Type,
 ) -> Result<hir::Block, LowerError> {
-    let scope_mark = if !is_func_body {
-        Some(fc.enter_scope())
-    } else {
+    let scope_mark = if is_func_body {
         None
+    } else {
+        Some(fc.enter_scope())
     };
 
     let mut stmts = vec![];
@@ -203,8 +203,7 @@ fn lower_stmt(
                                     .tcx
                                     .get_extern_type(extern_name)
                                     .and_then(|def| def.fields.get(field_name))
-                                    .map(|f| f.ty.clone())
-                                    .unwrap_or(Type::Void);
+                                    .map_or(Type::Void, |f| f.ty.clone());
 
                                 let local_id =
                                     register_named_local(fc, *binding_name, field_ty.clone());

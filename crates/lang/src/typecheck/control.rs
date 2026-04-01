@@ -99,8 +99,8 @@ fn validate_var_scrutinee(
     type_checker: &TypeChecker,
     errors: &mut Vec<TypeErr>,
 ) -> bool {
-    match &scrutinee.node.kind {
-        ExprKind::Ident(name) => match type_checker.get_var(*name) {
+    if let ExprKind::Ident(name) = &scrutinee.node.kind {
+        match type_checker.get_var(*name) {
             Some(info) if info.mutable => true,
             _ => {
                 errors.push(
@@ -109,14 +109,13 @@ fn validate_var_scrutinee(
                 );
                 false
             }
-        },
-        _ => {
-            errors.push(
-                TypeErr::new(scrutinee.span, TypeErrKind::VarPatternOnImmutable)
-                    .with_help("var binding in pattern requires a simple variable as scrutinee"),
-            );
-            false
         }
+    } else {
+        errors.push(
+            TypeErr::new(scrutinee.span, TypeErrKind::VarPatternOnImmutable)
+                .with_help("var binding in pattern requires a simple variable as scrutinee"),
+        );
+        false
     }
 }
 
@@ -651,7 +650,7 @@ fn check_exhaustiveness(
     }
 
     let all_variants: HashSet<Ident> = enum_def.variants.iter().map(|v| v.name).collect();
-    let missing: Vec<Ident> = all_variants.difference(covered).cloned().collect();
+    let missing: Vec<Ident> = all_variants.difference(covered).copied().collect();
     if !missing.is_empty() {
         errors.push(TypeErr::new(
             span,

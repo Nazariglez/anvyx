@@ -224,7 +224,7 @@ impl ExtendSpecKey {
         let args_str = self
             .type_args
             .iter()
-            .map(|t| t.to_string())
+            .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(", ");
         let type_str = format!("{}<{}>", self.base_name, args_str);
@@ -467,15 +467,15 @@ impl TypeChecker {
     pub fn func_param_info(&self, name: Ident) -> &[(Ident, Mutability)] {
         self.func_param_info
             .get(&name)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     pub fn func_param_defaults(&self, name: Ident) -> &[Option<ConstValue>] {
         self.func_param_defaults
             .get(&name)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     pub fn method_param_defaults(
@@ -487,7 +487,7 @@ impl TypeChecker {
             .get(&struct_name)
             .and_then(|sd| sd.methods.get(&method_name))
             .map(|m| m.param_defaults.as_slice())
-            .unwrap_or(&[])
+            .unwrap_or_default()
     }
 
     pub fn module_func_param_info(
@@ -498,8 +498,8 @@ impl TypeChecker {
         self.module_defs
             .get(&module_name)
             .and_then(|m| m.func_param_info.get(&func_name))
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     pub fn module_func_param_defaults(
@@ -510,8 +510,8 @@ impl TypeChecker {
         self.module_defs
             .get(&module_name)
             .and_then(|m| m.func_param_defaults.get(&func_name))
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     pub fn get_struct(&self, name: Ident) -> Option<&StructDef> {
@@ -812,8 +812,8 @@ impl TypeChecker {
     pub fn extend_call_ref_mask(&self, id: ExprId) -> &[bool] {
         self.extend_call_ref_masks
             .get(&id)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     pub(super) fn store_extend_ref_mask(&mut self, call_id: ExprId, params: &[Param]) {
@@ -832,8 +832,7 @@ impl TypeChecker {
         self.struct_defs
             .get(&struct_name)
             .and_then(|s| s.methods.get(&method_name))
-            .map(|m| (m.receiver, m.params.as_slice()))
-            .unwrap_or((None, &[]))
+            .map_or((None, &[]), |m| (m.receiver, m.params.as_slice()))
     }
 
     pub fn extend_specializations(&self) -> &HashMap<ExtendSpecKey, SpecializationResult> {
@@ -1156,7 +1155,7 @@ pub(super) enum PostfixNodeRef<'a> {
     },
 }
 
-impl<'a> PostfixNodeRef<'a> {
+impl PostfixNodeRef<'_> {
     pub fn safe(&self) -> bool {
         match self {
             PostfixNodeRef::Field { node, .. } => node.node.safe,
@@ -1337,17 +1336,16 @@ pub(super) fn type_index_on_base(
         return Type::Infer;
     }
 
-    match indexable_element_type(base_ty) {
-        Some(elem_ty) => elem_ty,
-        None => {
-            errors.push(TypeErr::new(
-                span,
-                TypeErrKind::IndexOnNonArray {
-                    found: base_ty.clone(),
-                },
-            ));
-            Type::Infer
-        }
+    if let Some(elem_ty) = indexable_element_type(base_ty) {
+        elem_ty
+    } else {
+        errors.push(TypeErr::new(
+            span,
+            TypeErrKind::IndexOnNonArray {
+                found: base_ty.clone(),
+            },
+        ));
+        Type::Infer
     }
 }
 

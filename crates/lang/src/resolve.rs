@@ -68,22 +68,25 @@ fn collect_imports(
         };
 
         let import = &import_node.node;
-        let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
+        let path_key: Vec<String> = import
+            .path
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
 
-        if path_key.first().map(|s| s.as_str()) == Some("std") {
+        if path_key.first().map(String::as_str) == Some("std") {
             if resolved.contains(&path_key) {
                 continue;
             }
 
-            let module_name = match path_key.get(1) {
-                Some(name) => name.as_str(),
-                None => {
-                    errors.push(ImportError::UnknownStdModule {
-                        name: "std".to_string(),
-                        span: import_node.span,
-                    });
-                    continue;
-                }
+            let module_name = if let Some(name) = path_key.get(1) {
+                name.as_str()
+            } else {
+                errors.push(ImportError::UnknownStdModule {
+                    name: "std".to_string(),
+                    span: import_node.span,
+                });
+                continue;
             };
 
             let Some(source) = std_modules.get(module_name) else {
@@ -95,14 +98,11 @@ fn collect_imports(
             };
 
             let file_label = format!("<std.{module_name}>");
-            let (module_ast, _) = match crate::parse_source(&source.anv_source, &file_label) {
-                Ok(r) => r,
-                Err(_) => {
-                    errors.push(ImportError::ParseError {
-                        file_path: file_label,
-                    });
-                    continue;
-                }
+            let Ok((module_ast, _)) = crate::parse_source(&source.anv_source, &file_label) else {
+                errors.push(ImportError::ParseError {
+                    file_path: file_label,
+                });
+                continue;
             };
 
             resolved.insert(path_key.clone());
@@ -139,28 +139,22 @@ fn collect_imports(
 
         let file_path = build_file_path(project_root, &path_key);
 
-        let source = match std::fs::read_to_string(&file_path) {
-            Ok(s) => s,
-            Err(_) => {
-                errors.push(ImportError::FileNotFound {
-                    path: file_path.display().to_string(),
-                    span: import_node.span,
-                });
-                resolving.remove(&path_key);
-                continue;
-            }
+        let Ok(source) = std::fs::read_to_string(&file_path) else {
+            errors.push(ImportError::FileNotFound {
+                path: file_path.display().to_string(),
+                span: import_node.span,
+            });
+            resolving.remove(&path_key);
+            continue;
         };
 
         let file_path_str = file_path.display().to_string();
-        let (module_ast, _tokens) = match crate::parse_source(&source, &file_path_str) {
-            Ok(r) => r,
-            Err(_) => {
-                errors.push(ImportError::ParseError {
-                    file_path: file_path_str,
-                });
-                resolving.remove(&path_key);
-                continue;
-            }
+        let Ok((module_ast, _tokens)) = crate::parse_source(&source, &file_path_str) else {
+            errors.push(ImportError::ParseError {
+                file_path: file_path_str,
+            });
+            resolving.remove(&path_key);
+            continue;
         };
 
         // recursively resolve imports declared inside this module
@@ -191,7 +185,7 @@ fn build_file_path(project_root: &Path, path_key: &[String]) -> PathBuf {
         if i < path_key.len() - 1 {
             p.push(segment);
         } else {
-            p.push(format!("{}.anv", segment));
+            p.push(format!("{segment}.anv"));
         }
     }
     p

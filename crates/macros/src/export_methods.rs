@@ -375,7 +375,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     for g in &getters {
         let method_ident = &g.method_ident;
         let field_name = &g.field_name;
-        let get_key = format!("{}::__get_{}", anvyx_name_str, field_name);
+        let get_key = format!("{anvyx_name_str}::__get_{field_name}");
         let get_fn_ident = format_ident!("__anvyx_method_{}_get_{}", rust_type_str, field_name);
 
         let sb = crate::codegen::build_self_borrow(&rust_type_ident, false, &get_key, 0);
@@ -403,7 +403,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
         let field_name = &s.field_name;
         let param_ident = &s.param_ident;
         let param_ty = &s.param_ty;
-        let set_key = format!("{}::__set_{}", anvyx_name_str, field_name);
+        let set_key = format!("{anvyx_name_str}::__set_{field_name}");
         let set_fn_ident = format_ident!("__anvyx_method_{}_set_{}", rust_type_str, field_name);
 
         let sb = crate::codegen::build_self_borrow(&rust_type_ident, true, &set_key, 0);
@@ -496,7 +496,7 @@ fn process_init(
         ));
     }
     let method_ident = &method.sig.ident;
-    let handler_key = format!("{}::__init__", anvyx_name_str);
+    let handler_key = format!("{anvyx_name_str}::__init__");
     let handler_fn_ident = format_ident!("__anvyx_method_{}___init__", rust_type_str);
 
     let resolved_output =
@@ -681,14 +681,11 @@ fn process_setter(
     let resolved_ty = crate::codegen::resolve_self_in_type(&pat_type.ty, rust_type_ident);
     let param_mode = classify_param(&resolved_ty)
         .ok_or_else(|| syn::Error::new_spanned(&pat_type.ty, "unsupported type in #[setter]"))?;
-    let param_ty = match param_mode {
-        ParamMode::Owned(ty) => ty,
-        _ => {
-            return Err(syn::Error::new_spanned(
-                &pat_type.ty,
-                "#[setter] does not support reference parameters; pass by value instead",
-            ));
-        }
+    let ParamMode::Owned(param_ty) = param_mode else {
+        return Err(syn::Error::new_spanned(
+            &pat_type.ty,
+            "#[setter] does not support reference parameters; pass by value instead",
+        ));
     };
     Ok(SetterInfo {
         field_name,
@@ -752,8 +749,8 @@ fn process_op(
                     lhs
                 };
                 (
-                    format!("{}::__op_r{}__{}", anvyx_name_str, op, lhs_r),
-                    format!("__op_r{}__{}", op, lhs_r),
+                    format!("{anvyx_name_str}::__op_r{op}__{lhs_r}"),
+                    format!("__op_r{op}__{lhs_r}"),
                     OpInfo {
                         op_cap,
                         other_type: lhs_r,
@@ -768,8 +765,8 @@ fn process_op(
                     rhs
                 };
                 (
-                    format!("{}::__op_{}__{}", anvyx_name_str, op, rhs_r),
-                    format!("__op_{}__{}", op, rhs_r),
+                    format!("{anvyx_name_str}::__op_{op}__{rhs_r}"),
+                    format!("__op_{op}__{rhs_r}"),
                     OpInfo {
                         op_cap,
                         other_type: rhs_r,
@@ -789,8 +786,8 @@ fn process_op(
             let op_cap = op_to_capitalized(op);
             let op_sym = op_to_symbol(op);
             (
-                format!("{}::__op_{}", anvyx_name_str, op),
-                format!("__op_{}", op),
+                format!("{anvyx_name_str}::__op_{op}"),
+                format!("__op_{op}"),
                 OpInfo {
                     op_cap,
                     other_type: String::new(),
@@ -838,8 +835,8 @@ fn process_op(
         }
     };
 
-    let self_arg_idx: usize = if self_on_right { 1 } else { 0 };
-    let other_arg_idx: usize = if self_on_right { 0 } else { 1 };
+    let self_arg_idx: usize = usize::from(self_on_right);
+    let other_arg_idx: usize = usize::from(!self_on_right);
 
     let sb = crate::codegen::build_self_borrow(rust_type_ident, false, &handler_key, self_arg_idx);
 
@@ -894,7 +891,7 @@ fn process_method(
 ) -> syn::Result<MethodResult> {
     let method_ident = &method.sig.ident;
     let method_name_str = method_ident.to_string();
-    let handler_key = format!("{}::{}", anvyx_name_str, method_name_str);
+    let handler_key = format!("{anvyx_name_str}::{method_name_str}");
     let handler_fn_ident = format_ident!("__anvyx_method_{}_{}", rust_type_str, method_name_str);
 
     let kind = classify_method_kind(&method.sig)?;
@@ -969,9 +966,10 @@ fn process_method(
     let handler_call = quote! { #handler_fn_ident() };
 
     let ret_anvyx_str = crate::codegen::ret_anvyx_type_str(&ret_mode);
-    let method_doc_token = match crate::codegen::extract_doc(&method.attrs) {
-        Some(s) => quote! { Some(#s) },
-        None => quote! { None },
+    let method_doc_token = if let Some(s) = crate::codegen::extract_doc(&method.attrs) {
+        quote! { Some(#s) }
+    } else {
+        quote! { None }
     };
     let param_anvyx_types = extracted.anvyx_types.as_slice();
 

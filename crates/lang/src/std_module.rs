@@ -35,11 +35,7 @@ impl StdModule {
                 || !ty.statics.is_empty()
                 || !ty.operators.is_empty();
             emit_doc(&mut out, ty.doc);
-            if !has_members {
-                out.push_str("extern type ");
-                out.push_str(ty.name);
-                out.push_str(";\n");
-            } else {
+            if has_members {
                 out.push_str("extern type ");
                 out.push_str(ty.name);
                 out.push_str(" {\n");
@@ -143,6 +139,10 @@ impl StdModule {
                     }
                 }
                 out.push_str("}\n");
+            } else {
+                out.push_str("extern type ");
+                out.push_str(ty.name);
+                out.push_str(";\n");
             }
         }
         for decl in self.exports {

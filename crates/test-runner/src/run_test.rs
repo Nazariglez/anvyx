@@ -131,7 +131,7 @@ fn match_output(output: &str, directives: &Directives) -> Result<TestResult, Str
     }
 
     // check if any line contains the expected text
-    for expected_ln in directives.contains.iter() {
+    for expected_ln in &directives.contains {
         let found = output.lines().any(|ln| ln.contains(expected_ln));
         if !found {
             return Ok(TestResult::Fail {
@@ -155,7 +155,7 @@ impl Mode {
         match s {
             "check" => Self::Check,
             "run" => Self::Run,
-            _ => panic!("Invalid mode: {}", s),
+            _ => panic!("Invalid mode: {s}"),
         }
     }
 }
@@ -183,14 +183,14 @@ impl ExpectedResult {
             "success" => Self::Success,
             "error" => Self::Error,
             "timeout" => Self::Timeout,
-            _ => panic!("Invalid expected result: {}", s),
+            _ => panic!("Invalid expected result: {s}"),
         }
     }
 }
 
 impl std::fmt::Display for ExpectedResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "{self:?}")
     }
 }
 
@@ -269,28 +269,25 @@ fn spawn_test_process(
         .map_err(|e| e.to_string())?;
 
     let res = child.wait_timeout(timeout).map_err(|e| e.to_string())?;
-    match res {
-        Some(status) => {
-            let mut stdout = String::new();
-            let mut stderr = String::new();
+    if let Some(status) = res {
+        let mut stdout = String::new();
+        let mut stderr = String::new();
 
-            if let Some(mut out) = child.stdout.take() {
-                let _ = out.read_to_string(&mut stdout);
-            }
-            if let Some(mut err) = child.stderr.take() {
-                let _ = err.read_to_string(&mut stderr);
-            }
+        if let Some(mut out) = child.stdout.take() {
+            let _ = out.read_to_string(&mut stdout);
+        }
+        if let Some(mut err) = child.stderr.take() {
+            let _ = err.read_to_string(&mut stderr);
+        }
 
-            if status.success() {
-                Ok(ProcessOutcome::Pass { stdout, stderr })
-            } else {
-                Ok(ProcessOutcome::Fail { stdout, stderr })
-            }
+        if status.success() {
+            Ok(ProcessOutcome::Pass { stdout, stderr })
+        } else {
+            Ok(ProcessOutcome::Fail { stdout, stderr })
         }
-        None => {
-            let _ = child.kill();
-            let _ = child.wait();
-            Ok(ProcessOutcome::Timeout)
-        }
+    } else {
+        let _ = child.kill();
+        let _ = child.wait();
+        Ok(ProcessOutcome::Timeout)
     }
 }

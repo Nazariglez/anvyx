@@ -174,7 +174,7 @@ fn compile_func(func: &hir::Func) -> Result<Chunk, CompileError> {
             func_name: func.name.to_string(),
         });
     }
-    if func.params_len > u8::MAX as u32 {
+    if func.params_len > u32::from(u8::MAX) {
         return Err(CompileError::TooManyParams {
             func_name: func.name.to_string(),
         });
@@ -356,7 +356,7 @@ fn compile_stmt(fc: &mut FuncCompiler<'_>, stmt: &hir::Stmt) -> Result<(), Compi
                 // check if variant matches, GetLocal scrutinee, GetEnumVariant, push expected, Eq, JumpIfFalse(skip)
                 fc.emit(Op::GetLocal(scrutinee.0 as u16));
                 fc.emit(Op::GetEnumVariant);
-                let variant_idx = fc.add_constant(Value::Int(arm.variant as i64))?;
+                let variant_idx = fc.add_constant(Value::Int(i64::from(arm.variant)))?;
                 fc.emit(Op::Constant(variant_idx));
                 fc.emit(Op::Eq);
                 let skip_pos = fc.emit_jump(Op::JumpIfFalse(0));
@@ -536,7 +536,7 @@ fn compile_expr(fc: &mut FuncCompiler<'_>, expr: &hir::Expr) -> Result<(), Compi
         }
 
         hir::ExprKind::String(s) => {
-            let idx = fc.add_constant(Value::String(ManagedRc::new(s.to_string())))?;
+            let idx = fc.add_constant(Value::String(ManagedRc::new(s.clone())))?;
             fc.emit(Op::Constant(idx));
         }
 
@@ -596,7 +596,7 @@ fn compile_expr(fc: &mut FuncCompiler<'_>, expr: &hir::Expr) -> Result<(), Compi
                     let type_name = arg
                         .ty
                         .option_inner()
-                        .map(|t| t.to_string())
+                        .map(ToString::to_string)
                         .unwrap_or_default();
                     let idx = fc.add_constant(Value::String(ManagedRc::new(type_name)))?;
                     fc.emit(Op::OptionalToString(idx));
@@ -748,7 +748,7 @@ fn compile_expr(fc: &mut FuncCompiler<'_>, expr: &hir::Expr) -> Result<(), Compi
                 let type_name = inner
                     .ty
                     .option_inner()
-                    .map(|t| t.to_string())
+                    .map(ToString::to_string)
                     .unwrap_or_default();
                 let idx = fc.add_constant(Value::String(ManagedRc::new(type_name)))?;
                 fc.emit(Op::OptionalToString(idx));

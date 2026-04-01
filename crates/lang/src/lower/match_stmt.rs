@@ -90,35 +90,32 @@ pub(super) fn lower_match_stmts(
         is_ref: false,
     });
 
-    match &scrutinee_ty {
-        Type::Enum { name, type_args } => {
-            let mcx = MatchLowerCtx {
-                match_node,
-                span,
-                ctx,
-                fc,
-                is_func_body,
-                ret_ty,
-                scrutinee_expr,
-                scrutinee_local,
-                scrutinee_ty: &scrutinee_ty,
-            };
-            lower_match_enum(mcx, *name, type_args)
-        }
-        _ => {
-            let mcx = MatchLowerCtx {
-                match_node,
-                span,
-                ctx,
-                fc,
-                is_func_body,
-                ret_ty,
-                scrutinee_expr,
-                scrutinee_local,
-                scrutinee_ty: &scrutinee_ty,
-            };
-            lower_match_non_enum(mcx, out)
-        }
+    if let Type::Enum { name, type_args } = &scrutinee_ty {
+        let mcx = MatchLowerCtx {
+            match_node,
+            span,
+            ctx,
+            fc,
+            is_func_body,
+            ret_ty,
+            scrutinee_expr,
+            scrutinee_local,
+            scrutinee_ty: &scrutinee_ty,
+        };
+        lower_match_enum(mcx, *name, type_args)
+    } else {
+        let mcx = MatchLowerCtx {
+            match_node,
+            span,
+            ctx,
+            fc,
+            is_func_body,
+            ret_ty,
+            scrutinee_expr,
+            scrutinee_local,
+            scrutinee_ty: &scrutinee_ty,
+        };
+        lower_match_non_enum(mcx, out)
     }
 }
 
@@ -1372,224 +1369,113 @@ pub(super) fn lower_if_let(
         is_ref: false,
     });
 
-    match &scrutinee_ty {
-        Type::Enum {
-            name: enum_name,
-            type_args,
-        } => {
-            let enum_name = *enum_name;
-            let mark = fc.enter_scope();
-            let pattern = &if_let_node.node.pattern.node;
+    if let Type::Enum {
+        name: enum_name,
+        type_args,
+    } = &scrutinee_ty
+    {
+        let enum_name = *enum_name;
+        let mark = fc.enter_scope();
+        let pattern = &if_let_node.node.pattern.node;
 
-            match pattern {
-                Pattern::Wildcard => {
-                    let body =
-                        lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
-                    fc.leave_scope(mark);
-                    return Ok(hir::Stmt {
-                        span,
-                        kind: hir::StmtKind::Match {
-                            scrutinee_init: Box::new(scrutinee_expr),
-                            scrutinee: scrutinee_local,
-                            write_through: None,
-                            arms: vec![],
-                            else_body: Some(hir::MatchElse {
-                                binding: None,
-                                body,
-                            }),
-                        },
-                    });
+        match pattern {
+            Pattern::Wildcard => {
+                let body =
+                    lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
+                fc.leave_scope(mark);
+                return Ok(hir::Stmt {
+                    span,
+                    kind: hir::StmtKind::Match {
+                        scrutinee_init: Box::new(scrutinee_expr),
+                        scrutinee: scrutinee_local,
+                        write_through: None,
+                        arms: vec![],
+                        else_body: Some(hir::MatchElse {
+                            binding: None,
+                            body,
+                        }),
+                    },
+                });
+            }
+            Pattern::Ident(name) => {
+                let binding = register_named_local(fc, *name, scrutinee_ty.clone());
+                let body =
+                    lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
+                fc.leave_scope(mark);
+                return Ok(hir::Stmt {
+                    span,
+                    kind: hir::StmtKind::Match {
+                        scrutinee_init: Box::new(scrutinee_expr),
+                        scrutinee: scrutinee_local,
+                        write_through: None,
+                        arms: vec![],
+                        else_body: Some(hir::MatchElse {
+                            binding: Some((binding, false)),
+                            body,
+                        }),
+                    },
+                });
+            }
+            Pattern::VarIdent(name) => {
+                let binding = register_named_local(fc, *name, scrutinee_ty.clone());
+                let body =
+                    lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
+                fc.leave_scope(mark);
+                let write_through = alloc_write_through(&scrutinee_expr, fc);
+                return Ok(hir::Stmt {
+                    span,
+                    kind: hir::StmtKind::Match {
+                        scrutinee_init: Box::new(scrutinee_expr),
+                        scrutinee: scrutinee_local,
+                        write_through,
+                        arms: vec![],
+                        else_body: Some(hir::MatchElse {
+                            binding: Some((binding, true)),
+                            body,
+                        }),
+                    },
+                });
+            }
+            _ => {}
+        }
+
+        // named variant pattern goes into a specific match arm
+        let arm = match pattern {
+            Pattern::EnumUnit { variant, .. } | Pattern::InferredEnumUnit { variant } => {
+                let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
+                let body =
+                    lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
+                hir::MatchArm {
+                    variant: variant_idx,
+                    bindings: vec![],
+                    guard: None,
+                    body,
                 }
-                Pattern::Ident(name) => {
-                    let binding = register_named_local(fc, *name, scrutinee_ty.clone());
-                    let body =
-                        lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
-                    fc.leave_scope(mark);
-                    return Ok(hir::Stmt {
-                        span,
-                        kind: hir::StmtKind::Match {
-                            scrutinee_init: Box::new(scrutinee_expr),
-                            scrutinee: scrutinee_local,
-                            write_through: None,
-                            arms: vec![],
-                            else_body: Some(hir::MatchElse {
-                                binding: Some((binding, false)),
-                                body,
-                            }),
-                        },
-                    });
-                }
-                Pattern::VarIdent(name) => {
-                    let binding = register_named_local(fc, *name, scrutinee_ty.clone());
-                    let body =
-                        lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
-                    fc.leave_scope(mark);
-                    let write_through = alloc_write_through(&scrutinee_expr, fc);
-                    return Ok(hir::Stmt {
-                        span,
-                        kind: hir::StmtKind::Match {
-                            scrutinee_init: Box::new(scrutinee_expr),
-                            scrutinee: scrutinee_local,
-                            write_through,
-                            arms: vec![],
-                            else_body: Some(hir::MatchElse {
-                                binding: Some((binding, true)),
-                                body,
-                            }),
-                        },
-                    });
-                }
-                _ => {}
             }
 
-            // named variant pattern goes into a specific match arm
-            let arm = match pattern {
-                Pattern::EnumUnit { variant, .. } | Pattern::InferredEnumUnit { variant } => {
-                    let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
-                    let body =
-                        lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
-                    hir::MatchArm {
-                        variant: variant_idx,
-                        bindings: vec![],
-                        guard: None,
-                        body,
-                    }
-                }
-
-                Pattern::EnumTuple {
-                    variant,
-                    fields: subpatterns,
-                    ..
-                }
-                | Pattern::InferredEnumTuple {
-                    variant,
-                    fields: subpatterns,
-                } => {
-                    let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
-                    let field_types = ctx
-                        .shared
-                        .tcx
-                        .enum_variant_field_types(enum_name, *variant, type_args)
-                        .unwrap_or_default();
-                    let mut bindings = vec![];
-                    for (field_idx, subpat) in subpatterns.iter().enumerate() {
-                        let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
-                        match &subpat.node {
-                            Pattern::Ident(name) => {
-                                let local = register_named_local(fc, *name, field_ty);
-                                bindings.push(hir::MatchBinding {
-                                    field_index: field_idx as u16,
-                                    local,
-                                    mutable: false,
-                                });
-                            }
-                            Pattern::VarIdent(name) => {
-                                let local = register_named_local(fc, *name, field_ty);
-                                bindings.push(hir::MatchBinding {
-                                    field_index: field_idx as u16,
-                                    local,
-                                    mutable: true,
-                                });
-                            }
-                            _ => {}
-                        }
-                    }
-                    let body =
-                        lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
-                    hir::MatchArm {
-                        variant: variant_idx,
-                        bindings,
-                        guard: None,
-                        body,
-                    }
-                }
-
-                Pattern::EnumStruct {
-                    variant,
-                    fields: field_patterns,
-                    ..
-                }
-                | Pattern::InferredEnumStruct {
-                    variant,
-                    fields: field_patterns,
-                    ..
-                } => {
-                    let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
-                    let field_names = ctx
-                        .shared
-                        .tcx
-                        .enum_variant_field_names(enum_name, *variant)
-                        .unwrap_or_default();
-                    let field_types = ctx
-                        .shared
-                        .tcx
-                        .enum_variant_field_types(enum_name, *variant, type_args)
-                        .unwrap_or_default();
-                    let mut bindings = vec![];
-                    for (pat_field_name, subpat) in field_patterns {
-                        let field_idx = field_names
-                            .iter()
-                            .position(|n| n == pat_field_name)
-                            .unwrap_or(0);
-                        let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
-                        match &subpat.node {
-                            Pattern::Ident(binding_name) => {
-                                let local = register_named_local(fc, *binding_name, field_ty);
-                                bindings.push(hir::MatchBinding {
-                                    field_index: field_idx as u16,
-                                    local,
-                                    mutable: false,
-                                });
-                            }
-                            Pattern::VarIdent(binding_name) => {
-                                let local = register_named_local(fc, *binding_name, field_ty);
-                                bindings.push(hir::MatchBinding {
-                                    field_index: field_idx as u16,
-                                    local,
-                                    mutable: true,
-                                });
-                            }
-                            _ => {}
-                        }
-                    }
-                    let body =
-                        lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
-                    hir::MatchArm {
-                        variant: variant_idx,
-                        bindings,
-                        guard: None,
-                        body,
-                    }
-                }
-
-                Pattern::Nil => {
-                    let none_ident = Ident(Intern::new("None".to_string()));
-                    let variant_idx = resolve_variant_index(ctx, span, enum_name, none_ident)?;
-                    let body =
-                        lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
-                    hir::MatchArm {
-                        variant: variant_idx,
-                        bindings: vec![],
-                        guard: None,
-                        body,
-                    }
-                }
-
-                Pattern::Optional(inner) => {
-                    let some_ident = Ident(Intern::new("Some".to_string()));
-                    let variant_idx = resolve_variant_index(ctx, span, enum_name, some_ident)?;
-                    let field_types = ctx
-                        .shared
-                        .tcx
-                        .enum_variant_field_types(enum_name, some_ident, type_args)
-                        .unwrap_or_default();
-                    let field_ty = field_types.first().cloned().unwrap_or(Type::Void);
-                    let mut bindings = vec![];
-                    match &inner.node {
+            Pattern::EnumTuple {
+                variant,
+                fields: subpatterns,
+                ..
+            }
+            | Pattern::InferredEnumTuple {
+                variant,
+                fields: subpatterns,
+            } => {
+                let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
+                let field_types = ctx
+                    .shared
+                    .tcx
+                    .enum_variant_field_types(enum_name, *variant, type_args)
+                    .unwrap_or_default();
+                let mut bindings = vec![];
+                for (field_idx, subpat) in subpatterns.iter().enumerate() {
+                    let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
+                    match &subpat.node {
                         Pattern::Ident(name) => {
                             let local = register_named_local(fc, *name, field_ty);
                             bindings.push(hir::MatchBinding {
-                                field_index: 0,
+                                field_index: field_idx as u16,
                                 local,
                                 mutable: false,
                             });
@@ -1597,119 +1483,227 @@ pub(super) fn lower_if_let(
                         Pattern::VarIdent(name) => {
                             let local = register_named_local(fc, *name, field_ty);
                             bindings.push(hir::MatchBinding {
-                                field_index: 0,
+                                field_index: field_idx as u16,
                                 local,
                                 mutable: true,
                             });
                         }
-                        Pattern::Wildcard => {}
-                        _ => {
-                            fc.leave_scope(mark);
-                            return Err(LowerError::UnsupportedExprKind {
-                                span,
-                                kind: "unsupported inner optional pattern".into(),
-                            });
-                        }
-                    }
-                    let body =
-                        lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
-                    hir::MatchArm {
-                        variant: variant_idx,
-                        bindings,
-                        guard: None,
-                        body,
+                        _ => {}
                     }
                 }
-
-                other => {
-                    fc.leave_scope(mark);
-                    return Err(LowerError::UnsupportedExprKind {
-                        span,
-                        kind: format!(
-                            "unsupported if-let pattern '{}' for enum type",
-                            other.variant_name()
-                        ),
-                    });
+                let body =
+                    lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
+                hir::MatchArm {
+                    variant: variant_idx,
+                    bindings,
+                    guard: None,
+                    body,
                 }
-            };
-
-            fc.leave_scope(mark);
-
-            let else_body = match &if_let_node.node.else_block {
-                Some(else_block) => hir::MatchElse {
-                    binding: None,
-                    body: lower_block(else_block, ctx, fc, is_func_body, ret_ty)?,
-                },
-                None => hir::MatchElse {
-                    binding: None,
-                    body: hir::Block { stmts: vec![] },
-                },
-            };
-
-            let has_var = arm.bindings.iter().any(|b| b.mutable);
-            let write_through = if has_var {
-                alloc_write_through(&scrutinee_expr, fc)
-            } else {
-                None
-            };
-
-            Ok(hir::Stmt {
-                span,
-                kind: hir::StmtKind::Match {
-                    scrutinee_init: Box::new(scrutinee_expr),
-                    scrutinee: scrutinee_local,
-                    write_through,
-                    arms: vec![arm],
-                    else_body: Some(else_body),
-                },
-            })
-        }
-
-        _ => {
-            // non enum emit scrutinee Let, then build if/else from the pattern
-            out.push(hir::Stmt {
-                span,
-                kind: hir::StmtKind::Let {
-                    local: scrutinee_local,
-                    init: scrutinee_expr,
-                },
-            });
-
-            let mark = fc.enter_scope();
-
-            let (cond_opt, preamble) = build_non_enum_cond_preamble(
-                &if_let_node.node.pattern.node,
-                &scrutinee_ty,
-                scrutinee_local,
-                span,
-                fc,
-            )?;
-
-            let mut then_block =
-                lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
-            for (i, stmt) in preamble.into_iter().enumerate() {
-                then_block.stmts.insert(i, stmt);
             }
 
-            fc.leave_scope(mark);
+            Pattern::EnumStruct {
+                variant,
+                fields: field_patterns,
+                ..
+            }
+            | Pattern::InferredEnumStruct {
+                variant,
+                fields: field_patterns,
+                ..
+            } => {
+                let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
+                let field_names = ctx
+                    .shared
+                    .tcx
+                    .enum_variant_field_names(enum_name, *variant)
+                    .unwrap_or_default();
+                let field_types = ctx
+                    .shared
+                    .tcx
+                    .enum_variant_field_types(enum_name, *variant, type_args)
+                    .unwrap_or_default();
+                let mut bindings = vec![];
+                for (pat_field_name, subpat) in field_patterns {
+                    let field_idx = field_names
+                        .iter()
+                        .position(|n| n == pat_field_name)
+                        .unwrap_or(0);
+                    let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
+                    match &subpat.node {
+                        Pattern::Ident(binding_name) => {
+                            let local = register_named_local(fc, *binding_name, field_ty);
+                            bindings.push(hir::MatchBinding {
+                                field_index: field_idx as u16,
+                                local,
+                                mutable: false,
+                            });
+                        }
+                        Pattern::VarIdent(binding_name) => {
+                            let local = register_named_local(fc, *binding_name, field_ty);
+                            bindings.push(hir::MatchBinding {
+                                field_index: field_idx as u16,
+                                local,
+                                mutable: true,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+                let body =
+                    lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
+                hir::MatchArm {
+                    variant: variant_idx,
+                    bindings,
+                    guard: None,
+                    body,
+                }
+            }
 
-            let else_block = match &if_let_node.node.else_block {
-                Some(b) => Some(lower_block(b, ctx, fc, is_func_body, ret_ty)?),
-                None => None,
-            };
+            Pattern::Nil => {
+                let none_ident = Ident(Intern::new("None".to_string()));
+                let variant_idx = resolve_variant_index(ctx, span, enum_name, none_ident)?;
+                let body =
+                    lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
+                hir::MatchArm {
+                    variant: variant_idx,
+                    bindings: vec![],
+                    guard: None,
+                    body,
+                }
+            }
 
-            let cond = cond_opt
-                .unwrap_or_else(|| hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(true)));
+            Pattern::Optional(inner) => {
+                let some_ident = Ident(Intern::new("Some".to_string()));
+                let variant_idx = resolve_variant_index(ctx, span, enum_name, some_ident)?;
+                let field_types = ctx
+                    .shared
+                    .tcx
+                    .enum_variant_field_types(enum_name, some_ident, type_args)
+                    .unwrap_or_default();
+                let field_ty = field_types.first().cloned().unwrap_or(Type::Void);
+                let mut bindings = vec![];
+                match &inner.node {
+                    Pattern::Ident(name) => {
+                        let local = register_named_local(fc, *name, field_ty);
+                        bindings.push(hir::MatchBinding {
+                            field_index: 0,
+                            local,
+                            mutable: false,
+                        });
+                    }
+                    Pattern::VarIdent(name) => {
+                        let local = register_named_local(fc, *name, field_ty);
+                        bindings.push(hir::MatchBinding {
+                            field_index: 0,
+                            local,
+                            mutable: true,
+                        });
+                    }
+                    Pattern::Wildcard => {}
+                    _ => {
+                        fc.leave_scope(mark);
+                        return Err(LowerError::UnsupportedExprKind {
+                            span,
+                            kind: "unsupported inner optional pattern".into(),
+                        });
+                    }
+                }
+                let body =
+                    lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
+                hir::MatchArm {
+                    variant: variant_idx,
+                    bindings,
+                    guard: None,
+                    body,
+                }
+            }
 
-            Ok(hir::Stmt {
-                span,
-                kind: hir::StmtKind::If {
-                    cond,
-                    then_block,
-                    else_block,
-                },
-            })
+            other => {
+                fc.leave_scope(mark);
+                return Err(LowerError::UnsupportedExprKind {
+                    span,
+                    kind: format!(
+                        "unsupported if-let pattern '{}' for enum type",
+                        other.variant_name()
+                    ),
+                });
+            }
+        };
+
+        fc.leave_scope(mark);
+
+        let else_body = match &if_let_node.node.else_block {
+            Some(else_block) => hir::MatchElse {
+                binding: None,
+                body: lower_block(else_block, ctx, fc, is_func_body, ret_ty)?,
+            },
+            None => hir::MatchElse {
+                binding: None,
+                body: hir::Block { stmts: vec![] },
+            },
+        };
+
+        let has_var = arm.bindings.iter().any(|b| b.mutable);
+        let write_through = if has_var {
+            alloc_write_through(&scrutinee_expr, fc)
+        } else {
+            None
+        };
+
+        Ok(hir::Stmt {
+            span,
+            kind: hir::StmtKind::Match {
+                scrutinee_init: Box::new(scrutinee_expr),
+                scrutinee: scrutinee_local,
+                write_through,
+                arms: vec![arm],
+                else_body: Some(else_body),
+            },
+        })
+    } else {
+        // non enum emit scrutinee Let, then build if/else from the pattern
+        out.push(hir::Stmt {
+            span,
+            kind: hir::StmtKind::Let {
+                local: scrutinee_local,
+                init: scrutinee_expr,
+            },
+        });
+
+        let mark = fc.enter_scope();
+
+        let (cond_opt, preamble) = build_non_enum_cond_preamble(
+            &if_let_node.node.pattern.node,
+            &scrutinee_ty,
+            scrutinee_local,
+            span,
+            fc,
+        )?;
+
+        let mut then_block =
+            lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
+        for (i, stmt) in preamble.into_iter().enumerate() {
+            then_block.stmts.insert(i, stmt);
         }
+
+        fc.leave_scope(mark);
+
+        let else_block = match &if_let_node.node.else_block {
+            Some(b) => Some(lower_block(b, ctx, fc, is_func_body, ret_ty)?),
+            None => None,
+        };
+
+        let cond =
+            cond_opt.unwrap_or_else(|| hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(true)));
+
+        Ok(hir::Stmt {
+            span,
+            kind: hir::StmtKind::If {
+                cond,
+                then_block,
+                else_block,
+            },
+        })
     }
 }
 
@@ -1783,152 +1777,47 @@ pub(super) fn lower_let_else(
         _ => {}
     }
 
-    match &scrutinee_ty {
-        Type::Enum {
-            name: enum_name,
-            type_args,
-        } => {
-            let enum_name = *enum_name;
+    if let Type::Enum {
+        name: enum_name,
+        type_args,
+    } = &scrutinee_ty
+    {
+        let enum_name = *enum_name;
 
-            let arm = match pattern {
-                Pattern::EnumUnit { variant, .. } | Pattern::InferredEnumUnit { variant } => {
-                    let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
-                    hir::MatchArm {
-                        variant: variant_idx,
-                        bindings: vec![],
-                        guard: None,
-                        body: hir::Block { stmts: vec![] },
-                    }
+        let arm = match pattern {
+            Pattern::EnumUnit { variant, .. } | Pattern::InferredEnumUnit { variant } => {
+                let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
+                hir::MatchArm {
+                    variant: variant_idx,
+                    bindings: vec![],
+                    guard: None,
+                    body: hir::Block { stmts: vec![] },
                 }
+            }
 
-                Pattern::EnumTuple {
-                    variant,
-                    fields: subpatterns,
-                    ..
-                }
-                | Pattern::InferredEnumTuple {
-                    variant,
-                    fields: subpatterns,
-                } => {
-                    let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
-                    let field_types = ctx
-                        .shared
-                        .tcx
-                        .enum_variant_field_types(enum_name, *variant, type_args)
-                        .unwrap_or_default();
-                    let mut bindings = vec![];
-                    for (field_idx, subpat) in subpatterns.iter().enumerate() {
-                        let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
-                        match &subpat.node {
-                            Pattern::Ident(name) => {
-                                let local = register_named_local(fc, *name, field_ty);
-                                bindings.push(hir::MatchBinding {
-                                    field_index: field_idx as u16,
-                                    local,
-                                    mutable: false,
-                                });
-                            }
-                            Pattern::VarIdent(name) => {
-                                let local = register_named_local(fc, *name, field_ty);
-                                bindings.push(hir::MatchBinding {
-                                    field_index: field_idx as u16,
-                                    local,
-                                    mutable: true,
-                                });
-                            }
-                            _ => {}
-                        }
-                    }
-                    hir::MatchArm {
-                        variant: variant_idx,
-                        bindings,
-                        guard: None,
-                        body: hir::Block { stmts: vec![] },
-                    }
-                }
-
-                Pattern::EnumStruct {
-                    variant,
-                    fields: field_patterns,
-                    ..
-                }
-                | Pattern::InferredEnumStruct {
-                    variant,
-                    fields: field_patterns,
-                    ..
-                } => {
-                    let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
-                    let field_names = ctx
-                        .shared
-                        .tcx
-                        .enum_variant_field_names(enum_name, *variant)
-                        .unwrap_or_default();
-                    let field_types = ctx
-                        .shared
-                        .tcx
-                        .enum_variant_field_types(enum_name, *variant, type_args)
-                        .unwrap_or_default();
-                    let mut bindings = vec![];
-                    for (pat_field_name, subpat) in field_patterns {
-                        let field_idx = field_names
-                            .iter()
-                            .position(|n| n == pat_field_name)
-                            .unwrap_or(0);
-                        let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
-                        match &subpat.node {
-                            Pattern::Ident(binding_name) => {
-                                let local = register_named_local(fc, *binding_name, field_ty);
-                                bindings.push(hir::MatchBinding {
-                                    field_index: field_idx as u16,
-                                    local,
-                                    mutable: false,
-                                });
-                            }
-                            Pattern::VarIdent(binding_name) => {
-                                let local = register_named_local(fc, *binding_name, field_ty);
-                                bindings.push(hir::MatchBinding {
-                                    field_index: field_idx as u16,
-                                    local,
-                                    mutable: true,
-                                });
-                            }
-                            _ => {}
-                        }
-                    }
-                    hir::MatchArm {
-                        variant: variant_idx,
-                        bindings,
-                        guard: None,
-                        body: hir::Block { stmts: vec![] },
-                    }
-                }
-
-                Pattern::Nil => {
-                    let none_ident = Ident(Intern::new("None".to_string()));
-                    let variant_idx = resolve_variant_index(ctx, span, enum_name, none_ident)?;
-                    hir::MatchArm {
-                        variant: variant_idx,
-                        bindings: vec![],
-                        guard: None,
-                        body: hir::Block { stmts: vec![] },
-                    }
-                }
-
-                Pattern::Optional(inner) => {
-                    let some_ident = Ident(Intern::new("Some".to_string()));
-                    let variant_idx = resolve_variant_index(ctx, span, enum_name, some_ident)?;
-                    let field_types = ctx
-                        .shared
-                        .tcx
-                        .enum_variant_field_types(enum_name, some_ident, type_args)
-                        .unwrap_or_default();
-                    let field_ty = field_types.first().cloned().unwrap_or(Type::Void);
-                    let mut bindings = vec![];
-                    match &inner.node {
+            Pattern::EnumTuple {
+                variant,
+                fields: subpatterns,
+                ..
+            }
+            | Pattern::InferredEnumTuple {
+                variant,
+                fields: subpatterns,
+            } => {
+                let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
+                let field_types = ctx
+                    .shared
+                    .tcx
+                    .enum_variant_field_types(enum_name, *variant, type_args)
+                    .unwrap_or_default();
+                let mut bindings = vec![];
+                for (field_idx, subpat) in subpatterns.iter().enumerate() {
+                    let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
+                    match &subpat.node {
                         Pattern::Ident(name) => {
                             let local = register_named_local(fc, *name, field_ty);
                             bindings.push(hir::MatchBinding {
-                                field_index: 0,
+                                field_index: field_idx as u16,
                                 local,
                                 mutable: false,
                             });
@@ -1936,100 +1825,201 @@ pub(super) fn lower_let_else(
                         Pattern::VarIdent(name) => {
                             let local = register_named_local(fc, *name, field_ty);
                             bindings.push(hir::MatchBinding {
-                                field_index: 0,
+                                field_index: field_idx as u16,
                                 local,
                                 mutable: true,
                             });
                         }
-                        Pattern::Wildcard => {}
-                        _ => {
-                            return Err(LowerError::UnsupportedExprKind {
-                                span,
-                                kind: "unsupported inner optional pattern".into(),
+                        _ => {}
+                    }
+                }
+                hir::MatchArm {
+                    variant: variant_idx,
+                    bindings,
+                    guard: None,
+                    body: hir::Block { stmts: vec![] },
+                }
+            }
+
+            Pattern::EnumStruct {
+                variant,
+                fields: field_patterns,
+                ..
+            }
+            | Pattern::InferredEnumStruct {
+                variant,
+                fields: field_patterns,
+                ..
+            } => {
+                let variant_idx = resolve_variant_index(ctx, span, enum_name, *variant)?;
+                let field_names = ctx
+                    .shared
+                    .tcx
+                    .enum_variant_field_names(enum_name, *variant)
+                    .unwrap_or_default();
+                let field_types = ctx
+                    .shared
+                    .tcx
+                    .enum_variant_field_types(enum_name, *variant, type_args)
+                    .unwrap_or_default();
+                let mut bindings = vec![];
+                for (pat_field_name, subpat) in field_patterns {
+                    let field_idx = field_names
+                        .iter()
+                        .position(|n| n == pat_field_name)
+                        .unwrap_or(0);
+                    let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
+                    match &subpat.node {
+                        Pattern::Ident(binding_name) => {
+                            let local = register_named_local(fc, *binding_name, field_ty);
+                            bindings.push(hir::MatchBinding {
+                                field_index: field_idx as u16,
+                                local,
+                                mutable: false,
                             });
                         }
-                    }
-                    hir::MatchArm {
-                        variant: variant_idx,
-                        bindings,
-                        guard: None,
-                        body: hir::Block { stmts: vec![] },
+                        Pattern::VarIdent(binding_name) => {
+                            let local = register_named_local(fc, *binding_name, field_ty);
+                            bindings.push(hir::MatchBinding {
+                                field_index: field_idx as u16,
+                                local,
+                                mutable: true,
+                            });
+                        }
+                        _ => {}
                     }
                 }
-
-                other => {
-                    return Err(LowerError::UnsupportedExprKind {
-                        span,
-                        kind: format!(
-                            "unsupported let-else pattern '{}' for enum type",
-                            other.variant_name()
-                        ),
-                    });
+                hir::MatchArm {
+                    variant: variant_idx,
+                    bindings,
+                    guard: None,
+                    body: hir::Block { stmts: vec![] },
                 }
-            };
+            }
 
-            let else_body =
-                lower_block(&let_else_node.node.else_block, ctx, fc, false, &Type::Void)?;
+            Pattern::Nil => {
+                let none_ident = Ident(Intern::new("None".to_string()));
+                let variant_idx = resolve_variant_index(ctx, span, enum_name, none_ident)?;
+                hir::MatchArm {
+                    variant: variant_idx,
+                    bindings: vec![],
+                    guard: None,
+                    body: hir::Block { stmts: vec![] },
+                }
+            }
 
-            out.push(hir::Stmt {
-                span,
-                kind: hir::StmtKind::Match {
-                    scrutinee_init: Box::new(scrutinee_expr),
-                    scrutinee: scrutinee_local,
-                    write_through: None,
-                    arms: vec![arm],
-                    else_body: Some(hir::MatchElse {
-                        binding: None,
-                        body: else_body,
-                    }),
-                },
-            });
+            Pattern::Optional(inner) => {
+                let some_ident = Ident(Intern::new("Some".to_string()));
+                let variant_idx = resolve_variant_index(ctx, span, enum_name, some_ident)?;
+                let field_types = ctx
+                    .shared
+                    .tcx
+                    .enum_variant_field_types(enum_name, some_ident, type_args)
+                    .unwrap_or_default();
+                let field_ty = field_types.first().cloned().unwrap_or(Type::Void);
+                let mut bindings = vec![];
+                match &inner.node {
+                    Pattern::Ident(name) => {
+                        let local = register_named_local(fc, *name, field_ty);
+                        bindings.push(hir::MatchBinding {
+                            field_index: 0,
+                            local,
+                            mutable: false,
+                        });
+                    }
+                    Pattern::VarIdent(name) => {
+                        let local = register_named_local(fc, *name, field_ty);
+                        bindings.push(hir::MatchBinding {
+                            field_index: 0,
+                            local,
+                            mutable: true,
+                        });
+                    }
+                    Pattern::Wildcard => {}
+                    _ => {
+                        return Err(LowerError::UnsupportedExprKind {
+                            span,
+                            kind: "unsupported inner optional pattern".into(),
+                        });
+                    }
+                }
+                hir::MatchArm {
+                    variant: variant_idx,
+                    bindings,
+                    guard: None,
+                    body: hir::Block { stmts: vec![] },
+                }
+            }
 
-            Ok(None)
-        }
-
-        _ => {
-            // non enum emit scrutinee Let, build guard (inverted condition), then bindings
-            out.push(hir::Stmt {
-                span,
-                kind: hir::StmtKind::Let {
-                    local: scrutinee_local,
-                    init: scrutinee_expr,
-                },
-            });
-
-            let (cond_opt, preamble) =
-                build_non_enum_cond_preamble(pattern, &scrutinee_ty, scrutinee_local, span, fc)?;
-
-            // if there's a condition emit an inverted guard that runs the else_block on mismatch
-            if let Some(cond) = cond_opt {
-                let neg_cond = hir::Expr::new(
-                    Type::Bool,
+            other => {
+                return Err(LowerError::UnsupportedExprKind {
                     span,
-                    hir::ExprKind::Unary {
-                        op: UnaryOp::Not,
-                        expr: Box::new(cond),
-                    },
-                );
-                let else_body =
-                    lower_block(&let_else_node.node.else_block, ctx, fc, false, &Type::Void)?;
-                out.push(hir::Stmt {
-                    span,
-                    kind: hir::StmtKind::If {
-                        cond: neg_cond,
-                        then_block: else_body,
-                        else_block: None,
-                    },
+                    kind: format!(
+                        "unsupported let-else pattern '{}' for enum type",
+                        other.variant_name()
+                    ),
                 });
             }
+        };
 
-            // emit binding extractions (always after the guard, since else_block diverges)
-            for stmt in preamble {
-                out.push(stmt);
-            }
+        let else_body = lower_block(&let_else_node.node.else_block, ctx, fc, false, &Type::Void)?;
 
-            Ok(None)
+        out.push(hir::Stmt {
+            span,
+            kind: hir::StmtKind::Match {
+                scrutinee_init: Box::new(scrutinee_expr),
+                scrutinee: scrutinee_local,
+                write_through: None,
+                arms: vec![arm],
+                else_body: Some(hir::MatchElse {
+                    binding: None,
+                    body: else_body,
+                }),
+            },
+        });
+
+        Ok(None)
+    } else {
+        // non enum emit scrutinee Let, build guard (inverted condition), then bindings
+        out.push(hir::Stmt {
+            span,
+            kind: hir::StmtKind::Let {
+                local: scrutinee_local,
+                init: scrutinee_expr,
+            },
+        });
+
+        let (cond_opt, preamble) =
+            build_non_enum_cond_preamble(pattern, &scrutinee_ty, scrutinee_local, span, fc)?;
+
+        // if there's a condition emit an inverted guard that runs the else_block on mismatch
+        if let Some(cond) = cond_opt {
+            let neg_cond = hir::Expr::new(
+                Type::Bool,
+                span,
+                hir::ExprKind::Unary {
+                    op: UnaryOp::Not,
+                    expr: Box::new(cond),
+                },
+            );
+            let else_body =
+                lower_block(&let_else_node.node.else_block, ctx, fc, false, &Type::Void)?;
+            out.push(hir::Stmt {
+                span,
+                kind: hir::StmtKind::If {
+                    cond: neg_cond,
+                    then_block: else_body,
+                    else_block: None,
+                },
+            });
         }
+
+        // emit binding extractions (always after the guard, since else_block diverges)
+        for stmt in preamble {
+            out.push(stmt);
+        }
+
+        Ok(None)
     }
 }
 
@@ -2052,32 +2042,29 @@ pub(super) fn lower_while_let(
 
     let cond = hir::Expr::new(Type::Bool, span, hir::ExprKind::Bool(true));
 
-    let body = match scrutinee_ty {
-        Type::Enum { .. } => {
-            let inner = lower_while_let_enum(
-                while_let_node,
-                span,
-                ctx,
-                fc,
-                scrutinee_expr,
-                scrutinee_local,
-            )?;
-            hir::Block { stmts: vec![inner] }
-        }
-        _ => {
-            let mut body_stmts = vec![];
-            let inner = lower_while_let_non_enum(
-                while_let_node,
-                span,
-                ctx,
-                fc,
-                scrutinee_expr,
-                scrutinee_local,
-                &mut body_stmts,
-            )?;
-            body_stmts.push(inner);
-            hir::Block { stmts: body_stmts }
-        }
+    let body = if let Type::Enum { .. } = scrutinee_ty {
+        let inner = lower_while_let_enum(
+            while_let_node,
+            span,
+            ctx,
+            fc,
+            scrutinee_expr,
+            scrutinee_local,
+        )?;
+        hir::Block { stmts: vec![inner] }
+    } else {
+        let mut body_stmts = vec![];
+        let inner = lower_while_let_non_enum(
+            while_let_node,
+            span,
+            ctx,
+            fc,
+            scrutinee_expr,
+            scrutinee_local,
+            &mut body_stmts,
+        )?;
+        body_stmts.push(inner);
+        hir::Block { stmts: body_stmts }
     };
 
     Ok(Some(hir::Stmt {

@@ -239,7 +239,7 @@ fn skip_msg(file: &Path, quiet: bool, mode: Mode, backend: Option<&str>, duratio
 fn list_all_anv_files(root: &PathBuf) -> Vec<PathBuf> {
     walkdir::WalkDir::new(root)
         .into_iter()
-        .filter_map(|entry| entry.ok())
+        .filter_map(Result::ok)
         .filter(|entry| {
             entry.file_type().is_file()
                 && entry.path().extension().and_then(|s| s.to_str()) == Some(EXT)

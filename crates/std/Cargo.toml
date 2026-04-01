@@ -7,3 +7,6 @@ edition.workspace = true
 anvyx-lang = { path = "../lang" }
 anvyx-runtime = { path = "../runtime" }
 glam = "0.29"
+
+[lints]
+workspace = true

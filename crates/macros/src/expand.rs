@@ -83,7 +83,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let decl_ident = crate::naming::fn_decl_ident(&fn_ident.to_string());
 
     // reject self parameters because they are not valid in free functions
-    for arg in func.sig.inputs.iter() {
+    for arg in &func.sig.inputs {
         if let FnArg::Receiver(_) = arg {
             return Err(syn::Error::new_spanned(
                 arg,
@@ -133,9 +133,10 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let extractions = &extracted.extractions;
     let param_tuples = &extracted.anvyx_types;
 
-    let doc_token = match crate::codegen::extract_doc(&func.attrs) {
-        Some(s) => quote! { Some(#s) },
-        None => quote! { None },
+    let doc_token = if let Some(s) = crate::codegen::extract_doc(&func.attrs) {
+        quote! { Some(#s) }
+    } else {
+        quote! { None }
     };
 
     Ok(quote! {

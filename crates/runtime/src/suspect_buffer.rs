@@ -30,8 +30,8 @@ pub fn push_suspect(ptr: NonNull<RcHeader>) {
 }
 
 pub fn maybe_collect() {
-    let threshold = COLLECT_THRESHOLD.with(|t| t.get());
-    let should = AUTO_COLLECT_ENABLED.with(|flag| flag.get())
+    let threshold = COLLECT_THRESHOLD.with(Cell::get);
+    let should = AUTO_COLLECT_ENABLED.with(Cell::get)
         && SUSPECT_BUFFER.with(|buf| buf.borrow().len() >= threshold);
     if should {
         let stats = crate::cycle_collector::collect_cycles();
@@ -63,7 +63,7 @@ pub fn clear_suspects() {
 }
 
 pub fn get_collect_threshold() -> usize {
-    COLLECT_THRESHOLD.with(|t| t.get())
+    COLLECT_THRESHOLD.with(Cell::get)
 }
 
 pub fn reset_collect_threshold() {

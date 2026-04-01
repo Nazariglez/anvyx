@@ -6,7 +6,7 @@ use indicatif::{ProgressBar, ProgressFinish, ProgressStyle};
 const VERB_WIDTH: usize = 12;
 
 pub fn status(verb: &str, message: &str) {
-    let padded = format!("{:>width$}", verb, width = VERB_WIDTH);
+    let padded = format!("{verb:>VERB_WIDTH$}");
     eprintln!("{} {}", style(padded).green().bold(), message);
 }
 
@@ -16,7 +16,7 @@ pub fn error(message: &str) {
 }
 
 pub fn start_spinner(verb: &str, message: &str) -> ProgressBar {
-    let padded = format!("{:>width$}", verb, width = VERB_WIDTH);
+    let padded = format!("{verb:>VERB_WIDTH$}");
     let text = format!("{} {}", style(padded).green().bold(), message);
     let pb = ProgressBar::new_spinner().with_finish(ProgressFinish::AndClear);
     pb.set_style(

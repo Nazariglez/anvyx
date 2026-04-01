@@ -8,3 +8,6 @@ anvyx-lang = { path = "../lang" }
 rayon = "1.11.0"
 walkdir = "2.5.0"
 wait-timeout = "0.2.1"
+
+[lints]
+workspace = true

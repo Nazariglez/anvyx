@@ -67,7 +67,7 @@ pub(super) fn params<'src>(
             })
             .collect::<Vec<_>>()
             .or_not()
-            .map(|opt| opt.unwrap_or_default()),
+            .map(Option::unwrap_or_default),
     )
     .then_ignore(select! {
         (Token::Close(Delimiter::Parent), _) => (),

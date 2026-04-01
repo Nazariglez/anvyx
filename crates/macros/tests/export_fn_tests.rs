@@ -1063,7 +1063,7 @@ mod method_tests {
         }
         pub fn with_value(&self, v: Value) -> Value {
             match v {
-                Value::Float(f) => Value::Float(f + self.x as f32),
+                Value::Float(f) => Value::Float(f + self.x),
                 other => other,
             }
         }
@@ -1792,11 +1792,11 @@ mod getter_setter_with_field_tests {
         }
         #[getter]
         pub fn scale(&self) -> f32 {
-            self.scale as f32
+            self.scale
         }
         #[setter]
         pub fn set_scale(&mut self, v: f32) {
-            self.scale = v as f32;
+            self.scale = v;
         }
     }
 

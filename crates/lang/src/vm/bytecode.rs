@@ -136,7 +136,7 @@ impl Chunk {
 
     pub fn add_constant(&mut self, value: Value) -> u16 {
         assert!(
-            self.constants.len() <= u16::MAX as usize,
+            u16::try_from(self.constants.len()).is_ok(),
             "constant pool overflow in chunk '{}'",
             self.name
         );

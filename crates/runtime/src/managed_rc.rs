@@ -15,11 +15,11 @@ thread_local! {
 }
 
 pub fn rc_inc_count() -> u64 {
-    RC_INC_COUNT.with(|c| c.get())
+    RC_INC_COUNT.with(Cell::get)
 }
 
 pub fn rc_dec_count() -> u64 {
-    RC_DEC_COUNT.with(|c| c.get())
+    RC_DEC_COUNT.with(Cell::get)
 }
 
 pub fn reset_rc_counts() {
@@ -45,14 +45,14 @@ pub fn managed_alloc_details() -> Vec<(&'static str, u64)> {
 }
 
 fn increment_alloc_count(vtable: &'static CycleVtable) {
-    let key = vtable as *const CycleVtable as usize;
+    let key = std::ptr::from_ref::<CycleVtable>(vtable) as usize;
     MANAGED_ALLOC_COUNTS.with(|m| {
         *m.borrow_mut().entry(key).or_insert(0) += 1;
     });
 }
 
 fn decrement_alloc_count(vtable: &'static CycleVtable) {
-    let key = vtable as *const CycleVtable as usize;
+    let key = std::ptr::from_ref::<CycleVtable>(vtable) as usize;
     MANAGED_ALLOC_COUNTS.with(|m| {
         if let Some(count) = m.borrow_mut().get_mut(&key) {
             *count -= 1;
@@ -205,7 +205,7 @@ impl<T> ManagedRc<T> {
     /// Raw pointer to the inner data, used for identity-based hashing of dataref values.
     pub fn as_ptr(&self) -> *const T {
         // SAFETY: ptr is valid for the lifetime of any ManagedRc handle.
-        unsafe { &self.ptr.as_ref().data as *const T }
+        unsafe { &raw const self.ptr.as_ref().data }
     }
 
     /// Returns a mutable reference to the inner data without cloning, regardless of strong count.
@@ -330,7 +330,7 @@ impl<T: Ord> Ord for ManagedRc<T> {
 
 impl<T: Hash> Hash for ManagedRc<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        (**self).hash(state)
+        (**self).hash(state);
     }
 }
 

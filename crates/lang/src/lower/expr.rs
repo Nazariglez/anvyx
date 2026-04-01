@@ -345,8 +345,8 @@ pub(super) fn lower_expr(
                 return lower_safe_index_expr(index_node, ty, span, ctx, fc, out);
             }
 
-            match &index_node.node.index.node.kind {
-                ast::ExprKind::Range(range_node) => match &range_node.node {
+            if let ast::ExprKind::Range(range_node) = &index_node.node.index.node.kind {
+                match &range_node.node {
                     ast::Range::Bounded {
                         start,
                         end,
@@ -395,14 +395,13 @@ pub(super) fn lower_expr(
                             inclusive: *inclusive,
                         }
                     }
-                },
-                _ => {
-                    let target = lower_expr(&index_node.node.target, ctx, fc, out)?;
-                    let index = lower_expr(&index_node.node.index, ctx, fc, out)?;
-                    hir::ExprKind::IndexGet {
-                        target: Box::new(target),
-                        index: Box::new(index),
-                    }
+                }
+            } else {
+                let target = lower_expr(&index_node.node.target, ctx, fc, out)?;
+                let index = lower_expr(&index_node.node.index, ctx, fc, out)?;
+                hir::ExprKind::IndexGet {
+                    target: Box::new(target),
+                    index: Box::new(index),
                 }
             }
         }
@@ -1550,24 +1549,21 @@ fn lower_lambda(
 
     let params_len = lambda_fc.locals.len() as u32;
 
-    let body = match &lambda.node.body.node.kind {
-        ast::ExprKind::Block(block_node) => {
-            lower_block(block_node, ctx, &mut lambda_fc, true, &func_ret)?
-        }
-        _ => {
-            let mut body_stmts = vec![];
-            let body_expr = lower_expr(&lambda.node.body, ctx, &mut lambda_fc, &mut body_stmts)?;
-            let stmt_kind = if !func_ret.is_void() {
-                hir::StmtKind::Return(Some(body_expr))
-            } else {
-                hir::StmtKind::Expr(body_expr)
-            };
-            body_stmts.push(hir::Stmt {
-                span,
-                kind: stmt_kind,
-            });
-            hir::Block { stmts: body_stmts }
-        }
+    let body = if let ast::ExprKind::Block(block_node) = &lambda.node.body.node.kind {
+        lower_block(block_node, ctx, &mut lambda_fc, true, &func_ret)?
+    } else {
+        let mut body_stmts = vec![];
+        let body_expr = lower_expr(&lambda.node.body, ctx, &mut lambda_fc, &mut body_stmts)?;
+        let stmt_kind = if func_ret.is_void() {
+            hir::StmtKind::Expr(body_expr)
+        } else {
+            hir::StmtKind::Return(Some(body_expr))
+        };
+        body_stmts.push(hir::Stmt {
+            span,
+            kind: stmt_kind,
+        });
+        hir::Block { stmts: body_stmts }
     };
 
     let lambda_name = Ident(Intern::new(format!("__lambda_{}", lambda_func_id.0)));
@@ -2706,19 +2702,16 @@ fn lower_sort_by(
 
     let params_len = lambda_fc.locals.len() as u32;
 
-    let body = match &lambda.node.body.node.kind {
-        ast::ExprKind::Block(block_node) => {
-            lower_block(block_node, ctx, &mut lambda_fc, true, &Type::Bool)?
-        }
-        _ => {
-            let mut body_stmts = vec![];
-            let body_expr = lower_expr(&lambda.node.body, ctx, &mut lambda_fc, &mut body_stmts)?;
-            body_stmts.push(hir::Stmt {
-                span,
-                kind: hir::StmtKind::Return(Some(body_expr)),
-            });
-            hir::Block { stmts: body_stmts }
-        }
+    let body = if let ast::ExprKind::Block(block_node) = &lambda.node.body.node.kind {
+        lower_block(block_node, ctx, &mut lambda_fc, true, &Type::Bool)?
+    } else {
+        let mut body_stmts = vec![];
+        let body_expr = lower_expr(&lambda.node.body, ctx, &mut lambda_fc, &mut body_stmts)?;
+        body_stmts.push(hir::Stmt {
+            span,
+            kind: hir::StmtKind::Return(Some(body_expr)),
+        });
+        hir::Block { stmts: body_stmts }
     };
 
     let lambda_name = Ident(Intern::new(format!("__sort_cmp_{}", lambda_func_id.0)));
@@ -3126,23 +3119,20 @@ fn lower_struct_literal_expr(
     // lower fields in declaration order, synthesizing defaults for omitted fields
     let mut fields = vec![];
     for decl_name in &field_names {
-        match lit.node.fields.iter().find(|(name, _)| *name == *decl_name) {
-            Some((_, expr)) => {
-                fields.push(lower_expr(expr, ctx, fc, out)?);
-            }
-            None => {
-                let default = ctx
-                    .shared
-                    .tcx
-                    .struct_field_default(struct_name, *decl_name)
-                    .expect("typechecker ensures omitted fields have defaults");
-                let field_ty = ctx
-                    .shared
-                    .tcx
-                    .struct_field_type(struct_name, *decl_name)
-                    .expect("field type exists");
-                fields.push(synthesize_default_hir_expr(default, &field_ty, span));
-            }
+        if let Some((_, expr)) = lit.node.fields.iter().find(|(name, _)| *name == *decl_name) {
+            fields.push(lower_expr(expr, ctx, fc, out)?);
+        } else {
+            let default = ctx
+                .shared
+                .tcx
+                .struct_field_default(struct_name, *decl_name)
+                .expect("typechecker ensures omitted fields have defaults");
+            let field_ty = ctx
+                .shared
+                .tcx
+                .struct_field_type(struct_name, *decl_name)
+                .expect("field type exists");
+            fields.push(synthesize_default_hir_expr(default, &field_ty, span));
         }
     }
     let kind = if matches!(ty, Type::DataRef { .. }) {

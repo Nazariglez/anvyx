@@ -175,8 +175,7 @@ pub(super) fn check_block_expr(
     let ty = type_checker
         .get_type(id)
         .cloned()
-        .map(|(_, ty)| ty)
-        .unwrap_or(Type::Void);
+        .map_or(Type::Void, |(_, ty)| ty);
 
     (ty, Some(id))
 }
@@ -449,16 +448,16 @@ pub(super) fn collect_scope_types(
         match &stmt.node {
             Stmt::ExternType(node) => {
                 let name = node.node.name;
-                if !seen.insert(name) {
-                    errors.push(TypeErr::new(
-                        stmt.span,
-                        TypeErrKind::DuplicateTypeDefinition { name },
-                    ));
-                } else {
+                if seen.insert(name) {
                     let def = build_extern_type_def(node.node.has_init, &node.node.members, |ty| {
                         type_checker.resolve_type(ty)
                     });
                     type_checker.extern_type_defs.insert(name, def);
+                } else {
+                    errors.push(TypeErr::new(
+                        stmt.span,
+                        TypeErrKind::DuplicateTypeDefinition { name },
+                    ));
                 }
             }
 
@@ -492,49 +491,49 @@ pub(super) fn collect_scope_types(
 
             Stmt::Struct(node) => {
                 let name = node.node.name;
-                if !seen.insert(name) {
+                if seen.insert(name) {
+                    type_checker
+                        .struct_defs
+                        .insert(name, StructDef::from_ast(&node.node, false));
+                } else {
                     errors.push(TypeErr::new(
                         stmt.span,
                         TypeErrKind::DuplicateTypeDefinition { name },
                     ));
-                } else {
-                    type_checker
-                        .struct_defs
-                        .insert(name, StructDef::from_ast(&node.node, false));
                 }
             }
 
             Stmt::DataRef(node) => {
                 let name = node.node.name;
-                if !seen.insert(name) {
+                if seen.insert(name) {
+                    type_checker
+                        .struct_defs
+                        .insert(name, StructDef::from_ast(&node.node, true));
+                } else {
                     errors.push(TypeErr::new(
                         stmt.span,
                         TypeErrKind::DuplicateTypeDefinition { name },
                     ));
-                } else {
-                    type_checker
-                        .struct_defs
-                        .insert(name, StructDef::from_ast(&node.node, true));
                 }
             }
 
             Stmt::Enum(node) => {
                 let name = node.node.name;
-                if !seen.insert(name) {
+                if seen.insert(name) {
+                    type_checker
+                        .enum_defs
+                        .insert(name, EnumDef::from_ast(&node.node));
+                } else {
                     errors.push(TypeErr::new(
                         stmt.span,
                         TypeErrKind::DuplicateTypeDefinition { name },
                     ));
-                } else {
-                    type_checker
-                        .enum_defs
-                        .insert(name, EnumDef::from_ast(&node.node));
                 }
             }
 
             Stmt::Import(node) => {
                 let import = &node.node;
-                let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
+                let path_key: Vec<String> = import.path.iter().map(ToString::to_string).collect();
 
                 let Some(module_def) = type_checker.resolved_module_defs.get(&path_key).cloned()
                 else {
@@ -866,7 +865,7 @@ pub(super) fn build_module_def_with_reexports(
                     continue;
                 }
 
-                let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
+                let path_key: Vec<String> = import.path.iter().map(ToString::to_string).collect();
                 let source_label = path_key.last().cloned().unwrap_or_default();
 
                 let Some(source_def) = type_checker.resolved_module_defs.get(&path_key).cloned()
@@ -1052,7 +1051,7 @@ pub(super) fn check_stmt(
     match &stmt.node {
         Stmt::Import(node) => {
             let import = &node.node;
-            let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
+            let path_key: Vec<String> = import.path.iter().map(ToString::to_string).collect();
 
             let Some(module_def) = type_checker.resolved_module_defs.get(&path_key) else {
                 return;
@@ -1106,7 +1105,7 @@ pub(super) fn check_stmt(
                 validate_annotations(&variant.annotations, AnnotationTarget::Variant, errors);
                 let has_any = match &variant.kind {
                     VariantKind::Unit => false,
-                    VariantKind::Tuple(types) => types.iter().any(|t| t.contains_any()),
+                    VariantKind::Tuple(types) => types.iter().any(Type::contains_any),
                     VariantKind::Struct(fields) => fields.iter().any(|f| f.ty.contains_any()),
                 };
                 if has_any {
@@ -1339,17 +1338,16 @@ fn check_generic_extend_decl(
     let decl = &node.node;
 
     // base type must be an unresolved name (primitives can't be generic)
-    let base_name = match &decl.ty {
-        Type::UnresolvedName(name) => *name,
-        _ => {
-            errors.push(TypeErr::new(
-                node.span,
-                TypeErrKind::ExtendUnsupportedType {
-                    ty: type_checker.resolve_type(&decl.ty),
-                },
-            ));
-            return;
-        }
+    let base_name = if let Type::UnresolvedName(name) = &decl.ty {
+        *name
+    } else {
+        errors.push(TypeErr::new(
+            node.span,
+            TypeErrKind::ExtendUnsupportedType {
+                ty: type_checker.resolve_type(&decl.ty),
+            },
+        ));
+        return;
     };
 
     // resolve to find the actual struct/enum definition
@@ -1501,46 +1499,42 @@ pub(super) fn check_binding(
 
     let value_ty = type_checker
         .get_type(node.value.node.id)
-        .map(|(_, ty)| ty.clone())
-        .unwrap_or(Type::Infer);
+        .map_or(Type::Infer, |(_, ty)| ty.clone());
 
-    let binding_ty = match &node.ty {
-        Some(annot_ty) => {
-            let resolved_annot = resolve_array_infer_annotation(annot_ty, &value_ty);
-            let resolved_annot = type_checker.resolve_type(&resolved_annot);
+    let binding_ty = if let Some(annot_ty) = &node.ty {
+        let resolved_annot = resolve_array_infer_annotation(annot_ty, &value_ty);
+        let resolved_annot = type_checker.resolve_type(&resolved_annot);
 
-            // validate map type annotation are keyable
-            if let Type::Map { key, .. } = &resolved_annot {
-                validate_map_key_type(binding.span, key, type_checker, errors);
-            }
-
-            let should_retag_literal = is_array_literal_with_infer_elem(&node.value, &value_ty)
-                || is_array_lit_with_list_annotation(&node.value, &resolved_annot);
-
-            if should_retag_literal {
-                update_array_literal_typ(&node.value, &resolved_annot, type_checker);
-            }
-
-            let annot_ref = TypeRef::concrete(&resolved_annot);
-            type_checker.constrain_assignable(binding.span, val_ref, annot_ref, errors);
-
-            resolved_annot
+        // validate map type annotation are keyable
+        if let Type::Map { key, .. } = &resolved_annot {
+            validate_map_key_type(binding.span, key, type_checker, errors);
         }
-        None => {
-            if is_all_nil_array_literal(&node.value) {
-                errors.push(
-                    TypeErr::new(node.value.span, TypeErrKind::ArrayAllNilAmbiguous)
-                        .with_help("add a type annotation, e.g. `let a: [int?; _] = [nil, nil];`"),
-                );
-            }
-            if is_empty_map_literal(&node.value) {
-                errors.push(TypeErr::new(
-                    node.value.span,
-                    TypeErrKind::MapEmptyLiteralNoContext,
-                ));
-            }
-            value_ty
+
+        let should_retag_literal = is_array_literal_with_infer_elem(&node.value, &value_ty)
+            || is_array_lit_with_list_annotation(&node.value, &resolved_annot);
+
+        if should_retag_literal {
+            update_array_literal_typ(&node.value, &resolved_annot, type_checker);
         }
+
+        let annot_ref = TypeRef::concrete(&resolved_annot);
+        type_checker.constrain_assignable(binding.span, val_ref, annot_ref, errors);
+
+        resolved_annot
+    } else {
+        if is_all_nil_array_literal(&node.value) {
+            errors.push(
+                TypeErr::new(node.value.span, TypeErrKind::ArrayAllNilAmbiguous)
+                    .with_help("add a type annotation, e.g. `let a: [int?; _] = [nil, nil];`"),
+            );
+        }
+        if is_empty_map_literal(&node.value) {
+            errors.push(TypeErr::new(
+                node.value.span,
+                TypeErrKind::MapEmptyLiteralNoContext,
+            ));
+        }
+        value_ty
     };
 
     let mutable = matches!(node.mutability, Mutability::Mutable);

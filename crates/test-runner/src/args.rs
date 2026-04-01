@@ -58,21 +58,18 @@ impl RunnerArgs {
 }
 
 fn parse_quiet(args: &[String]) -> bool {
-    args.iter().find(|arg| arg.as_str() == "--quiet").is_some()
+    args.iter().any(|arg| arg.as_str() == "--quiet")
 }
 
 fn parse_release(args: &[String]) -> bool {
-    args.iter()
-        .find(|arg| arg.as_str() == "--release")
-        .is_some()
+    args.iter().any(|arg| arg.as_str() == "--release")
 }
 
 fn parse_timeout(args: &[String]) -> u64 {
     args.iter()
         .position(|arg| arg.as_str() == "--timeout")
         .and_then(|i| args.get(i + 1))
-        .map(|arg| arg.parse::<u64>().unwrap())
-        .unwrap_or(2000)
+        .map_or(2000, |arg| arg.parse::<u64>().unwrap())
 }
 
 fn parse_root_file(args: &[String]) -> Result<(PathBuf, Option<PathBuf>), String> {
@@ -96,6 +93,5 @@ fn parse_backend(args: &[String]) -> Result<BackendArg, String> {
     args.iter()
         .position(|arg| arg.as_str() == "--backend")
         .and_then(|i| args.get(i + 1))
-        .map(|s| BackendArg::from_str(s))
-        .unwrap_or(Ok(BackendArg::Vm))
+        .map_or(Ok(BackendArg::Vm), |s| BackendArg::from_str(s))
 }

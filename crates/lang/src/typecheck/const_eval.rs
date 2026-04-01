@@ -266,7 +266,7 @@ fn eval_binary(
     span: Span,
 ) -> Result<ConstValue, TypeErr> {
     use BinaryOp::*;
-    use ConstValue::*;
+    use ConstValue::{Bool, Double, Float, Int, String};
 
     match (left, op, right) {
         // Int arithmetic
@@ -282,9 +282,7 @@ fn eval_binary(
             .checked_mul(r)
             .map(Int)
             .ok_or_else(|| TypeErr::new(span, TypeErrKind::ConstIntegerOverflow)),
-        (Int(_), Div, Int(0)) | (Int(_), Rem, Int(0)) => {
-            Err(TypeErr::new(span, TypeErrKind::ConstDivisionByZero))
-        }
+        (Int(_), Div | Rem, Int(0)) => Err(TypeErr::new(span, TypeErrKind::ConstDivisionByZero)),
         (Int(l), Div, Int(r)) => l
             .checked_div(r)
             .map(Int)
@@ -354,7 +352,7 @@ fn eval_binary(
 }
 
 fn eval_unary(op: UnaryOp, val: ConstValue, span: Span) -> Result<ConstValue, TypeErr> {
-    use ConstValue::*;
+    use ConstValue::{Bool, Double, Float, Int};
     match (op, val) {
         (UnaryOp::Neg, Int(n)) => n
             .checked_neg()
@@ -414,45 +412,45 @@ fn const_format_raw(val: &ConstValue, spec: &FormatSpec) -> String {
             let ConstValue::Int(n) = val else {
                 unreachable!("typechecker validated")
             };
-            format!("{:x}", n)
+            format!("{n:x}")
         }
         FormatKind::HexUpper => {
             let ConstValue::Int(n) = val else {
                 unreachable!("typechecker validated")
             };
-            format!("{:X}", n)
+            format!("{n:X}")
         }
         FormatKind::Binary => {
             let ConstValue::Int(n) = val else {
                 unreachable!("typechecker validated")
             };
-            format!("{:b}", n)
+            format!("{n:b}")
         }
         FormatKind::Exp => match (val, spec.precision) {
             (ConstValue::Float(v), Some(prec)) => format!("{:.prec$e}", v, prec = prec as usize),
-            (ConstValue::Float(v), None) => format!("{:e}", v),
+            (ConstValue::Float(v), None) => format!("{v:e}"),
             (ConstValue::Double(v), Some(prec)) => format!("{:.prec$e}", v, prec = prec as usize),
-            (ConstValue::Double(v), None) => format!("{:e}", v),
+            (ConstValue::Double(v), None) => format!("{v:e}"),
             _ => unreachable!("typechecker validated"),
         },
         FormatKind::ExpUpper => match (val, spec.precision) {
             (ConstValue::Float(v), Some(prec)) => format!("{:.prec$E}", v, prec = prec as usize),
-            (ConstValue::Float(v), None) => format!("{:E}", v),
+            (ConstValue::Float(v), None) => format!("{v:E}"),
             (ConstValue::Double(v), Some(prec)) => format!("{:.prec$E}", v, prec = prec as usize),
-            (ConstValue::Double(v), None) => format!("{:E}", v),
+            (ConstValue::Double(v), None) => format!("{v:E}"),
             _ => unreachable!("typechecker validated"),
         },
     }
 }
 
 fn eval_cast(val: ConstValue, target: &Type, span: Span) -> Result<ConstValue, TypeErr> {
-    use ConstValue::*;
+    use ConstValue::{Double, Float, Int};
     match (&val, target) {
         (Int(_), Type::Int) | (Float(_), Type::Float) | (Double(_), Type::Double) => Ok(val),
         (Int(n), Type::Float) => Ok(Float(*n as f32)),
         (Int(n), Type::Double) => Ok(Double(*n as f64)),
         (Float(f), Type::Int) => Ok(Int(*f as i64)),
-        (Float(f), Type::Double) => Ok(Double(*f as f64)),
+        (Float(f), Type::Double) => Ok(Double(f64::from(*f))),
         (Double(d), Type::Int) => Ok(Int(*d as i64)),
         (Double(d), Type::Float) => Ok(Float(*d as f32)),
         _ => Err(TypeErr::new(span, TypeErrKind::NotConstantExpression)),
@@ -475,7 +473,11 @@ pub(super) fn evaluate_and_export_consts(
             continue;
         };
         let import = &node.node;
-        let path_key: Vec<String> = import.path.iter().map(|id| id.to_string()).collect();
+        let path_key: Vec<String> = import
+            .path
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         let Some(module_def) = resolved_module_defs.get(&path_key) else {
             continue;
         };

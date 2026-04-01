@@ -51,7 +51,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
         args.name
     };
 
-    let option_name = format!("Option<{}>", anvyx_name);
+    let option_name = format!("Option<{anvyx_name}>");
 
     let struct_name = struct_ident.to_string();
     let decl_ident = crate::naming::type_decl_ident(&struct_name);
@@ -93,8 +93,8 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
 
     for (field_ident, field_ty) in &field_infos {
         let field_str = field_ident.to_string();
-        let get_key = format!("{}::__get_{}", anvyx_name, field_str);
-        let set_key = format!("{}::__set_{}", anvyx_name, field_str);
+        let get_key = format!("{anvyx_name}::__get_{field_str}");
+        let set_key = format!("{anvyx_name}::__set_{field_str}");
         let get_fn_ident = format_ident!("__anvyx_field_get_{}_{}", struct_ident, field_ident);
         let set_fn_ident = format_ident!("__anvyx_field_set_{}_{}", struct_ident, field_ident);
 
@@ -106,7 +106,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
             mode: ReturnMode::Valued(quote! { #field_ty }),
             wrapper: ReturnWrapper::None,
         };
-        let get_label = format!("extern method '{}'", get_key);
+        let get_label = format!("extern method '{get_key}'");
         let get_body = codegen::build_call_with_borrows(
             &get_call,
             &get_classified,
@@ -122,7 +122,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
             mode: ReturnMode::Void,
             wrapper: ReturnWrapper::None,
         };
-        let set_label = format!("extern method '{}'", set_key);
+        let set_label = format!("extern method '{set_key}'");
         let set_body = codegen::build_call_with_borrows(
             &set_call,
             &set_classified,
@@ -154,7 +154,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
     }
 
     if auto_init {
-        let init_key = format!("{}::__init__", anvyx_name);
+        let init_key = format!("{anvyx_name}::__init__");
         let init_fn_ident = format_ident!("__anvyx_auto_init_{}", struct_ident);
 
         let mut init_extractions = vec![];
@@ -188,9 +188,10 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
 
     let companion_fn_ident = crate::naming::fields_fn_ident(struct_ident);
 
-    let type_doc_token = match crate::codegen::extract_doc(&item_struct.attrs) {
-        Some(s) => quote! { Some(#s) },
-        None => quote! { None },
+    let type_doc_token = if let Some(s) = codegen::extract_doc(&item_struct.attrs) {
+        quote! { Some(#s) }
+    } else {
+        quote! { None }
     };
 
     Ok(quote! {

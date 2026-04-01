@@ -80,7 +80,7 @@ pub(super) fn doc_comment_block<'src>() -> BoxedParser<'src, Option<String>> {
         .collect::<Vec<_>>()
         .map(|lines| Some(lines.join("\n")))
         .or_not()
-        .map(|opt| opt.flatten())
+        .map(Option::flatten)
         .boxed()
 }
 
@@ -104,7 +104,7 @@ fn type_params<'src>() -> BoxedParser<'src, Vec<ast::TypeParam>> {
         (Token::Op(Op::GreaterThan), _) => (),
     })
     .or_not()
-    .map(|opt| opt.unwrap_or_default())
+    .map(Option::unwrap_or_default)
     .labelled("type parameters")
     .as_context()
     .boxed()
@@ -218,7 +218,7 @@ fn extern_type_declaration<'src>(
         .ignore_then(identifier())
         .then(choice((
             extern_type_body(stmt).map(Some),
-            semicolon.map(|_| None),
+            semicolon.map(|()| None),
         )))
         .map_with(|(name, body), e| {
             let s = e.span();
@@ -326,7 +326,7 @@ fn extern_type_body<'src>(
     let semicolon = select! { (Token::Semicolon, _) => () };
     let init_item = select! { (Token::Ident(ident), _) if ident.0.as_ref() == "init" => () }
         .then_ignore(semicolon)
-        .map(|_| BodyItem::Init);
+        .map(|()| BodyItem::Init);
     let member_item = extern_type_member(stmt).map(BodyItem::Member);
 
     select! { (Token::Open(Delimiter::Brace), _) => () }
@@ -625,7 +625,7 @@ fn method_params<'src>(
     .ignore_then(
         method_param_list(stmt)
             .or_not()
-            .map(|opt| opt.unwrap_or_default()),
+            .map(Option::unwrap_or_default),
     )
     .then_ignore(select! {
         (Token::Close(Delimiter::Parent), _) => (),
@@ -652,7 +652,7 @@ fn self_param<'src>() -> BoxedParser<'src, (ast::MethodReceiver, Option<ast::Typ
                 .ignore_then(type_ident())
                 .or_not(),
         )
-        .map(|((var_opt, _), annotation)| {
+        .map(|((var_opt, ()), annotation)| {
             let receiver = match var_opt {
                 Some(()) => ast::MethodReceiver::Var,
                 None => ast::MethodReceiver::Value,
@@ -682,7 +682,7 @@ fn method_param_list<'src>(
                 select! { (Token::Comma, _) => () }
                     .ignore_then(regular_params.clone())
                     .or_not()
-                    .map(|opt| opt.unwrap_or_default()),
+                    .map(Option::unwrap_or_default),
             )
             .map(|((receiver, annotation), params)| (Some(receiver), annotation, params)),
         regular_params.map(|params| (None, None, params)),

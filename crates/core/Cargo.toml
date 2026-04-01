@@ -6,3 +6,6 @@ edition.workspace = true
 [dependencies]
 anvyx-lang = { path = "../lang" }
 anvyx-macros = { path = "../macros" }
+
+[lints]
+workspace = true

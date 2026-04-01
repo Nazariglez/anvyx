@@ -145,23 +145,21 @@ pub(super) fn build_param_ref(
     slots: &InferenceSlots,
     type_checker: &TypeChecker,
 ) -> TypeRef {
-    match ty {
-        Type::Var(id) => slots
+    if let Type::Var(id) = ty {
+        slots
             .get(id)
-            .cloned()
-            .map(TypeRef::Var)
-            .unwrap_or_else(|| TypeRef::concrete(ty)),
-        _ => {
-            let subst: HashMap<TypeVarId, Type> = slots
-                .iter()
-                .filter_map(|(var_id, slot_name)| {
-                    let slot_ty = type_checker.get_var(*slot_name)?.ty.clone();
-                    Some((*var_id, slot_ty))
-                })
-                .collect();
-            let resolved = subst_type(ty, &subst);
-            TypeRef::concrete(&resolved)
-        }
+            .copied()
+            .map_or_else(|| TypeRef::concrete(ty), TypeRef::Var)
+    } else {
+        let subst: HashMap<TypeVarId, Type> = slots
+            .iter()
+            .filter_map(|(var_id, slot_name)| {
+                let slot_ty = type_checker.get_var(*slot_name)?.ty.clone();
+                Some((*var_id, slot_ty))
+            })
+            .collect();
+        let resolved = subst_type(ty, &subst);
+        TypeRef::concrete(&resolved)
     }
 }
 

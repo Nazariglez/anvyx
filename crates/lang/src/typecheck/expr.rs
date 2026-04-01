@@ -208,10 +208,7 @@ fn validate_format_spec(
                 errors.push(TypeErr::new(
                     span,
                     TypeErrKind::InvalidFormatSpec {
-                        reason: format!(
-                            "format type '{}' requires int, found '{}'",
-                            label, expr_type
-                        ),
+                        reason: format!("format type '{label}' requires int, found '{expr_type}'"),
                     },
                 ));
                 return;
@@ -228,8 +225,7 @@ fn validate_format_spec(
                     span,
                     TypeErrKind::InvalidFormatSpec {
                         reason: format!(
-                            "format type '{}' requires float or double, found '{}'",
-                            label, expr_type
+                            "format type '{label}' requires float or double, found '{expr_type}'"
                         ),
                     },
                 ));
@@ -243,7 +239,7 @@ fn validate_format_spec(
         errors.push(TypeErr::new(
             span,
             TypeErrKind::InvalidFormatSpec {
-                reason: format!("precision not supported for '{}'", expr_type),
+                reason: format!("precision not supported for '{expr_type}'"),
             },
         ));
         return;
@@ -255,7 +251,7 @@ fn validate_format_spec(
         errors.push(TypeErr::new(
             span,
             TypeErrKind::InvalidFormatSpec {
-                reason: format!("sign format requires a numeric type, found '{}'", expr_type),
+                reason: format!("sign format requires a numeric type, found '{expr_type}'"),
             },
         ));
     }
@@ -310,15 +306,14 @@ fn check_lambda(
         }
     } else {
         for param in &lambda.params {
-            let ty = match &param.ty {
-                Some(annotated) => type_checker.resolve_type(annotated),
-                None => {
-                    errors.push(TypeErr::new(
-                        expr_node.span,
-                        TypeErrKind::CannotInferLambdaParam { name: param.name },
-                    ));
-                    Type::Infer
-                }
+            let ty = if let Some(annotated) = &param.ty {
+                type_checker.resolve_type(annotated)
+            } else {
+                errors.push(TypeErr::new(
+                    expr_node.span,
+                    TypeErrKind::CannotInferLambdaParam { name: param.name },
+                ));
+                Type::Infer
             };
             param_types.push(ty);
         }
@@ -526,7 +521,7 @@ fn check_inferred_enum(
             let subst = build_subst(type_params, &type_args);
             let field_type_map: HashMap<Ident, &Type> =
                 expected_fields.iter().map(|f| (f.name, &f.ty)).collect();
-            for (name, field_expr) in fields.iter() {
+            for (name, field_expr) in fields {
                 let field_expected = field_type_map.get(name).map(|ty| subst_type(ty, &subst));
                 check_expr(field_expr, type_checker, errors, field_expected.as_ref());
             }
@@ -553,7 +548,7 @@ fn check_inferred_enum(
                 },
                 errors,
             );
-            for (name, field_expr) in fields.iter() {
+            for (name, field_expr) in fields {
                 if let Some(expected_def) = expected_fields.iter().find(|f| f.name == *name) {
                     let substituted = subst_type(&expected_def.ty, &subst);
                     let field_ref = TypeRef::Expr(field_expr.node.id);

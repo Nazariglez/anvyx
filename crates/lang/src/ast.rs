@@ -277,7 +277,7 @@ impl Type {
     pub fn is_option_with_infer(&self) -> bool {
         match self {
             Type::Enum { name, type_args } if name.0.as_ref() == OPTION_ENUM_NAME => {
-                type_args.first().is_some_and(|t| t.is_infer())
+                type_args.first().is_some_and(Type::is_infer)
             }
             _ => false,
         }
@@ -354,11 +354,11 @@ impl Type {
                 elem.contains_any()
             }
             Type::Map { key, value } => key.contains_any() || value.contains_any(),
-            Type::Tuple(elems) => elems.iter().any(|e| e.contains_any()),
+            Type::Tuple(elems) => elems.iter().any(Type::contains_any),
             Type::NamedTuple(fields) => fields.iter().any(|(_, ty)| ty.contains_any()),
             Type::Struct { type_args, .. }
             | Type::DataRef { type_args, .. }
-            | Type::Enum { type_args, .. } => type_args.iter().any(|a| a.contains_any()),
+            | Type::Enum { type_args, .. } => type_args.iter().any(Type::contains_any),
             _ => false,
         }
     }
@@ -409,8 +409,8 @@ impl Display for Type {
             ),
             Type::Infer => write!(f, "<infer>"),
             Type::Any => write!(f, "any"),
-            Type::Var(id) => write!(f, "{}", id),
-            Type::UnresolvedName(ident) => write!(f, "{}", ident),
+            Type::Var(id) => write!(f, "{id}"),
+            Type::UnresolvedName(ident) => write!(f, "{ident}"),
             Type::Tuple(elements) => {
                 let parts = elements
                     .iter()
@@ -422,7 +422,7 @@ impl Display for Type {
             Type::NamedTuple(fields) => {
                 let parts = fields
                     .iter()
-                    .map(|(name, ty)| format!("{}: {}", name, ty))
+                    .map(|(name, ty)| format!("{name}: {ty}"))
                     .collect::<Vec<_>>()
                     .join(", ");
                 write!(f, "({parts})")

@@ -30,16 +30,16 @@ pub type SpannedToken = (Token, Span);
 impl Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Token::Keyword(keyword) => write!(f, "{}", keyword),
-            Token::Ident(ident) => write!(f, "{}", ident),
-            Token::Literal(lit_token) => write!(f, "{}", lit_token),
+            Token::Keyword(keyword) => write!(f, "{keyword}"),
+            Token::Ident(ident) => write!(f, "{ident}"),
+            Token::Literal(lit_token) => write!(f, "{lit_token}"),
             Token::Open(Delimiter::Parent) => write!(f, "("),
             Token::Open(Delimiter::Brace) => write!(f, "{{"),
             Token::Open(Delimiter::Bracket) => write!(f, "["),
             Token::Close(Delimiter::Parent) => write!(f, ")"),
             Token::Close(Delimiter::Brace) => write!(f, "}}"),
             Token::Close(Delimiter::Bracket) => write!(f, "]"),
-            Token::Op(op) => write!(f, "{}", op),
+            Token::Op(op) => write!(f, "{op}"),
             Token::Colon => write!(f, ":"),
             Token::Semicolon => write!(f, ";"),
             Token::Comma => write!(f, ","),
@@ -48,8 +48,8 @@ impl Display for Token {
             Token::Range => write!(f, ".."),
             Token::RangeEq => write!(f, "..="),
             Token::At => write!(f, "@"),
-            Token::Interp(interp) => write!(f, "{}", interp),
-            Token::DocComment(s) => write!(f, "/// {}", s),
+            Token::Interp(interp) => write!(f, "{interp}"),
+            Token::DocComment(s) => write!(f, "/// {s}"),
         }
     }
 }
@@ -70,9 +70,9 @@ pub enum LitToken {
 impl Display for LitToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LitToken::Number(n) => write!(f, "{}", n),
-            LitToken::Float(s, _) => write!(f, "{}", s),
-            LitToken::String(s) => write!(f, "{}", s),
+            LitToken::Number(n) => write!(f, "{n}"),
+            LitToken::Float(s, _) => write!(f, "{s}"),
+            LitToken::String(s) => write!(f, "{s}"),
         }
     }
 }
@@ -91,10 +91,10 @@ impl Display for InterpToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             InterpToken::Start => write!(f, "\"..."),
-            InterpToken::Text(s) => write!(f, "{}", s),
+            InterpToken::Text(s) => write!(f, "{s}"),
             InterpToken::ExprStart => write!(f, "{{"),
             InterpToken::ExprEnd => write!(f, "}}"),
-            InterpToken::FormatSpec(s) => write!(f, ":{}", s),
+            InterpToken::FormatSpec(s) => write!(f, ":{s}"),
             InterpToken::End => write!(f, "...\""),
         }
     }
@@ -433,18 +433,15 @@ fn string_literal<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Ext
             Some('f') => {
                 let checkpoint = input.save();
                 input.skip(); // consume 'f'
-                match input.peek() {
-                    Some('"') => {
-                        input.skip(); // consume '"'
-                        true
-                    }
-                    _ => {
-                        input.rewind(checkpoint);
-                        return Err(Rich::custom(
-                            input.span_since(&str_open),
-                            "expected string literal",
-                        ));
-                    }
+                if let Some('"') = input.peek() {
+                    input.skip(); // consume '"'
+                    true
+                } else {
+                    input.rewind(checkpoint);
+                    return Err(Rich::custom(
+                        input.span_since(&str_open),
+                        "expected string literal",
+                    ));
                 }
             }
             _ => {
@@ -612,8 +609,8 @@ fn strip_underscores(s: &str) -> String {
     s.chars().filter(|c| *c != '_').collect()
 }
 
-fn try_consume_exponent<'src, 'p>(
-    input: &mut InputRef<'src, 'p, &'src str, Extra<'src>>,
+fn try_consume_exponent<'src>(
+    input: &mut InputRef<'src, '_, &'src str, Extra<'src>>,
     buf: &mut String,
 ) {
     if !matches!(input.peek(), Some('e' | 'E')) {

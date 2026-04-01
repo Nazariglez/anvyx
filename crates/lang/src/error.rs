@@ -14,11 +14,11 @@ pub fn report_lexer_errors(src: &str, file_path: &str, errors: Vec<Rich<'_, char
         let byte_range = span.start..span.end;
 
         let last_context = last_ctx(&e)
-            .map(|s| format!("while lexing a {}", s))
+            .map(|s| format!("while lexing a {s}"))
             .unwrap_or_default();
 
         let custom_msg = match e.reason() {
-            RichReason::Custom(msg) => Some(msg.to_string()),
+            RichReason::Custom(msg) => Some(msg.clone()),
             _ => None,
         };
 
@@ -26,12 +26,12 @@ pub fn report_lexer_errors(src: &str, file_path: &str, errors: Vec<Rich<'_, char
             (msg, String::new())
         } else if let Some(found_char) = e.found() {
             (
-                format!("Unexpected character {}", last_context),
-                format!("'{}'", found_char),
+                format!("Unexpected character {last_context}"),
+                format!("'{found_char}'"),
             )
         } else {
             (
-                format!("Unexpected end of input {}", last_context),
+                format!("Unexpected end of input {last_context}"),
                 "end of file".to_string(),
             )
         };
@@ -59,22 +59,22 @@ pub fn report_parse_errors(
         let byte_range = token_span_to_byte_range(tokens, token_span.start..token_span.end);
 
         let custom_msg = match e.reason() {
-            RichReason::Custom(msg) => Some(msg.to_string()),
+            RichReason::Custom(msg) => Some(msg.clone()),
             _ => None,
         };
 
         let last_context = last_ctx(&e)
-            .map(|s| format!("while parsing a {}", s))
+            .map(|s| format!("while parsing a {s}"))
             .unwrap_or_default();
 
         let (msg_title, msg_body) = if let Some(msg) = custom_msg {
             (msg, String::new())
         } else if let Some((found_token, _)) = e.found() {
             let token_desc = describe_token(found_token);
-            (format!("Unexpected token {}", last_context), token_desc)
+            (format!("Unexpected token {last_context}"), token_desc)
         } else {
             (
-                format!("Unexpected end of input {}", last_context),
+                format!("Unexpected end of input {last_context}"),
                 "end of file".to_string(),
             )
         };
@@ -517,7 +517,7 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
         TypeErrKind::NonExhaustiveMatch { missing } => {
             let missing_str = missing
                 .iter()
-                .map(|v| v.to_string())
+                .map(std::string::ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(", ");
             (
@@ -822,12 +822,9 @@ fn format_type_error(kind: &TypeErrKind) -> (String, String) {
 }
 
 fn token_span_to_byte_range(tokens: &[SpannedToken], span: Range<usize>) -> Range<usize> {
-    let start_byte = tokens.get(span.start).map(|(_, s)| s.start).unwrap_or(0);
+    let start_byte = tokens.get(span.start).map_or(0, |(_, s)| s.start);
     let last_tok_idx = span.end.saturating_sub(1);
-    let end_byte = tokens
-        .get(last_tok_idx)
-        .map(|(_, s)| s.end)
-        .unwrap_or(start_byte);
+    let end_byte = tokens.get(last_tok_idx).map_or(start_byte, |(_, s)| s.end);
 
     start_byte..end_byte
 }
@@ -881,11 +878,11 @@ fn emit_report(
 
 fn describe_token(token: &Token) -> String {
     match token {
-        Token::Keyword(keyword) => format!("'{}' keyword", keyword),
-        Token::Open(..) | Token::Close(..) => format!("'{}' delimiter", token),
+        Token::Keyword(keyword) => format!("'{keyword}' keyword"),
+        Token::Open(..) | Token::Close(..) => format!("'{token}' delimiter"),
         Token::Ident(_) => "identifier".to_string(),
-        Token::Literal(lit) => format!("'{}' literal", lit),
-        Token::Op(op) => format!("'{}' operator", op),
-        _ => format!("'{}' token", token),
+        Token::Literal(lit) => format!("'{lit}' literal"),
+        Token::Op(op) => format!("'{op}' operator"),
+        _ => format!("'{token}' token"),
     }
 }

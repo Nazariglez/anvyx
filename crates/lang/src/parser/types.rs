@@ -137,7 +137,7 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
                             .allow_trailing()
                             .collect::<Vec<_>>()
                             .or_not()
-                            .map(|opt| opt.unwrap_or_default()),
+                            .map(Option::unwrap_or_default),
                     )
                     .then_ignore(close_paren),
             )

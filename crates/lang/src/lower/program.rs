@@ -110,7 +110,7 @@ pub fn lower_program(
             .struct_field_names(*name)
             .unwrap_or_default()
             .iter()
-            .map(|f| f.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         let is_dataref = tcx.is_dataref(*name);
         let cycle_capable = tcx.is_cycle_capable(*name);
@@ -271,7 +271,7 @@ pub fn lower_program(
     let mut struct_methods: Vec<(Ident, u32, &ast::Method, bool)> = vec![];
     let to_string_name = Ident(Intern::new("to_string".to_string()));
     let self_ident = Ident(Intern::new("self".to_string()));
-    for stmt_node in ast.stmts.iter() {
+    for stmt_node in &ast.stmts {
         if let ast::Stmt::Struct(s) = &stmt_node.node {
             let struct_name = s.node.name;
             let Some(&type_id) = shared.struct_type_ids.get(&struct_name) else {

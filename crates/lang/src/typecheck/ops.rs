@@ -152,11 +152,7 @@ pub(super) fn check_binary(
             if left_ty.is_bool() && same_ty {
                 Type::Bool
             } else {
-                let wrong_ty = if !left_ty.is_bool() {
-                    left_ty
-                } else {
-                    right_ty
-                };
+                let wrong_ty = if left_ty.is_bool() { right_ty } else { left_ty };
                 errors.push(TypeErr::new(
                     bin.span,
                     TypeErrKind::InvalidOperand {
@@ -190,44 +186,7 @@ pub(super) fn check_binary(
             }
         }
 
-        BitAnd => {
-            if left_ty.is_int() && same_ty {
-                Type::Int
-            } else if let Some(result) =
-                resolve_extern_binary_op(node.op, &left_ty, &right_ty, type_checker)
-            {
-                match result {
-                    ExternOpResult::Found(ret) => ret,
-                    ExternOpResult::Ambiguous => {
-                        errors.push(TypeErr::new(
-                            bin.span,
-                            TypeErrKind::AmbiguousOperator {
-                                op: node.op.to_string(),
-                                left: left_ty.clone(),
-                                right: right_ty.clone(),
-                            },
-                        ));
-                        Type::Infer
-                    }
-                }
-            } else {
-                let kind = if same_ty {
-                    TypeErrKind::InvalidOperand {
-                        op: node.op.to_string(),
-                        operand_type: left_ty,
-                    }
-                } else {
-                    TypeErrKind::MismatchedTypes {
-                        expected: left_ty,
-                        found: right_ty,
-                    }
-                };
-                errors.push(TypeErr::new(bin.span, kind));
-                Type::Infer
-            }
-        }
-
-        BitOr => {
+        BitAnd | BitOr => {
             if left_ty.is_int() && same_ty {
                 Type::Int
             } else if let Some(result) =
@@ -523,10 +482,10 @@ pub(super) fn check_assign(
 
     let node = &assign.node;
     let target_ty = check_expr(&node.target, type_checker, errors, None);
-    let expected = if target_ty != Type::Infer {
-        Some(&target_ty)
-    } else {
+    let expected = if target_ty == Type::Infer {
         None
+    } else {
+        Some(&target_ty)
     };
     check_expr(&node.value, type_checker, errors, expected);
 

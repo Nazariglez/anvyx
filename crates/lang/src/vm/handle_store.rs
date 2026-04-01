@@ -49,7 +49,7 @@ impl<T> HandleStore<T> {
     pub fn remove(&mut self, id: u64) -> Result<T, RuntimeError> {
         self.entries
             .remove(&id)
-            .map(|cell| cell.into_inner())
+            .map(RefCell::into_inner)
             .ok_or_else(|| RuntimeError::new(format!("invalid extern handle: {id}")))
     }
 

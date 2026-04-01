@@ -7,18 +7,17 @@ const MAIN_ANV: &str = r#"fn main() {
 "#;
 
 pub fn cmd(name: Option<&str>) -> Result<(), String> {
-    let (target_dir, project_name) = match name {
-        Some(n) => (Path::new(n).to_path_buf(), n.to_string()),
-        None => {
-            let cwd = std::env::current_dir()
-                .map_err(|e| format!("Failed to get current directory: {e}"))?;
-            let project_name = cwd
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("project")
-                .to_string();
-            (cwd, project_name)
-        }
+    let (target_dir, project_name) = if let Some(n) = name {
+        (Path::new(n).to_path_buf(), n.to_string())
+    } else {
+        let cwd =
+            std::env::current_dir().map_err(|e| format!("Failed to get current directory: {e}"))?;
+        let project_name = cwd
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("project")
+            .to_string();
+        (cwd, project_name)
     };
 
     if target_dir.exists() {

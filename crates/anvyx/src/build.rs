@@ -744,7 +744,7 @@ mod tests {
         fs::write(metadata_dir.join("engine.json"), json).unwrap();
 
         let result = read_metadata(&tmp, &manifest_one_extern()).unwrap();
-        assert_eq!(result.get("engine").map(|s| s.as_str()), Some(json));
+        assert_eq!(result.get("engine").map(String::as_str), Some(json));
 
         let _ = fs::remove_dir_all(&tmp);
     }

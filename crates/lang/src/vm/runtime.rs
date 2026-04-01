@@ -504,19 +504,17 @@ impl<'a> VM<'a> {
                     let n = arg_count as usize;
                     let args: Vec<Value> = self.stack.drain(self.stack.len() - n..).collect();
                     let idx = extern_idx as usize;
-                    let result = match self.extern_handlers.get(idx) {
-                        Some(Some(handler)) => handler(args)?,
-                        _ => {
-                            let name = self
-                                .program
-                                .extern_names
-                                .get(idx)
-                                .map(|s| s.as_str())
-                                .unwrap_or("<unknown>");
-                            return Err(RuntimeError::new(format!(
-                                "missing extern implementation for '{name}'"
-                            )));
-                        }
+                    let result = if let Some(Some(handler)) = self.extern_handlers.get(idx) {
+                        handler(args)?
+                    } else {
+                        let name = self
+                            .program
+                            .extern_names
+                            .get(idx)
+                            .map_or("<unknown>", String::as_str);
+                        return Err(RuntimeError::new(format!(
+                            "missing extern implementation for '{name}'"
+                        )));
                     };
                     self.push(result);
                 }
@@ -625,7 +623,7 @@ impl<'a> VM<'a> {
                 Op::GetEnumVariant => {
                     let val = self.pop();
                     match val {
-                        Value::Enum(e) => self.push(Value::Int(e.variant as i64)),
+                        Value::Enum(e) => self.push(Value::Int(i64::from(e.variant))),
                         Value::Nil => self.push(Value::Int(0)),
                         _ => self.push(Value::Int(1)),
                     }
@@ -680,8 +678,7 @@ impl<'a> VM<'a> {
                         }
                         other => {
                             return Err(RuntimeError::new(format!(
-                                "SetField on non-struct value: {}",
-                                other
+                                "SetField on non-struct value: {other}"
                             )));
                         }
                     }
@@ -999,13 +996,10 @@ impl<'a> VM<'a> {
                                     let a = items[j - 1].clone();
                                     let b = items[j].clone();
                                     let result = self.call_function(comparator_idx, vec![a, b])?;
-                                    let is_ordered = match result {
-                                        Value::Bool(b) => b,
-                                        _ => {
-                                            return Err(RuntimeError::new(
-                                                "sort_by comparator must return bool",
-                                            ));
-                                        }
+                                    let Value::Bool(is_ordered) = result else {
+                                        return Err(RuntimeError::new(
+                                            "sort_by comparator must return bool",
+                                        ));
                                     };
                                     if is_ordered {
                                         break;
@@ -1051,7 +1045,7 @@ impl<'a> VM<'a> {
                         }
                         CastKind::FloatToDouble => {
                             let Value::Float(f) = val else { unreachable!() };
-                            Value::Double(f as f64)
+                            Value::Double(f64::from(f))
                         }
                         CastKind::DoubleToFloat => {
                             let Value::Double(d) = val else {
@@ -1230,7 +1224,7 @@ impl<'a> VM<'a> {
                     VariantMetaKind::Unit => Ok(format!("{enum_name}.{variant_name}")),
                     VariantMetaKind::Tuple(_) => {
                         let mut vals = vec![];
-                        for v in fields.iter() {
+                        for v in &fields {
                             vals.push(self.format_value(v)?);
                         }
                         Ok(format!("{enum_name}.{variant_name}({})", vals.join(", ")))
@@ -1274,36 +1268,36 @@ impl<'a> VM<'a> {
                 let Value::Int(n) = value else {
                     unreachable!("typechecker validated")
                 };
-                Ok(format!("{:x}", n))
+                Ok(format!("{n:x}"))
             }
             FormatKind::HexUpper => {
                 let Value::Int(n) = value else {
                     unreachable!("typechecker validated")
                 };
-                Ok(format!("{:X}", n))
+                Ok(format!("{n:X}"))
             }
             FormatKind::Binary => {
                 let Value::Int(n) = value else {
                     unreachable!("typechecker validated")
                 };
-                Ok(format!("{:b}", n))
+                Ok(format!("{n:b}"))
             }
             FormatKind::Exp => match (value, spec.precision) {
                 (Value::Float(v), Some(prec)) => Ok(format!("{:.prec$e}", v, prec = prec as usize)),
-                (Value::Float(v), None) => Ok(format!("{:e}", v)),
+                (Value::Float(v), None) => Ok(format!("{v:e}")),
                 (Value::Double(v), Some(prec)) => {
                     Ok(format!("{:.prec$e}", v, prec = prec as usize))
                 }
-                (Value::Double(v), None) => Ok(format!("{:e}", v)),
+                (Value::Double(v), None) => Ok(format!("{v:e}")),
                 _ => unreachable!("typechecker validated"),
             },
             FormatKind::ExpUpper => match (value, spec.precision) {
                 (Value::Float(v), Some(prec)) => Ok(format!("{:.prec$E}", v, prec = prec as usize)),
-                (Value::Float(v), None) => Ok(format!("{:E}", v)),
+                (Value::Float(v), None) => Ok(format!("{v:E}")),
                 (Value::Double(v), Some(prec)) => {
                     Ok(format!("{:.prec$E}", v, prec = prec as usize))
                 }
-                (Value::Double(v), None) => Ok(format!("{:E}", v)),
+                (Value::Double(v), None) => Ok(format!("{v:E}")),
                 _ => unreachable!("typechecker validated"),
             },
         }

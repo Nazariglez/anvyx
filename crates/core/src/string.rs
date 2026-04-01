@@ -22,7 +22,8 @@ pub fn str_ends_with(s: String, suffix: String) -> bool {
 
 #[export_fn]
 pub fn str_find(s: String, sub: String) -> i64 {
-    s.find(sub.as_str()).map(|i| i as i64).unwrap_or(-1)
+    s.find(sub.as_str())
+        .map_or(-1, |byte_pos| s[..byte_pos].chars().count() as i64)
 }
 
 #[export_fn]

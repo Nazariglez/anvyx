@@ -144,8 +144,7 @@ fn constrain_fields_and_extract_type_args(
                 let slot_name = slots.get(&param.id).expect("slot exists");
                 type_checker
                     .get_var(*slot_name)
-                    .map(|info| info.ty.clone())
-                    .unwrap_or(Type::Infer)
+                    .map_or(Type::Infer, |info| info.ty.clone())
             })
             .collect()
     } else {
@@ -361,8 +360,7 @@ pub(super) fn check_range(
 
             let elem_ty = type_checker
                 .get_type(start_expr.node.id)
-                .map(|(_, ty)| ty.clone())
-                .unwrap_or(start_ty);
+                .map_or(start_ty, |(_, ty)| ty.clone());
 
             if *inclusive {
                 range_inclusive_type(elem_ty)
@@ -374,16 +372,14 @@ pub(super) fn check_range(
             let start_ty = check_expr(start, type_checker, errors, None);
             let elem_ty = type_checker
                 .get_type(start.node.id)
-                .map(|(_, ty)| ty.clone())
-                .unwrap_or(start_ty);
+                .map_or(start_ty, |(_, ty)| ty.clone());
             range_from_type(elem_ty)
         }
         Range::To { end, inclusive } => {
             let end_ty = check_expr(end, type_checker, errors, None);
             let elem_ty = type_checker
                 .get_type(end.node.id)
-                .map(|(_, ty)| ty.clone())
-                .unwrap_or(end_ty);
+                .map_or(end_ty, |(_, ty)| ty.clone());
             if *inclusive {
                 range_to_inclusive_type(elem_ty)
             } else {
@@ -421,8 +417,7 @@ pub(super) fn check_array_literal(
 
     let elem_ty = type_checker
         .get_type(elements[0].node.id)
-        .map(|(_, ty)| ty.clone())
-        .unwrap_or_else(|| elem_types[0].clone());
+        .map_or_else(|| elem_types[0].clone(), |(_, ty)| ty.clone());
 
     Type::Array {
         elem: elem_ty.boxed(),
@@ -469,21 +464,20 @@ pub(super) fn check_array_fill(
         },
     };
 
-    match compile_time_len {
-        Some(n) => Type::Array {
+    if let Some(n) = compile_time_len {
+        Type::Array {
             elem: value_ty.boxed(),
             len: ArrayLen::Fixed(n),
-        },
-        None => {
-            errors.push(
-                TypeErr::new(len_expr.span, TypeErrKind::ArrayFillLengthNotLiteral).with_help(
-                    "the length in `[expr; len]` must be a compile-time integer literal or constant",
-                ),
-            );
-            Type::Array {
-                elem: value_ty.boxed(),
-                len: ArrayLen::Infer,
-            }
+        }
+    } else {
+        errors.push(
+            TypeErr::new(len_expr.span, TypeErrKind::ArrayFillLengthNotLiteral).with_help(
+                "the length in `[expr; len]` must be a compile-time integer literal or constant",
+            ),
+        );
+        Type::Array {
+            elem: value_ty.boxed(),
+            len: ArrayLen::Infer,
         }
     }
 }
@@ -539,13 +533,11 @@ pub(super) fn check_map_literal(
 
     let key_ty = type_checker
         .get_type(entries[0].0.node.id)
-        .map(|(_, ty)| ty.clone())
-        .unwrap_or_else(|| key_types[0].clone());
+        .map_or_else(|| key_types[0].clone(), |(_, ty)| ty.clone());
 
     let value_ty = type_checker
         .get_type(entries[0].1.node.id)
-        .map(|(_, ty)| ty.clone())
-        .unwrap_or_else(|| value_types[0].clone());
+        .map_or_else(|| value_types[0].clone(), |(_, ty)| ty.clone());
 
     // validate key type is keyable
     validate_map_key_type(lit.span, &key_ty, type_checker, errors);

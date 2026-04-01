@@ -13,3 +13,6 @@ proc-macro2 = "1"
 
 [dev-dependencies]
 anvyx-lang = { path = "../lang" }
+
+[lints]
+workspace = true

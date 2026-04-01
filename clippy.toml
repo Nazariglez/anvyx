@@ -1,0 +1,5 @@
+too-many-arguments-threshold = 9
+
+cognitive-complexity-threshold = 20
+
+allow-unwrap-in-tests = true
