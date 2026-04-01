@@ -71,7 +71,7 @@ pub(super) fn check_body_common(
 pub(super) fn check_fn_body(
     func: &Func,
     param_types: &[Type],
-    ret_ty: Type,
+    ret_ty: &Type,
     error_span: Span,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
@@ -92,7 +92,7 @@ pub(super) fn check_fn_body(
     check_body_common(
         &params,
         &func.body,
-        &ret_ty,
+        ret_ty,
         error_span,
         type_checker,
         errors,
@@ -249,7 +249,7 @@ pub(super) fn check_func(
     check_fn_body(
         func,
         &param_types,
-        ret_ty,
+        &ret_ty,
         fn_node.span,
         type_checker,
         errors,

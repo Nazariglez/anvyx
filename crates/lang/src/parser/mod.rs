@@ -36,11 +36,11 @@ pub(super) struct ParserState {
     next_type_var_id: TypeVarId,
 }
 
-impl ParserState {
-    pub(super) fn new_expr_id(&mut self) -> ExprId {
-        ExprId(NEXT_EXPR_ID.fetch_add(1, Ordering::Relaxed))
-    }
+pub(super) fn new_expr_id() -> ExprId {
+    ExprId(NEXT_EXPR_ID.fetch_add(1, Ordering::Relaxed))
+}
 
+impl ParserState {
     pub(super) fn new_type_var_id(&mut self) -> TypeVarId {
         let id = TypeVarId(self.next_type_var_id.0);
         self.next_type_var_id = TypeVarId(id.0 + 1);

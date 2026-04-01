@@ -17,10 +17,10 @@ use super::{
     infer::type_from_fn,
     pattern::{check_pattern, is_refutable},
     types::{
-        EnumDef, ExtendEntry, ExtendMethodDef, ExternFieldDef, ExternMethodDef, ExternOpDef,
-        ExternTypeDef, ExternUnaryOpDef, GenericExtendTemplate, ModuleDef, ModuleExtendEntry,
-        ModuleGenericExtendEntry, StructDef, TypeChecker, build_param_info, unwrap_opt_typ,
-        validate_map_key_type,
+        Deprecated, EnumDef, ExtendEntry, ExtendMethodDef, ExternFieldDef, ExternMethodDef,
+        ExternOpDef, ExternTypeDef, ExternUnaryOpDef, GenericExtendTemplate, ModuleDef,
+        ModuleExtendEntry, ModuleGenericExtendEntry, StructDef, TypeChecker, build_param_info,
+        unwrap_opt_typ, validate_map_key_type,
     },
     unify::contains_infer,
 };
@@ -487,7 +487,7 @@ pub(super) fn collect_scope_types(
                 if let Some(tmpl) = template {
                     type_checker.generic_func_templates.insert(func.name, tmpl);
                 }
-                if let Some(reason) = extract_deprecated(&func.annotations) {
+                if let Deprecated::Yes(reason) = extract_deprecated(&func.annotations) {
                     type_checker.func_deprecated.insert(func.name, reason);
                 }
             }
@@ -1087,17 +1087,12 @@ pub(super) fn check_stmt(
                 }
             }
         }
-        Stmt::ExternFunc(_) => {}
-        Stmt::ExternType(_) => {}
+        Stmt::ExternFunc(_) | Stmt::ExternType(_) => {}
         Stmt::Func(node) => {
             validate_annotations(&node.node.annotations, AnnotationTarget::Func, errors);
             check_func(node, type_checker, errors);
         }
-        Stmt::Struct(node) => {
-            validate_annotations(&node.node.annotations, AnnotationTarget::Struct, errors);
-            check_struct(node, type_checker, errors);
-        }
-        Stmt::DataRef(node) => {
+        Stmt::Struct(node) | Stmt::DataRef(node) => {
             validate_annotations(&node.node.annotations, AnnotationTarget::Struct, errors);
             check_struct(node, type_checker, errors);
         }

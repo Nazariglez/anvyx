@@ -213,7 +213,7 @@ pub(super) fn eval_const_expr(
     const_defs: &HashMap<Ident, ConstDef>,
 ) -> Result<ConstValue, Diagnostic> {
     match &expr.node.kind {
-        ExprKind::Lit(lit) => eval_lit(lit),
+        ExprKind::Lit(lit) => Ok(eval_lit(lit)),
         ExprKind::Ident(name) => {
             if let Some(def) = const_defs.get(name) {
                 Ok(def.value.clone())
@@ -261,16 +261,16 @@ pub(super) fn eval_const_expr(
     }
 }
 
-fn eval_lit(lit: &Lit) -> Result<ConstValue, Diagnostic> {
+fn eval_lit(lit: &Lit) -> ConstValue {
     match lit {
-        Lit::Int(n) => Ok(ConstValue::Int(*n)),
+        Lit::Int(n) => ConstValue::Int(*n),
         Lit::Float { value, suffix } => match suffix {
-            Some(FloatSuffix::D) => Ok(ConstValue::Double(*value)),
-            _ => Ok(ConstValue::Float(*value as f32)),
+            Some(FloatSuffix::D) => ConstValue::Double(*value),
+            _ => ConstValue::Float(*value as f32),
         },
-        Lit::Bool(b) => Ok(ConstValue::Bool(*b)),
-        Lit::String(s) => Ok(ConstValue::String(s.clone())),
-        Lit::Nil => Ok(ConstValue::Nil),
+        Lit::Bool(b) => ConstValue::Bool(*b),
+        Lit::String(s) => ConstValue::String(s.clone()),
+        Lit::Nil => ConstValue::Nil,
     }
 }
 

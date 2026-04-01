@@ -643,20 +643,20 @@ fn handled_method_result(
     chain_is_optional: bool,
     index: usize,
     call_op: PostfixNodeRef<'_>,
-) -> Option<MethodCallOutcome> {
+) -> MethodCallOutcome {
     let mut result_ty = method_ret;
     let mut chain_optional = chain_is_optional;
     if op_safe || chain_is_optional {
         chain_optional = true;
         result_ty = Type::option_of(result_ty);
     }
-    Some(MethodCallOutcome::Handled {
+    MethodCallOutcome::Handled {
         ty: result_ty,
         chain_optional,
         next_index: index + 2,
         call_expr: call_op.expr_id(),
         call_span: call_op.span(),
-    })
+    }
 }
 
 fn handled_infer(
@@ -664,14 +664,14 @@ fn handled_infer(
     chain_is_optional: bool,
     index: usize,
     call_op: PostfixNodeRef<'_>,
-) -> Option<MethodCallOutcome> {
-    Some(MethodCallOutcome::Handled {
+) -> MethodCallOutcome {
+    MethodCallOutcome::Handled {
         ty: Type::Infer,
         chain_optional: chain_is_optional || op_safe,
         next_index: index + 2,
         call_expr: call_op.expr_id(),
         call_span: call_op.span(),
-    })
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -695,7 +695,7 @@ fn try_struct_method(
             field_node.span,
             DiagnosticKind::UnknownStruct { name: struct_name },
         ));
-        return handled_infer(op_safe, chain_is_optional, index, call_op);
+        return Some(handled_infer(op_safe, chain_is_optional, index, call_op));
     };
 
     let method_name = field_node.node.field;
@@ -746,7 +746,13 @@ fn try_struct_method(
         )
     };
 
-    handled_method_result(method_ret, op_safe, chain_is_optional, index, call_op)
+    Some(handled_method_result(
+        method_ret,
+        op_safe,
+        chain_is_optional,
+        index,
+        call_op,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -784,7 +790,13 @@ fn try_extern_method(
             type_checker,
             errors,
         ) {
-            return handled_method_result(extend_ret, op_safe, chain_is_optional, index, call_op);
+            return Some(handled_method_result(
+                extend_ret,
+                op_safe,
+                chain_is_optional,
+                index,
+                call_op,
+            ));
         } else {
             errors.push(Diagnostic::new(
                 field_node.span,
@@ -794,7 +806,7 @@ fn try_extern_method(
                 },
             ));
         }
-        return handled_infer(op_safe, chain_is_optional, index, call_op);
+        return Some(handled_infer(op_safe, chain_is_optional, index, call_op));
     };
 
     let method_ret = check_extern_instance_method_call(
@@ -807,7 +819,13 @@ fn try_extern_method(
         errors,
     );
 
-    handled_method_result(method_ret, op_safe, chain_is_optional, index, call_op)
+    Some(handled_method_result(
+        method_ret,
+        op_safe,
+        chain_is_optional,
+        index,
+        call_op,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -854,13 +872,13 @@ fn try_builtin_or_extend_method(
                 type_checker,
                 errors,
             ) {
-                return handled_method_result(
+                return Some(handled_method_result(
                     extend_ret,
                     op_safe,
                     chain_is_optional,
                     index,
                     call_op,
-                );
+                ));
             }
             let type_ident = Ident(Intern::new(format!("{detection_ty}")));
             errors.push(Diagnostic::new(
@@ -870,12 +888,18 @@ fn try_builtin_or_extend_method(
                     method: method_name,
                 },
             ));
-            return handled_infer(op_safe, chain_is_optional, index, call_op);
+            return Some(handled_infer(op_safe, chain_is_optional, index, call_op));
         }
         _ => return None,
     };
 
-    handled_method_result(method_ret, op_safe, chain_is_optional, index, call_op)
+    Some(handled_method_result(
+        method_ret,
+        op_safe,
+        chain_is_optional,
+        index,
+        call_op,
+    ))
 }
 
 fn handle_method_call_if_applicable(

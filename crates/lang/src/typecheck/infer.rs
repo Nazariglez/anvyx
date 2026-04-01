@@ -217,6 +217,7 @@ pub(super) fn infer_type_args_from_call(
     Some(inferred_type_args)
 }
 
+#[allow(clippy::match_same_arms)] // container type-pair arms have distinct semantics and may diverge
 pub(super) fn constrain_slots_from_type(
     template: &Type,
     expected: &Type,

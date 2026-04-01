@@ -149,12 +149,9 @@ fn check_cast(
     let to_ty = &cast_node.node.target;
 
     let valid = match (&from_ty, to_ty) {
-        (Type::Int, Type::Float)
-        | (Type::Float, Type::Int)
-        | (Type::Int, Type::Double)
-        | (Type::Double, Type::Int)
-        | (Type::Float, Type::Double)
-        | (Type::Double, Type::Float) => true,
+        (Type::Int, Type::Float | Type::Double)
+        | (Type::Float, Type::Int | Type::Double)
+        | (Type::Double, Type::Int | Type::Float) => true,
         _ => from_ty == *to_ty,
     };
 

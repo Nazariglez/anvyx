@@ -10,7 +10,9 @@ use super::{
     range::{
         range_from_type, range_inclusive_type, range_to_inclusive_type, range_to_type, range_type,
     },
-    types::{ExternTypeDef, FieldDefault, InferenceSlots, TypeChecker, validate_map_key_type},
+    types::{
+        Deprecated, ExternTypeDef, FieldDefault, InferenceSlots, TypeChecker, validate_map_key_type,
+    },
 };
 use crate::{
     ast::{
@@ -182,7 +184,7 @@ pub(super) fn check_struct_lit(
         return Type::Infer;
     };
 
-    if let Some(reason) = &struct_def.deprecated {
+    if let Deprecated::Yes(reason) = &struct_def.deprecated {
         errors.push(Diagnostic::new(
             lit_node.span,
             DiagnosticKind::DeprecatedUsage {
@@ -198,7 +200,7 @@ pub(super) fn check_struct_lit(
         let call_id = type_checker.next_call_id();
         create_inference_slots(&struct_def.type_params, type_checker, call_id)
     } else {
-        Default::default()
+        HashMap::new()
     };
 
     let field_type_map: HashMap<Ident, &Type> =
@@ -207,7 +209,7 @@ pub(super) fn check_struct_lit(
         let expected = field_type_map.get(name).copied();
         check_expr(field_expr, type_checker, errors, expected);
         if let Some(sf) = struct_def.fields.iter().find(|f| f.name == *name)
-            && let Some(reason) = extract_deprecated(&sf.annotations)
+            && let Deprecated::Yes(reason) = extract_deprecated(&sf.annotations)
         {
             errors.push(Diagnostic::new(
                 field_expr.span,
@@ -602,7 +604,7 @@ fn check_enum_struct_variant(
         let call_id = type_checker.next_call_id();
         create_inference_slots(&enum_def.type_params, type_checker, call_id)
     } else {
-        Default::default()
+        HashMap::new()
     };
 
     let field_type_map: HashMap<Ident, &Type> =

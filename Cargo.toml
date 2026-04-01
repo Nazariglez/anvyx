@@ -34,8 +34,17 @@ too_many_lines = "allow"
 # allow short names for compiler code (lhs/rhs, a/b, ty/tv, lo/hi)
 similar_names = "allow"
 
-# avoid polluting the namespace with explicit imports 
+# avoid polluting the namespace with explicit imports
 wildcard_imports = "allow"
+
+# no need for other hashers for now
+implicit_hasher = "allow"
+
+# this is fine for anvyx (for now...)
+cast_precision_loss = "allow"
+
+# this is annoying, I want to use == and != for floats (I can always revisit this later)
+float_cmp = "allow"
 
 [workspace.lints.rust]
 # warn when we use fully qualified paths witouth need

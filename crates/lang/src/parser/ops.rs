@@ -1,6 +1,6 @@
 use chumsky::prelude::*;
 
-use super::{AnvParser, BoxedParser};
+use super::{AnvParser, BoxedParser, new_expr_id};
 use crate::{
     ast,
     lexer::{Op, Token},
@@ -13,7 +13,7 @@ pub(super) fn infix_left<'src>(
 ) -> BoxedParser<'src, ast::ExprNode> {
     let op_rhs = op.then(lower.clone());
     lower
-        .foldl_with(op_rhs.repeated(), |left, (op, right), e| {
+        .foldl(op_rhs.repeated(), |left, (op, right)| {
             let span = Span::new(left.span.start, right.span.end);
             let bin_node = Spanned::new(
                 ast::Binary {
@@ -24,7 +24,7 @@ pub(super) fn infix_left<'src>(
                 span,
             );
 
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::Binary(bin_node), expr_id);
             Spanned::new(expr, span)
         })

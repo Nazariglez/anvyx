@@ -19,17 +19,23 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
+pub enum Deprecated {
+    No,
+    Yes(Option<String>),
+}
+
+#[derive(Debug, Clone)]
 pub(super) struct EnumVariantDef {
     pub name: Ident,
     pub kind: VariantKind,
-    pub deprecated: Option<Option<String>>,
+    pub deprecated: Deprecated,
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct EnumDef {
     pub type_params: Vec<TypeParam>,
     pub variants: Vec<EnumVariantDef>,
-    pub deprecated: Option<Option<String>>,
+    pub deprecated: Deprecated,
 }
 
 impl EnumDef {
@@ -57,7 +63,7 @@ impl EnumDef {
         span: Span,
         errors: &mut Vec<Diagnostic>,
     ) {
-        if let Some(reason) = &self.deprecated {
+        if let Deprecated::Yes(reason) = &self.deprecated {
             errors.push(Diagnostic::new(
                 span,
                 DiagnosticKind::DeprecatedUsage {
@@ -67,7 +73,7 @@ impl EnumDef {
                 },
             ));
         }
-        if let Some(reason) = &variant.deprecated {
+        if let Deprecated::Yes(reason) = &variant.deprecated {
             errors.push(Diagnostic::new(
                 span,
                 DiagnosticKind::DeprecatedUsage {
@@ -150,7 +156,7 @@ pub struct StructDef {
     pub fields: Vec<StructField>,
     pub methods: HashMap<Ident, MethodDef>,
     pub field_defaults: HashMap<Ident, FieldDefault>,
-    pub deprecated: Option<Option<String>>,
+    pub deprecated: Deprecated,
 }
 
 impl StructDef {
@@ -1104,6 +1110,8 @@ impl TypeChecker {
         }
 
         // single-element containers constrain inner element types
+        #[allow(clippy::match_same_arms)]
+        // each arm documents a distinct permitted coercion; likely to diverge as type rules evolve
         let inner_pair = match (&from_ty, &to_ty) {
             (Type::Array { elem: f, .. }, Type::Array { elem: t, .. }) => Some((f, t)),
             (Type::ArrayView { elem: f }, Type::ArrayView { elem: t }) => Some((f, t)),
@@ -1234,9 +1242,9 @@ impl PostfixNodeRef<'_> {
 
     pub fn expr_id(&self) -> ExprId {
         match self {
-            PostfixNodeRef::Field { expr_id, .. } => *expr_id,
-            PostfixNodeRef::Index { expr_id, .. } => *expr_id,
-            PostfixNodeRef::Call { expr_id, .. } => *expr_id,
+            PostfixNodeRef::Field { expr_id, .. }
+            | PostfixNodeRef::Index { expr_id, .. }
+            | PostfixNodeRef::Call { expr_id, .. } => *expr_id,
         }
     }
 }
@@ -1284,7 +1292,7 @@ pub(super) fn type_field_on_base(
 
             for struct_field in &struct_def.fields {
                 if struct_field.name == field {
-                    if let Some(reason) = extract_deprecated(&struct_field.annotations) {
+                    if let Deprecated::Yes(reason) = extract_deprecated(&struct_field.annotations) {
                         errors.push(Diagnostic::new(
                             span,
                             DiagnosticKind::DeprecatedUsage {
@@ -1373,9 +1381,10 @@ pub(super) fn type_index_on_base(
         }
 
         return match base_ty {
-            Type::Array { elem, .. } => Type::ArrayView { elem: elem.clone() },
+            Type::Array { elem, .. } | Type::ArrayView { elem } => {
+                Type::ArrayView { elem: elem.clone() }
+            }
             Type::List { elem } => Type::List { elem: elem.clone() },
-            Type::ArrayView { elem } => Type::ArrayView { elem: elem.clone() },
             _ => {
                 errors.push(Diagnostic::new(
                     span,
@@ -1421,9 +1430,9 @@ pub(super) fn type_index_on_base(
 
 pub(super) fn indexable_element_type(ty: &Type) -> Option<Type> {
     match ty {
-        Type::Array { elem, .. } => Some((**elem).clone()),
-        Type::List { elem } => Some((**elem).clone()),
-        Type::ArrayView { elem } => Some((**elem).clone()),
+        Type::Array { elem, .. } | Type::List { elem } | Type::ArrayView { elem } => {
+            Some((**elem).clone())
+        }
         _ => None,
     }
 }

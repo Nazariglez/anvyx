@@ -3,7 +3,10 @@ use std::{
     fmt,
 };
 
-use super::error::{Diagnostic, DiagnosticKind};
+use super::{
+    error::{Diagnostic, DiagnosticKind},
+    types::Deprecated,
+};
 use crate::{
     ast::{AnnotationArgs, AnnotationNode, Ident, Lit},
     span::Span,
@@ -126,14 +129,13 @@ pub(super) fn validate_annotations(
     }
 }
 
-pub(super) fn extract_deprecated(annotations: &[AnnotationNode]) -> Option<Option<String>> {
+pub(super) fn extract_deprecated(annotations: &[AnnotationNode]) -> Deprecated {
     annotations
         .iter()
         .find(|a| a.node.name.to_string() == "deprecated")
-        .map(|a| match &a.node.args {
-            AnnotationArgs::Positional(Lit::String(s)) => Some(s.clone()),
-            AnnotationArgs::None => None,
-            AnnotationArgs::Positional(_) | AnnotationArgs::Named(_) => None,
+        .map_or(Deprecated::No, |a| match &a.node.args {
+            AnnotationArgs::Positional(Lit::String(s)) => Deprecated::Yes(Some(s.clone())),
+            _ => Deprecated::Yes(None),
         })
 }
 

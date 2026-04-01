@@ -21,9 +21,9 @@ pub fn cmd(file: &Path, backend: &str) -> Result<(), String> {
         &file_path,
         backend,
         handlers,
-        HashMap::new(),
-        std_sources,
-        core,
+        &HashMap::new(),
+        &std_sources,
+        &core,
     )?;
     print!("{output}");
     Ok(())

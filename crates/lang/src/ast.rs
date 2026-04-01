@@ -1032,6 +1032,7 @@ pub struct TupleIndex {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::struct_field_names)]
 pub struct Index {
     pub target: Box<ExprNode>,
     pub index: Box<ExprNode>,

@@ -6,6 +6,7 @@ use super::{
         TupleShapeResult, block_stmt, field_name_ident, identifier, literal,
         validate_tuple_shape_raw,
     },
+    new_expr_id,
     ops::{
         add_sub_op, and_op, assign_op, bit_and_op, bit_or_op, cmp_op, coalesce_op, eq_op,
         infix_left, mul_div_op, or_op, shift_op, xor_op,
@@ -90,7 +91,7 @@ fn if_expr<'src>(
                     },
                     span,
                 );
-                let expr_id = e.state().new_expr_id();
+                let expr_id = new_expr_id();
                 let expr = ast::Expr::new(ast::ExprKind::IfLet(if_let_node), expr_id);
                 Spanned::new(expr, span)
             });
@@ -112,7 +113,7 @@ fn if_expr<'src>(
                 },
                 span,
             );
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::If(if_node), expr_id);
             Spanned::new(expr, span)
         });
@@ -134,9 +135,9 @@ fn match_expr<'src>(
     let fat_arrow = select! { (Token::Op(Op::FatArrow), _) => () };
 
     let arm_body = choice((
-        block_stmt(stmt.clone(), expr.clone()).map_with(|block_node, e| {
+        block_stmt(stmt.clone(), expr.clone()).map(|block_node| {
             let span = block_node.span;
-            let id = e.state().new_expr_id();
+            let id = new_expr_id();
             let arm_expr = ast::Expr::new(ast::ExprKind::Block(block_node), id);
             Spanned::new(arm_expr, span)
         }),
@@ -177,7 +178,7 @@ fn match_expr<'src>(
                 },
                 span,
             );
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::Match(match_node), expr_id);
             Spanned::new(expr, span)
         })
@@ -197,7 +198,7 @@ fn struct_literal<'src>(
         identifier().map_with(|name, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let ident_expr = ast::Expr::new(ast::ExprKind::Ident(name), expr_id);
             let value = Spanned::new(ident_expr, span);
             (name, value)
@@ -238,7 +239,7 @@ fn struct_literal<'src>(
                 },
                 span,
             );
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::StructLiteral(lit_node), expr_id);
             Spanned::new(expr, span)
         })
@@ -272,7 +273,7 @@ fn array_literal<'src>(
                 },
                 span,
             );
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::ArrayFill(fill_node), expr_id);
             Spanned::new(expr, span)
         });
@@ -294,7 +295,7 @@ fn array_literal<'src>(
             let s = e.span();
             let span = Span::new(s.start, s.end);
             let lit_node = Spanned::new(ast::MapLiteral { entries }, span);
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::MapLiteral(lit_node), expr_id);
             Spanned::new(expr, span)
         });
@@ -309,7 +310,7 @@ fn array_literal<'src>(
             let s = e.span();
             let span = Span::new(s.start, s.end);
             let lit_node = Spanned::new(ast::MapLiteral { entries: vec![] }, span);
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::MapLiteral(lit_node), expr_id);
             Spanned::new(expr, span)
         });
@@ -326,7 +327,7 @@ fn array_literal<'src>(
             let s = e.span();
             let span = Span::new(s.start, s.end);
             let lit_node = Spanned::new(ast::ArrayLiteral { elements }, span);
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::ArrayLiteral(lit_node), expr_id);
             Spanned::new(expr, span)
         });
@@ -486,7 +487,7 @@ fn string_interp<'src>(
         .map_with(|parts, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
-            let id = e.state().new_expr_id();
+            let id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::StringInterp(parts), id);
             Spanned::new(expr, span)
         })
@@ -530,9 +531,9 @@ fn lambda_expr<'src>(
 
     let ret_type = thin_arrow.ignore_then(type_ident()).or_not();
 
-    let block_body = block_stmt(stmt, expr.clone()).map_with(|block_node, e| {
+    let block_body = block_stmt(stmt, expr.clone()).map(|block_node| {
         let span = block_node.span;
-        let id = e.state().new_expr_id();
+        let id = new_expr_id();
         let block_expr = ast::Expr::new(ast::ExprKind::Block(block_node), id);
         Spanned::new(block_expr, span)
     });
@@ -545,7 +546,7 @@ fn lambda_expr<'src>(
         .map_with(|((params, ret_type), body), e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
-            let id = e.state().new_expr_id();
+            let id = new_expr_id();
             let lambda = ast::Lambda {
                 params,
                 ret_type,
@@ -571,7 +572,7 @@ fn inferred_enum_expr<'src>(
         identifier().map_with(|name, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let ident_expr = ast::Expr::new(ast::ExprKind::Ident(name), expr_id);
             let value = Spanned::new(ident_expr, span);
             (name, value)
@@ -605,7 +606,7 @@ fn inferred_enum_expr<'src>(
             let span = Span::new(s.start, s.end);
             let args = args.unwrap_or(ast::InferredEnumArgs::Unit);
             let node = Spanned::new(ast::InferredEnum { variant, args }, span);
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::InferredEnum(node), expr_id);
             Spanned::new(expr, span)
         })
@@ -624,7 +625,7 @@ fn atom_expr<'src>(
         literal().map_with(|lit, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
-            let id = e.state().new_expr_id();
+            let id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::Lit(lit), id);
             Spanned::new(expr, span)
         }),
@@ -633,15 +634,15 @@ fn atom_expr<'src>(
         identifier().map_with(|ident, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::Ident(ident), expr_id);
             Spanned::new(expr, span)
         }),
         if_expr(stmt.clone(), expr.clone()),
         match_expr(stmt.clone(), expr.clone()),
-        block_stmt(stmt, expr.clone()).map_with(|block_node, e| {
+        block_stmt(stmt, expr.clone()).map(|block_node| {
             let span = block_node.span;
-            let id = e.state().new_expr_id();
+            let id = new_expr_id();
             let block_expr = ast::Expr::new(ast::ExprKind::Block(block_node), id);
             Spanned::new(block_expr, span)
         }),
@@ -659,7 +660,7 @@ fn cond_atom_expr<'src>(
         literal().map_with(|lit, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
-            let id = e.state().new_expr_id();
+            let id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::Lit(lit), id);
             Spanned::new(expr, span)
         }),
@@ -667,7 +668,7 @@ fn cond_atom_expr<'src>(
         identifier().map_with(|ident, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::Ident(ident), expr_id);
             Spanned::new(expr, span)
         }),
@@ -709,7 +710,7 @@ fn grouped_or_tuple_expr<'src>(
         .validate(|((first, rest), trailing_comma), e, emitter| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
 
             match validate_tuple_shape_raw(first, rest, trailing_comma.is_some()) {
                 TupleShapeResult::Empty => {
@@ -969,7 +970,7 @@ fn postfix_expr<'src>(
                     call_span,
                 );
 
-                let expr_id = e.state().new_expr_id();
+                let expr_id = new_expr_id();
                 let expr = ast::Expr::new(ast::ExprKind::Call(call_node), expr_id);
                 Spanned::new(expr, call_span)
             }
@@ -984,7 +985,7 @@ fn postfix_expr<'src>(
                         span,
                     );
 
-                    let expr_id = e.state().new_expr_id();
+                    let expr_id = new_expr_id();
                     let expr = ast::Expr::new(ast::ExprKind::TupleIndex(index_node), expr_id);
                     current = Spanned::new(expr, span);
                 }
@@ -1000,7 +1001,7 @@ fn postfix_expr<'src>(
                     span,
                 );
 
-                let expr_id = e.state().new_expr_id();
+                let expr_id = new_expr_id();
                 let expr = ast::Expr::new(ast::ExprKind::Field(field_node), expr_id);
                 Spanned::new(expr, span)
             }
@@ -1021,7 +1022,7 @@ fn postfix_expr<'src>(
                     index_span,
                 );
 
-                let expr_id = e.state().new_expr_id();
+                let expr_id = new_expr_id();
                 let expr = ast::Expr::new(ast::ExprKind::Index(index_node), expr_id);
                 Spanned::new(expr, index_span)
             }
@@ -1047,7 +1048,7 @@ fn cast_expr<'src>(unary: impl AnvParser<'src, ast::ExprNode>) -> BoxedParser<'s
                     },
                     span,
                 );
-                let id = e.state().new_expr_id();
+                let id = new_expr_id();
                 let node = ast::Expr::new(ast::ExprKind::Cast(cast_node), id);
                 Spanned::new(node, span)
             },
@@ -1077,7 +1078,7 @@ fn unary_expr<'src>(expr: impl AnvParser<'src, ast::ExprNode>) -> BoxedParser<'s
                 },
                 span,
             );
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             expr_node = Spanned::new(
                 ast::Expr::new(ast::ExprKind::Unary(unary_node), expr_id),
                 span,
@@ -1120,7 +1121,7 @@ fn range_expr<'src>(
     .map_with(|(inclusive, end), e| {
         let s = e.span();
         let span = Span::new(s.start, s.end);
-        let expr_id = e.state().new_expr_id();
+        let expr_id = new_expr_id();
         let expr = ast::Expr::new(
             ast::ExprKind::Range(Spanned::new(
                 ast::Range::To {
@@ -1155,13 +1156,13 @@ fn range_expr<'src>(
                 },
                 span,
             );
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::Range(range_node), expr_id);
             Spanned::new(expr, span)
         } else {
             let s = e.span();
             let span = Span::new(s.start, s.end);
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(
                 ast::ExprKind::Range(Spanned::new(
                     ast::Range::From {
@@ -1192,41 +1193,38 @@ fn ternary_expr<'src>(
     .then(expr);
 
     lower
-        .foldl_with(
-            ternary_suffix.repeated(),
-            |cond, (then_expr, else_expr), e| {
-                let span = Span::new(cond.span.start, else_expr.span.end);
+        .foldl(ternary_suffix.repeated(), |cond, (then_expr, else_expr)| {
+            let span = Span::new(cond.span.start, else_expr.span.end);
 
-                let then_block = Spanned::new(
-                    ast::Block {
-                        stmts: vec![],
-                        tail: Some(Box::new(then_expr.clone())),
-                    },
-                    then_expr.span,
-                );
+            let then_block = Spanned::new(
+                ast::Block {
+                    stmts: vec![],
+                    tail: Some(Box::new(then_expr.clone())),
+                },
+                then_expr.span,
+            );
 
-                let else_block = Spanned::new(
-                    ast::Block {
-                        stmts: vec![],
-                        tail: Some(Box::new(else_expr.clone())),
-                    },
-                    else_expr.span,
-                );
+            let else_block = Spanned::new(
+                ast::Block {
+                    stmts: vec![],
+                    tail: Some(Box::new(else_expr.clone())),
+                },
+                else_expr.span,
+            );
 
-                let if_node = Spanned::new(
-                    ast::If {
-                        cond: Box::new(cond),
-                        then_block,
-                        else_block: Some(else_block),
-                    },
-                    span,
-                );
+            let if_node = Spanned::new(
+                ast::If {
+                    cond: Box::new(cond),
+                    then_block,
+                    else_block: Some(else_block),
+                },
+                span,
+            );
 
-                let expr_id = e.state().new_expr_id();
-                let expr = ast::Expr::new(ast::ExprKind::If(if_node), expr_id);
-                Spanned::new(expr, span)
-            },
-        )
+            let expr_id = new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::If(if_node), expr_id);
+            Spanned::new(expr, span)
+        })
         .labelled("ternary")
         .as_context()
         .boxed()
@@ -1241,7 +1239,7 @@ fn lvalue_expr<'src>() -> BoxedParser<'src, ast::ExprNode> {
     let base = identifier().map_with(|ident, e| {
         let s = e.span();
         let span = Span::new(s.start, s.end);
-        let expr_id = e.state().new_expr_id();
+        let expr_id = new_expr_id();
         let expr = ast::Expr::new(ast::ExprKind::Ident(ident), expr_id);
         Spanned::new(expr, span)
     });
@@ -1250,14 +1248,14 @@ fn lvalue_expr<'src>() -> BoxedParser<'src, ast::ExprNode> {
         literal().map_with(|lit, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::Lit(lit), expr_id);
             Spanned::new(expr, span)
         }),
         identifier().map_with(|ident, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::Ident(ident), expr_id);
             Spanned::new(expr, span)
         }),
@@ -1287,7 +1285,7 @@ fn lvalue_expr<'src>() -> BoxedParser<'src, ast::ExprNode> {
                     },
                     span,
                 );
-                let expr_id = e.state().new_expr_id();
+                let expr_id = new_expr_id();
                 let expr = ast::Expr::new(ast::ExprKind::Field(field_node), expr_id);
                 Spanned::new(expr, span)
             }
@@ -1300,7 +1298,7 @@ fn lvalue_expr<'src>() -> BoxedParser<'src, ast::ExprNode> {
                     },
                     span,
                 );
-                let expr_id = e.state().new_expr_id();
+                let expr_id = new_expr_id();
                 let expr = ast::Expr::new(ast::ExprKind::Index(index_node), expr_id);
                 Spanned::new(expr, span)
             }
@@ -1328,7 +1326,7 @@ fn assignment_expr<'src>(
                 span,
             );
 
-            let expr_id = e.state().new_expr_id();
+            let expr_id = new_expr_id();
             let expr = ast::Expr::new(ast::ExprKind::Assign(assign_node), expr_id);
             Spanned::new(expr, span)
         })

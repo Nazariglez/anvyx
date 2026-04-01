@@ -279,7 +279,7 @@ pub fn run_program(
         core_source,
         backend,
         std::collections::HashMap::new(),
-        std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
     )
 }
 
@@ -289,7 +289,7 @@ pub fn run_program_with_externs(
     core_source: &str,
     backend: Backend,
     externs: std::collections::HashMap<String, ExternHandler>,
-    extern_metadata: std::collections::HashMap<String, String>,
+    extern_metadata: &std::collections::HashMap<String, String>,
 ) -> Result<String, String> {
     let core = CoreSource {
         prelude: core_source.to_string(),
@@ -301,8 +301,8 @@ pub fn run_program_with_externs(
         backend,
         externs,
         extern_metadata,
-        std::collections::HashMap::new(),
-        core,
+        &std::collections::HashMap::new(),
+        &core,
     )
 }
 
@@ -311,16 +311,16 @@ pub fn run_program_with_std(
     file_path: &str,
     backend: Backend,
     externs: std::collections::HashMap<String, ExternHandler>,
-    extern_metadata: std::collections::HashMap<String, String>,
-    std_modules: std::collections::HashMap<String, StdModuleSource>,
-    core: CoreSource,
+    extern_metadata: &std::collections::HashMap<String, String>,
+    std_modules: &std::collections::HashMap<String, StdModuleSource>,
+    core: &CoreSource,
 ) -> Result<String, String> {
     let hir = generate_hir_with_std(
         program,
         file_path,
         &core.prelude,
-        &extern_metadata,
-        &std_modules,
+        extern_metadata,
+        std_modules,
         &core.modules,
     )?;
 

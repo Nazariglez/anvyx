@@ -189,7 +189,7 @@ pub(super) fn check_binary(
             }
         }
 
-        Coalesce => check_coalesce(bin, left_ty, right_ty, type_checker, errors),
+        Coalesce => check_coalesce(bin, left_ty, &right_ty, type_checker, errors),
     }
 }
 
@@ -219,7 +219,7 @@ fn binary_type_error(
 fn check_coalesce(
     bin: &BinaryNode,
     left_ty: Type,
-    right_ty: Type,
+    right_ty: &Type,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
@@ -314,8 +314,7 @@ fn resolve_extern_binary_op(
 
     match (left_match, right_match) {
         (Some(_), Some(_)) => Some(ExternOpResult::Ambiguous),
-        (Some(ret), None) => Some(ExternOpResult::Found(ret)),
-        (None, Some(ret)) => Some(ExternOpResult::Found(ret)),
+        (Some(ret), None) | (None, Some(ret)) => Some(ExternOpResult::Found(ret)),
         (None, None) => None,
     }
 }
@@ -468,7 +467,7 @@ pub(super) fn check_assign(
     let value_ref = TypeRef::Expr(node.value.node.id);
 
     match node.op {
-        AssignOp::Assign => check_assign_op(assign, target_ref, value_ref, type_checker, errors),
+        AssignOp::Assign => check_assign_op(assign, &target_ref, value_ref, type_checker, errors),
         AssignOp::AddAssign
         | AssignOp::SubAssign
         | AssignOp::MulAssign
@@ -478,14 +477,14 @@ pub(super) fn check_assign(
         | AssignOp::BitOrAssign
         | AssignOp::ShlAssign
         | AssignOp::ShrAssign => {
-            check_compound_assign_op(assign, target_ref, value_ref, type_checker, errors)
+            check_compound_assign_op(assign, &target_ref, value_ref, type_checker, errors)
         }
     }
 }
 
 fn check_assign_op(
     assign: &AssignNode,
-    target_ref: TypeRef,
+    target_ref: &TypeRef,
     value_ref: TypeRef,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
@@ -496,14 +495,12 @@ fn check_assign_op(
 
 fn check_compound_assign_op(
     assign: &AssignNode,
-    target_ref: TypeRef,
+    target_ref: &TypeRef,
     value_ref: TypeRef,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
-    let target_ty = type_checker
-        .get_type_ref(&target_ref)
-        .unwrap_or(Type::Infer);
+    let target_ty = type_checker.get_type_ref(target_ref).unwrap_or(Type::Infer);
     let value_ty = type_checker.get_type_ref(&value_ref).unwrap_or(Type::Infer);
 
     let is_add_assign = assign.node.op == AssignOp::AddAssign;
@@ -520,9 +517,7 @@ fn check_compound_assign_op(
         type_checker.constrain_equal(assign.span, target_ref.clone(), value_ref, errors);
     }
 
-    let target_ty = type_checker
-        .get_type_ref(&target_ref)
-        .unwrap_or(Type::Infer);
+    let target_ty = type_checker.get_type_ref(target_ref).unwrap_or(Type::Infer);
     let is_valid = target_ty.is_infer()
         || (is_xor_assign && (target_ty.is_int() || target_ty.is_bool()))
         || (is_bit_and_assign && target_ty.is_int())

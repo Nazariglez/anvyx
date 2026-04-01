@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use internment::Intern;
 
@@ -200,13 +200,13 @@ fn check_literal_pattern(span: Span, lit: &Lit, value_ty: &Type, errors: &mut Ve
 
 fn check_range_pattern(
     span: Span,
-    start: &Option<Lit>,
-    end: &Option<Lit>,
+    start: Option<&Lit>,
+    end: Option<&Lit>,
     inclusive: bool,
     value_ty: &Type,
     errors: &mut Vec<Diagnostic>,
 ) {
-    match (start.as_ref(), end.as_ref()) {
+    match (start, end) {
         (Some(start_lit), Some(end_lit)) => {
             let start_ty = type_from_pattern_lit(start_lit);
             let end_ty = type_from_pattern_lit(end_lit);
@@ -414,11 +414,10 @@ pub(super) fn pattern_has_var_binding(pattern: &PatternNode) -> bool {
     }
 }
 
+#[allow(clippy::match_same_arms)] // refutable arms are scattered with complex recursive arms in between; regrouping hurts readability
 pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &TypeChecker) -> bool {
     match pattern {
-        Pattern::Wildcard => false,
-        Pattern::Ident(_) => false,
-        Pattern::VarIdent(_) => false,
+        Pattern::Wildcard | Pattern::Ident(_) | Pattern::VarIdent(_) => false,
         Pattern::Lit(_) => true,
         Pattern::Tuple(subs) => {
             let Some(elem_types) = value_ty.tuple_element_types() else {
@@ -834,7 +833,14 @@ fn check_pattern_inner(
             end,
             inclusive,
         } => {
-            check_range_pattern(pattern.span, start, end, *inclusive, value_ty, errors);
+            check_range_pattern(
+                pattern.span,
+                start.as_ref(),
+                end.as_ref(),
+                *inclusive,
+                value_ty,
+                errors,
+            );
         }
         Pattern::Optional(inner) => {
             if let Some((_, covered_variants, _)) = &mut match_ctx {
@@ -1164,7 +1170,7 @@ fn check_struct_destructure_pattern(
             Type::Struct { type_args, .. } | Type::DataRef { type_args, .. } => {
                 build_subst(&struct_def.type_params, type_args)
             }
-            _ => Default::default(),
+            _ => HashMap::new(),
         };
 
         for ((_, subpat), matched_def) in fields.iter().zip(matched.iter()) {
