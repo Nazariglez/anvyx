@@ -4,7 +4,7 @@ use crate::ast::{
 
 use super::{
     constraint::TypeRef,
-    error::{TypeErr, TypeErrKind},
+    error::{Diagnostic, DiagnosticKind},
     expr::{check_expr, root_ident},
     types::{TypeChecker, equatable_reason, is_equatable},
     unify::unify_types,
@@ -13,7 +13,7 @@ use super::{
 pub(super) fn check_binary(
     bin: &BinaryNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     use BinaryOp::*;
 
@@ -33,9 +33,9 @@ pub(super) fn check_binary(
                 Type::String
             } else {
                 let operand_type = if left_ty.is_str() { right_ty } else { left_ty };
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     bin.span,
-                    TypeErrKind::InvalidOperand {
+                    DiagnosticKind::InvalidOperand {
                         op: node.op.to_string(),
                         operand_type,
                     },
@@ -54,9 +54,9 @@ pub(super) fn check_binary(
                 match result {
                     ExternOpResult::Found(ret) => ret,
                     ExternOpResult::Ambiguous => {
-                        errors.push(TypeErr::new(
+                        errors.push(Diagnostic::new(
                             bin.span,
-                            TypeErrKind::AmbiguousOperator {
+                            DiagnosticKind::AmbiguousOperator {
                                 op: node.op.to_string(),
                                 left: left_ty.clone(),
                                 right: right_ty.clone(),
@@ -67,17 +67,17 @@ pub(super) fn check_binary(
                 }
             } else {
                 let kind = if same_ty {
-                    TypeErrKind::InvalidOperand {
+                    DiagnosticKind::InvalidOperand {
                         op: node.op.to_string(),
                         operand_type: left_ty,
                     }
                 } else {
-                    TypeErrKind::MismatchedTypes {
+                    DiagnosticKind::MismatchedTypes {
                         expected: left_ty,
                         found: right_ty,
                     }
                 };
-                errors.push(TypeErr::new(bin.span, kind));
+                errors.push(Diagnostic::new(bin.span, kind));
                 Type::Infer
             }
         }
@@ -95,9 +95,9 @@ pub(super) fn check_binary(
                     type_checker.set_type(node.left.node.id, ty.clone(), bin.span);
                     type_checker.set_type(node.right.node.id, ty.clone(), bin.span);
                 } else {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         bin.span,
-                        TypeErrKind::MismatchedTypes {
+                        DiagnosticKind::MismatchedTypes {
                             expected: left_ty.clone(),
                             found: right_ty.clone(),
                         },
@@ -115,7 +115,7 @@ pub(super) fn check_binary(
                             .is_some_and(|def| def.operators.iter().any(|o| o.op == BinaryOp::Eq)));
                 if !has_extern_eq && !is_equatable(ty, type_checker) {
                     let mut err =
-                        TypeErr::new(bin.span, TypeErrKind::NotEquatable { ty: ty.clone() });
+                        Diagnostic::new(bin.span, DiagnosticKind::NotEquatable { ty: ty.clone() });
                     if let Some(reason) = equatable_reason(ty, type_checker) {
                         err.notes.push(reason);
                     }
@@ -132,17 +132,17 @@ pub(super) fn check_binary(
                 Type::Bool
             } else {
                 let kind = if same_ty {
-                    TypeErrKind::InvalidOperand {
+                    DiagnosticKind::InvalidOperand {
                         op: node.op.to_string(),
                         operand_type: left_ty,
                     }
                 } else {
-                    TypeErrKind::MismatchedTypes {
+                    DiagnosticKind::MismatchedTypes {
                         expected: left_ty,
                         found: right_ty,
                     }
                 };
-                errors.push(TypeErr::new(bin.span, kind));
+                errors.push(Diagnostic::new(bin.span, kind));
                 Type::Infer
             }
         }
@@ -153,9 +153,9 @@ pub(super) fn check_binary(
                 Type::Bool
             } else {
                 let wrong_ty = if left_ty.is_bool() { right_ty } else { left_ty };
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     bin.span,
-                    TypeErrKind::InvalidOperand {
+                    DiagnosticKind::InvalidOperand {
                         op: node.op.to_string(),
                         operand_type: wrong_ty,
                     },
@@ -171,17 +171,17 @@ pub(super) fn check_binary(
                 Type::Bool
             } else {
                 let kind = if same_ty {
-                    TypeErrKind::InvalidOperand {
+                    DiagnosticKind::InvalidOperand {
                         op: node.op.to_string(),
                         operand_type: left_ty,
                     }
                 } else {
-                    TypeErrKind::MismatchedTypes {
+                    DiagnosticKind::MismatchedTypes {
                         expected: left_ty,
                         found: right_ty,
                     }
                 };
-                errors.push(TypeErr::new(bin.span, kind));
+                errors.push(Diagnostic::new(bin.span, kind));
                 Type::Infer
             }
         }
@@ -195,9 +195,9 @@ pub(super) fn check_binary(
                 match result {
                     ExternOpResult::Found(ret) => ret,
                     ExternOpResult::Ambiguous => {
-                        errors.push(TypeErr::new(
+                        errors.push(Diagnostic::new(
                             bin.span,
-                            TypeErrKind::AmbiguousOperator {
+                            DiagnosticKind::AmbiguousOperator {
                                 op: node.op.to_string(),
                                 left: left_ty.clone(),
                                 right: right_ty.clone(),
@@ -208,17 +208,17 @@ pub(super) fn check_binary(
                 }
             } else {
                 let kind = if same_ty {
-                    TypeErrKind::InvalidOperand {
+                    DiagnosticKind::InvalidOperand {
                         op: node.op.to_string(),
                         operand_type: left_ty,
                     }
                 } else {
-                    TypeErrKind::MismatchedTypes {
+                    DiagnosticKind::MismatchedTypes {
                         expected: left_ty,
                         found: right_ty,
                     }
                 };
-                errors.push(TypeErr::new(bin.span, kind));
+                errors.push(Diagnostic::new(bin.span, kind));
                 Type::Infer
             }
         }
@@ -228,17 +228,17 @@ pub(super) fn check_binary(
                 Type::Int
             } else {
                 let kind = if same_ty {
-                    TypeErrKind::InvalidOperand {
+                    DiagnosticKind::InvalidOperand {
                         op: node.op.to_string(),
                         operand_type: left_ty,
                     }
                 } else {
-                    TypeErrKind::MismatchedTypes {
+                    DiagnosticKind::MismatchedTypes {
                         expected: left_ty,
                         found: right_ty,
                     }
                 };
-                errors.push(TypeErr::new(bin.span, kind));
+                errors.push(Diagnostic::new(bin.span, kind));
                 Type::Infer
             }
         }
@@ -252,15 +252,15 @@ fn check_coalesce(
     left_ty: Type,
     right_ty: Type,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let node = &bin.node;
 
     // left must be optional
     let Some(left_inner_ty) = left_ty.option_inner().cloned() else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             bin.span,
-            TypeErrKind::InvalidOperand {
+            DiagnosticKind::InvalidOperand {
                 op: node.op.to_string(),
                 operand_type: left_ty,
             },
@@ -354,7 +354,7 @@ fn resolve_extern_binary_op(
 pub(super) fn check_unary(
     unary: &UnaryNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let node = &unary.node;
     let expr_ty = check_expr(&node.expr, type_checker, errors, None);
@@ -370,9 +370,9 @@ pub(super) fn check_unary(
             {
                 return op_def.ret.clone();
             }
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 unary.span,
-                TypeErrKind::InvalidOperand {
+                DiagnosticKind::InvalidOperand {
                     op: node.op.to_string(),
                     operand_type: expr_ty.clone(),
                 },
@@ -380,9 +380,9 @@ pub(super) fn check_unary(
             Type::Infer
         }
         _ => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 unary.span,
-                TypeErrKind::InvalidOperand {
+                DiagnosticKind::InvalidOperand {
                     op: node.op.to_string(),
                     operand_type: expr_ty.clone(),
                 },
@@ -392,7 +392,10 @@ pub(super) fn check_unary(
     }
 }
 
-fn immutable_assignment_error(assign: &AssignNode, type_checker: &TypeChecker) -> Option<TypeErr> {
+fn immutable_assignment_error(
+    assign: &AssignNode,
+    type_checker: &TypeChecker,
+) -> Option<Diagnostic> {
     let root = root_ident(&assign.node.target)?;
     let info = type_checker.get_var(root)?;
     if info.mutable {
@@ -400,15 +403,18 @@ fn immutable_assignment_error(assign: &AssignNode, type_checker: &TypeChecker) -
     }
 
     Some(
-        TypeErr::new(assign.span, TypeErrKind::ImmutableAssignment { name: root })
-            .with_help("declare with 'var' to allow mutation"),
+        Diagnostic::new(
+            assign.span,
+            DiagnosticKind::ImmutableAssignment { name: root },
+        )
+        .with_help("declare with 'var' to allow mutation"),
     )
 }
 
 fn readonly_self_mutation_error(
     assign: &AssignNode,
     type_checker: &TypeChecker,
-) -> Option<TypeErr> {
+) -> Option<Diagnostic> {
     let method_ctx = type_checker.current_method()?;
 
     if !matches!(method_ctx.receiver, Some(MethodReceiver::Value)) {
@@ -427,9 +433,9 @@ fn readonly_self_mutation_error(
         return None;
     }
 
-    Some(TypeErr::new(
+    Some(Diagnostic::new(
         assign.span,
-        TypeErrKind::ReadonlySelfMutation {
+        DiagnosticKind::ReadonlySelfMutation {
             struct_name: method_ctx.struct_name,
             field: field_node.node.field,
         },
@@ -439,7 +445,7 @@ fn readonly_self_mutation_error(
 pub(super) fn check_assign(
     assign: &AssignNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let maybe_error = readonly_self_mutation_error(assign, type_checker);
     if let Some(error) = maybe_error {
@@ -450,9 +456,9 @@ pub(super) fn check_assign(
     if let Some(name) = root_ident(&assign.node.target)
         && type_checker.const_defs.contains_key(&name)
     {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             assign.span,
-            TypeErrKind::ConstAssignment { name },
+            DiagnosticKind::ConstAssignment { name },
         ));
         return Type::Infer;
     }
@@ -466,9 +472,9 @@ pub(super) fn check_assign(
                 .is_some_and(|info| matches!(info.ty, Type::DataRef { .. }));
 
             if !(is_field_access && root_is_dataref) {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     assign.span,
-                    TypeErrKind::MutateCapturedVar { name: root },
+                    DiagnosticKind::MutateCapturedVar { name: root },
                 ));
                 return Type::Infer;
             }
@@ -513,7 +519,7 @@ fn check_assign_op(
     target_ref: TypeRef,
     value_ref: TypeRef,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     type_checker.constrain_assignable(assign.span, value_ref, target_ref.clone(), errors);
     Type::Void
@@ -524,7 +530,7 @@ fn check_compound_assign_op(
     target_ref: TypeRef,
     value_ref: TypeRef,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let target_ty = type_checker
         .get_type_ref(&target_ref)
@@ -560,9 +566,9 @@ fn check_compound_assign_op(
             && target_ty.is_num())
         || (is_add_assign && target_ty.is_str());
     if !is_valid {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             assign.span,
-            TypeErrKind::InvalidOperand {
+            DiagnosticKind::InvalidOperand {
                 op: assign.node.op.to_string(),
                 operand_type: target_ty.clone(),
             },

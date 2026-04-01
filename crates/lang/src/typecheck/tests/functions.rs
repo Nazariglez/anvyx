@@ -3,7 +3,7 @@ use super::helpers::{
     lit_bool, lit_int, program, reset_expr_ids, return_stmt, run_err, run_ok,
 };
 use crate::ast::{FuncParam, Type};
-use crate::typecheck::error::TypeErrKind;
+use crate::typecheck::error::DiagnosticKind;
 
 // ---- return tests ----
 
@@ -37,7 +37,7 @@ fn test_return_void_function_returning_value() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::MismatchedTypes { expected, found }
+            DiagnosticKind::MismatchedTypes { expected, found }
             if (*expected == Type::Void && *found == Type::Int) ||
                (*expected == Type::Int && *found == Type::Void)
         )),
@@ -79,7 +79,7 @@ fn test_return_non_void_wrong_type() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::MismatchedTypes { expected, found }
+            DiagnosticKind::MismatchedTypes { expected, found }
             if (*expected == Type::Int && *found == Type::Bool) ||
                (*expected == Type::Bool && *found == Type::Int)
         )),
@@ -102,7 +102,7 @@ fn test_return_non_void_without_value() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == Type::Int && *found == Type::Void
     )));
 }
@@ -270,7 +270,7 @@ fn test_implicit_return_empty_body_non_void_error() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == Type::Int && *found == Type::Void
     )));
 }
@@ -289,7 +289,7 @@ fn test_implicit_return_wrong_type_error() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == Type::Int && *found == Type::Bool
     )));
 }
@@ -309,7 +309,7 @@ fn test_void_fn_trailing_value_error() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == Type::Void && *found == Type::Int
     )));
 }
@@ -349,7 +349,7 @@ fn test_nested_fn_implicit_return() {
 
 fn check_src(
     src: &str,
-) -> Result<crate::typecheck::TypeChecker, Vec<crate::typecheck::error::TypeErr>> {
+) -> Result<crate::typecheck::TypeChecker, Vec<crate::typecheck::error::Diagnostic>> {
     const TEST_CORE_PRELUDE: &str = concat!(
         include_str!("../../../../core/src/option.anv"),
         "\n",

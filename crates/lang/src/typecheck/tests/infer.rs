@@ -1,6 +1,6 @@
 use super::helpers::{dummy_span, opt_type, type_param, type_var};
 use crate::ast::{FuncParam, Type, TypeVarId};
-use crate::typecheck::error::TypeErrKind;
+use crate::typecheck::error::DiagnosticKind;
 use crate::typecheck::infer::{instantiate_func_type, subst_type};
 use std::collections::HashMap;
 
@@ -157,7 +157,7 @@ fn test_instantiate_arity_mismatch_too_few() {
     assert_eq!(errors.len(), 1);
     assert!(matches!(
         &errors[0].kind,
-        TypeErrKind::GenericArgNumMismatch {
+        DiagnosticKind::GenericArgNumMismatch {
             expected: 2,
             found: 1
         }
@@ -182,7 +182,7 @@ fn test_instantiate_arity_mismatch_too_many() {
     assert_eq!(errors.len(), 1);
     assert!(matches!(
         &errors[0].kind,
-        TypeErrKind::GenericArgNumMismatch {
+        DiagnosticKind::GenericArgNumMismatch {
             expected: 1,
             found: 3
         }

@@ -4,16 +4,22 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TypeErr {
+pub struct Diagnostic {
     pub span: Span,
-    pub kind: TypeErrKind,
+    pub kind: DiagnosticKind,
     pub help: Option<String>,
     pub notes: Vec<String>,
     pub secondary: Vec<(Span, String)>,
 }
 
-impl TypeErr {
-    pub fn new(span: Span, kind: TypeErrKind) -> Self {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
+impl Diagnostic {
+    pub fn new(span: Span, kind: DiagnosticKind) -> Self {
         Self {
             span,
             kind,
@@ -40,7 +46,7 @@ impl TypeErr {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum TypeErrKind {
+pub enum DiagnosticKind {
     UnknownVariable {
         name: Ident,
     },
@@ -491,4 +497,18 @@ pub enum TypeErrKind {
     BareCatchAllOnOptional {
         pattern_name: Ident,
     },
+    DeprecatedUsage {
+        kind: &'static str,
+        name: Ident,
+        reason: Option<String>,
+    },
+}
+
+impl DiagnosticKind {
+    pub fn severity(&self) -> Severity {
+        match self {
+            Self::DeprecatedUsage { .. } => Severity::Warning,
+            _ => Severity::Error,
+        }
+    }
 }

@@ -21,7 +21,7 @@ mod unify;
 mod tests;
 
 pub use const_eval::ConstValue;
-pub use error::{TypeErr, TypeErrKind};
+pub use error::{Diagnostic, DiagnosticKind, Severity};
 pub use infer::{resolve_type_param_names, subst_type};
 pub use types::{
     ExtendSpecKey, ExternTypeDef, FieldDefault, MethodSpecKey, SpecializationKey, TypeChecker,
@@ -48,7 +48,7 @@ pub fn check_program_with_modules(
     program: &Program,
     module_list: &[(Vec<String>, Vec<StmtNode>)],
     auto_use_modules: &[Vec<String>],
-) -> Result<TypeChecker, Vec<TypeErr>> {
+) -> Result<TypeChecker, Vec<Diagnostic>> {
     let mut type_checker = TypeChecker::default();
     let mut errors = vec![];
 
@@ -160,16 +160,24 @@ pub fn check_program_with_modules(
         }
     }
 
-    if !errors.is_empty() {
-        return Err(errors);
+    let (errs, warns): (Vec<_>, Vec<_>) = errors
+        .drain(..)
+        .partition(|d| d.kind.severity() == Severity::Error);
+    type_checker.warnings.extend(warns);
+    if !errs.is_empty() {
+        return Err(errs);
     }
 
     // first pass we collect the types from the ast
     // we don't need the type of the file scope blocks
     let _ = check_block_stmts(&program.stmts, None, &mut type_checker, &mut errors, None);
 
-    if !errors.is_empty() {
-        return Err(errors);
+    let (errs, warns): (Vec<_>, Vec<_>) = errors
+        .drain(..)
+        .partition(|d| d.kind.severity() == Severity::Error);
+    type_checker.warnings.extend(warns);
+    if !errs.is_empty() {
+        return Err(errs);
     }
 
     let baseline_module_defs = type_checker.module_defs.clone();
@@ -190,8 +198,12 @@ pub fn check_program_with_modules(
         type_checker.generic_extend_templates = baseline_generic_extend_templates.clone();
     }
 
-    if !errors.is_empty() {
-        return Err(errors);
+    let (errs, warns): (Vec<_>, Vec<_>) = errors
+        .drain(..)
+        .partition(|d| d.kind.severity() == Severity::Error);
+    type_checker.warnings.extend(warns);
+    if !errs.is_empty() {
+        return Err(errs);
     }
 
     // second pass we infer the types from the constraints
@@ -201,7 +213,7 @@ pub fn check_program_with_modules(
     // so if there are any we add an error
     for (_expr_id, (span, ty)) in type_checker.types() {
         if contains_infer(ty) {
-            errors.push(TypeErr::new(*span, TypeErrKind::UnresolvedInfer));
+            errors.push(Diagnostic::new(*span, DiagnosticKind::UnresolvedInfer));
         }
     }
 

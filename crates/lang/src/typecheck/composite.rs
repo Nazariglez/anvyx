@@ -10,8 +10,9 @@ use crate::{
 use std::collections::{HashMap, HashSet};
 
 use super::{
+    annotations::extract_deprecated,
     constraint::TypeRef,
-    error::{TypeErr, TypeErrKind},
+    error::{Diagnostic, DiagnosticKind},
     expr::check_expr,
     infer::{build_param_ref, constrain_slots_from_type, create_inference_slots},
     range::{
@@ -23,7 +24,7 @@ use super::{
 pub(super) fn check_tuple(
     elements: &[ExprNode],
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let element_types: Vec<Type> = elements
         .iter()
@@ -36,7 +37,7 @@ pub(super) fn check_named_tuple(
     elements: &[(Ident, ExprNode)],
     span: Span,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let mut seen_labels = HashSet::new();
     let mut fields = Vec::with_capacity(elements.len());
@@ -46,9 +47,9 @@ pub(super) fn check_named_tuple(
 
         let inserted = seen_labels.insert(*label);
         if !inserted {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::DuplicateTupleLabel { label: *label },
+                DiagnosticKind::DuplicateTupleLabel { label: *label },
             ));
         }
 
@@ -64,10 +65,10 @@ pub(super) fn validate_field_names<'a>(
     container_span: Span,
     expected: &'a [StructField],
     allow_partial: bool,
-    on_duplicate: impl Fn(Ident) -> TypeErrKind,
-    on_unknown: impl Fn(Ident) -> TypeErrKind,
-    on_missing: impl Fn(Ident) -> TypeErrKind,
-    errors: &mut Vec<TypeErr>,
+    on_duplicate: impl Fn(Ident) -> DiagnosticKind,
+    on_unknown: impl Fn(Ident) -> DiagnosticKind,
+    on_missing: impl Fn(Ident) -> DiagnosticKind,
+    errors: &mut Vec<Diagnostic>,
 ) -> Vec<Option<&'a StructField>> {
     let mut seen = HashSet::new();
     let mut matched_names = HashSet::new();
@@ -76,12 +77,12 @@ pub(super) fn validate_field_names<'a>(
         .iter()
         .map(|(name, span)| {
             if !seen.insert(*name) {
-                errors.push(TypeErr::new(*span, on_duplicate(*name)));
+                errors.push(Diagnostic::new(*span, on_duplicate(*name)));
                 return None;
             }
             match expected.iter().find(|f| f.name == *name) {
                 None => {
-                    errors.push(TypeErr::new(*span, on_unknown(*name)));
+                    errors.push(Diagnostic::new(*span, on_unknown(*name)));
                     None
                 }
                 Some(def) => {
@@ -95,7 +96,7 @@ pub(super) fn validate_field_names<'a>(
     if !allow_partial {
         for field in expected {
             if !matched_names.contains(&field.name) {
-                errors.push(TypeErr::new(container_span, on_missing(field.name)));
+                errors.push(Diagnostic::new(container_span, on_missing(field.name)));
             }
         }
     }
@@ -110,7 +111,7 @@ fn constrain_fields_and_extract_type_args(
     slots: &InferenceSlots,
     is_generic: bool,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Vec<Type> {
     for ((_, field_expr), matched_def) in fields.iter().zip(matched.iter()) {
         let Some(expected) = matched_def else {
@@ -155,7 +156,7 @@ fn constrain_fields_and_extract_type_args(
 pub(super) fn check_struct_lit(
     lit_node: &StructLiteralNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let lit = &lit_node.node;
 
@@ -170,12 +171,23 @@ pub(super) fn check_struct_lit(
         if let Some(extern_def) = type_checker.get_extern_type(struct_name).cloned() {
             return check_extern_init_lit(lit_node, struct_name, &extern_def, type_checker, errors);
         }
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             lit_node.span,
-            TypeErrKind::UnknownStruct { name: struct_name },
+            DiagnosticKind::UnknownStruct { name: struct_name },
         ));
         return Type::Infer;
     };
+
+    if let Some(reason) = &struct_def.deprecated {
+        errors.push(Diagnostic::new(
+            lit_node.span,
+            DiagnosticKind::DeprecatedUsage {
+                kind: "struct",
+                name: struct_name,
+                reason: reason.clone(),
+            },
+        ));
+    }
 
     let is_generic = !struct_def.type_params.is_empty();
     let slots = if is_generic {
@@ -190,6 +202,18 @@ pub(super) fn check_struct_lit(
     for (name, field_expr) in &lit.fields {
         let expected = field_type_map.get(name).copied();
         check_expr(field_expr, type_checker, errors, expected);
+        if let Some(sf) = struct_def.fields.iter().find(|f| f.name == *name) {
+            if let Some(reason) = extract_deprecated(&sf.annotations) {
+                errors.push(Diagnostic::new(
+                    field_expr.span,
+                    DiagnosticKind::DeprecatedUsage {
+                        kind: "field",
+                        name: *name,
+                        reason,
+                    },
+                ));
+            }
+        }
     }
 
     let provided: Vec<(Ident, Span)> = lit.fields.iter().map(|(n, e)| (*n, e.span)).collect();
@@ -199,9 +223,9 @@ pub(super) fn check_struct_lit(
         lit_node.span,
         &struct_def.fields,
         has_defaults,
-        |field| TypeErrKind::StructDuplicateField { struct_name, field },
-        |field| TypeErrKind::StructUnknownField { struct_name, field },
-        |field| TypeErrKind::StructMissingField { struct_name, field },
+        |field| DiagnosticKind::StructDuplicateField { struct_name, field },
+        |field| DiagnosticKind::StructUnknownField { struct_name, field },
+        |field| DiagnosticKind::StructMissingField { struct_name, field },
         errors,
     );
 
@@ -211,9 +235,9 @@ pub(super) fn check_struct_lit(
             let is_missing = !provided_names.contains(&field.name);
             let has_default = struct_def.field_defaults.contains_key(&field.name);
             if is_missing && !has_default {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     lit_node.span,
-                    TypeErrKind::StructMissingField {
+                    DiagnosticKind::StructMissingField {
                         struct_name,
                         field: field.name,
                     },
@@ -240,14 +264,14 @@ fn check_extern_init_lit(
     type_name: Ident,
     extern_def: &ExternTypeDef,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let lit = &lit_node.node;
 
     if !extern_def.has_init {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             lit_node.span,
-            TypeErrKind::ExternInitNoInit { type_name },
+            DiagnosticKind::ExternInitNoInit { type_name },
         ));
         return Type::Infer;
     }
@@ -277,9 +301,9 @@ fn check_extern_init_lit(
         lit_node.span,
         &expected_fields,
         false,
-        |field| TypeErrKind::ExternInitDuplicateField { type_name, field },
-        |field| TypeErrKind::ExternInitUnknownField { type_name, field },
-        |field| TypeErrKind::ExternInitMissingField { type_name, field },
+        |field| DiagnosticKind::ExternInitDuplicateField { type_name, field },
+        |field| DiagnosticKind::ExternInitUnknownField { type_name, field },
+        |field| DiagnosticKind::ExternInitMissingField { type_name, field },
         errors,
     );
 
@@ -299,7 +323,7 @@ fn check_extern_init_lit(
 pub(super) fn check_tuple_index(
     index_node: &TupleIndexNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let node = &index_node.node;
     let target_ty = check_expr(&node.target, type_checker, errors, None);
@@ -310,9 +334,9 @@ pub(super) fn check_tuple_index(
             return Type::Infer;
         }
 
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             index_node.span,
-            TypeErrKind::TupleIndexOnNonTuple {
+            DiagnosticKind::TupleIndexOnNonTuple {
                 found: target_ty.clone(),
                 index,
             },
@@ -325,9 +349,9 @@ pub(super) fn check_tuple_index(
     if is_in_bounds {
         element_types[index as usize].clone()
     } else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             index_node.span,
-            TypeErrKind::TupleIndexOutOfBounds {
+            DiagnosticKind::TupleIndexOutOfBounds {
                 tuple_type: target_ty.clone(),
                 index,
                 len,
@@ -340,7 +364,7 @@ pub(super) fn check_tuple_index(
 pub(super) fn check_range(
     range: &RangeNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     match &range.node {
         Range::Bounded {
@@ -392,7 +416,7 @@ pub(super) fn check_range(
 pub(super) fn check_array_literal(
     lit: &ArrayLiteralNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let elements = &lit.node.elements;
     if elements.is_empty() {
@@ -449,7 +473,7 @@ pub(super) fn is_empty_map_literal(expr: &ExprNode) -> bool {
 pub(super) fn check_array_fill(
     fill: &ArrayFillNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let value_ty = check_expr(&fill.node.value, type_checker, errors, None);
     check_expr(&fill.node.len, type_checker, errors, None);
@@ -471,7 +495,7 @@ pub(super) fn check_array_fill(
         }
     } else {
         errors.push(
-            TypeErr::new(len_expr.span, TypeErrKind::ArrayFillLengthNotLiteral).with_help(
+            Diagnostic::new(len_expr.span, DiagnosticKind::ArrayFillLengthNotLiteral).with_help(
                 "the length in `[expr; len]` must be a compile-time integer literal or constant",
             ),
         );
@@ -485,7 +509,7 @@ pub(super) fn check_array_fill(
 pub(super) fn check_map_literal(
     lit: &MapLiteralNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let entries = &lit.node.entries;
 
@@ -505,7 +529,10 @@ pub(super) fn check_map_literal(
         if let ExprKind::Lit(lit_key) = &key_expr.node.kind {
             let is_duplicate = seen_literal_keys.contains(&lit_key);
             if is_duplicate {
-                errors.push(TypeErr::new(key_expr.span, TypeErrKind::MapDuplicateKey));
+                errors.push(Diagnostic::new(
+                    key_expr.span,
+                    DiagnosticKind::MapDuplicateKey,
+                ));
             } else {
                 seen_literal_keys.push(lit_key);
             }
@@ -553,22 +580,22 @@ fn check_enum_struct_variant(
     enum_name: Ident,
     variant_name: Ident,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let lit = &lit_node.node;
 
     let Some(enum_def) = type_checker.get_enum(enum_name).cloned() else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             lit_node.span,
-            TypeErrKind::UnknownEnum { name: enum_name },
+            DiagnosticKind::UnknownEnum { name: enum_name },
         ));
         return Type::Infer;
     };
 
     let Some(variant) = enum_def.variants.iter().find(|v| v.name == variant_name) else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             lit_node.span,
-            TypeErrKind::UnknownEnumVariant {
+            DiagnosticKind::UnknownEnumVariant {
                 enum_name,
                 variant_name,
             },
@@ -576,10 +603,12 @@ fn check_enum_struct_variant(
         return Type::Infer;
     };
 
+    enum_def.check_deprecation(enum_name, variant, lit_node.span, errors);
+
     let VariantKind::Struct(expected_fields) = &variant.kind else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             lit_node.span,
-            TypeErrKind::EnumVariantNotStruct {
+            DiagnosticKind::EnumVariantNotStruct {
                 enum_name,
                 variant_name,
             },
@@ -608,17 +637,17 @@ fn check_enum_struct_variant(
         lit_node.span,
         expected_fields,
         false,
-        |field| TypeErrKind::EnumVariantDuplicateField {
+        |field| DiagnosticKind::EnumVariantDuplicateField {
             enum_name,
             variant_name,
             field,
         },
-        |field| TypeErrKind::EnumVariantUnknownField {
+        |field| DiagnosticKind::EnumVariantUnknownField {
             enum_name,
             variant_name,
             field,
         },
-        |field| TypeErrKind::EnumVariantMissingField {
+        |field| DiagnosticKind::EnumVariantMissingField {
             enum_name,
             variant_name,
             field,

@@ -12,7 +12,7 @@ use super::{
     const_eval::ConstValue,
     constraint::{TypeRef, resolve_constraints},
     decl::{check_body_common, check_fn_body},
-    error::{TypeErr, TypeErrKind},
+    error::{Diagnostic, DiagnosticKind},
     expr::{check_expr, field_path, root_ident},
     infer::{
         build_param_ref, build_subst, constrain_slots_from_type, create_inference_slots,
@@ -40,7 +40,7 @@ pub(super) fn check_var_param_args(
     params: impl IntoIterator<Item = (Ident, Mutability)>,
     args: &[ExprNode],
     type_checker: &TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let mut var_paths: Vec<(Ident, Ident, Vec<Ident>)> = vec![]; // (param_name, root, field_path)
 
@@ -56,9 +56,9 @@ pub(super) fn check_var_param_args(
             }
             let ExprKind::Ident(root) = &target.node.kind else {
                 errors.push(
-                    TypeErr::new(
+                    Diagnostic::new(
                         arg.span,
-                        TypeErrKind::VarParamNotLvalue { param: param_name },
+                        DiagnosticKind::VarParamNotLvalue { param: param_name },
                     )
                     .with_help(
                         "only indexed variables (e.g., arr[i], matrix[i][j]) can be \
@@ -73,9 +73,9 @@ pub(super) fn check_var_param_args(
             };
             if !info.mutable {
                 errors.push(
-                    TypeErr::new(
+                    Diagnostic::new(
                         arg.span,
-                        TypeErrKind::VarParamImmutableBinding {
+                        DiagnosticKind::VarParamImmutableBinding {
                             param: param_name,
                             binding: root,
                         },
@@ -87,9 +87,9 @@ pub(super) fn check_var_param_args(
             for (prev_param, prev_root, _) in &var_paths {
                 if root == *prev_root {
                     errors.push(
-                        TypeErr::new(
+                        Diagnostic::new(
                             arg.span,
-                            TypeErrKind::VarParamAliasing {
+                            DiagnosticKind::VarParamAliasing {
                                 param_a: *prev_param,
                                 param_b: param_name,
                                 binding: root,
@@ -107,9 +107,9 @@ pub(super) fn check_var_param_args(
 
         let Some((root, path)) = field_path(arg) else {
             errors.push(
-                TypeErr::new(
+                Diagnostic::new(
                     arg.span,
-                    TypeErrKind::VarParamNotLvalue { param: param_name },
+                    DiagnosticKind::VarParamNotLvalue { param: param_name },
                 )
                 .with_help("pass a variable declared with 'var', not a literal or expression"),
             );
@@ -122,9 +122,9 @@ pub(super) fn check_var_param_args(
 
         if !info.mutable {
             errors.push(
-                TypeErr::new(
+                Diagnostic::new(
                     arg.span,
-                    TypeErrKind::VarParamImmutableBinding {
+                    DiagnosticKind::VarParamImmutableBinding {
                         param: param_name,
                         binding: root,
                     },
@@ -137,9 +137,9 @@ pub(super) fn check_var_param_args(
         for (prev_param, prev_root, prev_path) in &var_paths {
             if root == *prev_root && paths_alias(prev_path, &path) {
                 errors.push(
-                    TypeErr::new(
+                    Diagnostic::new(
                         arg.span,
-                        TypeErrKind::VarParamAliasing {
+                        DiagnosticKind::VarParamAliasing {
                             param_a: *prev_param,
                             param_b: param_name,
                             binding: root,
@@ -159,7 +159,7 @@ pub(super) fn check_receiver_mutability(
     type_label: Ident,
     method_name: Ident,
     type_checker: &TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let Some(root) = root_ident(target) else {
         // Receiver is a temporary (function return, constructor, etc.).
@@ -172,9 +172,9 @@ pub(super) fn check_receiver_mutability(
     };
     if !info.mutable {
         errors.push(
-            TypeErr::new(
+            Diagnostic::new(
                 target.span,
-                TypeErrKind::MutatingMethodOnImmutable {
+                DiagnosticKind::MutatingMethodOnImmutable {
                     struct_name: type_label,
                     method: method_name,
                 },
@@ -188,7 +188,7 @@ pub(super) fn check_var_self_aliasing(
     receiver: &ExprNode,
     params: impl IntoIterator<Item = (Ident, Mutability)>,
     args: &[ExprNode],
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let Some((receiver_root, receiver_path)) = field_path(receiver) else {
         // receiver is a temporary, no named root, so it cannot alias any var parameter
@@ -207,9 +207,9 @@ pub(super) fn check_var_self_aliasing(
         };
         if arg_root == receiver_root && paths_alias(&receiver_path, &arg_path) {
             errors.push(
-                TypeErr::new(
+                Diagnostic::new(
                     arg.span,
-                    TypeErrKind::VarParamAliasing {
+                    DiagnosticKind::VarParamAliasing {
                         param_a: self_name,
                         param_b: param_name,
                         binding: receiver_root,
@@ -241,7 +241,7 @@ pub(super) fn check_list_method(
     method_name: Ident,
     elem: &Type,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let label = list_type_label();
     let node = &call.node;
@@ -322,14 +322,14 @@ pub(super) fn check_list_method(
                 let expected = 2;
                 let found = node.args.len();
                 if found < expected {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         call.span,
-                        TypeErrKind::TooFewArguments { expected, found },
+                        DiagnosticKind::TooFewArguments { expected, found },
                     ));
                 } else {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         call.span,
-                        TypeErrKind::TooManyArguments { expected, found },
+                        DiagnosticKind::TooManyArguments { expected, found },
                     ));
                 }
                 return Type::Infer;
@@ -379,9 +379,9 @@ pub(super) fn check_list_method(
                 && !info.mutable
             {
                 errors.push(
-                    TypeErr::new(
+                    Diagnostic::new(
                         first_arg.span,
-                        TypeErrKind::MutableParamRequiresVarTarget {
+                        DiagnosticKind::MutableParamRequiresVarTarget {
                             name: first_param.name,
                         },
                     )
@@ -402,10 +402,11 @@ pub(super) fn check_list_method(
                     && !info.mutable
                 {
                     errors.push(
-                        TypeErr::new(first_arg.span, TypeErrKind::MutableFnParamRequiresVarTarget)
-                            .with_help(
-                                "declare the collection with 'var' to allow in-place mutation",
-                            ),
+                        Diagnostic::new(
+                            first_arg.span,
+                            DiagnosticKind::MutableFnParamRequiresVarTarget,
+                        )
+                        .with_help("declare the collection with 'var' to allow in-place mutation"),
                     );
                 }
             }
@@ -513,9 +514,9 @@ pub(super) fn check_list_method(
             )
         }
         _ => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 call.span,
-                TypeErrKind::UnknownMethod {
+                DiagnosticKind::UnknownMethod {
                     struct_name: label,
                     method: method_name,
                 },
@@ -532,7 +533,7 @@ pub(super) fn check_map_method(
     key: &Type,
     value: &Type,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let label = map_type_label();
     let node = &call.node;
@@ -615,9 +616,9 @@ pub(super) fn check_map_method(
             )
         }
         _ => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 call.span,
-                TypeErrKind::UnknownMethod {
+                DiagnosticKind::UnknownMethod {
                     struct_name: label,
                     method: method_name,
                 },
@@ -633,7 +634,7 @@ fn check_generic_call(
     func_ty: &Type,
     type_params: &[TypeParam],
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
     expected: Option<&Type>,
 ) -> Type {
     let node = &call.node;
@@ -642,9 +643,9 @@ fn check_generic_call(
     let type_args = if has_type_args {
         let same_param_count = type_params.len() == node.type_args.len();
         if !same_param_count {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 call.span,
-                TypeErrKind::GenericArgNumMismatch {
+                DiagnosticKind::GenericArgNumMismatch {
                     expected: type_params.len(),
                     found: node.type_args.len(),
                 },
@@ -653,9 +654,9 @@ fn check_generic_call(
         }
 
         let Type::Func { params, ret: _ } = func_ty else {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 call.span,
-                TypeErrKind::NotAFunction {
+                DiagnosticKind::NotAFunction {
                     expr_type: func_ty.clone(),
                 },
             ));
@@ -665,9 +666,9 @@ fn check_generic_call(
         let defaults = type_checker.func_param_defaults(func_name);
         let required_count = required_param_count(defaults, params.len());
         if node.args.len() < required_count {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 call.span,
-                TypeErrKind::TooFewArguments {
+                DiagnosticKind::TooFewArguments {
                     expected: required_count,
                     found: node.args.len(),
                 },
@@ -675,9 +676,9 @@ fn check_generic_call(
             return Type::Infer;
         }
         if node.args.len() > params.len() {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 call.span,
-                TypeErrKind::TooManyArguments {
+                DiagnosticKind::TooManyArguments {
                     expected: params.len(),
                     found: node.args.len(),
                 },
@@ -695,9 +696,9 @@ fn check_generic_call(
         node.type_args.clone()
     } else {
         let Type::Func { params, ret } = func_ty else {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 call.span,
-                TypeErrKind::NotAFunction {
+                DiagnosticKind::NotAFunction {
                     expr_type: func_ty.clone(),
                 },
             ));
@@ -736,7 +737,7 @@ fn check_generic_call(
 pub(super) fn check_call(
     call: &CallNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
     expected: Option<&Type>,
 ) -> Type {
     let node = &call.node;
@@ -767,14 +768,17 @@ pub(super) fn check_call(
     // handle generic function calls with template instantiation
     match (is_generic, has_type_args) {
         (false, true) => {
-            errors.push(TypeErr::new(call.span, TypeErrKind::NotGenericFunction));
+            errors.push(Diagnostic::new(
+                call.span,
+                DiagnosticKind::NotGenericFunction,
+            ));
             return Type::Infer;
         }
         (true, _) => {
             let Some(name) = func_name else {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     call.span,
-                    TypeErrKind::NotAFunction {
+                    DiagnosticKind::NotAFunction {
                         expr_type: func_ty.clone(),
                     },
                 ));
@@ -822,7 +826,7 @@ fn check_and_constrain_arg(
     arg_expr: &ExprNode,
     param_ty: &Type,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     check_expr(arg_expr, type_checker, errors, Some(param_ty));
     let arg_ref = TypeRef::Expr(arg_expr.node.id);
@@ -845,14 +849,14 @@ pub(super) fn check_call_signature(
     ret_type: &Type,
     args: &[ExprNode],
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let total_count = param_types.len();
 
     if args.len() < required_count {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call_span,
-            TypeErrKind::TooFewArguments {
+            DiagnosticKind::TooFewArguments {
                 expected: required_count,
                 found: args.len(),
             },
@@ -860,9 +864,9 @@ pub(super) fn check_call_signature(
         return Type::Infer;
     }
     if args.len() > total_count {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call_span,
-            TypeErrKind::TooManyArguments {
+            DiagnosticKind::TooManyArguments {
                 expected: total_count,
                 found: args.len(),
             },
@@ -885,7 +889,7 @@ fn check_call_with_type(
     func_ty: Type,
     required_count: usize,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let node = &call.node;
 
@@ -901,9 +905,9 @@ fn check_call_with_type(
             errors,
         )
     } else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call.span,
-            TypeErrKind::NotAFunction { expr_type: func_ty },
+            DiagnosticKind::NotAFunction { expr_type: func_ty },
         ));
         Type::Infer
     }
@@ -915,22 +919,22 @@ pub(super) fn check_module_func_call(
     func_name: Ident,
     module_def: &ModuleDef,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
     expected: Option<&Type>,
 ) -> Type {
     let Some(func_ty) = module_def.funcs.get(&func_name).cloned() else {
         let err_kind = if module_def.all_names.contains(&func_name) {
-            TypeErrKind::PrivateModuleMember {
+            DiagnosticKind::PrivateModuleMember {
                 module: module_name,
                 member: func_name,
             }
         } else {
-            TypeErrKind::UnknownModuleMember {
+            DiagnosticKind::UnknownModuleMember {
                 module: module_name,
                 member: func_name,
             }
         };
-        errors.push(TypeErr::new(call.span, err_kind));
+        errors.push(Diagnostic::new(call.span, err_kind));
         return Type::Infer;
     };
 
@@ -979,9 +983,9 @@ pub(super) fn check_module_func_call(
             ret
         } else {
             let Type::Func { params, ret } = &func_ty else {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     call.span,
-                    TypeErrKind::NotAFunction { expr_type: func_ty },
+                    DiagnosticKind::NotAFunction { expr_type: func_ty },
                 ));
                 restore_generic_maps(type_checker, func_name, prev_tp, prev_tmpl);
                 return Type::Infer;
@@ -1067,7 +1071,7 @@ fn try_check_method_call(
     call: &CallNode,
     field_access: &FieldAccessNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Option<Type> {
     let method_name = field_access.node.field;
     let target = &field_access.node.target;
@@ -1148,14 +1152,14 @@ fn check_enum_tuple_variant(
     variant_name: Ident,
     enum_def: &EnumDef,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let variant = enum_def.variants.iter().find(|v| v.name == variant_name);
 
     let Some(variant) = variant else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call.span,
-            TypeErrKind::UnknownEnumVariant {
+            DiagnosticKind::UnknownEnumVariant {
                 enum_name,
                 variant_name,
             },
@@ -1163,22 +1167,24 @@ fn check_enum_tuple_variant(
         return Type::Infer;
     };
 
+    enum_def.check_deprecation(enum_name, variant, call.span, errors);
+
     let VariantKind::Tuple(expected_types) = &variant.kind else {
         // not a tuple variant
         match &variant.kind {
             VariantKind::Unit => {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     call.span,
-                    TypeErrKind::EnumVariantNotTuple {
+                    DiagnosticKind::EnumVariantNotTuple {
                         enum_name,
                         variant_name,
                     },
                 ));
             }
             VariantKind::Struct(_) => {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     call.span,
-                    TypeErrKind::EnumVariantNotTuple {
+                    DiagnosticKind::EnumVariantNotTuple {
                         enum_name,
                         variant_name,
                     },
@@ -1202,9 +1208,9 @@ fn check_enum_tuple_variant(
 
     // check argument count
     if node.args.len() != expected_types.len() {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call.span,
-            TypeErrKind::EnumVariantArityMismatch {
+            DiagnosticKind::EnumVariantArityMismatch {
                 enum_name,
                 variant_name,
                 expected: expected_types.len(),
@@ -1271,7 +1277,7 @@ fn check_generic_static_method(
     method: &MethodDef,
     struct_def: &StructDef,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let node = &call.node;
     let is_struct_generic = !struct_def.type_params.is_empty();
@@ -1280,9 +1286,9 @@ fn check_generic_static_method(
     let (struct_type_args, method_type_args) = if has_explicit_type_args {
         let same_count = node.type_args.len() == method.type_params.len();
         if !same_count {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 call.span,
-                TypeErrKind::GenericArgNumMismatch {
+                DiagnosticKind::GenericArgNumMismatch {
                     expected: method.type_params.len(),
                     found: node.type_args.len(),
                 },
@@ -1381,12 +1387,12 @@ pub(super) fn check_static_method_call(
     method_name: Ident,
     struct_def: &StructDef,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let Some(method) = struct_def.methods.get(&method_name) else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call.span,
-            TypeErrKind::UnknownMethod {
+            DiagnosticKind::UnknownMethod {
                 struct_name,
                 method: method_name,
             },
@@ -1395,9 +1401,9 @@ pub(super) fn check_static_method_call(
     };
 
     if method.receiver.is_some() {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call.span,
-            TypeErrKind::InstanceMethodOnType {
+            DiagnosticKind::InstanceMethodOnType {
                 struct_name,
                 method: method_name,
             },
@@ -1508,7 +1514,7 @@ fn check_generic_instance_method(
     struct_def: &StructDef,
     method: &MethodDef,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let node = &call.node;
 
@@ -1526,9 +1532,9 @@ fn check_generic_instance_method(
     let method_type_args = if has_explicit_type_args {
         let same_count = node.type_args.len() == method.type_params.len();
         if !same_count {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 call.span,
-                TypeErrKind::GenericArgNumMismatch {
+                DiagnosticKind::GenericArgNumMismatch {
                     expected: method.type_params.len(),
                     found: node.type_args.len(),
                 },
@@ -1601,12 +1607,12 @@ pub(super) fn check_instance_method_call(
     struct_def: &StructDef,
     target: Option<&ExprNode>,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let Some(method) = struct_def.methods.get(&method_name) else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call.span,
-            TypeErrKind::UnknownMethod {
+            DiagnosticKind::UnknownMethod {
                 struct_name,
                 method: method_name,
             },
@@ -1615,9 +1621,9 @@ pub(super) fn check_instance_method_call(
     };
 
     if method.receiver.is_none() {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call.span,
-            TypeErrKind::StaticMethodOnValue {
+            DiagnosticKind::StaticMethodOnValue {
                 struct_name,
                 method: method_name,
             },
@@ -1706,7 +1712,7 @@ pub(super) fn check_extern_instance_method_call(
     method: &ExternMethodDef,
     target: Option<&ExprNode>,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     if let Some(target) = target
         && matches!(method.receiver, Some(MethodReceiver::Var))
@@ -1748,21 +1754,21 @@ pub(super) fn check_extern_static_method_call(
     method_name: Ident,
     extern_def: &ExternTypeDef,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let Some(method) = extern_def.statics.get(&method_name) else {
         if extern_def.methods.contains_key(&method_name) {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 call.span,
-                TypeErrKind::InstanceMethodOnType {
+                DiagnosticKind::InstanceMethodOnType {
                     struct_name: type_name,
                     method: method_name,
                 },
             ));
         } else {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 call.span,
-                TypeErrKind::ExternUnknownMethod {
+                DiagnosticKind::ExternUnknownMethod {
                     type_name,
                     method: method_name,
                 },
@@ -1800,7 +1806,7 @@ pub(super) fn generic_context_strings(
 ) -> (String, String) {
     let args_str = type_args
         .iter()
-        .map(std::string::ToString::to_string)
+        .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ");
     let label = format!("in this instantiation of '{name}<{args_str}>'");
@@ -1823,13 +1829,13 @@ fn find_type_param_name(ty: &Type, type_params: &[TypeParam], type_args: &[Type]
 }
 
 fn generic_instantiation_help(
-    err_kind: &TypeErrKind,
+    err_kind: &DiagnosticKind,
     context_name: &str,
     type_params: &[TypeParam],
     type_args: &[Type],
 ) -> Option<String> {
     match err_kind {
-        TypeErrKind::InvalidOperand { op, operand_type } => {
+        DiagnosticKind::InvalidOperand { op, operand_type } => {
             let param = find_type_param_name(operand_type, type_params, type_args);
             let op_str = op.as_str();
             match op_str {
@@ -1872,7 +1878,7 @@ fn generic_instantiation_help(
                 _ => None,
             }
         }
-        TypeErrKind::IndexOnNonArray { found } => {
+        DiagnosticKind::IndexOnNonArray { found } => {
             let param = find_type_param_name(found, type_params, type_args);
             Some(match param {
                 Some(p) => format!(
@@ -1883,7 +1889,7 @@ fn generic_instantiation_help(
                 }
             })
         }
-        TypeErrKind::UnknownMethod {
+        DiagnosticKind::UnknownMethod {
             struct_name,
             method,
         } => {
@@ -1901,7 +1907,7 @@ fn generic_instantiation_help(
                 ),
             })
         }
-        TypeErrKind::NotEquatable { ty } => {
+        DiagnosticKind::NotEquatable { ty } => {
             let param = find_type_param_name(ty, type_params, type_args);
             Some(match param {
                 Some(p) => format!(
@@ -1920,11 +1926,11 @@ pub(super) fn report_cached_spec_error(
     type_params: &[TypeParam],
     type_args: &[Type],
     call_span: Span,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     if let Some((body_span, err_kind)) = &cached.err {
         let (_, note) = generic_context_strings(context_name, type_params, type_args);
-        let mut err = TypeErr::new(call_span, err_kind.clone())
+        let mut err = Diagnostic::new(call_span, err_kind.clone())
             .with_secondary(*body_span, "required by this expression".to_string())
             .with_note(note);
         if let Some(help) =
@@ -1937,17 +1943,17 @@ pub(super) fn report_cached_spec_error(
 }
 
 pub(super) fn report_instantiation_errors(
-    body_errors: Vec<TypeErr>,
+    body_errors: Vec<Diagnostic>,
     context_name: &str,
     type_params: &[TypeParam],
     type_args: &[Type],
     call_span: Span,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let (_, note) = generic_context_strings(context_name, type_params, type_args);
     for err in body_errors {
         let body_span = err.span;
-        let mut new_err = TypeErr::new(call_span, err.kind.clone())
+        let mut new_err = Diagnostic::new(call_span, err.kind.clone())
             .with_secondary(body_span, "required by this expression".to_string())
             .with_note(note.clone());
         for (sec_span, sec_msg) in &err.secondary {
@@ -1974,13 +1980,13 @@ fn instantiate_and_check_fn(
     type_args: &[Type],
     call_span: Span,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     // look up type parameters early so they are available for cache-hit context
     let Some(type_params) = type_checker.func_type_params.get(&func_name).cloned() else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call_span,
-            TypeErrKind::UnknownFunction { name: func_name },
+            DiagnosticKind::UnknownFunction { name: func_name },
         ));
         return Type::Infer;
     };
@@ -2005,9 +2011,9 @@ fn instantiate_and_check_fn(
 
     // look up the generic function template
     let Some(fn_template) = type_checker.generic_func_templates.get(&func_name).cloned() else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call_span,
-            TypeErrKind::UnknownFunction { name: func_name },
+            DiagnosticKind::UnknownFunction { name: func_name },
         ));
         return Type::Infer;
     };
@@ -2015,9 +2021,9 @@ fn instantiate_and_check_fn(
     // verify arity
     let same_param_count = type_params.len() == type_args.len();
     if !same_param_count {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call_span,
-            TypeErrKind::GenericArgNumMismatch {
+            DiagnosticKind::GenericArgNumMismatch {
                 expected: type_params.len(),
                 found: type_args.len(),
             },
@@ -2106,7 +2112,7 @@ fn instantiate_method_body(
     method: &MethodDef,
     call_span: Span,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let all_type_args: Vec<Type> = struct_type_args
         .iter()
@@ -2219,7 +2225,7 @@ pub(super) fn type_call_on_base(
     call_node: &CallNode,
     required_count: usize,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     // check each argument and pass expected type for lambdas so they can infer param types
     if let Type::Func { params, .. } = base_ty {
@@ -2248,9 +2254,9 @@ pub(super) fn type_call_on_base(
         if matches!(base_ty, Type::Infer) {
             return Type::Infer;
         }
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call_node.span,
-            TypeErrKind::NotAFunction {
+            DiagnosticKind::NotAFunction {
                 expr_type: base_ty.clone(),
             },
         ));
@@ -2259,9 +2265,9 @@ pub(super) fn type_call_on_base(
 
     let args_len = call_node.node.args.len();
     if args_len < required_count || args_len > params.len() {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call_node.span,
-            TypeErrKind::MismatchedTypes {
+            DiagnosticKind::MismatchedTypes {
                 expected: base_ty.clone(),
                 found: Type::Func {
                     params: vec![FuncParam::immut(Type::Infer); args_len],

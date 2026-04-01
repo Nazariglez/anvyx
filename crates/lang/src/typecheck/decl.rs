@@ -12,7 +12,7 @@ use super::{
     annotations::{AnnotationTarget, validate_annotations},
     const_eval::{ConstValue, eval_const_expr, validate_const_expr},
     constraint::TypeRef,
-    error::{TypeErr, TypeErrKind},
+    error::{Diagnostic, DiagnosticKind},
     infer::type_from_fn,
     stmt::check_block_expr,
     types::{
@@ -26,7 +26,7 @@ pub(super) fn check_body_common(
     ret_ty: &Type,
     error_span: Span,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     type_checker.push_scope();
     type_checker.push_return_type(ret_ty.clone(), None);
@@ -41,9 +41,9 @@ pub(super) fn check_body_common(
 
     if ret_ty.is_void() {
         if !body_ty.is_void() {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 error_span,
-                TypeErrKind::MismatchedTypes {
+                DiagnosticKind::MismatchedTypes {
                     expected: Type::Void,
                     found: body_ty,
                 },
@@ -54,9 +54,9 @@ pub(super) fn check_body_common(
         let ret_ref = TypeRef::concrete(ret_ty);
         type_checker.constrain_assignable(error_span, expr_ref, ret_ref, errors);
     } else if !had_explicit_return {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             error_span,
-            TypeErrKind::MismatchedTypes {
+            DiagnosticKind::MismatchedTypes {
                 expected: ret_ty.clone(),
                 found: Type::Void,
             },
@@ -73,7 +73,7 @@ pub(super) fn check_fn_body(
     ret_ty: Type,
     error_span: Span,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let params: Vec<(Ident, Type, bool)> = func
         .params
@@ -105,7 +105,7 @@ pub(super) fn check_method_body(
     method: &MethodDef,
     error_span: Span,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     if !method.type_params.is_empty() {
         for method_param in &method.type_params {
@@ -114,9 +114,9 @@ pub(super) fn check_method_body(
                 .iter()
                 .any(|sp| sp.name == method_param.name);
             if shadows_struct {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     error_span,
-                    TypeErrKind::MethodTypeParamShadowsStruct {
+                    DiagnosticKind::MethodTypeParamShadowsStruct {
                         struct_name,
                         method: method_name,
                         param: method_param.name,
@@ -175,17 +175,23 @@ pub(super) fn check_method_body(
 pub(super) fn check_func(
     fn_node: &FuncNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let func = &fn_node.node;
 
     for param in &func.params {
         if param.ty.contains_any() {
-            errors.push(TypeErr::new(fn_node.span, TypeErrKind::AnyTypeNotAllowed));
+            errors.push(Diagnostic::new(
+                fn_node.span,
+                DiagnosticKind::AnyTypeNotAllowed,
+            ));
         }
     }
     if func.ret.contains_any() {
-        errors.push(TypeErr::new(fn_node.span, TypeErrKind::AnyTypeNotAllowed));
+        errors.push(Diagnostic::new(
+            fn_node.span,
+            DiagnosticKind::AnyTypeNotAllowed,
+        ));
     }
 
     // if the function is generic we skip checking here
@@ -196,9 +202,9 @@ pub(super) fn check_func(
     }
 
     let Some(info) = type_checker.get_var(func.name) else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             fn_node.span,
-            TypeErrKind::UnknownFunction { name: func.name },
+            DiagnosticKind::UnknownFunction { name: func.name },
         ));
 
         return;
@@ -206,9 +212,9 @@ pub(super) fn check_func(
     let ty = &info.ty;
 
     if !matches!(ty, Type::Func { .. }) {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             fn_node.span,
-            TypeErrKind::MismatchedTypes {
+            DiagnosticKind::MismatchedTypes {
                 expected: type_from_fn(func),
                 found: ty.clone(),
             },
@@ -255,7 +261,7 @@ fn validate_param_defaults(
     owner_name: Ident,
     owner_span: Span,
     type_checker: &TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Vec<Option<ConstValue>> {
     let known_consts: HashSet<Ident> = type_checker.const_defs.keys().copied().collect();
     let mut seen_default = false;
@@ -265,9 +271,9 @@ fn validate_param_defaults(
         match &param.default {
             None => {
                 if seen_default {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         owner_span,
-                        TypeErrKind::RequiredParamAfterOptional {
+                        DiagnosticKind::RequiredParamAfterOptional {
                             func: owner_name,
                             param: param.name,
                         },
@@ -279,9 +285,9 @@ fn validate_param_defaults(
                 seen_default = true;
 
                 if type_references_generic(&param.ty, type_params) {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         expr.span,
-                        TypeErrKind::ParamDefaultOnGenericType {
+                        DiagnosticKind::ParamDefaultOnGenericType {
                             func: owner_name,
                             param: param.name,
                         },
@@ -291,9 +297,9 @@ fn validate_param_defaults(
                 }
 
                 if validate_const_expr(expr, &known_consts).is_err() {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         expr.span,
-                        TypeErrKind::ParamDefaultNotConst {
+                        DiagnosticKind::ParamDefaultNotConst {
                             func: owner_name,
                             param: param.name,
                         },
@@ -303,9 +309,9 @@ fn validate_param_defaults(
                 }
 
                 let Ok(value) = eval_const_expr(expr, &type_checker.const_defs) else {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         expr.span,
-                        TypeErrKind::ParamDefaultNotConst {
+                        DiagnosticKind::ParamDefaultNotConst {
                             func: owner_name,
                             param: param.name,
                         },
@@ -317,9 +323,9 @@ fn validate_param_defaults(
                 let resolved_ty = type_checker.resolve_type(&param.ty);
                 if value == ConstValue::Nil {
                     if !resolved_ty.is_option() {
-                        errors.push(TypeErr::new(
+                        errors.push(Diagnostic::new(
                             expr.span,
-                            TypeErrKind::ParamDefaultTypeMismatch {
+                            DiagnosticKind::ParamDefaultTypeMismatch {
                                 func: owner_name,
                                 param: param.name,
                                 expected: resolved_ty,
@@ -332,9 +338,9 @@ fn validate_param_defaults(
                 } else {
                     let value_ty = value.ty();
                     if value_ty != resolved_ty {
-                        errors.push(TypeErr::new(
+                        errors.push(Diagnostic::new(
                             expr.span,
-                            TypeErrKind::ParamDefaultTypeMismatch {
+                            DiagnosticKind::ParamDefaultTypeMismatch {
                                 func: owner_name,
                                 param: param.name,
                                 expected: resolved_ty,
@@ -357,7 +363,7 @@ fn validate_param_defaults(
 pub(super) fn check_struct(
     struct_node: &StructDeclNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let decl = &struct_node.node;
     let struct_name = decl.name;
@@ -365,9 +371,9 @@ pub(super) fn check_struct(
     for field in &decl.fields {
         validate_annotations(&field.annotations, AnnotationTarget::Field, errors);
         if field.ty.contains_any() {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 struct_node.span,
-                TypeErrKind::AnyTypeNotAllowed,
+                DiagnosticKind::AnyTypeNotAllowed,
             ));
         }
     }
@@ -383,9 +389,9 @@ pub(super) fn check_struct(
         };
 
         if type_references_generic(&field.ty, &decl.type_params) {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 expr.span,
-                TypeErrKind::FieldDefaultOnGenericType {
+                DiagnosticKind::FieldDefaultOnGenericType {
                     struct_name,
                     field: field.name,
                 },
@@ -404,9 +410,9 @@ pub(super) fn check_struct(
                     .field_defaults
                     .insert(field.name, FieldDefault::EmptyArray);
             } else {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     expr.span,
-                    TypeErrKind::FieldDefaultTypeMismatch {
+                    DiagnosticKind::FieldDefaultTypeMismatch {
                         struct_name,
                         field: field.name,
                         expected: resolved_ty,
@@ -429,9 +435,9 @@ pub(super) fn check_struct(
                     .field_defaults
                     .insert(field.name, FieldDefault::EmptyMap);
             } else {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     expr.span,
-                    TypeErrKind::FieldDefaultTypeMismatch {
+                    DiagnosticKind::FieldDefaultTypeMismatch {
                         struct_name,
                         field: field.name,
                         expected: resolved_ty,
@@ -446,9 +452,9 @@ pub(super) fn check_struct(
         }
 
         if validate_const_expr(expr, &known_consts).is_err() {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 expr.span,
-                TypeErrKind::FieldDefaultNotConst {
+                DiagnosticKind::FieldDefaultNotConst {
                     struct_name,
                     field: field.name,
                 },
@@ -457,9 +463,9 @@ pub(super) fn check_struct(
         }
 
         let Ok(value) = eval_const_expr(expr, &type_checker.const_defs) else {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 expr.span,
-                TypeErrKind::FieldDefaultNotConst {
+                DiagnosticKind::FieldDefaultNotConst {
                     struct_name,
                     field: field.name,
                 },
@@ -469,9 +475,9 @@ pub(super) fn check_struct(
 
         if value == ConstValue::Nil {
             if !resolved_ty.is_option() {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     expr.span,
-                    TypeErrKind::FieldDefaultTypeMismatch {
+                    DiagnosticKind::FieldDefaultTypeMismatch {
                         struct_name,
                         field: field.name,
                         expected: resolved_ty,
@@ -483,9 +489,9 @@ pub(super) fn check_struct(
         } else {
             let value_ty = value.ty();
             if value_ty != resolved_ty {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     expr.span,
-                    TypeErrKind::FieldDefaultTypeMismatch {
+                    DiagnosticKind::FieldDefaultTypeMismatch {
                         struct_name,
                         field: field.name,
                         expected: resolved_ty,
@@ -544,13 +550,13 @@ fn validate_to_string_signature(
     struct_name: Ident,
     method: &MethodDef,
     span: Span,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     match method.receiver {
         None => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::InvalidToStringSignature {
+                DiagnosticKind::InvalidToStringSignature {
                     struct_name,
                     reason: "must have a 'self' receiver".to_string(),
                 },
@@ -558,9 +564,9 @@ fn validate_to_string_signature(
             return;
         }
         Some(MethodReceiver::Var) => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::InvalidToStringSignature {
+                DiagnosticKind::InvalidToStringSignature {
                     struct_name,
                     reason: "receiver must be 'self', not 'var self'".to_string(),
                 },
@@ -571,9 +577,9 @@ fn validate_to_string_signature(
 
     if method.ret != Type::String {
         let found = method.ret.clone();
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             span,
-            TypeErrKind::InvalidToStringSignature {
+            DiagnosticKind::InvalidToStringSignature {
                 struct_name,
                 reason: format!("must return 'string', found '{found}'"),
             },
@@ -581,9 +587,9 @@ fn validate_to_string_signature(
     }
 
     if !method.params.is_empty() {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             span,
-            TypeErrKind::InvalidToStringSignature {
+            DiagnosticKind::InvalidToStringSignature {
                 struct_name,
                 reason: "must take no parameters besides 'self'".to_string(),
             },
@@ -591,9 +597,9 @@ fn validate_to_string_signature(
     }
 
     if !method.type_params.is_empty() {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             span,
-            TypeErrKind::InvalidToStringSignature {
+            DiagnosticKind::InvalidToStringSignature {
                 struct_name,
                 reason: "must not be generic".to_string(),
             },

@@ -4,7 +4,7 @@ use super::helpers::{
     struct_decl, struct_literal_expr, var_binding,
 };
 use crate::ast::{AssignOp, MethodReceiver, Type};
-use crate::typecheck::error::TypeErrKind;
+use crate::typecheck::error::DiagnosticKind;
 
 // ---- assignment mutability ----
 
@@ -21,7 +21,7 @@ fn test_let_assign_ident_err() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::ImmutableAssignment { name } if name == &dummy_ident("x")
+            DiagnosticKind::ImmutableAssignment { name } if name == &dummy_ident("x")
         )),
         "expected ImmutableAssignment for x, got: {:?}",
         errors
@@ -57,7 +57,7 @@ fn test_let_compound_assign_err() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::ImmutableAssignment { name } if name == &dummy_ident("x")
+            DiagnosticKind::ImmutableAssignment { name } if name == &dummy_ident("x")
         )),
         "expected ImmutableAssignment for x, got: {:?}",
         errors
@@ -101,7 +101,7 @@ fn test_let_field_assign_err() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::ImmutableAssignment { name } if name == &dummy_ident("p")
+            DiagnosticKind::ImmutableAssignment { name } if name == &dummy_ident("p")
         )),
         "expected ImmutableAssignment for p, got: {:?}",
         errors
@@ -150,7 +150,7 @@ fn test_readonly_param_assign_err() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::ImmutableAssignment { name } if name == &dummy_ident("x")
+            DiagnosticKind::ImmutableAssignment { name } if name == &dummy_ident("x")
         )),
         "expected ImmutableAssignment for x, got: {:?}",
         errors
@@ -207,7 +207,7 @@ fn test_var_param_let_arg_err() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::VarParamImmutableBinding { param, binding }
+            DiagnosticKind::VarParamImmutableBinding { param, binding }
                 if param == &dummy_ident("x") && binding == &dummy_ident("n")
         )),
         "expected VarParamImmutableBinding for x/n, got: {:?}",
@@ -229,7 +229,7 @@ fn test_var_param_literal_err() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::VarParamNotLvalue { param } if param == &dummy_ident("x")
+            DiagnosticKind::VarParamNotLvalue { param } if param == &dummy_ident("x")
         )),
         "expected VarParamNotLvalue for x, got: {:?}",
         errors
@@ -255,7 +255,7 @@ fn test_var_param_expr_err() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::VarParamNotLvalue { param } if param == &dummy_ident("x")
+            DiagnosticKind::VarParamNotLvalue { param } if param == &dummy_ident("x")
         )),
         "expected VarParamNotLvalue for x, got: {:?}",
         errors
@@ -305,7 +305,7 @@ fn test_readonly_self_mutation_err() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::ReadonlySelfMutation { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::ReadonlySelfMutation { .. })),
         "expected ReadonlySelfMutation, got: {:?}",
         errors
     );
@@ -396,7 +396,7 @@ fn test_var_self_on_let_binding_err() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MutatingMethodOnImmutable { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MutatingMethodOnImmutable { .. })),
         "expected MutatingMethodOnImmutable, got: {:?}",
         errors
     );

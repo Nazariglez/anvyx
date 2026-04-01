@@ -14,7 +14,7 @@ use super::{
     },
     constraint::TypeRef,
     control::{check_if, check_if_let, check_match},
-    error::{TypeErr, TypeErrKind},
+    error::{Diagnostic, DiagnosticKind},
     infer::{build_subst, subst_type},
     ops::{check_assign, check_binary, check_unary},
     postfix::{check_postfix_chain, collect_postfix_chain},
@@ -25,7 +25,7 @@ use super::{
 pub(super) fn check_expr(
     expr_node: &ExprNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
     expected: Option<&Type>,
 ) -> Type {
     // route all postfix expressions through the shared chain checker
@@ -50,9 +50,9 @@ pub(super) fn check_expr(
                 type_checker.const_values.insert(expr_node.node.id, val);
                 ty
             } else {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     expr_node.span,
-                    TypeErrKind::UnknownVariable { name: *ident },
+                    DiagnosticKind::UnknownVariable { name: *ident },
                 ));
                 Type::Infer
             }
@@ -144,7 +144,7 @@ fn resolve_float_type(suffix: Option<FloatSuffix>, expected: Option<&Type>) -> T
 fn check_cast(
     cast_node: &CastNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let from_ty = check_expr(&cast_node.node.expr, type_checker, errors, None);
     let to_ty = &cast_node.node.target;
@@ -157,9 +157,9 @@ fn check_cast(
     };
 
     if !valid {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             cast_node.span,
-            TypeErrKind::InvalidCast {
+            DiagnosticKind::InvalidCast {
                 from: from_ty,
                 to: to_ty.clone(),
             },
@@ -172,7 +172,7 @@ fn check_cast(
 fn check_string_interp(
     parts: &[StringPart],
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     for part in parts {
         let StringPart::Expr(expr_node, fmt) = part else {
@@ -190,7 +190,7 @@ fn validate_format_spec(
     spec: &FormatSpec,
     expr_type: &Type,
     span: Span,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     if matches!(expr_type, Type::Infer | Type::Void) {
         return;
@@ -205,9 +205,9 @@ fn validate_format_spec(
                     FormatKind::Binary => "b",
                     _ => unreachable!(),
                 };
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     span,
-                    TypeErrKind::InvalidFormatSpec {
+                    DiagnosticKind::InvalidFormatSpec {
                         reason: format!("format type '{label}' requires int, found '{expr_type}'"),
                     },
                 ));
@@ -221,9 +221,9 @@ fn validate_format_spec(
                     FormatKind::ExpUpper => "E",
                     _ => unreachable!(),
                 };
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     span,
-                    TypeErrKind::InvalidFormatSpec {
+                    DiagnosticKind::InvalidFormatSpec {
                         reason: format!(
                             "format type '{label}' requires float or double, found '{expr_type}'"
                         ),
@@ -236,9 +236,9 @@ fn validate_format_spec(
     }
 
     if spec.precision.is_some() && !matches!(expr_type, Type::Float | Type::Double | Type::String) {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             span,
-            TypeErrKind::InvalidFormatSpec {
+            DiagnosticKind::InvalidFormatSpec {
                 reason: format!("precision not supported for '{expr_type}'"),
             },
         ));
@@ -248,9 +248,9 @@ fn validate_format_spec(
     if matches!(spec.sign, FormatSign::Always)
         && !matches!(expr_type, Type::Int | Type::Float | Type::Double)
     {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             span,
-            TypeErrKind::InvalidFormatSpec {
+            DiagnosticKind::InvalidFormatSpec {
                 reason: format!("sign format requires a numeric type, found '{expr_type}'"),
             },
         ));
@@ -261,7 +261,7 @@ fn check_lambda(
     lambda_node: &LambdaNode,
     expr_node: &ExprNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
     expected: Option<&Type>,
 ) -> Type {
     let lambda = &lambda_node.node;
@@ -276,9 +276,9 @@ fn check_lambda(
     let mut param_types: Vec<Type> = Vec::with_capacity(lambda.params.len());
     if let Some(ep) = expected_params {
         if lambda.params.len() != ep.len() {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 expr_node.span,
-                TypeErrKind::LambdaParamCountMismatch {
+                DiagnosticKind::LambdaParamCountMismatch {
                     expected: ep.len(),
                     found: lambda.params.len(),
                 },
@@ -290,9 +290,9 @@ fn check_lambda(
                 Some(annotated) => {
                     let resolved = type_checker.resolve_type(annotated);
                     if resolved != expected_param_fp.ty {
-                        errors.push(TypeErr::new(
+                        errors.push(Diagnostic::new(
                             expr_node.span,
-                            TypeErrKind::MismatchedTypes {
+                            DiagnosticKind::MismatchedTypes {
                                 expected: expected_param_fp.ty.clone(),
                                 found: resolved.clone(),
                             },
@@ -309,9 +309,9 @@ fn check_lambda(
             let ty = if let Some(annotated) = &param.ty {
                 type_checker.resolve_type(annotated)
             } else {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     expr_node.span,
-                    TypeErrKind::CannotInferLambdaParam { name: param.name },
+                    DiagnosticKind::CannotInferLambdaParam { name: param.name },
                 ));
                 Type::Infer
             };
@@ -360,9 +360,9 @@ fn check_lambda(
 
             if effective_ret.is_void() {
                 if !body_ty.is_void() {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         expr_node.span,
-                        TypeErrKind::MismatchedTypes {
+                        DiagnosticKind::MismatchedTypes {
                             expected: Type::Void,
                             found: body_ty,
                         },
@@ -373,9 +373,9 @@ fn check_lambda(
                 let ret_ref = TypeRef::concrete(&effective_ret);
                 type_checker.constrain_assignable(expr_node.span, expr_ref, ret_ref, errors);
             } else if !had_explicit_return {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     expr_node.span,
-                    TypeErrKind::MismatchedTypes {
+                    DiagnosticKind::MismatchedTypes {
                         expected: effective_ret.clone(),
                         found: Type::Void,
                     },
@@ -424,7 +424,7 @@ fn check_inferred_enum(
     node: &InferredEnumNode,
     span: Span,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
     expected: Option<&Type>,
 ) -> Type {
     let resolved_expected = expected.map(|t| type_checker.resolve_type(t));
@@ -433,9 +433,9 @@ fn check_inferred_enum(
         type_args,
     }) = resolved_expected.as_ref()
     else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             span,
-            TypeErrKind::CannotInferEnumVariant {
+            DiagnosticKind::CannotInferEnumVariant {
                 variant: node.node.variant,
             },
         ));
@@ -447,23 +447,25 @@ fn check_inferred_enum(
     let variant_name = node.node.variant;
 
     let Some(enum_def) = type_checker.get_enum(enum_name).cloned() else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             span,
-            TypeErrKind::UnknownEnum { name: enum_name },
+            DiagnosticKind::UnknownEnum { name: enum_name },
         ));
         return Type::Infer;
     };
 
     let Some(variant) = enum_def.variants.iter().find(|v| v.name == variant_name) else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             span,
-            TypeErrKind::UnknownEnumVariant {
+            DiagnosticKind::UnknownEnumVariant {
                 enum_name,
                 variant_name,
             },
         ));
         return Type::Infer;
     };
+
+    enum_def.check_deprecation(enum_name, variant, span, errors);
 
     let type_params = &enum_def.type_params;
     match (&node.node.args, &variant.kind) {
@@ -472,9 +474,9 @@ fn check_inferred_enum(
             type_args,
         },
         (InferredEnumArgs::Unit, _) => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::EnumVariantNotUnit {
+                DiagnosticKind::EnumVariantNotUnit {
                     enum_name,
                     variant_name,
                 },
@@ -483,9 +485,9 @@ fn check_inferred_enum(
         }
         (InferredEnumArgs::Tuple(args), VariantKind::Tuple(expected_types)) => {
             if args.len() != expected_types.len() {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     span,
-                    TypeErrKind::EnumVariantArityMismatch {
+                    DiagnosticKind::EnumVariantArityMismatch {
                         enum_name,
                         variant_name,
                         expected: expected_types.len(),
@@ -508,9 +510,9 @@ fn check_inferred_enum(
             }
         }
         (InferredEnumArgs::Tuple(_), _) => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::EnumVariantNotTuple {
+                DiagnosticKind::EnumVariantNotTuple {
                     enum_name,
                     variant_name,
                 },
@@ -531,17 +533,17 @@ fn check_inferred_enum(
                 span,
                 expected_fields,
                 false,
-                |field| TypeErrKind::EnumVariantDuplicateField {
+                |field| DiagnosticKind::EnumVariantDuplicateField {
                     enum_name,
                     variant_name,
                     field,
                 },
-                |field| TypeErrKind::EnumVariantUnknownField {
+                |field| DiagnosticKind::EnumVariantUnknownField {
                     enum_name,
                     variant_name,
                     field,
                 },
-                |field| TypeErrKind::EnumVariantMissingField {
+                |field| DiagnosticKind::EnumVariantMissingField {
                     enum_name,
                     variant_name,
                     field,
@@ -567,9 +569,9 @@ fn check_inferred_enum(
             }
         }
         (InferredEnumArgs::Struct(_), _) => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::EnumVariantNotStruct {
+                DiagnosticKind::EnumVariantNotStruct {
                     enum_name,
                     variant_name,
                 },

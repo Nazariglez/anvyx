@@ -6,6 +6,7 @@ pub struct Directives {
     pub expect: ExpectedResult,
     pub match_exact: Option<String>,
     pub contains: Vec<String>,
+    pub warn_contains: Vec<String>,
     pub skip: Option<String>,
     pub helper: bool,
 }
@@ -65,6 +66,9 @@ impl Directives {
             }
             if let Some(ln) = trimmed.strip_prefix("// @contains:") {
                 directives.contains.push(ln.trim().to_string());
+            }
+            if let Some(ln) = trimmed.strip_prefix("// @warn-contains:") {
+                directives.warn_contains.push(ln.trim().to_string());
             }
             if let Some(ln) = trimmed.strip_prefix("// @mode:") {
                 directives.mode = Mode::from_str(ln.trim());

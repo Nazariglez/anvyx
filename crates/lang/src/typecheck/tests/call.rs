@@ -4,7 +4,7 @@ use super::helpers::{
     lit_string, program, reset_expr_ids, return_stmt, run_err, run_ok,
 };
 use crate::ast::{BinaryOp, FuncParam, Type, TypeParam, TypeVarId};
-use crate::typecheck::error::TypeErrKind;
+use crate::typecheck::error::DiagnosticKind;
 
 #[test]
 fn test_call_happy_path() {
@@ -45,7 +45,7 @@ fn test_call_arity_mismatch_too_few() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. }))
     );
 }
 
@@ -72,7 +72,7 @@ fn test_call_arity_mismatch_too_many() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. }))
     );
 }
 
@@ -100,7 +100,7 @@ fn test_call_argument_type_mismatch() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::MismatchedTypes { expected, found }
+            DiagnosticKind::MismatchedTypes { expected, found }
             if (*expected == Type::Int && *found == Type::String) ||
                (*expected == Type::String && *found == Type::Int)
         )),
@@ -239,7 +239,7 @@ fn test_template_generic_add_with_bool_err() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::InvalidOperand { op, operand_type }
+            DiagnosticKind::InvalidOperand { op, operand_type }
             if op == "+" && *operand_type == Type::Bool
         )),
         "Expected InvalidOperand error, got: {:?}",
@@ -323,7 +323,7 @@ fn test_template_generic_explicit_type_args_bool_err() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::InvalidOperand { op, operand_type }
+            DiagnosticKind::InvalidOperand { op, operand_type }
             if op == "+" && *operand_type == Type::Bool
         )),
         "Expected InvalidOperand error, got: {:?}",

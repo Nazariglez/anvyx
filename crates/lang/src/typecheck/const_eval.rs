@@ -10,7 +10,7 @@ use crate::{
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use super::{
-    error::{TypeErr, TypeErrKind},
+    error::{Diagnostic, DiagnosticKind},
     types::ModuleDef,
 };
 
@@ -62,15 +62,15 @@ pub(super) fn collect_const_decls(stmts: &[StmtNode]) -> Vec<&ConstDeclNode> {
 /// Returns indices into `decls` in topological evaluation order.
 pub(super) fn build_const_dependency_graph(
     decls: &[&ConstDeclNode],
-) -> Result<Vec<usize>, TypeErr> {
+) -> Result<Vec<usize>, Diagnostic> {
     // Map const name -> index
     let mut name_to_idx: HashMap<Ident, usize> = HashMap::new();
     for (i, decl) in decls.iter().enumerate() {
         let name = decl.node.name;
         if name_to_idx.contains_key(&name) {
-            return Err(TypeErr::new(
+            return Err(Diagnostic::new(
                 decl.span,
-                TypeErrKind::DuplicateConst { name },
+                DiagnosticKind::DuplicateConst { name },
             ));
         }
         name_to_idx.insert(name, i);
@@ -118,9 +118,9 @@ pub(super) fn build_const_dependency_graph(
             .map(|(i, _)| i)
             .expect("cycle must exist if order is incomplete");
         let decl = decls[cycle_node];
-        return Err(TypeErr::new(
+        return Err(Diagnostic::new(
             decl.span,
-            TypeErrKind::CircularConstDependency {
+            DiagnosticKind::CircularConstDependency {
                 name: decl.node.name,
             },
         ));
@@ -164,14 +164,17 @@ fn collect_expr_ident_refs(
 pub(super) fn validate_const_expr(
     expr: &ExprNode,
     known_consts: &HashSet<Ident>,
-) -> Result<(), TypeErr> {
+) -> Result<(), Diagnostic> {
     match &expr.node.kind {
         ExprKind::Lit(_) => Ok(()),
         ExprKind::Ident(name) => {
             if known_consts.contains(name) {
                 Ok(())
             } else {
-                Err(TypeErr::new(expr.span, TypeErrKind::NotConstantExpression))
+                Err(Diagnostic::new(
+                    expr.span,
+                    DiagnosticKind::NotConstantExpression,
+                ))
             }
         }
         ExprKind::Binary(bin) => {
@@ -183,7 +186,10 @@ pub(super) fn validate_const_expr(
             let target = &cast_node.node.target;
             let is_numeric = matches!(target, Type::Int | Type::Float | Type::Double);
             if !is_numeric {
-                return Err(TypeErr::new(expr.span, TypeErrKind::NotConstantExpression));
+                return Err(Diagnostic::new(
+                    expr.span,
+                    DiagnosticKind::NotConstantExpression,
+                ));
             }
             validate_const_expr(&cast_node.node.expr, known_consts)
         }
@@ -195,21 +201,27 @@ pub(super) fn validate_const_expr(
             }
             Ok(())
         }
-        _ => Err(TypeErr::new(expr.span, TypeErrKind::NotConstantExpression)),
+        _ => Err(Diagnostic::new(
+            expr.span,
+            DiagnosticKind::NotConstantExpression,
+        )),
     }
 }
 
 pub(super) fn eval_const_expr(
     expr: &ExprNode,
     const_defs: &HashMap<Ident, ConstDef>,
-) -> Result<ConstValue, TypeErr> {
+) -> Result<ConstValue, Diagnostic> {
     match &expr.node.kind {
         ExprKind::Lit(lit) => eval_lit(lit),
         ExprKind::Ident(name) => {
             if let Some(def) = const_defs.get(name) {
                 Ok(def.value.clone())
             } else {
-                Err(TypeErr::new(expr.span, TypeErrKind::NotConstantExpression))
+                Err(Diagnostic::new(
+                    expr.span,
+                    DiagnosticKind::NotConstantExpression,
+                ))
             }
         }
         ExprKind::Binary(bin) => {
@@ -242,11 +254,14 @@ pub(super) fn eval_const_expr(
             }
             Ok(ConstValue::String(result))
         }
-        _ => Err(TypeErr::new(expr.span, TypeErrKind::NotConstantExpression)),
+        _ => Err(Diagnostic::new(
+            expr.span,
+            DiagnosticKind::NotConstantExpression,
+        )),
     }
 }
 
-fn eval_lit(lit: &Lit) -> Result<ConstValue, TypeErr> {
+fn eval_lit(lit: &Lit) -> Result<ConstValue, Diagnostic> {
     match lit {
         Lit::Int(n) => Ok(ConstValue::Int(*n)),
         Lit::Float { value, suffix } => match suffix {
@@ -264,8 +279,11 @@ fn eval_binary(
     op: BinaryOp,
     right: ConstValue,
     span: Span,
-) -> Result<ConstValue, TypeErr> {
-    use BinaryOp::*;
+) -> Result<ConstValue, Diagnostic> {
+    use BinaryOp::{
+        Add, And, BitAnd, BitOr, Div, Eq, GreaterThan, GreaterThanEq, LessThan, LessThanEq, Mul,
+        NotEq, Or, Rem, Shl, Shr, Sub, Xor,
+    };
     use ConstValue::{Bool, Double, Float, Int, String};
 
     match (left, op, right) {
@@ -273,24 +291,26 @@ fn eval_binary(
         (Int(l), Add, Int(r)) => l
             .checked_add(r)
             .map(Int)
-            .ok_or_else(|| TypeErr::new(span, TypeErrKind::ConstIntegerOverflow)),
+            .ok_or_else(|| Diagnostic::new(span, DiagnosticKind::ConstIntegerOverflow)),
         (Int(l), Sub, Int(r)) => l
             .checked_sub(r)
             .map(Int)
-            .ok_or_else(|| TypeErr::new(span, TypeErrKind::ConstIntegerOverflow)),
+            .ok_or_else(|| Diagnostic::new(span, DiagnosticKind::ConstIntegerOverflow)),
         (Int(l), Mul, Int(r)) => l
             .checked_mul(r)
             .map(Int)
-            .ok_or_else(|| TypeErr::new(span, TypeErrKind::ConstIntegerOverflow)),
-        (Int(_), Div | Rem, Int(0)) => Err(TypeErr::new(span, TypeErrKind::ConstDivisionByZero)),
+            .ok_or_else(|| Diagnostic::new(span, DiagnosticKind::ConstIntegerOverflow)),
+        (Int(_), Div | Rem, Int(0)) => {
+            Err(Diagnostic::new(span, DiagnosticKind::ConstDivisionByZero))
+        }
         (Int(l), Div, Int(r)) => l
             .checked_div(r)
             .map(Int)
-            .ok_or_else(|| TypeErr::new(span, TypeErrKind::ConstIntegerOverflow)),
+            .ok_or_else(|| Diagnostic::new(span, DiagnosticKind::ConstIntegerOverflow)),
         (Int(l), Rem, Int(r)) => l
             .checked_rem(r)
             .map(Int)
-            .ok_or_else(|| TypeErr::new(span, TypeErrKind::ConstIntegerOverflow)),
+            .ok_or_else(|| Diagnostic::new(span, DiagnosticKind::ConstIntegerOverflow)),
         (Int(l), Xor, Int(r)) => Ok(Int(l ^ r)),
         (Int(l), BitAnd, Int(r)) => Ok(Int(l & r)),
         (Int(l), BitOr, Int(r)) => Ok(Int(l | r)),
@@ -347,22 +367,22 @@ fn eval_binary(
         (String(l), Eq, String(r)) => Ok(Bool(l == r)),
         (String(l), NotEq, String(r)) => Ok(Bool(l != r)),
 
-        _ => Err(TypeErr::new(span, TypeErrKind::NotConstantExpression)),
+        _ => Err(Diagnostic::new(span, DiagnosticKind::NotConstantExpression)),
     }
 }
 
-fn eval_unary(op: UnaryOp, val: ConstValue, span: Span) -> Result<ConstValue, TypeErr> {
+fn eval_unary(op: UnaryOp, val: ConstValue, span: Span) -> Result<ConstValue, Diagnostic> {
     use ConstValue::{Bool, Double, Float, Int};
     match (op, val) {
         (UnaryOp::Neg, Int(n)) => n
             .checked_neg()
             .map(Int)
-            .ok_or_else(|| TypeErr::new(span, TypeErrKind::ConstIntegerOverflow)),
+            .ok_or_else(|| Diagnostic::new(span, DiagnosticKind::ConstIntegerOverflow)),
         (UnaryOp::Neg, Float(f)) => Ok(Float(-f)),
         (UnaryOp::Neg, Double(d)) => Ok(Double(-d)),
         (UnaryOp::Not, Bool(b)) => Ok(Bool(!b)),
         (UnaryOp::BitNot, Int(n)) => Ok(Int(!n)),
-        _ => Err(TypeErr::new(span, TypeErrKind::NotConstantExpression)),
+        _ => Err(Diagnostic::new(span, DiagnosticKind::NotConstantExpression)),
     }
 }
 
@@ -443,7 +463,7 @@ fn const_format_raw(val: &ConstValue, spec: &FormatSpec) -> String {
     }
 }
 
-fn eval_cast(val: ConstValue, target: &Type, span: Span) -> Result<ConstValue, TypeErr> {
+fn eval_cast(val: ConstValue, target: &Type, span: Span) -> Result<ConstValue, Diagnostic> {
     use ConstValue::{Double, Float, Int};
     match (&val, target) {
         (Int(_), Type::Int) | (Float(_), Type::Float) | (Double(_), Type::Double) => Ok(val),
@@ -453,7 +473,7 @@ fn eval_cast(val: ConstValue, target: &Type, span: Span) -> Result<ConstValue, T
         (Float(f), Type::Double) => Ok(Double(f64::from(*f))),
         (Double(d), Type::Int) => Ok(Int(*d as i64)),
         (Double(d), Type::Float) => Ok(Float(*d as f32)),
-        _ => Err(TypeErr::new(span, TypeErrKind::NotConstantExpression)),
+        _ => Err(Diagnostic::new(span, DiagnosticKind::NotConstantExpression)),
     }
 }
 
@@ -463,7 +483,7 @@ fn eval_cast(val: ConstValue, target: &Type, span: Span) -> Result<ConstValue, T
 pub(super) fn evaluate_and_export_consts(
     stmts: &[StmtNode],
     resolved_module_defs: &HashMap<Vec<String>, ModuleDef>,
-) -> (HashMap<Ident, ConstDef>, Vec<TypeErr>) {
+) -> (HashMap<Ident, ConstDef>, Vec<Diagnostic>) {
     let mut local_consts: HashMap<Ident, ConstDef> = HashMap::new();
     let mut errors = vec![];
 
@@ -473,11 +493,7 @@ pub(super) fn evaluate_and_export_consts(
             continue;
         };
         let import = &node.node;
-        let path_key: Vec<String> = import
-            .path
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect();
+        let path_key: Vec<String> = import.path.iter().map(ToString::to_string).collect();
         let Some(module_def) = resolved_module_defs.get(&path_key) else {
             continue;
         };
@@ -537,9 +553,9 @@ pub(super) fn evaluate_and_export_consts(
         if let Some(ann_ty) = &decl.node.ty
             && *ann_ty != value_ty
         {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 decl.span,
-                TypeErrKind::ConstTypeMismatch {
+                DiagnosticKind::ConstTypeMismatch {
                     expected: ann_ty.clone(),
                     got: value_ty,
                 },

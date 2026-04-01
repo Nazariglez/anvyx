@@ -5,7 +5,7 @@ use super::helpers::{
     struct_literal_expr,
 };
 use crate::ast::{ArrayLen, BinaryOp, Type, VariantKind};
-use crate::typecheck::error::TypeErrKind;
+use crate::typecheck::error::DiagnosticKind;
 
 // ---- equatable primitives ----
 
@@ -718,7 +718,7 @@ fn test_eq_array_view_errors() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::NotEquatable { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::NotEquatable { .. })),
         "Expected NotEquatable for ArrayView, got: {:?}",
         errors
     );
@@ -844,7 +844,7 @@ fn test_eq_int_vs_nil_mismatch() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. })),
         "Expected MismatchedTypes, got: {:?}",
         errors
     );

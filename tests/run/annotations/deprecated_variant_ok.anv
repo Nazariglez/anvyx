@@ -1,0 +1,15 @@
+// @mode: run
+// @expect: success
+// @warn-contains: use of deprecated variant 'Disabled'
+// @match: done
+
+enum Status {
+    Active,
+    @deprecated("use Inactive")
+    Disabled,
+}
+
+fn main() {
+    let s = Status.Disabled;
+    println("done");
+}

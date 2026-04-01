@@ -8,7 +8,7 @@ use crate::span::Span;
 use internment::Intern;
 
 use super::{
-    error::{TypeErr, TypeErrKind},
+    error::{Diagnostic, DiagnosticKind},
     expr::check_expr,
     pattern::{
         check_match_pattern, check_pattern, check_pattern_in_match, pattern_has_var_binding,
@@ -22,16 +22,16 @@ fn check_bare_catchall_on_optional(
     pattern: &ast::PatternNode,
     value_ty: &Type,
     keyword: &str,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     if !value_ty.is_option() {
         return;
     }
     if let Pattern::Ident(name) | Pattern::VarIdent(name) = &pattern.node {
         errors.push(
-            TypeErr::new(
+            Diagnostic::new(
                 pattern.span,
-                TypeErrKind::BareCatchAllOnOptional { pattern_name: *name },
+                DiagnosticKind::BareCatchAllOnOptional { pattern_name: *name },
             )
             .with_help(format!(
                 "use '{keyword} {name}? = ...' to unwrap the optional, or 'let {name} = ...' if you want the full optional type",
@@ -50,7 +50,7 @@ fn unify_branch_types(
     else_span: Span,
     parent_span: Span,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     if then_ty == else_ty {
         return then_ty;
@@ -77,9 +77,9 @@ fn unify_branch_types(
 
     let is_unifiable = contains_infer(&then_ty) || contains_infer(&else_ty);
     if !is_unifiable {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             parent_span,
-            TypeErrKind::MismatchedTypes {
+            DiagnosticKind::MismatchedTypes {
                 expected: then_ty.clone(),
                 found: else_ty.clone(),
             },
@@ -97,14 +97,14 @@ fn unify_branch_types(
 fn validate_var_scrutinee(
     scrutinee: &ExprNode,
     type_checker: &TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> bool {
     if let ExprKind::Ident(name) = &scrutinee.node.kind {
         match type_checker.get_var(*name) {
             Some(info) if info.mutable => true,
             _ => {
                 errors.push(
-                    TypeErr::new(scrutinee.span, TypeErrKind::VarPatternOnImmutable)
+                    Diagnostic::new(scrutinee.span, DiagnosticKind::VarPatternOnImmutable)
                         .with_help("declare the scrutinee with 'var' to allow write-through"),
                 );
                 false
@@ -112,7 +112,7 @@ fn validate_var_scrutinee(
         }
     } else {
         errors.push(
-            TypeErr::new(scrutinee.span, TypeErrKind::VarPatternOnImmutable)
+            Diagnostic::new(scrutinee.span, DiagnosticKind::VarPatternOnImmutable)
                 .with_help("var binding in pattern requires a simple variable as scrutinee"),
         );
         false
@@ -122,15 +122,15 @@ fn validate_var_scrutinee(
 pub(super) fn check_while(
     while_node: &WhileNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let node = &while_node.node;
     let cond_ty = check_expr(&node.cond, type_checker, errors, None);
     let maybe_bool = cond_ty.is_bool() || cond_ty.is_infer();
     if !maybe_bool {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             node.cond.span,
-            TypeErrKind::WhileConditionNotBool {
+            DiagnosticKind::WhileConditionNotBool {
                 found: cond_ty.clone(),
             },
         ));
@@ -151,7 +151,7 @@ pub(super) fn check_while(
 pub(super) fn check_while_let(
     while_let_node: &WhileLetNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let node = &while_let_node.node;
     let value_ty = check_expr(&node.value, type_checker, errors, None);
@@ -183,7 +183,7 @@ pub(super) fn check_while_let(
 pub(super) fn check_for(
     for_node: &ForNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let node = &for_node.node;
 
@@ -196,9 +196,9 @@ pub(super) fn check_for(
         let step_ty = check_expr(step_expr, type_checker, errors, None);
 
         if is_map {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 step_expr.span,
-                TypeErrKind::ForMapStepNotAllowed,
+                DiagnosticKind::ForMapStepNotAllowed,
             ));
         } else {
             let is_seq = is_sequence_type(&iterable_ty);
@@ -206,9 +206,9 @@ pub(super) fn check_for(
 
             if is_seq {
                 if !step_is_int {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         step_expr.span,
-                        TypeErrKind::ForStepNotInt {
+                        DiagnosticKind::ForStepNotInt {
                             item_ty: item_ty.clone(),
                             step_ty,
                         },
@@ -217,9 +217,9 @@ pub(super) fn check_for(
             } else {
                 let item_is_int = matches!(item_ty, Type::Int | Type::Infer);
                 if !item_is_int || !step_is_int {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         step_expr.span,
-                        TypeErrKind::ForStepNotInt {
+                        DiagnosticKind::ForStepNotInt {
                             item_ty: item_ty.clone(),
                             step_ty,
                         },
@@ -230,18 +230,18 @@ pub(super) fn check_for(
     }
 
     if is_map && node.reversed {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             for_node.span,
-            TypeErrKind::ForMapRevNotAllowed,
+            DiagnosticKind::ForMapRevNotAllowed,
         ));
     }
 
     let is_range_from =
         matches!(&iterable_ty, Type::Struct { name, .. } if name.0.as_ref() == "RangeFrom");
     if is_range_from && node.reversed {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             for_node.span,
-            TypeErrKind::ForRangeFromRevNotAllowed,
+            DiagnosticKind::ForRangeFromRevNotAllowed,
         ));
     }
 
@@ -264,7 +264,11 @@ pub(super) fn check_for(
     type_checker.pop_scope();
 }
 
-pub(super) fn extract_iterable_item_type(ty: &Type, span: Span, errors: &mut Vec<TypeErr>) -> Type {
+pub(super) fn extract_iterable_item_type(
+    ty: &Type,
+    span: Span,
+    errors: &mut Vec<Diagnostic>,
+) -> Type {
     match ty {
         Type::Struct { name, type_args } => {
             let name_str = name.0.as_ref();
@@ -273,9 +277,9 @@ pub(super) fn extract_iterable_item_type(ty: &Type, span: Span, errors: &mut Vec
             if is_range && type_args.len() == 1 {
                 return type_args[0].clone();
             }
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::ForIterableNotSupported { found: ty.clone() },
+                DiagnosticKind::ForIterableNotSupported { found: ty.clone() },
             ));
             Type::Infer
         }
@@ -285,9 +289,9 @@ pub(super) fn extract_iterable_item_type(ty: &Type, span: Span, errors: &mut Vec
         Type::Map { key, value } => Type::Tuple(vec![*key.clone(), *value.clone()]),
         Type::Infer => Type::Infer,
         _ => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::ForIterableNotSupported { found: ty.clone() },
+                DiagnosticKind::ForIterableNotSupported { found: ty.clone() },
             ));
             Type::Infer
         }
@@ -346,16 +350,16 @@ fn infer_for_effective_type(
 pub(super) fn check_if(
     if_node: &IfNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let node = &if_node.node;
 
     let cond_ty = check_expr(&node.cond, type_checker, errors, None);
     let maybe_bool = cond_ty.is_bool() || cond_ty.is_infer();
     if !maybe_bool {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             node.cond.span,
-            TypeErrKind::IfConditionNotBool { found: cond_ty },
+            DiagnosticKind::IfConditionNotBool { found: cond_ty },
         ));
     }
 
@@ -401,7 +405,7 @@ pub(super) fn block_always_diverges(block: &BlockNode) -> bool {
 pub(super) fn check_if_let(
     if_let_node: &IfLetNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let node = &if_let_node.node;
 
@@ -442,7 +446,7 @@ pub(super) fn check_if_let(
 pub(super) fn check_match(
     match_node: &MatchNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let scrutinee = &match_node.node.scrutinee;
     let scrutinee_ty = check_expr(scrutinee, type_checker, errors, None);
@@ -469,9 +473,9 @@ pub(super) fn check_match(
         }
         Type::Infer => Type::Infer,
         _ => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 scrutinee.span,
-                TypeErrKind::UnsupportedMatchScrutinee {
+                DiagnosticKind::UnsupportedMatchScrutinee {
                     found: scrutinee_ty.clone(),
                 },
             ));
@@ -485,14 +489,14 @@ fn check_match_enum(
     scrutinee_ty: &Type,
     enum_name: Ident,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let scrutinee = &match_node.node.scrutinee;
 
     let Some(enum_def) = type_checker.get_enum(enum_name) else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             scrutinee.span,
-            TypeErrKind::UnknownEnum { name: enum_name },
+            DiagnosticKind::UnknownEnum { name: enum_name },
         ));
         return Type::Infer;
     };
@@ -535,7 +539,7 @@ fn check_match_bool(
     match_node: &MatchNode,
     scrutinee_ty: &Type,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let mut has_true = false;
     let mut has_false = false;
@@ -589,9 +593,9 @@ fn check_match_bool(
         if !has_false {
             missing.push(Ident(Intern::new("false".to_string())));
         }
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             match_node.span,
-            TypeErrKind::NonExhaustiveMatch { missing },
+            DiagnosticKind::NonExhaustiveMatch { missing },
         ));
     }
 
@@ -602,7 +606,7 @@ fn check_match_scalar(
     match_node: &MatchNode,
     scrutinee_ty: &Type,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let mut has_wildcard = false;
     let mut arm_types: Vec<Type> = vec![];
@@ -629,9 +633,9 @@ fn check_match_scalar(
     }
 
     if !has_wildcard {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             match_node.span,
-            TypeErrKind::NonExhaustiveMatchNoCatchAll,
+            DiagnosticKind::NonExhaustiveMatchNoCatchAll,
         ));
     }
 
@@ -643,7 +647,7 @@ fn check_exhaustiveness(
     covered: &HashSet<Ident>,
     has_wildcard: bool,
     span: Span,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     if has_wildcard {
         return;
@@ -652,14 +656,14 @@ fn check_exhaustiveness(
     let all_variants: HashSet<Ident> = enum_def.variants.iter().map(|v| v.name).collect();
     let missing: Vec<Ident> = all_variants.difference(covered).copied().collect();
     if !missing.is_empty() {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             span,
-            TypeErrKind::NonExhaustiveMatch { missing },
+            DiagnosticKind::NonExhaustiveMatch { missing },
         ));
     }
 }
 
-fn unify_arm_types(arm_types: &[Type], span: Span, errors: &mut Vec<TypeErr>) -> Type {
+fn unify_arm_types(arm_types: &[Type], span: Span, errors: &mut Vec<Diagnostic>) -> Type {
     if arm_types.is_empty() {
         return Type::Void;
     }
@@ -670,9 +674,9 @@ fn unify_arm_types(arm_types: &[Type], span: Span, errors: &mut Vec<TypeErr>) ->
         match unify_types(&result, ty, span, &mut unify_errors) {
             Some(unified) => result = unified,
             None => {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     span,
-                    TypeErrKind::MatchArmTypeMismatch {
+                    DiagnosticKind::MatchArmTypeMismatch {
                         expected: result.clone(),
                         found: ty.clone(),
                     },

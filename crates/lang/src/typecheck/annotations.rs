@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
-use crate::ast::{AnnotationArgs, AnnotationNode, Ident};
+use crate::ast::{AnnotationArgs, AnnotationNode, Ident, Lit};
 use crate::span::Span;
 
-use super::error::{TypeErr, TypeErrKind};
+use super::error::{Diagnostic, DiagnosticKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum AnnotationTarget {
@@ -30,6 +30,7 @@ impl fmt::Display for AnnotationTarget {
 #[derive(Debug, Clone, Copy)]
 enum AnnotationArgSchema {
     NoArgs,
+    OptionalPositionalString,
 }
 
 struct AnnotationDef {
@@ -46,13 +47,26 @@ fn known_annotations() -> HashMap<&'static str, AnnotationDef> {
             args: AnnotationArgSchema::NoArgs,
         },
     );
+    map.insert(
+        "deprecated",
+        AnnotationDef {
+            targets: &[
+                AnnotationTarget::Func,
+                AnnotationTarget::Struct,
+                AnnotationTarget::Enum,
+                AnnotationTarget::Field,
+                AnnotationTarget::Variant,
+            ],
+            args: AnnotationArgSchema::OptionalPositionalString,
+        },
+    );
     map
 }
 
 pub(super) fn validate_annotations(
     annotations: &[AnnotationNode],
     target: AnnotationTarget,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let registry = known_annotations();
     let mut seen = HashSet::new();
@@ -62,9 +76,9 @@ pub(super) fn validate_annotations(
         let name_str = name.to_string();
 
         let Some(def) = registry.get(name_str.as_str()) else {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 annotation.span,
-                TypeErrKind::UnknownAnnotation { name: *name },
+                DiagnosticKind::UnknownAnnotation { name: *name },
             ));
             continue;
         };
@@ -77,9 +91,9 @@ pub(super) fn validate_annotations(
                 .collect::<Vec<_>>()
                 .join(", ");
             errors.push(
-                TypeErr::new(
+                Diagnostic::new(
                     annotation.span,
-                    TypeErrKind::InvalidAnnotationTarget {
+                    DiagnosticKind::InvalidAnnotationTarget {
                         name: *name,
                         target: format!("{target}"),
                         valid_targets: valid_targets.clone(),
@@ -91,9 +105,9 @@ pub(super) fn validate_annotations(
         }
 
         if seen.contains(&name_str) {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 annotation.span,
-                TypeErrKind::DuplicateAnnotation { name: *name },
+                DiagnosticKind::DuplicateAnnotation { name: *name },
             ));
             continue;
         }
@@ -109,24 +123,47 @@ pub(super) fn validate_annotations(
     }
 }
 
+pub(super) fn extract_deprecated(annotations: &[AnnotationNode]) -> Option<Option<String>> {
+    annotations
+        .iter()
+        .find(|a| a.node.name.to_string() == "deprecated")
+        .map(|a| match &a.node.args {
+            AnnotationArgs::Positional(Lit::String(s)) => Some(s.clone()),
+            _ => None,
+        })
+}
+
 fn validate_annotation_args(
     args: &AnnotationArgs,
     name: Ident,
     schema: AnnotationArgSchema,
     span: Span,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     match schema {
         AnnotationArgSchema::NoArgs => {
             if !matches!(args, AnnotationArgs::None) {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     span,
-                    TypeErrKind::InvalidAnnotationArgs {
+                    DiagnosticKind::InvalidAnnotationArgs {
                         name,
                         message: "this annotation does not accept arguments".to_string(),
                     },
                 ));
             }
         }
+        AnnotationArgSchema::OptionalPositionalString => match args {
+            AnnotationArgs::None => {}
+            AnnotationArgs::Positional(Lit::String(_)) => {}
+            _ => {
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::InvalidAnnotationArgs {
+                        name,
+                        message: "expected no arguments or a string argument".to_string(),
+                    },
+                ));
+            }
+        },
     }
 }

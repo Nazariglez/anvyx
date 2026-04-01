@@ -5,7 +5,7 @@ use crate::{
 
 use super::{
     constraint::TypeRef,
-    error::{TypeErr, TypeErrKind},
+    error::{Diagnostic, DiagnosticKind},
     types::TypeChecker,
 };
 
@@ -30,7 +30,7 @@ pub(super) fn contains_infer(ty: &Type) -> bool {
 
 /// Checks if 'from' is assignable to 'to'
 pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
-    use Type::*;
+    use Type::{Array, ArrayView, DataRef, Enum, Extern, Func, List, Map, Struct};
 
     // same type is always assignable
     let is_same_type = from == to;
@@ -197,7 +197,7 @@ pub(super) fn unify_types(
     left: &Type,
     right: &Type,
     span: Span,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Option<Type> {
     use Type::*;
 
@@ -229,9 +229,9 @@ pub(super) fn unify_types(
             },
         ) => {
             if ln != rn || la.len() != ra.len() {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     span,
-                    TypeErrKind::MismatchedTypes {
+                    DiagnosticKind::MismatchedTypes {
                         expected: left.clone(),
                         found: right.clone(),
                     },
@@ -273,9 +273,9 @@ pub(super) fn unify_types(
             },
         ) => {
             if lp.len() != rp.len() {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     span,
-                    TypeErrKind::MismatchedTypes {
+                    DiagnosticKind::MismatchedTypes {
                         expected: left.clone(),
                         found: right.clone(),
                     },
@@ -309,9 +309,9 @@ pub(super) fn unify_types(
             },
         ) => {
             if ln != rn || la.len() != ra.len() {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     span,
-                    TypeErrKind::MismatchedTypes {
+                    DiagnosticKind::MismatchedTypes {
                         expected: left.clone(),
                         found: right.clone(),
                     },
@@ -341,9 +341,9 @@ pub(super) fn unify_types(
                 }
                 (ArrayLen::Infer, ArrayLen::Infer) => ArrayLen::Infer,
                 _ => {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         span,
-                        TypeErrKind::MismatchedTypes {
+                        DiagnosticKind::MismatchedTypes {
                             expected: left.clone(),
                             found: right.clone(),
                         },
@@ -382,9 +382,9 @@ pub(super) fn unify_types(
             if ln == rn {
                 Some(Extern { name: *ln })
             } else {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     span,
-                    TypeErrKind::MismatchedTypes {
+                    DiagnosticKind::MismatchedTypes {
                         expected: left.clone(),
                         found: right.clone(),
                     },
@@ -395,9 +395,9 @@ pub(super) fn unify_types(
 
         // mismatched types report an error
         (l, r) => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::MismatchedTypes {
+                DiagnosticKind::MismatchedTypes {
                     expected: l.clone(),
                     found: r.clone(),
                 },
@@ -412,7 +412,7 @@ pub(super) fn unify_equal(
     span: Span,
     left: &TypeRef,
     right: &TypeRef,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> bool {
     let (Some(lt), Some(rt)) = (tcx.get_type_ref(left), tcx.get_type_ref(right)) else {
         return false;

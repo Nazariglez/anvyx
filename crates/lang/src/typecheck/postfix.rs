@@ -14,7 +14,7 @@ use super::{
         required_param_count, type_call_on_base,
     },
     decl::check_body_common,
-    error::{TypeErr, TypeErrKind},
+    error::{Diagnostic, DiagnosticKind},
     expr::check_expr,
     infer::{build_subst, resolve_type_param_names, subst_type},
     types::{
@@ -63,7 +63,7 @@ pub(super) fn check_postfix_chain(
     base: &ExprNode,
     chain: &[PostfixNodeRef<'_>],
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
     expected: Option<&Type>,
 ) -> Type {
     // handle type name postfixes without looking them up as value variables
@@ -117,7 +117,7 @@ fn continue_postfix_chain(
     initial_ty: Type,
     initial_optional: bool,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
     expected: Option<&Type>,
 ) -> Type {
     let mut current_ty = initial_ty;
@@ -171,9 +171,9 @@ fn continue_postfix_chain(
                 base_ty = inner.clone();
             } else {
                 errors.push(
-                    TypeErr::new(
+                    Diagnostic::new(
                         op.span(),
-                        TypeErrKind::OptionalChainingOnNonOpt {
+                        DiagnosticKind::OptionalChainingOnNonOpt {
                             found: current_ty.clone(),
                         },
                     )
@@ -222,7 +222,7 @@ fn try_specialize_extend(
     receiver: Option<&ExprNode>,
     span: Span,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let base_name = match receiver_ty {
         Type::Struct { name, .. } | Type::Enum { name, .. } | Type::DataRef { name, .. } => *name,
@@ -422,7 +422,7 @@ fn check_extend_var_params(
     method_name: Ident,
     call_node: &CallNode,
     type_checker: &TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     check_var_param_args(
         params[1..].iter().map(|p| (p.name, p.mutability)),
@@ -454,7 +454,7 @@ fn check_extend_call(
     receiver: Option<&ExprNode>,
     method_name: Ident,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let param_types: Vec<Type> = def.params[1..].iter().map(|p| p.ty.clone()).collect();
     type_checker
@@ -487,7 +487,7 @@ fn check_extend_qualified_call(
     def: &ExtendMethodDef,
     call_node: &CallNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let param_types: Vec<Type> = def.params.iter().map(|p| p.ty.clone()).collect();
     type_checker
@@ -522,7 +522,7 @@ fn resolve_extend_method(
     receiver: Option<&ExprNode>,
     span: Span,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Option<Type> {
     let entries = type_checker
         .get_extend_methods(receiver_ty, method_name)
@@ -558,9 +558,9 @@ fn resolve_extend_method(
         )),
         _ => {
             let candidates = unique.iter().map(|e| e.binding).collect();
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::AmbiguousExtendMethod {
+                DiagnosticKind::AmbiguousExtendMethod {
                     ty: receiver_ty.clone(),
                     method: method_name,
                     candidates,
@@ -578,7 +578,7 @@ fn try_resolve_generic_extend(
     receiver: Option<&ExprNode>,
     span: Span,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Option<Type> {
     let (base_name, type_args) = match receiver_ty {
         Type::Struct { name, type_args } if !type_args.is_empty() => (*name, type_args.as_slice()),
@@ -617,9 +617,9 @@ fn try_resolve_generic_extend(
         }
         _ => {
             let candidates = unique.iter().map(|t| t.binding).collect();
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::AmbiguousExtendMethod {
+                DiagnosticKind::AmbiguousExtendMethod {
                     ty: receiver_ty.clone(),
                     method: method_name,
                     candidates,
@@ -649,7 +649,7 @@ fn handle_method_call_if_applicable(
     chain_is_optional: bool,
     base: &ExprNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Option<MethodCallOutcome> {
     if index + 1 >= chain.len() {
         return None;
@@ -699,9 +699,9 @@ fn handle_method_call_if_applicable(
 
         if !current_ty.is_option() {
             errors.push(
-                TypeErr::new(
+                Diagnostic::new(
                     error_span,
-                    TypeErrKind::OptionalChainingOnNonOpt {
+                    DiagnosticKind::OptionalChainingOnNonOpt {
                         found: current_ty.clone(),
                     },
                 )
@@ -714,9 +714,9 @@ fn handle_method_call_if_applicable(
 
     if let Some((struct_name, struct_type_args)) = struct_info {
         let Some(struct_def) = type_checker.get_struct(struct_name).cloned() else {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 field_node.span,
-                TypeErrKind::UnknownStruct { name: struct_name },
+                DiagnosticKind::UnknownStruct { name: struct_name },
             ));
             return Some(MethodCallOutcome::Handled {
                 ty: Type::Infer,
@@ -801,9 +801,9 @@ fn handle_method_call_if_applicable(
         let method_name = field_node.node.field;
         let Some(method) = extern_def.methods.get(&method_name) else {
             if extern_def.statics.contains_key(&method_name) {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     call_node.span,
-                    TypeErrKind::StaticMethodOnValue {
+                    DiagnosticKind::StaticMethodOnValue {
                         struct_name: *name,
                         method: method_name,
                     },
@@ -831,9 +831,9 @@ fn handle_method_call_if_applicable(
                     call_span: call_op.span(),
                 });
             } else {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     field_node.span,
-                    TypeErrKind::ExternUnknownMethod {
+                    DiagnosticKind::ExternUnknownMethod {
                         type_name: *name,
                         method: method_name,
                     },
@@ -920,9 +920,9 @@ fn handle_method_call_if_applicable(
             }
             // No native methods and no extend method found — emit a clear error
             let type_ident = Ident(Intern::new(format!("{detection_ty}")));
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 field_node.span,
-                TypeErrKind::UnknownMethod {
+                DiagnosticKind::UnknownMethod {
                     struct_name: type_ident,
                     method: method_name,
                 },
@@ -975,7 +975,7 @@ fn try_type_name_dispatch(
     base: &ExprNode,
     chain: &[PostfixNodeRef<'_>],
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
     expected: Option<&Type>,
 ) -> Option<(Type, usize, bool)> {
     let ExprKind::Ident(type_name) = &base.node.kind else {
@@ -1032,11 +1032,11 @@ fn try_type_name_dispatch(
                     }
                 }
                 // facade.submodule without further chaining, not a valid expression
-                let err_kind = TypeErrKind::UnknownModuleMember {
+                let err_kind = DiagnosticKind::UnknownModuleMember {
                     module: *type_name,
                     member: member_name,
                 };
-                errors.push(TypeErr::new(field_node.span, err_kind));
+                errors.push(Diagnostic::new(field_node.span, err_kind));
                 return Some((Type::Infer, 1, op_safe));
             }
 
@@ -1114,17 +1114,17 @@ fn try_type_name_dispatch(
                 }
 
                 let err_kind = if module_def.all_names.contains(&member_name) {
-                    TypeErrKind::PrivateModuleMember {
+                    DiagnosticKind::PrivateModuleMember {
                         module: *type_name,
                         member: member_name,
                     }
                 } else {
-                    TypeErrKind::UnknownModuleMember {
+                    DiagnosticKind::UnknownModuleMember {
                         module: *type_name,
                         member: member_name,
                     }
                 };
-                errors.push(TypeErr::new(field_node.span, err_kind));
+                errors.push(Diagnostic::new(field_node.span, err_kind));
                 return Some((Type::Infer, 1, op_safe));
             }
         }
@@ -1197,25 +1197,27 @@ fn try_type_name_dispatch(
 }
 
 fn resolve_enum_unit_variant(
-    enum_name: crate::ast::Ident,
+    enum_name: Ident,
     field_node: &crate::ast::FieldAccessNode,
     enum_def: &super::types::EnumDef,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     use crate::ast::VariantKind;
     let variant_name = field_node.node.field;
     let variant = enum_def.variants.iter().find(|v| v.name == variant_name);
 
     let Some(variant) = variant else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             field_node.span,
-            TypeErrKind::UnknownEnumVariant {
+            DiagnosticKind::UnknownEnumVariant {
                 enum_name,
                 variant_name,
             },
         ));
         return Type::Infer;
     };
+
+    enum_def.check_deprecation(enum_name, variant, field_node.span, errors);
 
     match &variant.kind {
         VariantKind::Unit => {
@@ -1230,9 +1232,9 @@ fn resolve_enum_unit_variant(
             }
         }
         VariantKind::Tuple(_) | VariantKind::Struct(_) => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 field_node.span,
-                TypeErrKind::EnumVariantNotUnit {
+                DiagnosticKind::EnumVariantNotUnit {
                     enum_name,
                     variant_name,
                 },
@@ -1243,12 +1245,12 @@ fn resolve_enum_unit_variant(
 }
 
 fn check_static_method_call_outer(
-    call_node: &crate::ast::CallNode,
-    struct_name: crate::ast::Ident,
-    method_name: crate::ast::Ident,
+    call_node: &CallNode,
+    struct_name: Ident,
+    method_name: Ident,
     struct_def: &super::types::StructDef,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     super::call::check_static_method_call(
         call_node,
@@ -1264,7 +1266,7 @@ fn check_closure_var_params(
     params: &[FuncParam],
     call_node: &CallNode,
     type_checker: &TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let var_params = params.iter().enumerate().map(|(i, fp)| {
         let name = Ident(Intern::new(format!("arg{i}")));
@@ -1282,7 +1284,7 @@ fn apply_postfix_op(
     op: &PostfixNodeRef<'_>,
     base_ty: &Type,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
     expected: Option<&Type>,
 ) -> Type {
     match op {
@@ -1320,6 +1322,16 @@ fn apply_postfix_op(
             node: call_node, ..
         } => {
             if let ExprKind::Ident(name) = &call_node.node.func.node.kind {
+                if let Some(reason) = type_checker.func_deprecated.get(name).cloned() {
+                    errors.push(Diagnostic::new(
+                        call_node.span,
+                        DiagnosticKind::DeprecatedUsage {
+                            kind: "function",
+                            name: *name,
+                            reason,
+                        },
+                    ));
+                }
                 let is_generic = type_checker
                     .func_type_params
                     .get(name)

@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @warn-contains: use of deprecated function 'old_greet'
+// @match: hello
+
+@deprecated
+fn old_greet() -> string {
+    "hello"
+}
+
+fn main() {
+    println(old_greet());
+}

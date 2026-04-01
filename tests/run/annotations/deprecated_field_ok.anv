@@ -1,0 +1,15 @@
+// @mode: run
+// @expect: success
+// @warn-contains: use of deprecated field 'label'
+// @match: old
+
+struct Config {
+    name: string,
+    @deprecated("use 'name' instead")
+    label: string,
+}
+
+fn main() {
+    let c = Config { name: "test", label: "old" };
+    println(c.label);
+}

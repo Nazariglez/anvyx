@@ -3,7 +3,7 @@ use crate::{
     span::Span,
 };
 
-use super::{error::TypeErr, types::TypeChecker, unify::unify_equal};
+use super::{error::Diagnostic, types::TypeChecker, unify::unify_equal};
 
 #[derive(Debug, Clone)]
 pub(super) enum TypeRef {
@@ -25,7 +25,7 @@ pub(super) struct Constraint {
     pub right: TypeRef,
 }
 
-pub(super) fn resolve_constraints(type_checker: &mut TypeChecker, errors: &mut Vec<TypeErr>) {
+pub(super) fn resolve_constraints(type_checker: &mut TypeChecker, errors: &mut Vec<Diagnostic>) {
     // keep going until we make no progress infering types
     loop {
         if !resolve_constraints_pass(type_checker, errors) {
@@ -34,7 +34,7 @@ pub(super) fn resolve_constraints(type_checker: &mut TypeChecker, errors: &mut V
     }
 }
 
-fn resolve_constraints_pass(type_checker: &mut TypeChecker, errors: &mut Vec<TypeErr>) -> bool {
+fn resolve_constraints_pass(type_checker: &mut TypeChecker, errors: &mut Vec<Diagnostic>) -> bool {
     let mut made_progress = false;
 
     let constraints = std::mem::take(&mut type_checker.constraints);

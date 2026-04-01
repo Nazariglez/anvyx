@@ -54,12 +54,20 @@ pub fn run_test_file(
     let elapsed = start_time.elapsed();
 
     let res = match (outcome, directives.expect, directives.mode) {
-        (ProcessOutcome::Pass { stdout, .. }, ExpectedResult::Success, Mode::Run) => {
-            match_output(&stdout, &directives)?
+        (ProcessOutcome::Pass { stdout, stderr }, ExpectedResult::Success, Mode::Run) => {
+            let res = match_output(&stdout, &directives)?;
+            match res {
+                TestResult::Pass => check_warn_contains(&stderr, &directives)?,
+                other => other,
+            }
         }
         (ProcessOutcome::Pass { stdout, stderr }, ExpectedResult::Success, Mode::Check) => {
             let merged = format!("{stdout}{stderr}");
-            match_output(&merged, &directives)?
+            let res = match_output(&merged, &directives)?;
+            match res {
+                TestResult::Pass => check_warn_contains(&stderr, &directives)?,
+                other => other,
+            }
         }
         (ProcessOutcome::Pass { .. }, ExpectedResult::Error, _) => TestResult::Fail {
             message: "Expected error but got success".to_string(),
@@ -100,6 +108,19 @@ pub fn run_test_file(
         backend: effective_backend,
         duration: elapsed,
     })
+}
+
+fn check_warn_contains(stderr: &str, directives: &Directives) -> Result<TestResult, String> {
+    for expected in &directives.warn_contains {
+        if !stderr.lines().any(|ln| ln.contains(expected.as_str())) {
+            return Ok(TestResult::Fail {
+                message: format!(
+                    "* Expected warning containing:\n{expected}\n* Got stderr:\n{stderr}"
+                ),
+            });
+        }
+    }
+    Ok(TestResult::Pass)
 }
 
 fn match_output(output: &str, directives: &Directives) -> Result<TestResult, String> {

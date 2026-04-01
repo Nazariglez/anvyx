@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: invalid arguments for `@deprecated`
+
+@deprecated(reason = "use new_func")
+fn old_func() {}
+
+fn main() {}

@@ -10,7 +10,7 @@ use crate::{
         Unary, UnaryNode, UnaryOp, VariantKind, Visibility,
     },
     span::Span,
-    typecheck::{check_program_with_modules, error::TypeErr, types::TypeChecker},
+    typecheck::{check_program_with_modules, error::Diagnostic, types::TypeChecker},
 };
 use internment::Intern;
 use std::cell::Cell;
@@ -725,7 +725,7 @@ pub(super) fn run_ok(prog: Program) -> TypeChecker {
 }
 
 #[track_caller]
-pub(super) fn run_err(prog: Program) -> Vec<TypeErr> {
+pub(super) fn run_err(prog: Program) -> Vec<Diagnostic> {
     match check_program_with_modules(&with_prelude(prog), &[], &[]) {
         Ok(_) => panic!("Expected Err, got Ok"),
         Err(errors) => errors,

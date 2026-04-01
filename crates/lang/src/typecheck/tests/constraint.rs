@@ -8,7 +8,7 @@ use crate::ast::{
     BinaryOp, EnumDecl, EnumDeclNode, EnumVariant, MethodReceiver, Stmt, StmtNode, Type, TypeParam,
     TypeVarId, VariantKind, Visibility,
 };
-use crate::typecheck::error::TypeErrKind;
+use crate::typecheck::error::DiagnosticKind;
 
 // ---- list constrain_assignable tests ----
 
@@ -92,7 +92,7 @@ fn test_constrain_list_type_mismatch_errors() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. })),
         "Expected MismatchedTypes, got: {:?}",
         errors
     );
@@ -161,7 +161,7 @@ fn test_constrain_map_type_mismatch_errors() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. })),
         "Expected MismatchedTypes, got: {:?}",
         errors
     );
@@ -240,7 +240,7 @@ fn test_constrain_generic_struct_name_mismatch_errors() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. })),
         "Expected MismatchedTypes, got: {:?}",
         errors
     );
@@ -330,7 +330,7 @@ fn test_generic_method_type_param_shadows_struct_errors() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MethodTypeParamShadowsStruct { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MethodTypeParamShadowsStruct { .. })),
         "Expected MethodTypeParamShadowsStruct, got: {:?}",
         errors
     );
@@ -520,7 +520,7 @@ fn test_generic_method_call_explicit_type_arg_arity_mismatch() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::GenericArgNumMismatch { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::GenericArgNumMismatch { .. })),
         "Expected GenericArgNumMismatch, got: {:?}",
         errors
     );
@@ -769,7 +769,7 @@ fn test_constrain_list_inferred_elem_mismatch_errors() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. })),
         "Expected MismatchedTypes, got: {:?}",
         errors
     );
@@ -837,7 +837,7 @@ fn test_constrain_map_inferred_value_mismatch_errors() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. })),
         "Expected MismatchedTypes, got: {:?}",
         errors
     );
@@ -924,7 +924,7 @@ fn test_constrain_generic_struct_type_arg_mismatch_errors() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. })),
         "Expected MismatchedTypes, got: {:?}",
         errors
     );
@@ -1026,7 +1026,7 @@ fn test_constrain_generic_enum_type_arg_mismatch_errors() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. })),
         "Expected MismatchedTypes, got: {:?}",
         errors
     );

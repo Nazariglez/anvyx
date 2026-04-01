@@ -3,7 +3,7 @@ use super::helpers::{
     map_literal_expr, program, reset_expr_ids, run_err, run_ok, struct_decl, struct_literal_expr,
 };
 use crate::ast::{Type, VariantKind};
-use crate::typecheck::error::TypeErrKind;
+use crate::typecheck::error::DiagnosticKind;
 
 // ---- sanity: int key still works ----
 
@@ -31,7 +31,7 @@ fn test_map_float_key_err() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MapKeyFloat)),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MapKeyFloat)),
         "Expected MapKeyFloat, got: {:?}",
         errors
     );
@@ -55,7 +55,7 @@ fn test_map_annotation_float_key_err() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MapKeyFloat)),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MapKeyFloat)),
         "Expected MapKeyFloat, got: {:?}",
         errors
     );
@@ -105,7 +105,7 @@ fn test_map_struct_float_field_key_err() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MapKeyNotKeyable { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MapKeyNotKeyable { .. })),
         "Expected MapKeyNotKeyable, got: {:?}",
         errors
     );
@@ -173,7 +173,7 @@ fn test_map_enum_non_keyable_payload_err() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MapKeyNotKeyable { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MapKeyNotKeyable { .. })),
         "Expected MapKeyNotKeyable, got: {:?}",
         errors
     );
@@ -198,7 +198,7 @@ fn test_map_struct_float_field_reason_note() {
     let errors = run_err(prog);
     let not_keyable_err = errors
         .iter()
-        .find(|e| matches!(&e.kind, TypeErrKind::MapKeyNotKeyable { .. }))
+        .find(|e| matches!(&e.kind, DiagnosticKind::MapKeyNotKeyable { .. }))
         .expect("Expected MapKeyNotKeyable error");
     assert!(
         not_keyable_err
@@ -237,7 +237,7 @@ fn test_map_enum_list_payload_reason_note() {
     let errors = run_err(prog);
     let not_keyable_err = errors
         .iter()
-        .find(|e| matches!(&e.kind, TypeErrKind::MapKeyNotKeyable { .. }))
+        .find(|e| matches!(&e.kind, DiagnosticKind::MapKeyNotKeyable { .. }))
         .expect("Expected MapKeyNotKeyable error");
     assert!(
         not_keyable_err

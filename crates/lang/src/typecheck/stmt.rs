@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use internment::Intern;
 
 use super::{
-    annotations::{AnnotationTarget, validate_annotations},
+    annotations::{AnnotationTarget, extract_deprecated, validate_annotations},
     composite::{is_all_nil_array_literal, is_empty_map_literal},
     const_eval::{
         ConstDef, build_const_dependency_graph, collect_const_decls, eval_const_expr,
@@ -20,7 +20,7 @@ use super::{
     constraint::TypeRef,
     control::{block_always_diverges, check_for, check_while, check_while_let, is_if_without_else},
     decl::{check_body_common, check_func, check_struct},
-    error::{TypeErr, TypeErrKind},
+    error::{Diagnostic, DiagnosticKind},
     expr::check_expr,
     infer::type_from_fn,
     pattern::{check_pattern, is_refutable},
@@ -37,7 +37,7 @@ pub(super) fn check_block_stmts(
     stmts: &[StmtNode],
     tail: Option<&ExprNode>,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
     expected_tail: Option<&Type>,
 ) -> Option<ExprId> {
     let in_function = !type_checker.return_types.is_empty();
@@ -74,7 +74,7 @@ pub(super) fn check_block_stmts(
 fn evaluate_module_consts(
     stmts: &[StmtNode],
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let decls = collect_const_decls(stmts);
     if decls.is_empty() {
@@ -98,7 +98,7 @@ fn evaluate_module_consts(
 fn process_const_decl(
     decl: &ConstDeclNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let name = decl.node.name;
 
@@ -133,9 +133,9 @@ fn process_const_decl(
     if let Some(ref ann_ty) = annotated_ty
         && *ann_ty != value_ty
     {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             decl.span,
-            TypeErrKind::ConstTypeMismatch {
+            DiagnosticKind::ConstTypeMismatch {
                 expected: ann_ty.clone(),
                 got: value_ty,
             },
@@ -158,7 +158,7 @@ fn process_const_decl(
 pub(super) fn check_block_expr(
     block: &BlockNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
     expected_tail: Option<&Type>,
 ) -> (Type, Option<ExprId>) {
     let last_expr_id = check_block_stmts(
@@ -221,7 +221,7 @@ fn build_extern_func_registration(
 }
 
 fn push_reexport_collision(
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
     span: Span,
     name: Ident,
     existing: &str,
@@ -229,9 +229,9 @@ fn push_reexport_collision(
     help: &str,
 ) {
     errors.push(
-        TypeErr::new(
+        Diagnostic::new(
             span,
-            TypeErrKind::ReExportCollision {
+            DiagnosticKind::ReExportCollision {
                 name,
                 first_source: existing.to_string(),
                 second_source: source.to_string(),
@@ -419,7 +419,7 @@ fn build_extern_type_def(
 pub(super) fn collect_scope_types(
     stmts: &[StmtNode],
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     // register extern type names before anything else, so they can be
     // resolved when building function signatures that reference them
@@ -454,9 +454,9 @@ pub(super) fn collect_scope_types(
                     });
                     type_checker.extern_type_defs.insert(name, def);
                 } else {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         stmt.span,
-                        TypeErrKind::DuplicateTypeDefinition { name },
+                        DiagnosticKind::DuplicateTypeDefinition { name },
                     ));
                 }
             }
@@ -487,6 +487,9 @@ pub(super) fn collect_scope_types(
                 if let Some(tmpl) = template {
                     type_checker.generic_func_templates.insert(func.name, tmpl);
                 }
+                if let Some(reason) = extract_deprecated(&func.annotations) {
+                    type_checker.func_deprecated.insert(func.name, reason);
+                }
             }
 
             Stmt::Struct(node) => {
@@ -496,9 +499,9 @@ pub(super) fn collect_scope_types(
                         .struct_defs
                         .insert(name, StructDef::from_ast(&node.node, false));
                 } else {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         stmt.span,
-                        TypeErrKind::DuplicateTypeDefinition { name },
+                        DiagnosticKind::DuplicateTypeDefinition { name },
                     ));
                 }
             }
@@ -510,9 +513,9 @@ pub(super) fn collect_scope_types(
                         .struct_defs
                         .insert(name, StructDef::from_ast(&node.node, true));
                 } else {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         stmt.span,
-                        TypeErrKind::DuplicateTypeDefinition { name },
+                        DiagnosticKind::DuplicateTypeDefinition { name },
                     ));
                 }
             }
@@ -524,9 +527,9 @@ pub(super) fn collect_scope_types(
                         .enum_defs
                         .insert(name, EnumDef::from_ast(&node.node));
                 } else {
-                    errors.push(TypeErr::new(
+                    errors.push(Diagnostic::new(
                         stmt.span,
-                        TypeErrKind::DuplicateTypeDefinition { name },
+                        DiagnosticKind::DuplicateTypeDefinition { name },
                     ));
                 }
             }
@@ -582,9 +585,9 @@ pub(super) fn collect_scope_types(
                     ImportKind::Module => {
                         let binding = *import.path.last().expect("import path cannot be empty");
                         if imported_modules.contains(&binding) {
-                            errors.push(TypeErr::new(
+                            errors.push(Diagnostic::new(
                                 stmt.span,
-                                TypeErrKind::ModuleBindingConflict { name: binding },
+                                DiagnosticKind::ModuleBindingConflict { name: binding },
                             ));
                         } else {
                             imported_modules.insert(binding);
@@ -593,9 +596,9 @@ pub(super) fn collect_scope_types(
                     }
                     ImportKind::ModuleAs(alias) => {
                         if imported_modules.contains(alias) {
-                            errors.push(TypeErr::new(
+                            errors.push(Diagnostic::new(
                                 stmt.span,
-                                TypeErrKind::ModuleBindingConflict { name: *alias },
+                                DiagnosticKind::ModuleBindingConflict { name: *alias },
                             ));
                         } else {
                             imported_modules.insert(*alias);
@@ -613,9 +616,9 @@ pub(super) fn collect_scope_types(
                                 None
                             };
                             if let Some(existing) = existing {
-                                errors.push(TypeErr::new(
+                                errors.push(Diagnostic::new(
                                     stmt.span,
-                                    TypeErrKind::ImportNameConflict {
+                                    DiagnosticKind::ImportNameConflict {
                                         name: bind_as,
                                         existing,
                                     },
@@ -644,9 +647,9 @@ pub(super) fn collect_scope_types(
                                 None
                             };
                             if let Some(existing) = existing {
-                                errors.push(TypeErr::new(
+                                errors.push(Diagnostic::new(
                                     stmt.span,
-                                    TypeErrKind::ImportNameConflict { name, existing },
+                                    DiagnosticKind::ImportNameConflict { name, existing },
                                 ));
                             } else {
                                 inject_module_item(
@@ -671,9 +674,9 @@ pub(super) fn collect_scope_types(
                                 None
                             };
                             if let Some(existing) = existing {
-                                errors.push(TypeErr::new(
+                                errors.push(Diagnostic::new(
                                     stmt.span,
-                                    TypeErrKind::ImportNameConflict { name, existing },
+                                    DiagnosticKind::ImportNameConflict { name, existing },
                                 ));
                             } else {
                                 inject_module_item(
@@ -768,9 +771,9 @@ pub(super) fn build_module_def_with_reexports(
     stmts: &[StmtNode],
     type_checker: &TypeChecker,
     module_path: &[String],
-) -> (ModuleDef, Vec<TypeErr>) {
+) -> (ModuleDef, Vec<Diagnostic>) {
     let mut module_def = ModuleDef::default();
-    let mut errors: Vec<TypeErr> = vec![];
+    let mut errors: Vec<Diagnostic> = vec![];
 
     let mut local_extern_types = HashSet::new();
     for stmt in stmts {
@@ -1046,7 +1049,7 @@ pub(super) fn build_module_def_with_reexports(
 pub(super) fn check_stmt(
     stmt: &StmtNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     match &stmt.node {
         Stmt::Import(node) => {
@@ -1069,17 +1072,17 @@ pub(super) fn check_stmt(
                         || module_def.const_defs.contains_key(&item.name);
                     if !is_public {
                         let err_kind = if module_def.all_names.contains(&item.name) {
-                            TypeErrKind::PrivateModuleMember {
+                            DiagnosticKind::PrivateModuleMember {
                                 module: module_name,
                                 member: item.name,
                             }
                         } else {
-                            TypeErrKind::UnknownModuleMember {
+                            DiagnosticKind::UnknownModuleMember {
                                 module: module_name,
                                 member: item.name,
                             }
                         };
-                        errors.push(TypeErr::new(node.span, err_kind));
+                        errors.push(Diagnostic::new(node.span, err_kind));
                     }
                 }
             }
@@ -1109,7 +1112,10 @@ pub(super) fn check_stmt(
                     VariantKind::Struct(fields) => fields.iter().any(|f| f.ty.contains_any()),
                 };
                 if has_any {
-                    errors.push(TypeErr::new(node.span, TypeErrKind::AnyTypeNotAllowed));
+                    errors.push(Diagnostic::new(
+                        node.span,
+                        DiagnosticKind::AnyTypeNotAllowed,
+                    ));
                 }
                 if let VariantKind::Struct(fields) = &variant.kind {
                     for field in fields {
@@ -1143,9 +1149,9 @@ pub(super) fn check_stmt(
                 .last()
                 .is_some_and(|scope| scope.contains(&name));
             if already_in_scope {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     stmt.span,
-                    TypeErrKind::DuplicateConst { name },
+                    DiagnosticKind::DuplicateConst { name },
                 ));
                 return;
             }
@@ -1181,9 +1187,9 @@ pub(super) fn check_stmt(
             if let Some(ref ann_ty) = annotated_ty
                 && *ann_ty != value_ty
             {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     decl.span,
-                    TypeErrKind::ConstTypeMismatch {
+                    DiagnosticKind::ConstTypeMismatch {
                         expected: ann_ty.clone(),
                         got: value_ty,
                     },
@@ -1212,7 +1218,7 @@ pub(super) fn check_stmt(
 fn check_extend_decl(
     node: &crate::ast::ExtendDeclNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let decl = &node.node;
 
@@ -1236,9 +1242,9 @@ fn check_extend_decl(
         _ => false,
     };
     if !valid {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             node.span,
-            TypeErrKind::ExtendUnsupportedType { ty: resolved_ty },
+            DiagnosticKind::ExtendUnsupportedType { ty: resolved_ty },
         ));
         return;
     }
@@ -1246,9 +1252,9 @@ fn check_extend_decl(
     for method in &decl.methods {
         // Validate self param exists
         if method.node.params.is_empty() || method.node.params[0].name.0.as_ref() != "self" {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 method.span,
-                TypeErrKind::ExtendMethodMissingSelf {
+                DiagnosticKind::ExtendMethodMissingSelf {
                     method: method.node.name,
                 },
             ));
@@ -1257,9 +1263,9 @@ fn check_extend_decl(
 
         // Validate no type annotation on self (ty must be Infer)
         if method.node.params[0].ty != Type::Infer {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 method.span,
-                TypeErrKind::ExtendSelfTypeAnnotation {
+                DiagnosticKind::ExtendSelfTypeAnnotation {
                     method: method.node.name,
                 },
             ));
@@ -1277,9 +1283,9 @@ fn check_extend_decl(
             _ => false,
         };
         if has_native_conflict {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 method.span,
-                TypeErrKind::ExtendMethodConflict {
+                DiagnosticKind::ExtendMethodConflict {
                     ty: resolved_ty.clone(),
                     method: method.node.name,
                 },
@@ -1296,9 +1302,9 @@ fn check_extend_decl(
                 .count()
         });
         if local_count > 1 {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 method.span,
-                TypeErrKind::DuplicateExtendMethod {
+                DiagnosticKind::DuplicateExtendMethod {
                     ty: resolved_ty.clone(),
                     method: method.node.name,
                 },
@@ -1333,7 +1339,7 @@ fn check_extend_decl(
 fn check_generic_extend_decl(
     node: &crate::ast::ExtendDeclNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let decl = &node.node;
 
@@ -1341,9 +1347,9 @@ fn check_generic_extend_decl(
     let base_name = if let Type::UnresolvedName(name) = &decl.ty {
         *name
     } else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             node.span,
-            TypeErrKind::ExtendUnsupportedType {
+            DiagnosticKind::ExtendUnsupportedType {
                 ty: type_checker.resolve_type(&decl.ty),
             },
         ));
@@ -1368,26 +1374,26 @@ fn check_generic_extend_decl(
             (tp, *name)
         }
         _ => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 node.span,
-                TypeErrKind::ExtendUnsupportedType { ty: resolved_ty },
+                DiagnosticKind::ExtendUnsupportedType { ty: resolved_ty },
             ));
             return;
         }
     };
 
     if def_type_params.is_empty() {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             node.span,
-            TypeErrKind::ExtendTypeParamsOnNonGeneric { ty_name: base_name },
+            DiagnosticKind::ExtendTypeParamsOnNonGeneric { ty_name: base_name },
         ));
         return;
     }
 
     if decl.type_params.len() != def_type_params.len() {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             node.span,
-            TypeErrKind::ExtendTypeParamCountMismatch {
+            DiagnosticKind::ExtendTypeParamCountMismatch {
                 ty_name: base_name,
                 expected: def_type_params.len(),
                 found: decl.type_params.len(),
@@ -1399,9 +1405,9 @@ fn check_generic_extend_decl(
     for method in &decl.methods {
         // vlidate self param exists
         if method.node.params.is_empty() || method.node.params[0].name.0.as_ref() != "self" {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 method.span,
-                TypeErrKind::ExtendMethodMissingSelf {
+                DiagnosticKind::ExtendMethodMissingSelf {
                     method: method.node.name,
                 },
             ));
@@ -1410,9 +1416,9 @@ fn check_generic_extend_decl(
 
         // validate no type annotation on self
         if method.node.params[0].ty != Type::Infer {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 method.span,
-                TypeErrKind::ExtendSelfTypeAnnotation {
+                DiagnosticKind::ExtendSelfTypeAnnotation {
                     method: method.node.name,
                 },
             ));
@@ -1424,9 +1430,9 @@ fn check_generic_extend_decl(
             .get_struct(resolved_base_name)
             .is_some_and(|def| def.methods.contains_key(&method.node.name));
         if has_native_conflict {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 method.span,
-                TypeErrKind::ExtendMethodConflict {
+                DiagnosticKind::ExtendMethodConflict {
                     ty: resolved_ty.clone(),
                     method: method.node.name,
                 },
@@ -1446,9 +1452,9 @@ fn check_generic_extend_decl(
                     .count()
             });
         if local_count > 0 {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 method.span,
-                TypeErrKind::DuplicateExtendMethod {
+                DiagnosticKind::DuplicateExtendMethod {
                     ty: resolved_ty.clone(),
                     method: method.node.name,
                 },
@@ -1473,13 +1479,16 @@ fn check_generic_extend_decl(
 pub(super) fn check_binding(
     binding: &crate::ast::BindingNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let node = &binding.node;
     if let Some(annot_ty) = &node.ty
         && annot_ty.contains_any()
     {
-        errors.push(TypeErr::new(binding.span, TypeErrKind::AnyTypeNotAllowed));
+        errors.push(Diagnostic::new(
+            binding.span,
+            DiagnosticKind::AnyTypeNotAllowed,
+        ));
     }
     let expected = node
         .ty
@@ -1489,7 +1498,7 @@ pub(super) fn check_binding(
 
     if is_if_without_else(&node.value) {
         errors.push(
-            TypeErr::new(node.value.span, TypeErrKind::IfMissingElse).with_help(
+            Diagnostic::new(node.value.span, DiagnosticKind::IfMissingElse).with_help(
                 "add an `else` branch, or end the `if` with `;` if you meant a statement",
             ),
         );
@@ -1524,14 +1533,14 @@ pub(super) fn check_binding(
     } else {
         if is_all_nil_array_literal(&node.value) {
             errors.push(
-                TypeErr::new(node.value.span, TypeErrKind::ArrayAllNilAmbiguous)
+                Diagnostic::new(node.value.span, DiagnosticKind::ArrayAllNilAmbiguous)
                     .with_help("add a type annotation, e.g. `let a: [int?; _] = [nil, nil];`"),
             );
         }
         if is_empty_map_literal(&node.value) {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 node.value.span,
-                TypeErrKind::MapEmptyLiteralNoContext,
+                DiagnosticKind::MapEmptyLiteralNoContext,
             ));
         }
         value_ty
@@ -1544,16 +1553,16 @@ pub(super) fn check_binding(
 pub(super) fn check_let_else(
     let_else_node: &crate::ast::LetElseNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let node = &let_else_node.node;
 
     let value_ty = check_expr(&node.value, type_checker, errors, None);
 
     if !is_refutable(&node.pattern.node, &value_ty, type_checker) {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             node.pattern.span,
-            TypeErrKind::LetElseIrrefutable,
+            DiagnosticKind::LetElseIrrefutable,
         ));
         check_pattern(&node.pattern, &value_ty, false, type_checker, errors);
         return;
@@ -1570,9 +1579,9 @@ pub(super) fn check_let_else(
     type_checker.pop_scope();
 
     if !block_always_diverges(&node.else_block) {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             node.else_block.span,
-            TypeErrKind::LetElseMustDiverge,
+            DiagnosticKind::LetElseMustDiverge,
         ));
     }
 
@@ -1696,7 +1705,7 @@ fn resolve_array_infer_annotation(annot_ty: &Type, value_ty: &Type) -> Type {
 pub(super) fn check_ret(
     ret: &ReturnNode,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     let node = &ret.node;
 
@@ -1721,9 +1730,9 @@ pub(super) fn check_ret(
 
         // returning nothing in a non-void fn is invalid
         (None, expected_ty) => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 ret.span,
-                TypeErrKind::MismatchedTypes {
+                DiagnosticKind::MismatchedTypes {
                     expected: expected_ty.clone(),
                     found: Type::Void,
                 },
@@ -1732,19 +1741,19 @@ pub(super) fn check_ret(
     }
 }
 
-fn check_break(span: Span, type_checker: &mut TypeChecker, errors: &mut Vec<TypeErr>) {
+fn check_break(span: Span, type_checker: &mut TypeChecker, errors: &mut Vec<Diagnostic>) {
     if !type_checker.in_loop() {
         errors.push(
-            TypeErr::new(span, TypeErrKind::BreakOutsideLoop)
+            Diagnostic::new(span, DiagnosticKind::BreakOutsideLoop)
                 .with_help("break can only appear inside `while` or `for` loops"),
         );
     }
 }
 
-fn check_continue(span: Span, type_checker: &mut TypeChecker, errors: &mut Vec<TypeErr>) {
+fn check_continue(span: Span, type_checker: &mut TypeChecker, errors: &mut Vec<Diagnostic>) {
     if !type_checker.in_loop() {
         errors.push(
-            TypeErr::new(span, TypeErrKind::ContinueOutsideLoop)
+            Diagnostic::new(span, DiagnosticKind::ContinueOutsideLoop)
                 .with_help("continue can only appear inside `while` or `for` loops"),
         );
     }

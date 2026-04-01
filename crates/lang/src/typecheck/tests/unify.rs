@@ -1,6 +1,6 @@
 use super::helpers::{dummy_span, opt_type, type_var};
 use crate::ast::{FuncParam, Type};
-use crate::typecheck::error::TypeErrKind;
+use crate::typecheck::error::DiagnosticKind;
 use crate::typecheck::unify::{contains_infer, is_assignable, unify_types};
 
 #[test]
@@ -132,7 +132,7 @@ fn test_unify_function_types() {
     assert_eq!(errors.len(), 1);
     assert!(matches!(
         &errors[0].kind,
-        TypeErrKind::MismatchedTypes { .. }
+        DiagnosticKind::MismatchedTypes { .. }
     ));
 }
 
@@ -147,7 +147,7 @@ fn test_unify_mismatched_types() {
     assert_eq!(errors.len(), 1);
     assert!(matches!(
         &errors[0].kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == Type::Int && *found == Type::Bool
     ));
 
@@ -185,7 +185,7 @@ fn test_unify_different_type_vars_error() {
     assert_eq!(errors.len(), 1);
     assert!(matches!(
         &errors[0].kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == t && *found == u
     ));
 }
@@ -202,7 +202,7 @@ fn test_unify_type_var_with_concrete_error() {
     assert_eq!(errors.len(), 1);
     assert!(matches!(
         &errors[0].kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == t && *found == Type::Int
     ));
 
@@ -213,7 +213,7 @@ fn test_unify_type_var_with_concrete_error() {
     assert_eq!(errors.len(), 1);
     assert!(matches!(
         &errors[0].kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == Type::Int && *found == t
     ));
 }
@@ -459,7 +459,7 @@ fn test_unify_struct_type_args_mismatch_no_panic() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. }))
     );
 }
 

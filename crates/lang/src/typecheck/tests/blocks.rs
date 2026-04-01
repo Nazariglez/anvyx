@@ -3,7 +3,7 @@ use super::helpers::{
     lit_int, program, reset_expr_ids, run_err, run_ok,
 };
 use crate::ast::Type;
-use crate::typecheck::error::TypeErrKind;
+use crate::typecheck::error::DiagnosticKind;
 
 // ---- block expression type tests ----
 
@@ -120,7 +120,7 @@ fn test_let_binding_block_type_mismatch() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == Type::String && *found == Type::Int
     )));
 }

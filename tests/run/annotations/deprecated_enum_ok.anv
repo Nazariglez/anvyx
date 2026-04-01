@@ -1,0 +1,15 @@
+// @mode: run
+// @expect: success
+// @warn-contains: use of deprecated enum 'OldColor'
+// @match: done
+
+@deprecated
+enum OldColor {
+    Red,
+    Green,
+}
+
+fn main() {
+    let c = OldColor.Red;
+    println("done");
+}

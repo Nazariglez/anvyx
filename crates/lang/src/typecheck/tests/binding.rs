@@ -4,7 +4,7 @@ use super::helpers::{
     run_err, run_ok, var_binding,
 };
 use crate::ast::{AssignOp, Type};
-use crate::typecheck::error::TypeErrKind;
+use crate::typecheck::error::DiagnosticKind;
 
 #[test]
 fn test_binding_annotated_success() {
@@ -32,7 +32,7 @@ fn test_binding_annotated_mismatch() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::MismatchedTypes { expected, found }
+            DiagnosticKind::MismatchedTypes { expected, found }
             if (*expected == Type::Int && *found == Type::Bool) ||
                (*expected == Type::Bool && *found == Type::Int)
         )),
@@ -65,7 +65,7 @@ fn test_binding_unannotated_unresolved_infer() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::UnresolvedInfer))
+            .any(|e| matches!(&e.kind, DiagnosticKind::UnresolvedInfer))
     );
 }
 
@@ -117,7 +117,7 @@ fn test_leftover_infer() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::UnresolvedInfer))
+            .any(|e| matches!(&e.kind, DiagnosticKind::UnresolvedInfer))
     );
 }
 
@@ -186,7 +186,7 @@ fn test_assignability_optional_to_non_optional_fails() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == Type::Int && *found == opt_type(Type::Int)
     )));
 }

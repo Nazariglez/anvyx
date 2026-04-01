@@ -8,7 +8,7 @@ use crate::ast::{
     ArrayLen, AssignOp, Block, BlockNode, Func, FuncNode, Ident, Mutability, Param, Stmt, StmtNode,
     Type, Visibility,
 };
-use crate::typecheck::error::TypeErrKind;
+use crate::typecheck::error::DiagnosticKind;
 use internment::Intern;
 
 fn ident(s: &str) -> Ident {
@@ -108,7 +108,7 @@ fn test_array_literal_annotated_length_mismatch() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. }))
     );
 }
 
@@ -172,7 +172,7 @@ fn test_array_literal_all_nil_ambiguous() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::ArrayAllNilAmbiguous))
+            .any(|e| matches!(&e.kind, DiagnosticKind::ArrayAllNilAmbiguous))
     );
 }
 
@@ -290,7 +290,7 @@ fn test_array_literal_optional_mixed_error() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. })),
         "expected mismatched types error for incompatible element"
     );
 }
@@ -308,7 +308,7 @@ fn test_array_literal_element_type_mismatch() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. }))
     );
 }
 
@@ -368,7 +368,7 @@ fn test_array_fill_length_mismatch() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. }))
     );
 }
 
@@ -411,7 +411,7 @@ fn test_array_fill_length_not_literal() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::ArrayFillLengthNotLiteral))
+            .any(|e| matches!(&e.kind, DiagnosticKind::ArrayFillLengthNotLiteral))
     );
 }
 
@@ -465,7 +465,7 @@ fn test_array_fill_list_len_not_literal_err() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::ArrayFillLengthNotLiteral)),
+            .any(|e| matches!(&e.kind, DiagnosticKind::ArrayFillLengthNotLiteral)),
         "Expected ArrayFillLengthNotLiteral error, got: {:?}",
         errors
     );
@@ -503,7 +503,7 @@ fn test_fixed_array_not_assignable_to_list() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::MismatchedTypes { expected, found }
+            DiagnosticKind::MismatchedTypes { expected, found }
             if *expected == Type::List { elem: Type::Int.boxed() }
             && *found == Type::Array { elem: Type::Int.boxed(), len: ArrayLen::Fixed(2) }
         )),
@@ -542,7 +542,7 @@ fn test_list_not_assignable_to_fixed_array() {
     assert!(
         errors.iter().any(|e| matches!(
             &e.kind,
-            TypeErrKind::MismatchedTypes { expected, found }
+            DiagnosticKind::MismatchedTypes { expected, found }
             if *expected == Type::Array { elem: Type::Int.boxed(), len: ArrayLen::Fixed(2) }
             && *found == Type::List { elem: Type::Int.boxed() }
         )),
@@ -658,7 +658,7 @@ fn test_array_index_non_int_index_error() {
     assert!(!errors.is_empty(), "Expected type error for non-int index");
     assert!(
         errors.iter().any(
-            |e| matches!(&e.kind, TypeErrKind::IndexNotInt { found } if *found == Type::Float)
+            |e| matches!(&e.kind, DiagnosticKind::IndexNotInt { found } if *found == Type::Float)
         ),
         "Expected IndexNotInt error with found=float, got: {:?}",
         errors
@@ -684,7 +684,7 @@ fn test_index_on_non_array_error() {
     );
     assert!(
         errors.iter().any(
-            |e| matches!(&e.kind, TypeErrKind::IndexOnNonArray { found } if *found == Type::Int)
+            |e| matches!(&e.kind, DiagnosticKind::IndexOnNonArray { found } if *found == Type::Int)
         ),
         "Expected IndexOnNonArray error with found=int, got: {:?}",
         errors
@@ -875,7 +875,7 @@ fn test_view_mismatched_element_type_err() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. })),
         "Expected MismatchedTypes error, got: {:?}",
         errors
     );

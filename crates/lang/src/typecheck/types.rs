@@ -11,8 +11,9 @@ use super::const_eval::{ConstDef, ConstValue};
 use std::collections::{HashMap, HashSet};
 
 use super::{
+    annotations::extract_deprecated,
     constraint::{Constraint, TypeRef},
-    error::{TypeErr, TypeErrKind},
+    error::{Diagnostic, DiagnosticKind},
     infer::{build_subst, subst_type},
     range::range_element_type,
     unify::{contains_infer, is_assignable, unify_equal},
@@ -22,12 +23,14 @@ use super::{
 pub(super) struct EnumVariantDef {
     pub name: Ident,
     pub kind: VariantKind,
+    pub deprecated: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct EnumDef {
     pub type_params: Vec<TypeParam>,
     pub variants: Vec<EnumVariantDef>,
+    pub deprecated: Option<Option<String>>,
 }
 
 impl EnumDef {
@@ -38,11 +41,42 @@ impl EnumDef {
             .map(|v| EnumVariantDef {
                 name: v.name,
                 kind: v.kind.clone(),
+                deprecated: extract_deprecated(&v.annotations),
             })
             .collect();
         Self {
             type_params: decl.type_params.clone(),
             variants,
+            deprecated: extract_deprecated(&decl.annotations),
+        }
+    }
+
+    pub(super) fn check_deprecation(
+        &self,
+        enum_name: Ident,
+        variant: &EnumVariantDef,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if let Some(reason) = &self.deprecated {
+            errors.push(Diagnostic::new(
+                span,
+                DiagnosticKind::DeprecatedUsage {
+                    kind: "enum",
+                    name: enum_name,
+                    reason: reason.clone(),
+                },
+            ));
+        }
+        if let Some(reason) = &variant.deprecated {
+            errors.push(Diagnostic::new(
+                span,
+                DiagnosticKind::DeprecatedUsage {
+                    kind: "variant",
+                    name: variant.name,
+                    reason: reason.clone(),
+                },
+            ));
         }
     }
 }
@@ -117,6 +151,7 @@ pub struct StructDef {
     pub fields: Vec<StructField>,
     pub methods: HashMap<Ident, MethodDef>,
     pub field_defaults: HashMap<Ident, FieldDefault>,
+    pub deprecated: Option<Option<String>>,
 }
 
 impl StructDef {
@@ -128,6 +163,7 @@ impl StructDef {
             fields: decl.fields.clone(),
             methods,
             field_defaults: HashMap::new(),
+            deprecated: extract_deprecated(&decl.annotations),
         }
     }
 
@@ -278,7 +314,7 @@ pub struct MethodSpecKey {
 #[derive(Debug, Clone)]
 pub struct SpecializationResult {
     pub ret_ty: Type,
-    pub err: Option<(Span, TypeErrKind)>,
+    pub err: Option<(Span, DiagnosticKind)>,
     pub body_types: HashMap<ExprId, (Span, Type)>,
 }
 
@@ -443,6 +479,14 @@ pub struct TypeChecker {
     /// Final capture lists, keyed by the lambda expression's ExprId
     /// Used by the lowering pass
     pub lambda_captures: HashMap<ExprId, Vec<(Ident, Type)>>,
+
+    /// Accumulated warnings (diagnostics with Severity::Warning)
+    /// Populated during typechecking; reported after success
+    pub warnings: Vec<Diagnostic>,
+
+    /// Deprecated status for free functions, keyed by function name
+    /// Only contains entries for functions marked @deprecated
+    pub(super) func_deprecated: HashMap<Ident, Option<String>>,
 }
 
 impl TypeChecker {
@@ -970,7 +1014,7 @@ impl TypeChecker {
         span: Span,
         left: TypeRef,
         right: TypeRef,
-        errors: &mut Vec<TypeErr>,
+        errors: &mut Vec<Diagnostic>,
     ) {
         // try to unify the types immediately
         let unified = unify_equal(self, span, &left, &right, errors);
@@ -988,7 +1032,7 @@ impl TypeChecker {
         span: Span,
         from: TypeRef,
         to: TypeRef,
-        errors: &mut Vec<TypeErr>,
+        errors: &mut Vec<Diagnostic>,
     ) {
         let from_ty = self.get_type_ref(&from).unwrap_or(Type::Infer);
         let to_ty = self.get_type_ref(&to).unwrap_or(Type::Infer);
@@ -997,9 +1041,9 @@ impl TypeChecker {
         let both_resolved = !(contains_infer(&from_ty) || contains_infer(&to_ty));
         if both_resolved {
             if !is_assignable(&from_ty, &to_ty) {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     span,
-                    TypeErrKind::MismatchedTypes {
+                    DiagnosticKind::MismatchedTypes {
                         expected: to_ty.clone(),
                         found: from_ty.clone(),
                     },
@@ -1033,9 +1077,9 @@ impl TypeChecker {
         let from_is_optional = from_ty.is_optional();
         let to_is_optional = to_ty.is_optional();
         if from_is_optional && !to_is_optional && !contains_infer(&to_ty) {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::MismatchedTypes {
+                DiagnosticKind::MismatchedTypes {
                     expected: to_ty.clone(),
                     found: from_ty.clone(),
                 },
@@ -1186,7 +1230,7 @@ pub(super) fn type_field_on_base(
     field: Ident,
     span: Span,
     type_checker: &TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     match base_ty {
         Type::NamedTuple(fields) => {
@@ -1195,9 +1239,9 @@ pub(super) fn type_field_on_base(
                     return ty.clone();
                 }
             }
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::NoSuchFieldOnTuple {
+                DiagnosticKind::NoSuchFieldOnTuple {
                     field,
                     tuple_type: base_ty.clone(),
                 },
@@ -1213,9 +1257,9 @@ pub(super) fn type_field_on_base(
             type_args,
         } => {
             let Some(struct_def) = type_checker.get_struct(*struct_name) else {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     span,
-                    TypeErrKind::UnknownStruct { name: *struct_name },
+                    DiagnosticKind::UnknownStruct { name: *struct_name },
                 ));
                 return Type::Infer;
             };
@@ -1224,14 +1268,24 @@ pub(super) fn type_field_on_base(
 
             for struct_field in &struct_def.fields {
                 if struct_field.name == field {
+                    if let Some(reason) = extract_deprecated(&struct_field.annotations) {
+                        errors.push(Diagnostic::new(
+                            span,
+                            DiagnosticKind::DeprecatedUsage {
+                                kind: "field",
+                                name: field,
+                                reason,
+                            },
+                        ));
+                    }
                     let field_ty = subst_type(&struct_field.ty, &subst);
                     return type_checker.resolve_type(&field_ty);
                 }
             }
 
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::StructUnknownField {
+                DiagnosticKind::StructUnknownField {
                     struct_name: *struct_name,
                     field,
                 },
@@ -1240,9 +1294,9 @@ pub(super) fn type_field_on_base(
         }
         Type::Extern { name } => {
             let Some(extern_def) = type_checker.get_extern_type(*name) else {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     span,
-                    TypeErrKind::FieldAccessOnNonNamedTuple {
+                    DiagnosticKind::FieldAccessOnNonNamedTuple {
                         field,
                         found: base_ty.clone(),
                     },
@@ -1254,9 +1308,9 @@ pub(super) fn type_field_on_base(
                 return field_def.ty.clone();
             }
 
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::ExternUnknownField {
+                DiagnosticKind::ExternUnknownField {
                     type_name: *name,
                     field,
                 },
@@ -1265,9 +1319,9 @@ pub(super) fn type_field_on_base(
         }
         Type::Infer => Type::Infer,
         _ => {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 span,
-                TypeErrKind::FieldAccessOnNonNamedTuple {
+                DiagnosticKind::FieldAccessOnNonNamedTuple {
                     field,
                     found: base_ty.clone(),
                 },
@@ -1284,18 +1338,18 @@ pub(super) fn type_index_on_base(
     span: Span,
     index_span: Span,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Type {
     if let Some(range_elem) = range_element_type(index_ty) {
         if matches!(base_ty, Type::Map { .. }) {
-            errors.push(TypeErr::new(span, TypeErrKind::RangeIndexOnMap));
+            errors.push(Diagnostic::new(span, DiagnosticKind::RangeIndexOnMap));
             return Type::Infer;
         }
 
         if !matches!(range_elem, Type::Int | Type::Infer) {
-            errors.push(TypeErr::new(
+            errors.push(Diagnostic::new(
                 index_span,
-                TypeErrKind::RangeIndexNotInt {
+                DiagnosticKind::RangeIndexNotInt {
                     found: range_elem.clone(),
                 },
             ));
@@ -1307,9 +1361,9 @@ pub(super) fn type_index_on_base(
             Type::List { elem } => Type::List { elem: elem.clone() },
             Type::ArrayView { elem } => Type::ArrayView { elem: elem.clone() },
             _ => {
-                errors.push(TypeErr::new(
+                errors.push(Diagnostic::new(
                     span,
-                    TypeErrKind::IndexOnNonArray {
+                    DiagnosticKind::IndexOnNonArray {
                         found: base_ty.clone(),
                     },
                 ));
@@ -1327,9 +1381,9 @@ pub(super) fn type_index_on_base(
 
     let maybe_int = matches!(index_ty, Type::Int | Type::Infer);
     if !maybe_int {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             index_span,
-            TypeErrKind::IndexNotInt {
+            DiagnosticKind::IndexNotInt {
                 found: index_ty.clone(),
             },
         ));
@@ -1339,9 +1393,9 @@ pub(super) fn type_index_on_base(
     if let Some(elem_ty) = indexable_element_type(base_ty) {
         elem_ty
     } else {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             span,
-            TypeErrKind::IndexOnNonArray {
+            DiagnosticKind::IndexOnNonArray {
                 found: base_ty.clone(),
             },
         ));
@@ -1505,7 +1559,7 @@ pub(super) fn validate_map_key_type(
     span: Span,
     key_ty: &Type,
     type_checker: &TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     if matches!(key_ty, Type::Infer) {
         return;
@@ -1514,18 +1568,18 @@ pub(super) fn validate_map_key_type(
         return;
     }
     if key_ty.is_option() {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             span,
-            TypeErrKind::MapOptionalKeyNotAllowed {
+            DiagnosticKind::MapOptionalKeyNotAllowed {
                 found: key_ty.clone(),
             },
         ));
     } else if matches!(key_ty, Type::Float | Type::Double) {
-        errors.push(TypeErr::new(span, TypeErrKind::MapKeyFloat));
+        errors.push(Diagnostic::new(span, DiagnosticKind::MapKeyFloat));
     } else {
-        let mut err = TypeErr::new(
+        let mut err = Diagnostic::new(
             span,
-            TypeErrKind::MapKeyNotKeyable {
+            DiagnosticKind::MapKeyNotKeyable {
                 found: key_ty.clone(),
             },
         );

@@ -5,7 +5,7 @@ use super::helpers::{
     text_part, unary_expr, var_binding,
 };
 use crate::ast::{AssignOp, BinaryOp, Type, UnaryOp};
-use crate::typecheck::error::TypeErrKind;
+use crate::typecheck::error::DiagnosticKind;
 
 // ---- binary arithmetic tests ----
 
@@ -47,7 +47,7 @@ fn test_binary_arithmetic_mismatch() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. }))
     );
 }
 
@@ -78,7 +78,7 @@ fn test_binary_logical_invalid_operand() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::InvalidOperand { operand_type, .. }
+        DiagnosticKind::InvalidOperand { operand_type, .. }
         if *operand_type == Type::Int
     )));
 }
@@ -111,7 +111,7 @@ fn test_binary_comparison_mismatch() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. }))
     );
 }
 
@@ -170,7 +170,7 @@ fn test_binary_string_comparison_mismatch() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == Type::String && *found == Type::Int
     )));
 }
@@ -222,7 +222,7 @@ fn test_unary_neg_invalid() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::InvalidOperand { operand_type, .. }
+        DiagnosticKind::InvalidOperand { operand_type, .. }
         if *operand_type == Type::Bool
     )));
 }
@@ -236,7 +236,7 @@ fn test_unary_not_invalid() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::InvalidOperand { operand_type, .. }
+        DiagnosticKind::InvalidOperand { operand_type, .. }
         if *operand_type == Type::Int
     )));
 }
@@ -274,7 +274,7 @@ fn test_assignment_plain_mismatch() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == Type::Int && *found == Type::Bool
     )));
 }
@@ -386,7 +386,7 @@ fn test_coalesce_non_optional_left_error() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::InvalidOperand { op, operand_type }
+        DiagnosticKind::InvalidOperand { op, operand_type }
         if op == "??" && *operand_type == Type::Int
     )));
 }
@@ -404,7 +404,7 @@ fn test_coalesce_mismatched_types() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == Type::Int && *found == Type::String
     )));
 }
@@ -437,7 +437,7 @@ fn test_coalesce_string_with_string_error() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::InvalidOperand { op, operand_type }
+        DiagnosticKind::InvalidOperand { op, operand_type }
         if op == "??" && *operand_type == Type::String
     )));
 }
@@ -455,7 +455,7 @@ fn test_coalesce_mismatched_inner_types() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. }))
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. }))
     );
 }
 
@@ -488,7 +488,7 @@ fn test_coalesce_optional_int_with_float_error() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::MismatchedTypes { expected, found }
+        DiagnosticKind::MismatchedTypes { expected, found }
         if *expected == Type::Int && *found == Type::Float
     )));
 }
@@ -520,7 +520,7 @@ fn test_binary_string_sub_err() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::InvalidOperand { op, operand_type }
+        DiagnosticKind::InvalidOperand { op, operand_type }
         if op == "-" && *operand_type == Type::String
     )));
 }
@@ -568,7 +568,7 @@ fn test_assignment_string_sub_assign_err() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::InvalidOperand { op, operand_type }
+        DiagnosticKind::InvalidOperand { op, operand_type }
         if op == "-=" && *operand_type == Type::String
     )));
 }
@@ -626,7 +626,7 @@ fn test_binary_string_add_struct_err() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::InvalidOperand { op, .. }
+        DiagnosticKind::InvalidOperand { op, .. }
         if op == "+"
     )));
 }
@@ -789,7 +789,7 @@ fn test_cast_bool_to_int_err() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::InvalidCast { from, to }
+        DiagnosticKind::InvalidCast { from, to }
         if *from == Type::Bool && *to == Type::Int
     )));
 }
@@ -801,7 +801,7 @@ fn test_cast_string_to_int_err() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::InvalidCast { from, to }
+        DiagnosticKind::InvalidCast { from, to }
         if *from == Type::String && *to == Type::Int
     )));
 }
@@ -813,7 +813,7 @@ fn test_cast_int_to_bool_err() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::InvalidCast { from, to }
+        DiagnosticKind::InvalidCast { from, to }
         if *from == Type::Int && *to == Type::Bool
     )));
 }
@@ -825,7 +825,7 @@ fn test_cast_int_to_string_err() {
     let errors = run_err(prog);
     assert!(errors.iter().any(|e| matches!(
         &e.kind,
-        TypeErrKind::InvalidCast { from, to }
+        DiagnosticKind::InvalidCast { from, to }
         if *from == Type::Int && *to == Type::String
     )));
 }

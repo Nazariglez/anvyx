@@ -3,7 +3,7 @@ use super::helpers::{
     let_binding, lit_float, lit_int, program, range_expr, reset_expr_ids, run_err, run_ok,
 };
 use crate::ast::{Type, TypeParam, TypeVarId};
-use crate::typecheck::error::TypeErrKind;
+use crate::typecheck::error::DiagnosticKind;
 use crate::typecheck::range::{range_inclusive_type, range_type};
 
 #[test]
@@ -35,7 +35,7 @@ fn range_expr_bounds_must_unify() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(&e.kind, TypeErrKind::MismatchedTypes { .. })),
+            .any(|e| matches!(&e.kind, DiagnosticKind::MismatchedTypes { .. })),
         "expected mismatched types error, got: {:?}",
         errors
     );

@@ -1,0 +1,28 @@
+// @mode: check
+// @expect: success
+
+@deprecated
+fn old_func() {}
+
+@deprecated("use NewPoint")
+struct OldPoint { x: int, y: int }
+
+@deprecated
+enum OldColor {
+    Red,
+    Green,
+}
+
+struct Config {
+    @deprecated("use 'name' instead")
+    label: string,
+    name: string,
+}
+
+enum Status {
+    Active,
+    @deprecated("use Inactive")
+    Disabled,
+}
+
+fn main() {}

@@ -159,9 +159,19 @@ fn analyze_with_extern_meta(
 
     let tcx =
         match typecheck::check_program_with_modules(&combined, &module_list, &auto_use_modules) {
-            Ok(tcx) => tcx,
+            Ok(tcx) => {
+                if !tcx.warnings.is_empty() {
+                    error::report_diagnostics(
+                        program,
+                        file_path,
+                        &user_tokens,
+                        tcx.warnings.clone(),
+                    );
+                }
+                tcx
+            }
             Err(errors) => {
-                error::report_typecheck_errors(program, file_path, &user_tokens, errors);
+                error::report_diagnostics(program, file_path, &user_tokens, errors);
                 return Err("Failed to typecheck program".to_string());
             }
         };

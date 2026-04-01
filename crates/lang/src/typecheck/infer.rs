@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use super::{
     constraint::{TypeRef, resolve_constraints},
-    error::{TypeErr, TypeErrKind},
+    error::{Diagnostic, DiagnosticKind},
     expr::check_expr,
     types::{InferenceSlots, TypeChecker},
     unify::contains_infer,
@@ -97,13 +97,13 @@ pub(super) fn instantiate_func_type(
     template: &Type,
     type_args: &[Type],
     span: Span,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Option<Type> {
     let same_param_count = type_params.len() == type_args.len();
     if !same_param_count {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             span,
-            TypeErrKind::GenericArgNumMismatch {
+            DiagnosticKind::GenericArgNumMismatch {
                 expected: type_params.len(),
                 found: type_args.len(),
             },
@@ -173,15 +173,15 @@ pub(super) fn infer_type_args_from_call(
     ret_template: &Type,
     expected_ret: Option<&Type>,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) -> Option<Vec<Type>> {
     let call_id = type_checker.next_call_id();
     let slots = create_inference_slots(type_params, type_checker, call_id);
 
     if args.len() != param_template_types.len() {
-        errors.push(TypeErr::new(
+        errors.push(Diagnostic::new(
             call_span,
-            TypeErrKind::MismatchedTypes {
+            DiagnosticKind::MismatchedTypes {
                 expected: expected_on_mismatch,
                 found: Type::Func {
                     params: vec![FuncParam::immut(Type::Infer); args.len()],
@@ -246,7 +246,7 @@ pub(super) fn infer_type_args_from_call(
     }
 
     if inference_failed {
-        errors.push(TypeErr::new(call_span, TypeErrKind::UnresolvedInfer));
+        errors.push(Diagnostic::new(call_span, DiagnosticKind::UnresolvedInfer));
         return None;
     }
 
@@ -259,7 +259,7 @@ pub(super) fn constrain_slots_from_type(
     slots: &InferenceSlots,
     span: Span,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<TypeErr>,
+    errors: &mut Vec<Diagnostic>,
 ) {
     match (template, expected) {
         (Type::Var(id), _) => {
