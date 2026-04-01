@@ -1,12 +1,11 @@
 use std::ptr::NonNull;
 
-use crate::managed_rc::{CycleColor, RcHeader};
-use crate::suspect_buffer::SUSPECT_BUFFER;
-
-pub use crate::suspect_buffer::set_auto_collect;
-
 pub use crate::suspect_buffer::{
-    get_collect_threshold, reset_collect_threshold, set_collect_threshold,
+    get_collect_threshold, reset_collect_threshold, set_auto_collect, set_collect_threshold,
+};
+use crate::{
+    managed_rc::{CycleColor, RcHeader},
+    suspect_buffer::SUSPECT_BUFFER,
 };
 
 pub struct CollectStats {
@@ -168,13 +167,16 @@ pub fn clear_suspects() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::managed_rc::{CycleVtable, ManagedRc, ManagedRcInner, typed_dropper};
-    use crate::suspect_buffer::{
-        MAX_THRESHOLD, MIN_THRESHOLD, get_collect_threshold, reset_collect_threshold,
-        set_collect_threshold,
-    };
     use std::cell::RefCell;
+
+    use super::*;
+    use crate::{
+        managed_rc::{CycleVtable, ManagedRc, ManagedRcInner, typed_dropper},
+        suspect_buffer::{
+            MAX_THRESHOLD, MIN_THRESHOLD, get_collect_threshold, reset_collect_threshold,
+            set_collect_threshold,
+        },
+    };
 
     struct Node {
         children: RefCell<Vec<ManagedRc<Node>>>,

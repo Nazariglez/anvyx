@@ -1,20 +1,23 @@
+use chumsky::{error::Rich, prelude::*};
+
+use super::{
+    AnvParser, BoxedParser,
+    common::{
+        TupleShapeResult, block_stmt, field_name_ident, identifier, literal,
+        validate_tuple_shape_raw,
+    },
+    ops::{
+        add_sub_op, and_op, assign_op, bit_and_op, bit_or_op, cmp_op, coalesce_op, eq_op,
+        infix_left, mul_div_op, or_op, shift_op, xor_op,
+    },
+    pattern::{or_pattern, pattern},
+    types::type_ident,
+};
 use crate::{
     ast,
     lexer::{Delimiter, InterpToken, Keyword, LitToken, Op, Token},
     span::{Span, Spanned},
 };
-use chumsky::{error::Rich, prelude::*};
-
-use super::common::{
-    TupleShapeResult, block_stmt, field_name_ident, identifier, literal, validate_tuple_shape_raw,
-};
-use super::ops::{
-    add_sub_op, and_op, assign_op, bit_and_op, bit_or_op, cmp_op, coalesce_op, eq_op, infix_left,
-    mul_div_op, or_op, shift_op, xor_op,
-};
-use super::pattern::{or_pattern, pattern};
-use super::types::type_ident;
-use super::{AnvParser, BoxedParser};
 
 pub(super) fn expression<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
@@ -717,13 +720,11 @@ fn grouped_or_tuple_expr<'src>(
                 TupleShapeResult::OneTupleError(elem) => {
                     emitter.emit(Rich::custom(s, "1-tuples are not supported"));
                     match elem {
-                        TupleExprElem::Pos(e) => e,
-                        TupleExprElem::Labeled(_, e) => e,
+                        TupleExprElem::Pos(e) | TupleExprElem::Labeled(_, e) => e,
                     }
                 }
                 TupleShapeResult::Grouped(elem) => match elem {
-                    TupleExprElem::Pos(e) => e,
-                    TupleExprElem::Labeled(_, e) => e,
+                    TupleExprElem::Pos(e) | TupleExprElem::Labeled(_, e) => e,
                 },
                 TupleShapeResult::Tuple(elems) => {
                     let all_pos = elems.iter().all(|e| matches!(e, TupleExprElem::Pos(_)));
@@ -735,8 +736,7 @@ fn grouped_or_tuple_expr<'src>(
                         let exprs: Vec<ast::ExprNode> = elems
                             .into_iter()
                             .map(|e| match e {
-                                TupleExprElem::Pos(expr) => expr,
-                                TupleExprElem::Labeled(_, expr) => expr,
+                                TupleExprElem::Pos(expr) | TupleExprElem::Labeled(_, expr) => expr,
                             })
                             .collect();
                         let tuple_expr = ast::Expr::new(ast::ExprKind::Tuple(exprs), expr_id);
@@ -788,7 +788,7 @@ fn fn_call_args<'src>(
         .allow_trailing()
         .collect::<Vec<_>>()
         .or_not()
-        .map(std::option::Option::unwrap_or_default),
+        .map(Option::unwrap_or_default),
     )
     .then_ignore(select! {
         (Token::Close(Delimiter::Parent), _) => (),

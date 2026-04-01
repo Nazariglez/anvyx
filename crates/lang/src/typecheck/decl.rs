@@ -1,12 +1,6 @@
-use crate::{
-    ast::{
-        ArrayLen, BlockNode, ExprKind, Func, FuncNode, Ident, MethodReceiver, Mutability, Param,
-        StructDeclNode, Type, TypeParam,
-    },
-    span::Span,
-};
-use internment::Intern;
 use std::collections::HashSet;
+
+use internment::Intern;
 
 use super::{
     annotations::{AnnotationTarget, validate_annotations},
@@ -18,6 +12,13 @@ use super::{
     types::{
         FieldDefault, MethodContext, MethodDef, StructDef, TypeChecker, type_references_generic,
     },
+};
+use crate::{
+    ast::{
+        ArrayLen, BlockNode, ExprKind, Func, FuncNode, Ident, MethodReceiver, Mutability, Param,
+        StructDeclNode, Type, TypeParam,
+    },
+    span::Span,
 };
 
 pub(super) fn check_body_common(

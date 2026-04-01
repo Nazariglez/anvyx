@@ -1,6 +1,9 @@
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    collections::HashMap,
+};
+
 use super::value::RuntimeError;
-use std::cell::{Ref, RefCell, RefMut};
-use std::collections::HashMap;
 
 pub struct HandleStore<T> {
     entries: HashMap<u64, RefCell<T>>,

@@ -1,10 +1,12 @@
-use std::cell::{Cell, RefCell};
-use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::ops::Deref;
-use std::ptr::NonNull;
+use std::{
+    cell::{Cell, RefCell},
+    cmp::Ordering,
+    collections::HashMap,
+    fmt,
+    hash::{Hash, Hasher},
+    ops::Deref,
+    ptr::NonNull,
+};
 
 pub type ChildrenVisitorFn = fn(NonNull<RcHeader>, &mut dyn FnMut(NonNull<RcHeader>));
 
@@ -81,7 +83,7 @@ impl fmt::Debug for CycleVtable {
         f.debug_struct("CycleVtable")
             .field("type_name", &self.type_name)
             .field("buffer_on_decrement", &self.buffer_on_decrement)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -336,8 +338,9 @@ impl<T: Hash> Hash for ManagedRc<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::cell::Cell;
+
+    use super::*;
 
     fn no_children(_: NonNull<RcHeader>, _: &mut dyn FnMut(NonNull<RcHeader>)) {}
     fn no_clear(_: NonNull<RcHeader>) {}

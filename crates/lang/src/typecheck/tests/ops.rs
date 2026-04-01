@@ -4,8 +4,10 @@ use super::helpers::{
     reset_expr_ids, run_err, run_ok, string_interp_expr, struct_decl, struct_literal_expr,
     text_part, unary_expr, var_binding,
 };
-use crate::ast::{AssignOp, BinaryOp, Type, UnaryOp};
-use crate::typecheck::error::DiagnosticKind;
+use crate::{
+    ast::{AssignOp, BinaryOp, Type, UnaryOp},
+    typecheck::error::DiagnosticKind,
+};
 
 // ---- binary arithmetic tests ----
 

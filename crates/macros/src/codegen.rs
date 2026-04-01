@@ -42,6 +42,11 @@ pub struct SelfBorrow {
     pub borrow_param: BorrowParam,
 }
 
+struct StoreGroup<'a> {
+    type_ident: &'a syn::Ident,
+    params: Vec<&'a BorrowParam>,
+}
+
 pub struct ExtractedParams {
     pub extractions: Vec<TokenStream>,
     pub param_names: Vec<syn::Ident>,
@@ -245,11 +250,6 @@ pub fn build_call_with_borrows(
             quote! { #call }
         }
     };
-
-    struct StoreGroup<'a> {
-        type_ident: &'a syn::Ident,
-        params: Vec<&'a BorrowParam>,
-    }
 
     let mut groups: Vec<StoreGroup> = vec![];
     for bp in borrow_params {

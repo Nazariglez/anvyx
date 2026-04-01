@@ -1,11 +1,11 @@
+use chumsky::prelude::*;
+
+use super::{AnvParser, BoxedParser};
 use crate::{
     ast,
     lexer::{Op, Token},
     span::{Span, Spanned},
 };
-use chumsky::prelude::*;
-
-use super::{AnvParser, BoxedParser};
 
 pub(super) fn infix_left<'src>(
     lower: impl AnvParser<'src, ast::ExprNode>,

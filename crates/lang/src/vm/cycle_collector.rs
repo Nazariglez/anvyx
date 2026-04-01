@@ -1,10 +1,9 @@
 use std::ptr::NonNull;
 
-use anvyx_runtime::managed_rc::{CycleVtable, ManagedRcInner, RcHeader, typed_dropper};
-
 #[cfg(test)]
 pub use anvyx_runtime::cycle_collector::{clear_suspects, reset_collect_threshold, suspect_count};
 pub use anvyx_runtime::cycle_collector::{collect_cycles, set_auto_collect};
+use anvyx_runtime::managed_rc::{CycleVtable, ManagedRcInner, RcHeader, typed_dropper};
 
 use super::value::{StructData, Value};
 
@@ -105,8 +104,7 @@ fn visit_value_for_datarefs(val: &Value, f: &mut dyn FnMut(NonNull<RcHeader>)) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::managed_rc::ManagedRc;
-    use super::*;
+    use super::{super::managed_rc::ManagedRc, *};
 
     fn test_vtable() -> &'static CycleVtable {
         make_dataref_vtable("TestNode", true)

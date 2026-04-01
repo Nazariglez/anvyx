@@ -1,11 +1,15 @@
-use crate::ast;
-use crate::lexer;
-use crate::parser::expr::expression;
-use crate::parser::stmt::statement;
-use crate::parser::types::{param_type_ident, type_ident};
-use crate::parser::{ParserState, parser};
-use chumsky::extra::SimpleState;
-use chumsky::prelude::*;
+use chumsky::{extra::SimpleState, prelude::*};
+
+use crate::{
+    ast, lexer,
+    parser::{
+        ParserState,
+        expr::expression,
+        parser,
+        stmt::statement,
+        types::{param_type_ident, type_ident},
+    },
+};
 
 pub(super) fn parse_expr(src: &str) -> ast::ExprNode {
     let tokens =

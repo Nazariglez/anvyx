@@ -3,8 +3,10 @@ use super::helpers::{
     let_binding, lit_bool, lit_int, lit_nil, opt_type, program, reset_expr_ids, return_stmt,
     run_err, run_ok, var_binding,
 };
-use crate::ast::{AssignOp, Type};
-use crate::typecheck::error::DiagnosticKind;
+use crate::{
+    ast::{AssignOp, Type},
+    typecheck::error::DiagnosticKind,
+};
 
 #[test]
 fn test_binding_annotated_success() {

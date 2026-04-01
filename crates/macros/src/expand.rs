@@ -64,16 +64,17 @@ impl Parse for ExportFnArgs {
 }
 
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
-    match do_expand(attr, item.clone()) {
+    let item_for_error = item.clone();
+    match do_expand(attr, item) {
         Ok(ts) => ts,
         Err(e) => {
             let err = e.to_compile_error();
-            quote! { #err #item }
+            quote! { #err #item_for_error }
         }
     }
 }
 
-fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
+fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
     let args: ExportFnArgs = syn::parse2(attr)?;
     let func: ItemFn = syn::parse2(item)?;
 
@@ -106,15 +107,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     }
 
     // classify return type once because it is used for both decl and handler body
-    let classified = classify_return(&func.sig.output).ok_or_else(|| {
-        syn::Error::new_spanned(
-            &func.sig.output,
-            format!(
-                "unsupported return type in #[export_fn] '{export_name}': \
-                 only i64, f64, bool, String, Value, and exported types are supported"
-            ),
-        )
-    })?;
+    let classified = classify_return(&func.sig.output);
 
     let ret_type_ts = match &args.ret {
         Some(ret_str) => quote! { #ret_str },

@@ -95,12 +95,11 @@ impl StdModule {
                 for op in &ty.operators {
                     let sym = match op.op {
                         "Add" => "+",
-                        "Sub" => "-",
+                        "Sub" | "Neg" => "-",
                         "Mul" => "*",
                         "Div" => "/",
                         "Rem" => "%",
                         "Eq" => "==",
-                        "Neg" => "-",
                         other => panic!("unknown operator: {other}"),
                     };
                     let as_self =

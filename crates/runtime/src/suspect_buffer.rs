@@ -1,8 +1,9 @@
-use std::cell::{Cell, RefCell};
-use std::ptr::NonNull;
+use std::{
+    cell::{Cell, RefCell},
+    ptr::NonNull,
+};
 
-use crate::cycle_collector::CollectStats;
-use crate::managed_rc::RcHeader;
+use crate::{cycle_collector::CollectStats, managed_rc::RcHeader};
 
 pub(crate) const MIN_THRESHOLD: usize = 256;
 pub(crate) const MAX_THRESHOLD: usize = 4096;
@@ -35,20 +36,19 @@ pub fn maybe_collect() {
         && SUSPECT_BUFFER.with(|buf| buf.borrow().len() >= threshold);
     if should {
         let stats = crate::cycle_collector::collect_cycles();
-        adjust_threshold(stats);
+        adjust_threshold(&stats);
     }
 }
 
-fn adjust_threshold(stats: CollectStats) {
+fn adjust_threshold(stats: &CollectStats) {
     if stats.suspects == 0 {
         return;
     }
-    let effectiveness = stats.freed as f64 / stats.suspects as f64;
     COLLECT_THRESHOLD.with(|t| {
         let current = t.get();
-        if effectiveness >= 0.5 {
+        if stats.freed.saturating_mul(2) >= stats.suspects {
             t.set((current * 2 / 3).max(MIN_THRESHOLD));
-        } else if effectiveness < 0.1 {
+        } else if stats.freed.saturating_mul(10) < stats.suspects {
             t.set((current * 3 / 2).min(MAX_THRESHOLD));
         }
     });

@@ -134,7 +134,6 @@ fn resolve_float_type(suffix: Option<FloatSuffix>, expected: Option<&Type>) -> T
         Some(FloatSuffix::F) => Type::Float,
         Some(FloatSuffix::D) => Type::Double,
         None => match expected {
-            Some(Type::Float) => Type::Float,
             Some(Type::Double) => Type::Double,
             _ => Type::Float,
         },
@@ -150,9 +149,12 @@ fn check_cast(
     let to_ty = &cast_node.node.target;
 
     let valid = match (&from_ty, to_ty) {
-        (Type::Int, Type::Float) | (Type::Float, Type::Int) => true,
-        (Type::Int, Type::Double) | (Type::Double, Type::Int) => true,
-        (Type::Float, Type::Double) | (Type::Double, Type::Float) => true,
+        (Type::Int, Type::Float)
+        | (Type::Float, Type::Int)
+        | (Type::Int, Type::Double)
+        | (Type::Double, Type::Int)
+        | (Type::Float, Type::Double)
+        | (Type::Double, Type::Float) => true,
         _ => from_ty == *to_ty,
     };
 

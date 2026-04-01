@@ -1,10 +1,11 @@
+use std::fmt::Write;
+
 use super::value::{RuntimeError, Value};
 use crate::builtin::Builtin;
-use std::fmt::Write;
 
 pub fn call_builtin(
     builtin: Builtin,
-    args: Vec<Value>,
+    args: &[Value],
     stdout: &mut String,
 ) -> Result<Value, RuntimeError> {
     match builtin {

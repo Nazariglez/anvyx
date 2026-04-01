@@ -1113,16 +1113,7 @@ fn check_enum_tuple_variant(
     let VariantKind::Tuple(expected_types) = &variant.kind else {
         // not a tuple variant
         match &variant.kind {
-            VariantKind::Unit => {
-                errors.push(Diagnostic::new(
-                    call.span,
-                    DiagnosticKind::EnumVariantNotTuple {
-                        enum_name,
-                        variant_name,
-                    },
-                ));
-            }
-            VariantKind::Struct(_) => {
+            VariantKind::Unit | VariantKind::Struct(_) => {
                 errors.push(Diagnostic::new(
                     call.span,
                     DiagnosticKind::EnumVariantNotTuple {

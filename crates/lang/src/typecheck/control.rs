@@ -309,9 +309,7 @@ pub(super) fn extract_iterable_item_type(
             ));
             Type::Infer
         }
-        Type::Array { elem, .. } => *elem.clone(),
-        Type::List { elem } => *elem.clone(),
-        Type::ArrayView { elem } => *elem.clone(),
+        Type::Array { elem, .. } | Type::List { elem } | Type::ArrayView { elem } => *elem.clone(),
         Type::Map { key, value } => Type::Tuple(vec![*key.clone(), *value.clone()]),
         Type::Infer => Type::Infer,
         _ => {

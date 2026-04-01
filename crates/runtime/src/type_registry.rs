@@ -1,6 +1,8 @@
-use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
-use std::ptr::NonNull;
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    ptr::NonNull,
+};
 
 use crate::managed_rc::{ChildrenVisitorFn, RcHeader};
 
@@ -67,12 +69,13 @@ pub fn clear_registry() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::cycle_collector::{
-        clear_suspects, collect_cycles, reset_collect_threshold, suspect_count,
-    };
-    use crate::managed_rc::{CycleVtable, ManagedRc, ManagedRcInner, typed_dropper};
     use std::cell::RefCell;
+
+    use super::*;
+    use crate::{
+        cycle_collector::{clear_suspects, collect_cycles, reset_collect_threshold, suspect_count},
+        managed_rc::{CycleVtable, ManagedRc, ManagedRcInner, typed_dropper},
+    };
 
     fn no_children(_: NonNull<RcHeader>, _: &mut dyn FnMut(NonNull<RcHeader>)) {}
     fn no_clear(_: NonNull<RcHeader>) {}

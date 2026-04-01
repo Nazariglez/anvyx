@@ -1,9 +1,11 @@
 use super::*;
-use crate::ast::Type;
-use crate::builtin::Builtin;
-use crate::hir;
-use crate::hir::{ExprKind, LocalId, StmtKind};
-use crate::test_helpers::TestCtx;
+use crate::{
+    ast::Type,
+    builtin::Builtin,
+    hir,
+    hir::{ExprKind, LocalId, StmtKind},
+    test_helpers::TestCtx,
+};
 
 fn lower_ok(source: &str) -> hir::Program {
     TestCtx::lower_ok(source)

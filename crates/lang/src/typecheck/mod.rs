@@ -180,12 +180,14 @@ pub fn check_program_with_modules(
         type_checker.current_module_path = Some(path.clone());
         let _ = check_block_stmts(stmts, None, &mut type_checker, &mut errors, None);
         type_checker.current_module_path = None;
-        type_checker.module_defs = baseline_module_defs.clone();
-        type_checker.struct_defs = baseline_struct_defs.clone();
-        type_checker.enum_defs = baseline_enum_defs.clone();
-        type_checker.const_defs = baseline_const_defs.clone();
-        type_checker.extend_defs = baseline_extend_defs.clone();
-        type_checker.generic_extend_templates = baseline_generic_extend_templates.clone();
+        type_checker.module_defs.clone_from(&baseline_module_defs);
+        type_checker.struct_defs.clone_from(&baseline_struct_defs);
+        type_checker.enum_defs.clone_from(&baseline_enum_defs);
+        type_checker.const_defs.clone_from(&baseline_const_defs);
+        type_checker.extend_defs.clone_from(&baseline_extend_defs);
+        type_checker
+            .generic_extend_templates
+            .clone_from(&baseline_generic_extend_templates);
     }
 
     flush_errors(&mut errors, &mut type_checker)?;

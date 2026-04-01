@@ -1,7 +1,9 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::parse::{Parse, ParseStream};
-use syn::{FnArg, ImplItem, ItemImpl, LitStr, Pat, Token, Type};
+use syn::{
+    FnArg, ImplItem, ItemImpl, LitStr, Pat, Token, Type,
+    parse::{Parse, ParseStream},
+};
 
 use crate::type_map::{
     ClassifiedReturn, ParamMode, ReturnMode, ReturnWrapper, classify_param, classify_return,
@@ -195,11 +197,12 @@ struct MethodResult {
 }
 
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
-    match do_expand(attr, item.clone()) {
+    let item_for_error = item.clone();
+    match do_expand(attr, item) {
         Ok(ts) => ts,
         Err(e) => {
             let err = e.to_compile_error();
-            quote! { #err #item }
+            quote! { #err #item_for_error }
         }
     }
 }
@@ -501,9 +504,7 @@ fn process_init(
 
     let resolved_output =
         crate::codegen::resolve_self_in_return(&method.sig.output, rust_type_ident);
-    let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
-        syn::Error::new_spanned(&method.sig.output, "#[init] method must return Self")
-    })?;
+    let ret_mode = classify_return(&resolved_output);
     let returns_self =
         matches!(&ret_mode.mode, ReturnMode::Valued(ty) if *rust_type_ident == *ty.to_string());
     if !returns_self {
@@ -618,9 +619,7 @@ fn process_getter(
     }
     let resolved_output =
         crate::codegen::resolve_self_in_return(&method.sig.output, rust_type_ident);
-    let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
-        syn::Error::new_spanned(&method.sig.output, "unsupported return type in #[getter]")
-    })?;
+    let ret_mode = classify_return(&resolved_output);
     if matches!(ret_mode.mode, ReturnMode::Void) {
         return Err(syn::Error::new_spanned(
             &method.sig.output,
@@ -804,9 +803,7 @@ fn process_op(
 
     let resolved_output =
         crate::codegen::resolve_self_in_return(&method.sig.output, rust_type_ident);
-    let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
-        syn::Error::new_spanned(&method.sig.output, "unsupported return type in #[op]")
-    })?;
+    let ret_mode = classify_return(&resolved_output);
 
     if op_info.op_cap == "Eq" {
         let is_bool = matches!(&ret_mode.mode, ReturnMode::Valued(ty) if ty.to_string() == "bool");
@@ -898,12 +895,7 @@ fn process_method(
 
     let resolved_output =
         crate::codegen::resolve_self_in_return(&method.sig.output, rust_type_ident);
-    let ret_mode = classify_return(&resolved_output).ok_or_else(|| {
-        syn::Error::new_spanned(
-            &method.sig.output,
-            "unsupported return type in #[export_methods]",
-        )
-    })?;
+    let ret_mode = classify_return(&resolved_output);
 
     let self_offset = match kind {
         MethodKind::Static => 0,
@@ -1056,12 +1048,11 @@ fn op_to_capitalized(op: &str) -> &'static str {
 fn op_to_symbol(op: &str) -> &'static str {
     match op {
         "add" => "+",
-        "sub" => "-",
+        "sub" | "neg" => "-",
         "mul" => "*",
         "div" => "/",
         "rem" => "%",
         "eq" => "==",
-        "neg" => "-",
         _ => unreachable!("unknown op: {op}"),
     }
 }

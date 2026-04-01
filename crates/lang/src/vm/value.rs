@@ -1,6 +1,8 @@
-use std::collections::HashMap;
-use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::{
+    collections::HashMap,
+    fmt,
+    hash::{Hash, Hasher},
+};
 
 use indexmap::IndexMap;
 
@@ -83,12 +85,21 @@ impl MapStorage {
     }
 }
 
+impl<'a> IntoIterator for &'a MapStorage {
+    type Item = (&'a Value, &'a Value);
+    type IntoIter = Box<dyn Iterator<Item = Self::Item> + 'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 impl PartialEq for MapStorage {
     fn eq(&self, other: &Self) -> bool {
         if self.len() != other.len() {
             return false;
         }
-        for (k, v) in self.iter() {
+        for (k, v) in self {
             match other.get(k) {
                 Some(ov) if ov == v => {}
                 _ => return false,
@@ -158,7 +169,7 @@ impl fmt::Debug for ExternHandleData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ExternHandleData")
             .field("id", &self.id)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -233,11 +244,11 @@ impl PartialEq for Value {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Nil, Value::Nil) => true,
             (Value::String(a), Value::String(b)) => a == b,
-            (Value::List(a), Value::List(b)) => a == b,
-            (Value::Array(a), Value::Array(b)) => a == b,
+            (Value::List(a), Value::List(b))
+            | (Value::Array(a), Value::Array(b))
+            | (Value::Tuple(a), Value::Tuple(b)) => a == b,
             (Value::Map(a), Value::Map(b)) => a == b,
             (Value::Struct(a), Value::Struct(b)) => a == b,
-            (Value::Tuple(a), Value::Tuple(b)) => a == b,
             (Value::Enum(a), Value::Enum(b)) => a == b,
             (Value::ExternHandle(a), Value::ExternHandle(b)) => a == b,
             (Value::DataRef(a), Value::DataRef(b)) => ManagedRc::ptr_eq(a, b),
@@ -271,13 +282,10 @@ impl Hash for Value {
             Value::Float(v) => v.to_bits().hash(state),
             Value::Double(v) => v.to_bits().hash(state),
             Value::Bool(v) => v.hash(state),
-            Value::Nil => {}
+            Value::Nil | Value::Map(_) => {}
             Value::String(s) => s.hash(state),
             Value::List(l) => l.hash(state),
             Value::Array(a) => a.hash(state),
-
-            // maps-as-keys are rejected by the typechecker, hash only by discriminant
-            Value::Map(_) => {}
             Value::Struct(s) => s.hash(state),
             Value::Tuple(t) => t.hash(state),
             Value::Enum(e) => e.hash(state),

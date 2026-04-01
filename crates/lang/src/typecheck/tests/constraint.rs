@@ -4,11 +4,13 @@ use super::helpers::{
     let_binding, lit_int, lit_string, map_literal_expr, program, reset_expr_ids, return_stmt,
     run_err, run_ok, struct_decl, struct_literal_expr, type_param,
 };
-use crate::ast::{
-    BinaryOp, EnumDecl, EnumDeclNode, EnumVariant, MethodReceiver, Stmt, StmtNode, Type, TypeParam,
-    TypeVarId, VariantKind, Visibility,
+use crate::{
+    ast::{
+        BinaryOp, EnumDecl, EnumDeclNode, EnumVariant, MethodReceiver, Stmt, StmtNode, Type,
+        TypeParam, TypeVarId, VariantKind, Visibility,
+    },
+    typecheck::error::DiagnosticKind,
 };
-use crate::typecheck::error::DiagnosticKind;
 
 // ---- list constrain_assignable tests ----
 

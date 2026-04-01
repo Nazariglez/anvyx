@@ -1,14 +1,16 @@
-use std::collections::HashMap;
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
-use crate::ast::{BinaryOp, Type, UnaryOp};
-use crate::builtin::Builtin;
-use crate::hir;
-
-use super::bytecode::{CastKind, Chunk, Op};
-use super::managed_rc::ManagedRc;
-use super::meta::{EnumMeta, StructMeta};
-use super::value::Value;
+use super::{
+    bytecode::{CastKind, Chunk, Op},
+    managed_rc::ManagedRc,
+    meta::{EnumMeta, StructMeta},
+    value::Value,
+};
+use crate::{
+    ast::{BinaryOp, Type, UnaryOp},
+    builtin::Builtin,
+    hir,
+};
 
 #[derive(Debug)]
 pub enum CompileError {
@@ -124,8 +126,8 @@ impl<'a> FuncCompiler<'a> {
         Ok(self.chunk.add_constant(value))
     }
 
-    fn emit_write_through(&mut self, local: &hir::LocalId) {
-        let wt_data = self.write_through_map.get(local).map(|wt| {
+    fn emit_write_through(&mut self, local: hir::LocalId) {
+        let wt_data = self.write_through_map.get(&local).map(|wt| {
             let ref_local = wt.ref_local.0 as u16;
             let field_idx = match &wt.kind {
                 WriteThroughKind::Field(f) => Some(*f),
@@ -217,7 +219,7 @@ fn compile_stmt(fc: &mut FuncCompiler<'_>, stmt: &hir::Stmt) -> Result<(), Compi
             } else {
                 fc.emit(Op::SetLocal(local.0 as u16));
             }
-            fc.emit_write_through(local);
+            fc.emit_write_through(*local);
         }
 
         hir::StmtKind::Expr(expr) => {
@@ -325,7 +327,7 @@ fn compile_stmt(fc: &mut FuncCompiler<'_>, stmt: &hir::Stmt) -> Result<(), Compi
                 fc.emit(Op::SetField(*field_index));
                 fc.emit(Op::SetLocal(object.0 as u16));
             }
-            fc.emit_write_through(object);
+            fc.emit_write_through(*object);
         }
 
         hir::StmtKind::Match {
@@ -452,7 +454,7 @@ fn compile_stmt(fc: &mut FuncCompiler<'_>, stmt: &hir::Stmt) -> Result<(), Compi
                 fc.emit(Op::IndexSet);
                 fc.emit(Op::SetLocal(object.0 as u16));
             }
-            fc.emit_write_through(object);
+            fc.emit_write_through(*object);
         }
     }
 
@@ -818,12 +820,14 @@ fn compile_expr(fc: &mut FuncCompiler<'_>, expr: &hir::Expr) -> Result<(), Compi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::Type;
-    use crate::hir::{Block, Expr, ExprKind, Func, FuncId, Local, LocalId, Program, StmtKind};
-    use crate::test_helpers::{
-        dummy_ident, dummy_span, hir_binary_expr as binary_expr, hir_bool_expr as bool_expr,
-        hir_int_expr as int_expr, hir_local_expr as local_expr, hir_main_func as main_func,
-        hir_program as prog, hir_simple_func as simple_func, hir_stmt as stmt,
+    use crate::{
+        ast::Type,
+        hir::{Block, Expr, ExprKind, Func, FuncId, Local, LocalId, Program, StmtKind},
+        test_helpers::{
+            dummy_ident, dummy_span, hir_binary_expr as binary_expr, hir_bool_expr as bool_expr,
+            hir_int_expr as int_expr, hir_local_expr as local_expr, hir_main_func as main_func,
+            hir_program as prog, hir_simple_func as simple_func, hir_stmt as stmt,
+        },
     };
 
     #[test]

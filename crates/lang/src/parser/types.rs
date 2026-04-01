@@ -1,35 +1,37 @@
+use chumsky::{error::Rich, prelude::*};
+
+use super::{
+    AnvParser, BoxedParser,
+    common::{TupleShapeResult, identifier, validate_tuple_shape_raw},
+};
 use crate::{
     ast::{self, Type},
     lexer::{Delimiter, Keyword, LitToken, Op, Token},
 };
-use chumsky::{error::Rich, prelude::*};
-
-use super::common::{TupleShapeResult, identifier, validate_tuple_shape_raw};
-use super::{AnvParser, BoxedParser};
 
 #[derive(Clone)]
 enum TypeSuffix {
     Optional,
 }
 
-pub(super) fn type_ident<'src>() -> BoxedParser<'src, ast::Type> {
+pub(super) fn type_ident<'src>() -> BoxedParser<'src, Type> {
     type_ident_inner(false)
 }
 
-pub(super) fn param_type_ident<'src>() -> BoxedParser<'src, ast::Type> {
+pub(super) fn param_type_ident<'src>() -> BoxedParser<'src, Type> {
     type_ident_inner(true)
 }
 
-fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
+fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, Type> {
     recursive(move |type_parser| {
         let builtin_typ = select! {
-            (Token::Keyword(Keyword::Int), _) => ast::Type::Int,
-            (Token::Keyword(Keyword::Float), _) => ast::Type::Float,
-            (Token::Keyword(Keyword::Double), _) => ast::Type::Double,
-            (Token::Keyword(Keyword::Bool), _) => ast::Type::Bool,
-            (Token::Keyword(Keyword::String), _) => ast::Type::String,
-            (Token::Keyword(Keyword::Void), _) => ast::Type::Void,
-            (Token::Keyword(Keyword::Any), _) => ast::Type::Any,
+            (Token::Keyword(Keyword::Int), _) => Type::Int,
+            (Token::Keyword(Keyword::Float), _) => Type::Float,
+            (Token::Keyword(Keyword::Double), _) => Type::Double,
+            (Token::Keyword(Keyword::Bool), _) => Type::Bool,
+            (Token::Keyword(Keyword::String), _) => Type::String,
+            (Token::Keyword(Keyword::Void), _) => Type::Void,
+            (Token::Keyword(Keyword::Any), _) => Type::Any,
         };
 
         let type_args = select! { (Token::Op(Op::LessThan), _) => () }
@@ -45,8 +47,8 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
         let type_name_ref = identifier()
             .then(type_args.or_not())
             .map(|(name, args)| match args {
-                Some(type_args) => ast::Type::Struct { name, type_args },
-                None => ast::Type::UnresolvedName(name),
+                Some(type_args) => Type::Struct { name, type_args },
+                None => Type::UnresolvedName(name),
             });
 
         let paren_type = paren_or_tuple_type(type_parser.clone());
@@ -60,7 +62,7 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
         let semicolon = select! { (Token::Semicolon, _) => () };
         let colon = select! { (Token::Colon, _) => () };
 
-        let param_type_parser: BoxedParser<'src, ast::Type> = if allow_view {
+        let param_type_parser: BoxedParser<'src, Type> = if allow_view {
             type_parser.clone().boxed()
         } else {
             param_type_ident()
@@ -82,7 +84,7 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
             .then_ignore(colon)
             .then(type_parser.clone())
             .then_ignore(close_bracket)
-            .map(|(key, value)| ast::Type::Map {
+            .map(|(key, value)| Type::Map {
                 key: key.boxed(),
                 value: value.boxed(),
             });
@@ -90,14 +92,14 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
         let list_type = open_bracket
             .ignore_then(type_parser.clone())
             .then_ignore(close_bracket)
-            .map(|elem| ast::Type::List { elem: elem.boxed() });
+            .map(|elem| Type::List { elem: elem.boxed() });
 
         let array_type = open_bracket
             .ignore_then(type_parser.clone())
             .then_ignore(semicolon)
             .then(array_len)
             .then_ignore(close_bracket)
-            .map(|(elem, len)| ast::Type::Array {
+            .map(|(elem, len)| Type::Array {
                 elem: elem.boxed(),
                 len,
             });
@@ -109,7 +111,7 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
             .then_ignore(close_bracket)
             .try_map(move |elem, span| {
                 if allow_view {
-                    Ok(ast::Type::ArrayView { elem: elem.boxed() })
+                    Ok(Type::ArrayView { elem: elem.boxed() })
                 } else {
                     Err(Rich::custom(
                         span,
@@ -143,7 +145,7 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
             )
             .then_ignore(arrow)
             .then(type_parser.clone())
-            .map(|(params, ret)| ast::Type::Func {
+            .map(|(params, ret)| Type::Func {
                 params,
                 ret: ret.boxed(),
             });
@@ -166,13 +168,11 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, ast::Type> {
 }
 
 enum TupleTypeElem {
-    Pos(ast::Type),
-    Labeled(ast::Ident, ast::Type),
+    Pos(Type),
+    Labeled(ast::Ident, Type),
 }
 
-fn paren_or_tuple_type<'src>(
-    type_parser: impl AnvParser<'src, ast::Type>,
-) -> BoxedParser<'src, ast::Type> {
+fn paren_or_tuple_type<'src>(type_parser: impl AnvParser<'src, Type>) -> BoxedParser<'src, Type> {
     let comma = select! { (Token::Comma, _) => () };
     let open_paren = select! { (Token::Open(Delimiter::Parent), _) => () };
     let close_paren = select! { (Token::Close(Delimiter::Parent), _) => () };
@@ -200,18 +200,16 @@ fn paren_or_tuple_type<'src>(
             match validate_tuple_shape_raw(first, rest, trailing_comma.is_some()) {
                 TupleShapeResult::Empty => {
                     emitter.emit(Rich::custom(s, "empty tuples are not supported"));
-                    ast::Type::Void
+                    Type::Void
                 }
                 TupleShapeResult::OneTupleError(elem) => {
                     emitter.emit(Rich::custom(s, "1-tuples are not supported"));
                     match elem {
-                        TupleTypeElem::Pos(ty) => ty,
-                        TupleTypeElem::Labeled(_, ty) => ty,
+                        TupleTypeElem::Pos(ty) | TupleTypeElem::Labeled(_, ty) => ty,
                     }
                 }
                 TupleShapeResult::Grouped(elem) => match elem {
-                    TupleTypeElem::Pos(ty) => ty,
-                    TupleTypeElem::Labeled(_, ty) => ty,
+                    TupleTypeElem::Pos(ty) | TupleTypeElem::Labeled(_, ty) => ty,
                 },
                 TupleShapeResult::Tuple(elems) => {
                     let all_pos = elems.iter().all(|e| matches!(e, TupleTypeElem::Pos(_)));
@@ -220,36 +218,35 @@ fn paren_or_tuple_type<'src>(
                         .all(|e| matches!(e, TupleTypeElem::Labeled(_, _)));
 
                     if all_pos {
-                        let types: Vec<ast::Type> = elems
+                        let types: Vec<Type> = elems
                             .into_iter()
                             .map(|e| match e {
-                                TupleTypeElem::Pos(ty) => ty,
-                                TupleTypeElem::Labeled(_, ty) => ty,
+                                TupleTypeElem::Pos(ty) | TupleTypeElem::Labeled(_, ty) => ty,
                             })
                             .collect();
-                        return ast::Type::Tuple(types);
+                        return Type::Tuple(types);
                     }
 
                     if all_labeled {
-                        let fields: Vec<(ast::Ident, ast::Type)> = elems
+                        let fields: Vec<(ast::Ident, Type)> = elems
                             .into_iter()
                             .map(|e| match e {
                                 TupleTypeElem::Labeled(name, ty) => (name, ty),
                                 TupleTypeElem::Pos(_) => unreachable!(),
                             })
                             .collect();
-                        return ast::Type::NamedTuple(fields);
+                        return Type::NamedTuple(fields);
                     }
 
                     emitter.emit(Rich::custom(
                         s,
                         "cannot mix labeled and unlabeled elements in tuple type",
                     ));
-                    ast::Type::Void
+                    Type::Void
                 }
                 TupleShapeResult::UnexpectedComma => {
                     emitter.emit(Rich::custom(s, "unexpected comma"));
-                    ast::Type::Void
+                    Type::Void
                 }
             }
         })

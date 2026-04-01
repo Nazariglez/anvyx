@@ -987,10 +987,11 @@ fn cleanup_explicit_destroy_then_drop_no_panic() {
 // -- #[export_methods] tests --
 
 mod method_tests {
-    use super::extern_handle;
     use anvyx_lang::{
         ExternMethodDecl, ExternStaticMethodDecl, Value, export_methods, export_type,
     };
+
+    use super::extern_handle;
 
     #[export_type(name = "Vec2")]
     pub struct Vec2 {
@@ -2053,8 +2054,9 @@ mod init_no_auto_tests {
 // -- #[op(...)] annotation tests --
 
 mod op_tests {
-    use super::extern_handle;
     use anvyx_lang::{ExternOpDecl, Value, export_methods, export_type};
+
+    use super::extern_handle;
 
     #[export_type(name = "Vec2")]
     pub struct OpVec2 {
@@ -2639,8 +2641,9 @@ fn provider_option_handler() {
 // -- Getter/setter pair returning/accepting an extern type --
 
 mod getter_extern_type_tests {
-    use super::extern_handle;
     use anvyx_lang::{Value, export_methods, export_type};
+
+    use super::extern_handle;
 
     #[export_type(name = "Inner")]
     pub struct Inner {
@@ -2796,8 +2799,9 @@ mod getter_extern_type_tests {
 // -- #[init] accepting an extern type param --
 
 mod init_extern_param_tests {
-    use super::extern_handle;
     use anvyx_lang::{Value, export_methods, export_type};
+
+    use super::extern_handle;
 
     #[export_type(name = "Pos")]
     pub struct Pos {
@@ -3037,8 +3041,9 @@ mod fallible_init_tests {
 // -- #[op] returning Option<f32> --
 
 mod op_option_return_tests {
-    use super::extern_handle;
     use anvyx_lang::{ExternOpDecl, OPTION_TYPE_ID, Value, export_methods, export_type};
+
+    use super::extern_handle;
 
     #[export_type(name = "Num")]
     pub struct Num {
@@ -3129,8 +3134,9 @@ mod op_option_return_tests {
 // -- #[op] returning Result<f32, RuntimeError> --
 
 mod op_result_return_tests {
-    use super::extern_handle;
     use anvyx_lang::{ExternOpDecl, RuntimeError, Value, export_methods, export_type};
+
+    use super::extern_handle;
 
     #[export_type(name = "SafeNum")]
     pub struct SafeNum {
@@ -3408,8 +3414,9 @@ mod method_result_extern_return_tests {
 // -- #[op] returning Option<ExternType> --
 
 mod op_option_extern_return_tests {
-    use super::extern_handle;
     use anvyx_lang::{ExternOpDecl, OPTION_TYPE_ID, Value, export_methods, export_type};
+
+    use super::extern_handle;
 
     #[export_type(name = "Vec2")]
     pub struct OptVec2 {
@@ -3511,8 +3518,9 @@ mod op_option_extern_return_tests {
 // -- #[op] returning Result<ExternType, RuntimeError> --
 
 mod op_result_extern_return_tests {
-    use super::extern_handle;
     use anvyx_lang::{ExternOpDecl, RuntimeError, Value, export_methods, export_type};
+
+    use super::extern_handle;
 
     #[export_type(name = "Frac")]
     pub struct Frac {

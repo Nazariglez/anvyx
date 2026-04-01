@@ -2,9 +2,13 @@ use super::helpers::{
     assert_expr_type, call_expr, dummy_ident, expr_stmt, generic_fn_decl, get_expr_id, ident_expr,
     let_binding, lit_float, lit_int, program, range_expr, reset_expr_ids, run_err, run_ok,
 };
-use crate::ast::{Type, TypeParam, TypeVarId};
-use crate::typecheck::error::DiagnosticKind;
-use crate::typecheck::range::{range_inclusive_type, range_type};
+use crate::{
+    ast::{Type, TypeParam, TypeVarId},
+    typecheck::{
+        error::DiagnosticKind,
+        range::{range_inclusive_type, range_type},
+    },
+};
 
 #[test]
 fn range_expr_of_ints_has_range_int_type() {

@@ -1,16 +1,18 @@
 use std::collections::HashMap;
 
+use chumsky::{error::Rich, prelude::*};
+
+use super::{
+    AnvParser, BoxedParser,
+    common::{block_stmt, field_name_ident, identifier, param, params, return_type},
+    expr::expression,
+    types::type_ident,
+};
 use crate::{
     ast,
     lexer::{Delimiter, Keyword, LitToken, Op, Token},
     span::{Span, Spanned},
 };
-use chumsky::{error::Rich, prelude::*};
-
-use super::common::{block_stmt, field_name_ident, identifier, param, params, return_type};
-use super::expr::expression;
-use super::types::type_ident;
-use super::{AnvParser, BoxedParser};
 
 fn annotation_value<'src>() -> BoxedParser<'src, ast::Lit> {
     select! {
@@ -1181,7 +1183,10 @@ fn resolve_type_params_with_self(
     type_param_map: &HashMap<ast::Ident, ast::TypeVarId>,
     self_type: Option<&ast::Type>,
 ) -> ast::Type {
-    use ast::Type::*;
+    use ast::Type::{
+        Array, ArrayView, DataRef, Enum, Func, List, Map, NamedTuple, Struct, Tuple,
+        UnresolvedName, Var,
+    };
     match ty {
         UnresolvedName(ident) => {
             if let Some(id) = type_param_map.get(ident) {

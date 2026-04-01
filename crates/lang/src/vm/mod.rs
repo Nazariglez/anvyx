@@ -9,17 +9,18 @@ pub mod meta;
 mod runtime;
 mod value;
 
-use crate::hir;
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Write};
 
 pub use extern_type::{AnvyxConvert, AnvyxExternType, extern_handle};
 pub use handle_store::HandleStore;
 pub use managed_rc::ManagedRc;
 pub use runtime::ExternHandler;
-pub use value::RuntimeError;
 pub use value::{
-    DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData, MapStorage, StructData, Value,
+    DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData, MapStorage, RuntimeError,
+    StructData, Value,
 };
+
+use crate::hir;
 
 pub fn run_with_externs(
     hir_prog: &hir::Program,
@@ -59,7 +60,7 @@ pub fn run_with_externs(
         let mut details = managed_rc::managed_alloc_details();
         details.sort_by(|a, b| a.0.cmp(b.0));
         for (name, count) in details {
-            msg.push_str(&format!("\n  {name}: {count}"));
+            let _ = write!(msg, "\n  {name}: {count}");
         }
         return Err(msg);
     }
@@ -69,11 +70,12 @@ pub fn run_with_externs(
 
 #[cfg(test)]
 mod tests {
-    use super::managed_rc::ManagedRc;
-    use super::value::ExternHandleData;
-    use super::{ExternHandler, Value, run_with_externs};
-    use crate::test_helpers::TestCtx;
     use std::collections::HashMap;
+
+    use super::{
+        ExternHandler, Value, managed_rc::ManagedRc, run_with_externs, value::ExternHandleData,
+    };
+    use crate::test_helpers::TestCtx;
 
     fn noop_drop(_id: u64) {}
 

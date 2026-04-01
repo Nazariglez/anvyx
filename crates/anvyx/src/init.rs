@@ -1,5 +1,4 @@
-use std::fs;
-use std::path::Path;
+use std::{fs, path::Path};
 
 const MAIN_ANV: &str = r#"fn main() {
     println("Hello, Anvyx!");

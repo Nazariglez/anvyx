@@ -1519,12 +1519,11 @@ fn check_type_property(ty: &Type, tc: &TypeChecker, prop: TypeProperty) -> Resul
 fn check_type_property_leaf(ty: &Type, tc: &TypeChecker, prop: TypeProperty) -> Result<(), String> {
     match prop {
         TypeProperty::Keyable => match ty {
-            Type::Int | Type::Bool | Type::String => Ok(()),
+            Type::Int | Type::Bool | Type::String | Type::DataRef { .. } => Ok(()),
             Type::Float | Type::Double => Err(
                 "float is not keyable due to NaN and precision issues; use int or string instead"
                     .to_string(),
             ),
-            Type::DataRef { .. } => Ok(()),
             other => Err(format!("type '{other}' is not keyable")),
         },
         TypeProperty::Equatable => match ty {

@@ -1,5 +1,7 @@
-use std::sync::LazyLock;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::{
+    sync::LazyLock,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 
 use anvyx_lang::{export_fn, provider};
 

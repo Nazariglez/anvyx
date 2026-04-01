@@ -64,12 +64,12 @@ fn classify_inner_type(ty: &Type) -> ReturnMode {
     }
 }
 
-pub fn classify_return(output: &ReturnType) -> Option<ClassifiedReturn> {
+pub fn classify_return(output: &ReturnType) -> ClassifiedReturn {
     match output {
-        ReturnType::Default => Some(ClassifiedReturn {
+        ReturnType::Default => ClassifiedReturn {
             mode: ReturnMode::Void,
             wrapper: ReturnWrapper::None,
-        }),
+        },
         ReturnType::Type(_, ty) => {
             if let Type::Path(path) = ty.as_ref()
                 && path.qself.is_none()
@@ -83,10 +83,10 @@ pub fn classify_return(output: &ReturnType) -> Option<ClassifiedReturn> {
                     && let GenericArgument::Type(inner_ty) = &args.args[0]
                 {
                     let inner_mode = classify_inner_type(inner_ty);
-                    return Some(ClassifiedReturn {
+                    return ClassifiedReturn {
                         mode: inner_mode,
                         wrapper: ReturnWrapper::AnvyxOption,
-                    });
+                    };
                 }
 
                 if seg.ident == "Result"
@@ -99,19 +99,19 @@ pub fn classify_return(output: &ReturnType) -> Option<ClassifiedReturn> {
                         if p.path.segments.last().is_some_and(|s| s.ident == "RuntimeError"));
                     if is_runtime_error {
                         let inner_mode = classify_inner_type(ok_ty);
-                        return Some(ClassifiedReturn {
+                        return ClassifiedReturn {
                             mode: inner_mode,
                             wrapper: ReturnWrapper::Fallible,
-                        });
+                        };
                     }
                 }
             }
 
             let mode = classify_inner_type(ty);
-            Some(ClassifiedReturn {
+            ClassifiedReturn {
                 mode,
                 wrapper: ReturnWrapper::None,
-            })
+            }
         }
     }
 }

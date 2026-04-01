@@ -1,11 +1,3 @@
-use crate::{
-    ast::{
-        ArrayLen, BlockNode, ConstDeclNode, ExprId, ExprKind, ExprNode, ExternFunc,
-        ExternTypeMember, Func, FuncNode, FuncParam, Ident, ImportKind, Mutability, Param,
-        ReturnNode, Stmt, StmtNode, Type, TypeParam, VariantKind, Visibility,
-    },
-    span::Span,
-};
 use std::collections::{HashMap, HashSet};
 
 use internment::Intern;
@@ -31,6 +23,14 @@ use super::{
         validate_map_key_type,
     },
     unify::contains_infer,
+};
+use crate::{
+    ast::{
+        ArrayLen, BlockNode, ConstDeclNode, ExprId, ExprKind, ExprNode, ExternFunc,
+        ExternTypeMember, Func, FuncNode, FuncParam, Ident, ImportKind, Mutability, Param,
+        ReturnNode, Stmt, StmtNode, Type, TypeParam, VariantKind, Visibility,
+    },
+    span::Span,
 };
 
 pub(super) fn check_block_stmts(

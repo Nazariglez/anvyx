@@ -11,23 +11,23 @@ mod tests;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::{
-    ast::{self, ExprId, TypeVarId},
-    lexer::SpannedToken,
-    span::Spanned,
-};
 use chumsky::{
     Boxed,
     error::Rich,
     extra::{self, SimpleState},
     prelude::*,
 };
-
 use decl::{
     annotations, const_decl, dataref_declaration, doc_comment_block, enum_declaration,
     extend_declaration, extern_declaration, function, import_declaration, struct_declaration,
 };
 use stmt::statement;
+
+use crate::{
+    ast::{self, ExprId, TypeVarId},
+    lexer::SpannedToken,
+    span::Spanned,
+};
 
 static NEXT_EXPR_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -51,11 +51,11 @@ impl ParserState {
 pub(super) type Input<'src> = &'src [SpannedToken];
 pub(super) type Extra<'src> = extra::Full<Rich<'src, SpannedToken>, SimpleState<ParserState>, ()>;
 pub(super) trait AnvParser<'src, T>:
-    chumsky::Parser<'src, Input<'src>, T, Extra<'src>> + Clone + 'src
+    Parser<'src, Input<'src>, T, Extra<'src>> + Clone + 'src
 {
 }
 impl<'src, T, P> AnvParser<'src, T> for P where
-    P: chumsky::Parser<'src, Input<'src>, T, Extra<'src>> + Clone + 'src
+    P: Parser<'src, Input<'src>, T, Extra<'src>> + Clone + 'src
 {
 }
 

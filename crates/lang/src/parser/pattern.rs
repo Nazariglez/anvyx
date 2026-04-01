@@ -1,12 +1,14 @@
+use chumsky::{error::Rich, prelude::*};
+
+use super::{
+    AnvParser, BoxedParser,
+    common::{TupleShapeResult, identifier, literal, validate_tuple_shape_raw},
+};
 use crate::{
     ast,
     lexer::{Delimiter, Keyword, Op, Token},
     span::{Span, Spanned},
 };
-use chumsky::{error::Rich, prelude::*};
-
-use super::common::{TupleShapeResult, identifier, literal, validate_tuple_shape_raw};
-use super::{AnvParser, BoxedParser};
 
 pub(super) fn pattern<'src>() -> BoxedParser<'src, ast::PatternNode> {
     recursive(|pat| {
@@ -374,13 +376,11 @@ fn tuple_pattern<'src>(
                 TupleShapeResult::OneTupleError(elem) => {
                     emitter.emit(Rich::custom(s, "1-tuple patterns are not supported"));
                     match elem {
-                        TuplePatternElem::Pos(p) => p,
-                        TuplePatternElem::Labeled(_, p) => p,
+                        TuplePatternElem::Pos(p) | TuplePatternElem::Labeled(_, p) => p,
                     }
                 }
                 TupleShapeResult::Grouped(elem) => match elem {
-                    TuplePatternElem::Pos(p) => p,
-                    TuplePatternElem::Labeled(_, p) => p,
+                    TuplePatternElem::Pos(p) | TuplePatternElem::Labeled(_, p) => p,
                 },
                 TupleShapeResult::Tuple(elems) => {
                     let all_pos = elems.iter().all(|e| matches!(e, TuplePatternElem::Pos(_)));
@@ -392,8 +392,7 @@ fn tuple_pattern<'src>(
                         let pats: Vec<ast::PatternNode> = elems
                             .into_iter()
                             .map(|e| match e {
-                                TuplePatternElem::Pos(p) => p,
-                                TuplePatternElem::Labeled(_, p) => p,
+                                TuplePatternElem::Pos(p) | TuplePatternElem::Labeled(_, p) => p,
                             })
                             .collect();
                         return Spanned::new(ast::Pattern::Tuple(pats), span);

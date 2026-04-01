@@ -106,7 +106,7 @@ pub(super) fn check_binary(
                 let has_extern_eq = matches!(ty, Type::Extern { name }
                         if type_checker
                             .get_extern_type(*name)
-                            .is_some_and(|def| def.operators.iter().any(|o| o.op == BinaryOp::Eq)));
+                            .is_some_and(|def| def.operators.iter().any(|o| o.op == Eq)));
                 if !has_extern_eq && !is_equatable(ty, type_checker) {
                     let mut err =
                         Diagnostic::new(bin.span, DiagnosticKind::NotEquatable { ty: ty.clone() });

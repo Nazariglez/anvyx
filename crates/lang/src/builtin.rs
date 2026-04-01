@@ -1,5 +1,6 @@
-use crate::ast::{FuncParam, Ident, Type};
 use internment::Intern;
+
+use crate::ast::{FuncParam, Ident, Type};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Builtin {
@@ -11,7 +12,7 @@ pub(crate) enum Builtin {
 const ALL: &[Builtin] = &[Builtin::Println, Builtin::Assert, Builtin::AssertMsg];
 
 impl Builtin {
-    pub fn name(&self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Builtin::Println => "println",
             Builtin::Assert => "assert",
@@ -19,11 +20,11 @@ impl Builtin {
         }
     }
 
-    pub fn ident(&self) -> Ident {
+    pub fn ident(self) -> Ident {
         Ident(Intern::new(self.name().to_string()))
     }
 
-    pub fn params(&self) -> Vec<Type> {
+    pub fn params(self) -> Vec<Type> {
         match self {
             Builtin::Println => vec![Type::Any],
             Builtin::Assert => vec![Type::Bool],
@@ -31,15 +32,13 @@ impl Builtin {
         }
     }
 
-    pub fn ret(&self) -> Type {
+    pub fn ret(self) -> Type {
         match self {
-            Builtin::Println => Type::Void,
-            Builtin::Assert => Type::Void,
-            Builtin::AssertMsg => Type::Void,
+            Builtin::Println | Builtin::Assert | Builtin::AssertMsg => Type::Void,
         }
     }
 
-    pub fn func_type(&self) -> Type {
+    pub fn func_type(self) -> Type {
         Type::Func {
             params: self.params().into_iter().map(FuncParam::immut).collect(),
             ret: Box::new(self.ret()),

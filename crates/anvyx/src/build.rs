@@ -1,6 +1,9 @@
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process;
+use std::{
+    fmt::Write,
+    fs,
+    path::{Path, PathBuf},
+    process,
+};
 
 use crate::manifest::Manifest;
 
@@ -160,7 +163,7 @@ fn generate_cargo_toml(project_root: &Path, manifest: &Manifest) -> String {
 
     for (name, entry) in entries {
         let extern_path = resolve_relative_path(project_root, &entry.path);
-        deps.push_str(&format!("{name} = {{ path = \"{extern_path}\" }}\n"));
+        let _ = writeln!(deps, "{name} = {{ path = \"{extern_path}\" }}");
     }
 
     format!(
@@ -194,13 +197,14 @@ fn generate_main_rs(manifest: &Manifest) -> String {
 fn generate_metadata_lines(sorted_names: &[&String]) -> String {
     let mut lines = String::new();
     for name in sorted_names {
-        lines.push_str(&format!(
+        let _ = write!(
+            lines,
             "        {{\n\
              \x20           let json = anvyx_lang::exports_to_json({name}::ANVYX_EXPORTS, &{name}::anvyx_type_exports());\n\
              \x20           fs::write(format!(\"{{output_dir}}/{name}.json\"), json)\n\
              \x20               .unwrap_or_else(|e| {{ eprintln!(\"Failed to write metadata for '{name}': {{e}}\"); std::process::exit(1); }});\n\
              \x20       }}\n"
-        ));
+        );
     }
     lines
 }
@@ -208,13 +212,14 @@ fn generate_metadata_lines(sorted_names: &[&String]) -> String {
 fn generate_metadata_read_lines(sorted_names: &[&String]) -> String {
     let mut lines = String::new();
     for name in sorted_names {
-        lines.push_str(&format!(
+        let _ = write!(
+            lines,
             "    {{\n\
              \x20       let json = fs::read_to_string(format!(\"{{metadata_dir}}/{name}.json\"))\n\
              \x20           .unwrap_or_else(|e| {{ eprintln!(\"Failed to read metadata for '{name}': {{e}}\"); std::process::exit(1); }});\n\
              \x20       extern_metadata.insert(\"{name}\".to_string(), json);\n\
              \x20   }}\n"
-        ));
+        );
     }
     lines
 }
@@ -239,9 +244,10 @@ fn generate_build_metadata_consts(sorted_names: &[&String]) -> String {
     let mut lines = String::new();
     for name in sorted_names {
         let const_name = format!("META_{}", name.to_uppercase());
-        lines.push_str(&format!(
-            "const {const_name}: &str = include_str!(\"../../metadata/{name}.json\");\n"
-        ));
+        let _ = writeln!(
+            lines,
+            "const {const_name}: &str = include_str!(\"../../metadata/{name}.json\");"
+        );
     }
     lines
 }
@@ -250,9 +256,10 @@ fn generate_build_metadata_inserts(sorted_names: &[&String]) -> String {
     let mut lines = String::new();
     for name in sorted_names {
         let const_name = format!("META_{}", name.to_uppercase());
-        lines.push_str(&format!(
-            "    extern_metadata.insert(\"{name}\".to_string(), {const_name}.to_string());\n"
-        ));
+        let _ = writeln!(
+            lines,
+            "    extern_metadata.insert(\"{name}\".to_string(), {const_name}.to_string());"
+        );
     }
     lines
 }

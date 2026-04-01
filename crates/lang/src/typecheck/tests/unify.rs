@@ -1,7 +1,11 @@
 use super::helpers::{dummy_span, opt_type, type_var};
-use crate::ast::{FuncParam, Type};
-use crate::typecheck::error::DiagnosticKind;
-use crate::typecheck::unify::{contains_infer, is_assignable, unify_types};
+use crate::{
+    ast::{FuncParam, Type},
+    typecheck::{
+        error::DiagnosticKind,
+        unify::{contains_infer, is_assignable, unify_types},
+    },
+};
 
 #[test]
 fn test_unify_primitives() {

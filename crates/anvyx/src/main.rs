@@ -6,12 +6,11 @@ mod progress;
 mod run;
 mod std_support;
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-
-use crate::manifest::Manifest;
+use std::{collections::HashMap, path::PathBuf};
 
 use clap::{Parser, Subcommand};
+
+use crate::manifest::Manifest;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -52,11 +51,9 @@ fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Run { file, backend } => {
             let manifest = manifest::parse_manifest()?;
-            let path = resolve_entry(file, &manifest)?;
+            let path = resolve_entry(file, manifest.as_ref())?;
 
-            let has_externs = manifest
-                .as_ref()
-                .is_some_and(manifest::Manifest::has_externs);
+            let has_externs = manifest.as_ref().is_some_and(Manifest::has_externs);
             if has_externs {
                 let manifest = manifest.as_ref().unwrap();
                 let ctx = prepare_externs(manifest)?;
@@ -72,11 +69,9 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Command::Check { file } => {
             let manifest = manifest::parse_manifest()?;
-            let path = resolve_entry(file, &manifest)?;
+            let path = resolve_entry(file, manifest.as_ref())?;
 
-            let has_externs = manifest
-                .as_ref()
-                .is_some_and(manifest::Manifest::has_externs);
+            let has_externs = manifest.as_ref().is_some_and(Manifest::has_externs);
             let extern_meta = if has_externs {
                 let manifest = manifest.as_ref().unwrap();
                 let ctx = prepare_externs(manifest)?;
@@ -122,13 +117,12 @@ fn run(cli: Cli) -> Result<(), String> {
     Ok(())
 }
 
-fn resolve_entry(file: Option<PathBuf>, manifest: &Option<Manifest>) -> Result<PathBuf, String> {
+fn resolve_entry(file: Option<PathBuf>, manifest: Option<&Manifest>) -> Result<PathBuf, String> {
     if let Some(f) = file {
         Ok(f)
     } else {
-        let m = manifest
-            .as_ref()
-            .ok_or("No file provided and no anvyx.toml found in the current directory")?;
+        let m =
+            manifest.ok_or("No file provided and no anvyx.toml found in the current directory")?;
         Ok(PathBuf::from(&m.project.entry))
     }
 }

@@ -1,7 +1,9 @@
-use crate::ast::{BinaryOp, FormatSpec, Ident, Type, UnaryOp};
-use crate::builtin::Builtin;
-use crate::span::Span;
-use crate::vm::meta::{EnumMeta, StructMeta};
+use crate::{
+    ast::{BinaryOp, FormatSpec, Ident, Type, UnaryOp},
+    builtin::Builtin,
+    span::Span,
+    vm::meta::{EnumMeta, StructMeta},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Ownership {

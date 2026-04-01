@@ -1,8 +1,13 @@
-use super::helpers::{dummy_span, opt_type, type_param, type_var};
-use crate::ast::{FuncParam, Type, TypeVarId};
-use crate::typecheck::error::DiagnosticKind;
-use crate::typecheck::infer::{instantiate_func_type, subst_type};
 use std::collections::HashMap;
+
+use super::helpers::{dummy_span, opt_type, type_param, type_var};
+use crate::{
+    ast::{FuncParam, Type, TypeVarId},
+    typecheck::{
+        error::DiagnosticKind,
+        infer::{instantiate_func_type, subst_type},
+    },
+};
 
 // ---- subst_type tests ----
 

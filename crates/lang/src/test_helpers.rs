@@ -1,10 +1,15 @@
 use internment::Intern;
 
-use crate::ast::{BinaryOp, Ident, Type};
-use crate::hir::{Block, Expr, Func, FuncId, Local, LocalId, Program, Stmt, StmtKind};
-use crate::lower::LowerError;
-use crate::span::Span;
-use crate::{ast, hir, lower, typecheck, vm};
+use crate::{
+    ast,
+    ast::{BinaryOp, Ident, Type},
+    hir,
+    hir::{Block, Expr, Func, FuncId, Local, LocalId, Program, Stmt, StmtKind},
+    lower,
+    lower::LowerError,
+    span::Span,
+    typecheck, vm,
+};
 
 const TEST_CORE_PRELUDE: &str = concat!(
     include_str!("../../core/src/option.anv"),

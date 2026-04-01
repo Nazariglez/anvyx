@@ -2,8 +2,10 @@ use super::helpers::{
     assert_expr_type, call_expr, expr_stmt, fn_decl, get_expr_id, ident_expr, let_binding,
     lit_bool, lit_int, program, reset_expr_ids, return_stmt, run_err, run_ok,
 };
-use crate::ast::{FuncParam, Type};
-use crate::typecheck::error::DiagnosticKind;
+use crate::{
+    ast::{FuncParam, Type},
+    typecheck::error::DiagnosticKind,
+};
 
 // ---- return tests ----
 

@@ -1,7 +1,13 @@
-use chumsky::input::Cursor;
-use chumsky::{Parser, error::Rich, extra, input::InputRef, prelude::*};
-use internment::Intern;
 use std::fmt::Display;
+
+use chumsky::{
+    Parser,
+    error::Rich,
+    extra,
+    input::{Cursor, InputRef},
+    prelude::*,
+};
+use internment::Intern;
 
 use crate::{ast, span::Span};
 
@@ -71,8 +77,7 @@ impl Display for LitToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LitToken::Number(n) => write!(f, "{n}"),
-            LitToken::Float(s, _) => write!(f, "{s}"),
-            LitToken::String(s) => write!(f, "{s}"),
+            LitToken::Float(s, _) | LitToken::String(s) => write!(f, "{s}"),
         }
     }
 }
@@ -1016,7 +1021,7 @@ fn doc_comment<'src>() -> impl Parser<'src, &'src str, Vec<SpannedToken>, Extra<
         .then_ignore(just("/").rewind().not())
         .ignore_then(none_of("\n").repeated().collect::<String>())
         .map_with(|content, e| -> Vec<SpannedToken> {
-            let span: chumsky::span::SimpleSpan<usize> = e.span();
+            let span: SimpleSpan<usize> = e.span();
             let stripped = content.strip_prefix(' ').unwrap_or(&content).to_string();
             vec![(
                 Token::DocComment(Intern::new(stripped)),

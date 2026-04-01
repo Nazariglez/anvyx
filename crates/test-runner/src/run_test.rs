@@ -1,11 +1,12 @@
-use wait_timeout::ChildExt;
-
-use crate::directives::Directives;
 use std::{
     io::Read,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
+
+use wait_timeout::ChildExt;
+
+use crate::directives::Directives;
 
 const ORANGE: &str = "\x1b[93m";
 const RESET: &str = "\x1b[0m";
@@ -55,17 +56,17 @@ pub fn run_test_file(
 
     let res = match (outcome, directives.expect, directives.mode) {
         (ProcessOutcome::Pass { stdout, stderr }, ExpectedResult::Success, Mode::Run) => {
-            let res = match_output(&stdout, &directives)?;
+            let res = match_output(&stdout, &directives);
             match res {
-                TestResult::Pass => check_warn_contains(&stderr, &directives)?,
+                TestResult::Pass => check_warn_contains(&stderr, &directives),
                 other => other,
             }
         }
         (ProcessOutcome::Pass { stdout, stderr }, ExpectedResult::Success, Mode::Check) => {
             let merged = format!("{stdout}{stderr}");
-            let res = match_output(&merged, &directives)?;
+            let res = match_output(&merged, &directives);
             match res {
-                TestResult::Pass => check_warn_contains(&stderr, &directives)?,
+                TestResult::Pass => check_warn_contains(&stderr, &directives),
                 other => other,
             }
         }
@@ -91,14 +92,15 @@ pub fn run_test_file(
             }
         }
         (ProcessOutcome::Fail { stderr, .. }, ExpectedResult::Error, Mode::Run) => {
-            match_output(&stderr, &directives)?
+            match_output(&stderr, &directives)
         }
         (ProcessOutcome::Fail { stdout, stderr }, ExpectedResult::Error, Mode::Check) => {
             let merged = format!("{stdout}{stderr}");
-            match_output(&merged, &directives)?
+            match_output(&merged, &directives)
         }
-        (ProcessOutcome::Timeout, ExpectedResult::Success, _) => TestResult::Timeout,
-        (ProcessOutcome::Timeout, ExpectedResult::Error, _) => TestResult::Timeout,
+        (ProcessOutcome::Timeout, ExpectedResult::Success | ExpectedResult::Error, _) => {
+            TestResult::Timeout
+        }
         (ProcessOutcome::Timeout, ExpectedResult::Timeout, _) => TestResult::Pass,
     };
 
@@ -110,29 +112,29 @@ pub fn run_test_file(
     })
 }
 
-fn check_warn_contains(stderr: &str, directives: &Directives) -> Result<TestResult, String> {
+fn check_warn_contains(stderr: &str, directives: &Directives) -> TestResult {
     for expected in &directives.warn_contains {
         if !stderr.lines().any(|ln| ln.contains(expected.as_str())) {
-            return Ok(TestResult::Fail {
+            return TestResult::Fail {
                 message: format!(
                     "* Expected warning containing:\n{expected}\n* Got stderr:\n{stderr}"
                 ),
-            });
+            };
         }
     }
-    Ok(TestResult::Pass)
+    TestResult::Pass
 }
 
-fn match_output(output: &str, directives: &Directives) -> Result<TestResult, String> {
+fn match_output(output: &str, directives: &Directives) -> TestResult {
     // exact match, multilnne or not
     if let Some(expected) = &directives.match_exact {
         let expected_lines = expected.lines();
         let lns = output.lines();
         let same_lines_num = lns.count() == expected_lines.count();
         if !same_lines_num {
-            return Ok(TestResult::Fail {
+            return TestResult::Fail {
                 message: format!("* Expected:\n{expected}\n* Got:\n{output}"),
-            });
+            };
         }
 
         let expected_lines = expected.lines();
@@ -140,28 +142,28 @@ fn match_output(output: &str, directives: &Directives) -> Result<TestResult, Str
         let join_iter = lns.zip(expected_lines);
         for (idx, (ln, expected_ln)) in join_iter.enumerate() {
             if ln != expected_ln {
-                return Ok(TestResult::Fail {
+                return TestResult::Fail {
                     message: format!(
                         "* Line {idx} failed\n* Expected:\n{expected}\n* Got:\n{output}",
                     ),
-                });
+                };
             }
         }
 
-        return Ok(TestResult::Pass);
+        return TestResult::Pass;
     }
 
     // check if any line contains the expected text
     for expected_ln in &directives.contains {
         let found = output.lines().any(|ln| ln.contains(expected_ln));
         if !found {
-            return Ok(TestResult::Fail {
+            return TestResult::Fail {
                 message: format!("* Expected output to contain:\n{expected_ln}\n* Got:\n{output}",),
-            });
+            };
         }
     }
 
-    Ok(TestResult::Pass)
+    TestResult::Pass
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

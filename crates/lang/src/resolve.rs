@@ -1,9 +1,13 @@
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+};
 
-use crate::StdModuleSource;
-use crate::ast::{Stmt, StmtNode};
-use crate::span::Span;
+use crate::{
+    StdModuleSource,
+    ast::{Stmt, StmtNode},
+    span::Span,
+};
 
 #[derive(Debug)]
 pub enum ImportError {
@@ -68,11 +72,7 @@ fn collect_imports(
         };
 
         let import = &import_node.node;
-        let path_key: Vec<String> = import
-            .path
-            .iter()
-            .map(std::string::ToString::to_string)
-            .collect();
+        let path_key: Vec<String> = import.path.iter().map(ToString::to_string).collect();
 
         if path_key.first().map(String::as_str) == Some("std") {
             if resolved.contains(&path_key) {

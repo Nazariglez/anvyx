@@ -2,13 +2,14 @@ mod args;
 mod directives;
 mod run_test;
 
-use args::BackendArg;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use run_test::{ExpectedResult, TestResult, run_test_file};
 use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
+
+use args::BackendArg;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use run_test::{ExpectedResult, TestResult, run_test_file};
 
 use crate::run_test::{Mode, RunTestResult};
 
@@ -60,11 +61,11 @@ fn main() {
                 Ok(res) => Some((file.clone(), res)),
                 Err(e) => Some((
                     file.clone(),
-                    run_test::RunTestResult {
+                    RunTestResult {
                         result: TestResult::Fail {
                             message: format!("Test runner error: {e}"),
                         },
-                        mode: run_test::Mode::Check,
+                        mode: Mode::Check,
                         backend: None,
                         duration: Duration::from_secs(0),
                     },

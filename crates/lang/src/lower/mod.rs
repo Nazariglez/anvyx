@@ -1,11 +1,15 @@
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
-use std::fmt;
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    fmt,
+};
 
-use crate::ast::{self, ExprId, Ident, Type};
-use crate::hir;
-use crate::span::Span;
-use crate::typecheck::TypeChecker;
+use crate::{
+    ast::{self, ExprId, Ident, Type},
+    hir,
+    span::Span,
+    typecheck::TypeChecker,
+};
 
 mod assign;
 mod block;
@@ -16,9 +20,6 @@ mod match_stmt;
 mod ownership;
 mod program;
 
-pub use ownership::analyze_ownership;
-pub use program::lower_program;
-
 use assign::lower_assign;
 use block::{lower_block, lower_block_to_target, lower_string_interp};
 use expr::lower_expr;
@@ -27,6 +28,8 @@ use helpers::*;
 use match_stmt::{
     alloc_write_through, lower_if_let, lower_let_else, lower_match_stmts, lower_while_let,
 };
+pub use ownership::analyze_ownership;
+pub use program::lower_program;
 
 #[derive(Debug)]
 pub enum LowerError {

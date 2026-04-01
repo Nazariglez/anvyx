@@ -1,19 +1,22 @@
 use std::fmt::Write;
 
-use crate::ast::{FormatKind, FormatSpec};
-use crate::builtin::Builtin;
-use crate::prelude_enums::OPTION_TYPE_ID;
-
-use super::builtins;
-use super::bytecode::{CastKind, Op};
-use super::compiler::CompiledProgram;
-use super::managed_rc::ManagedRc;
-use super::meta::VariantMetaKind;
-use super::value::{
-    ClosureData, EnumData, MapStorage, RefPath, RuntimeError, StructData, Value, type_name,
-    value_add, value_and, value_bit_and, value_bit_not, value_bit_or, value_div, value_eq,
-    value_gt, value_gte, value_lt, value_lte, value_mul, value_negate, value_neq, value_not,
-    value_or, value_rem, value_shl, value_shr, value_sub, value_xor,
+use super::{
+    builtins,
+    bytecode::{CastKind, Op},
+    compiler::CompiledProgram,
+    managed_rc::ManagedRc,
+    meta::VariantMetaKind,
+    value::{
+        ClosureData, EnumData, MapStorage, RefPath, RuntimeError, StructData, Value, type_name,
+        value_add, value_and, value_bit_and, value_bit_not, value_bit_or, value_div, value_eq,
+        value_gt, value_gte, value_lt, value_lte, value_mul, value_negate, value_neq, value_not,
+        value_or, value_rem, value_shl, value_shr, value_sub, value_xor,
+    },
+};
+use crate::{
+    ast::{FormatKind, FormatSpec},
+    builtin::Builtin,
+    prelude_enums::OPTION_TYPE_ID,
 };
 
 pub type ExternHandler = Box<dyn Fn(Vec<Value>) -> Result<Value, RuntimeError>>;
@@ -68,8 +71,7 @@ fn resolve_path_ref<'a>(slot: &'a Value, segments: &[u16]) -> &'a Value {
     let mut current = slot;
     for &seg in segments {
         current = match current {
-            Value::Struct(s) => &s.fields[seg as usize],
-            Value::DataRef(s) => &s.fields[seg as usize],
+            Value::Struct(s) | Value::DataRef(s) => &s.fields[seg as usize],
             Value::Tuple(t) => &t[seg as usize],
             Value::Enum(e) => &e.fields[seg as usize],
             _ => panic!("resolve_path_ref: cannot index into {}", type_name(current)),
@@ -174,7 +176,7 @@ impl<'a> VM<'a> {
                     self.pop();
                 }
 
-                Op::GetLocal(idx) => {
+                Op::GetLocal(idx) | Op::CloneLocal(idx) => {
                     let val = self.stack[stack_base + idx as usize].clone();
                     self.push(val);
                 }
@@ -182,11 +184,6 @@ impl<'a> VM<'a> {
                 Op::MoveLocal(idx) => {
                     let slot = &mut self.stack[stack_base + idx as usize];
                     let val = std::mem::replace(slot, Value::Nil);
-                    self.push(val);
-                }
-
-                Op::CloneLocal(idx) => {
-                    let val = self.stack[stack_base + idx as usize].clone();
                     self.push(val);
                 }
 
@@ -495,7 +492,7 @@ impl<'a> VM<'a> {
                         writeln!(self.stdout, "{s}").unwrap();
                         Value::Nil
                     } else {
-                        builtins::call_builtin(builtin, args, &mut self.stdout)?
+                        builtins::call_builtin(builtin, &args, &mut self.stdout)?
                     };
                     self.push(result);
                 }
@@ -1161,8 +1158,7 @@ impl<'a> VM<'a> {
 
     fn format_value(&mut self, value: &Value) -> Result<String, RuntimeError> {
         match value {
-            Value::Struct(s) => self.format_struct_data(s, value),
-            Value::DataRef(s) => self.format_struct_data(s, value),
+            Value::Struct(s) | Value::DataRef(s) => self.format_struct_data(s, value),
             Value::List(l) => {
                 let elems: Vec<Value> = l.iter().cloned().collect();
                 self.format_sequence(&elems)
@@ -1307,8 +1303,7 @@ impl<'a> VM<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vm::bytecode::Chunk;
-    use crate::vm::managed_rc::ManagedRc;
+    use crate::vm::{bytecode::Chunk, managed_rc::ManagedRc};
 
     fn make_program(chunks: Vec<Chunk>, main_idx: usize) -> CompiledProgram {
         CompiledProgram {

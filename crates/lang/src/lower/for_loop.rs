@@ -1,10 +1,11 @@
-use crate::ast::{self, BinaryOp, Pattern, Type};
-use crate::hir;
-use crate::span::Span;
-
 use super::{
     FuncLower, LowerCtx, LowerError, alloc_and_bind, emit_counter_increment, lower_block,
     lower_expr, register_named_local,
+};
+use crate::{
+    ast::{self, BinaryOp, Pattern, Type},
+    hir,
+    span::Span,
 };
 
 enum IterableKind {
@@ -25,9 +26,9 @@ fn classify_iterable(ty: &Type) -> Option<IterableKind> {
                 None
             }
         }
-        Type::Array { elem, .. } => Some(IterableKind::Sequence(*elem.clone())),
-        Type::List { elem } => Some(IterableKind::Sequence(*elem.clone())),
-        Type::ArrayView { elem } => Some(IterableKind::Sequence(*elem.clone())),
+        Type::Array { elem, .. } | Type::List { elem } | Type::ArrayView { elem } => {
+            Some(IterableKind::Sequence(*elem.clone()))
+        }
         Type::Map { key, value } => Some(IterableKind::Map {
             key_ty: *key.clone(),
             value_ty: *value.clone(),

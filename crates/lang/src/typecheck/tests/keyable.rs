@@ -2,8 +2,10 @@ use super::helpers::{
     dummy_ident, enum_decl, ident_expr, let_binding, lit_float, lit_int, lit_string,
     map_literal_expr, program, reset_expr_ids, run_err, run_ok, struct_decl, struct_literal_expr,
 };
-use crate::ast::{Type, VariantKind};
-use crate::typecheck::error::DiagnosticKind;
+use crate::{
+    ast::{Type, VariantKind},
+    typecheck::error::DiagnosticKind,
+};
 
 // ---- sanity: int key still works ----
 

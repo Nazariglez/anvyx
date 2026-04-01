@@ -1,5 +1,6 @@
-use crate::ast::{Ident, Type};
 use internment::Intern;
+
+use crate::ast::{Ident, Type};
 
 pub(super) fn range_type(elem_ty: Type) -> Type {
     Type::Struct {

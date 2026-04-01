@@ -1,15 +1,18 @@
+use internment::Intern;
+
 use super::helpers::{
     array_fill, array_literal, assert_expr_type, assign_expr, call_expr, dummy_span, func_decl,
     get_expr_id, ident_expr, index_expr, let_binding, lit_float, lit_int, lit_nil, lit_string,
     map_literal_expr, opt_type, program, reset_expr_ids, run_err, run_ok, safe_index_expr,
     var_binding, view_type,
 };
-use crate::ast::{
-    ArrayLen, AssignOp, Block, BlockNode, Func, FuncNode, Ident, Mutability, Param, Stmt, StmtNode,
-    Type, Visibility,
+use crate::{
+    ast::{
+        ArrayLen, AssignOp, Block, BlockNode, Func, FuncNode, Ident, Mutability, Param, Stmt,
+        StmtNode, Type, Visibility,
+    },
+    typecheck::error::DiagnosticKind,
 };
-use crate::typecheck::error::DiagnosticKind;
-use internment::Intern;
 
 fn ident(s: &str) -> Ident {
     Ident(Intern::new(s.to_string()))

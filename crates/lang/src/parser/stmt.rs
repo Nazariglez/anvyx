@@ -1,16 +1,18 @@
+use chumsky::prelude::*;
+
+use super::{
+    AnvParser, BoxedParser,
+    common::{block_stmt, identifier},
+    decl::function,
+    expr::{cond_expression, expression},
+    pattern::pattern,
+    types::type_ident,
+};
 use crate::{
     ast,
     lexer::{Keyword, Op, Token},
     span::{Span, Spanned},
 };
-use chumsky::prelude::*;
-
-use super::common::{block_stmt, identifier};
-use super::decl::function;
-use super::expr::{cond_expression, expression};
-use super::pattern::pattern;
-use super::types::type_ident;
-use super::{AnvParser, BoxedParser};
 
 pub(super) fn statement<'src>() -> BoxedParser<'src, ast::StmtNode> {
     recursive(|stmt| {
@@ -315,7 +317,7 @@ fn break_stmt<'src>() -> BoxedParser<'src, ast::StmtNode> {
         (Token::Semicolon, _) => (),
     })
     .map_with(|(), e| {
-        let s: chumsky::span::SimpleSpan<usize> = e.span();
+        let s: SimpleSpan<usize> = e.span();
         let span = Span::new(s.start, s.end);
         Spanned::new(ast::Stmt::Break, span)
     })
@@ -332,7 +334,7 @@ fn continue_stmt<'src>() -> BoxedParser<'src, ast::StmtNode> {
         (Token::Semicolon, _) => (),
     })
     .map_with(|(), e| {
-        let s: chumsky::span::SimpleSpan<usize> = e.span();
+        let s: SimpleSpan<usize> = e.span();
         let span = Span::new(s.start, s.end);
         Spanned::new(ast::Stmt::Continue, span)
     })

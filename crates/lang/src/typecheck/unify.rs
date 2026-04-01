@@ -138,7 +138,13 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
             len_ok && is_assignable(elem_from, elem_to)
         }
 
-        (List { elem: elem_from }, List { elem: elem_to }) => is_assignable(elem_from, elem_to),
+        (List { elem: elem_from }, List { elem: elem_to })
+        | (
+            Array {
+                elem: elem_from, ..
+            },
+            ArrayView { elem: elem_to },
+        ) => is_assignable(elem_from, elem_to),
 
         (
             Map {
@@ -152,22 +158,11 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
         ) => is_assignable(key_from, key_to) && is_assignable(value_from, value_to),
 
         // view [T; ..] to [U; ..] if T is assignable to U
-        (ArrayView { elem: elem_from }, ArrayView { elem: elem_to }) => {
+        (ArrayView { elem: elem_from } | List { elem: elem_from }, ArrayView { elem: elem_to }) => {
             is_assignable(elem_from, elem_to)
         }
 
         // array [T; N] to View [U; ..] if T is assignable to U
-        (
-            Array {
-                elem: elem_from, ..
-            },
-            ArrayView { elem: elem_to },
-        ) => is_assignable(elem_from, elem_to),
-
-        // list [T] to View [U; ..] if T is assignable to U
-        (List { elem: elem_from }, ArrayView { elem: elem_to }) => {
-            is_assignable(elem_from, elem_to)
-        }
 
         // opaque extern types are only assignable to the exact same extern type
         (Extern { name: ln }, Extern { name: rn }) => ln == rn,
@@ -184,7 +179,7 @@ pub(super) fn unify_types(
     span: Span,
     errors: &mut Vec<Diagnostic>,
 ) -> Option<Type> {
-    use Type::*;
+    use Type::{Array, ArrayView, Enum, Extern, Func, Infer, List, Map, Struct};
 
     // same type, no need to unify
     if left == right {

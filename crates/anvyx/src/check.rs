@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::{fs, path::Path};
+use std::{collections::HashMap, fs, path::Path};
 
 use crate::std_support::{collect_core, collect_std};
 

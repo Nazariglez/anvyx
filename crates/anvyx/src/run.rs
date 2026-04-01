@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
+use std::{collections::HashMap, fs, path::Path};
 
 use anvyx_lang::{Backend, CoreSource, run_program_with_std};
 

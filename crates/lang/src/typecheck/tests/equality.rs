@@ -4,8 +4,10 @@ use super::helpers::{
     map_literal_expr, opt_type, program, reset_expr_ids, return_stmt, run_err, run_ok, struct_decl,
     struct_literal_expr,
 };
-use crate::ast::{ArrayLen, BinaryOp, Type, VariantKind};
-use crate::typecheck::error::DiagnosticKind;
+use crate::{
+    ast::{ArrayLen, BinaryOp, Type, VariantKind},
+    typecheck::error::DiagnosticKind,
+};
 
 // ---- equatable primitives ----
 

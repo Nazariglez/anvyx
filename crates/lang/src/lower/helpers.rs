@@ -268,7 +268,6 @@ pub(super) fn collect_declarations<'a>(
                     }
                 }
             }
-            Stmt::Extend(_) => {}
             _ => {}
         }
     }

@@ -183,11 +183,12 @@ fn op_str_to_binary_op(s: &str) -> Result<crate::ast::BinaryOp, String> {
 pub(crate) fn metadata_to_extern_stmts(
     meta: &ExternProviderMeta,
 ) -> Result<Vec<crate::ast::StmtNode>, String> {
-    use crate::ast::{
-        ExternFunc, ExternType, ExternTypeMember, Ident, MethodReceiver, Stmt, UnaryOp,
-    };
-    use crate::span::{Span, Spanned};
     use internment::Intern;
+
+    use crate::{
+        ast::{ExternFunc, ExternType, ExternTypeMember, Ident, MethodReceiver, Stmt, UnaryOp},
+        span::{Span, Spanned},
+    };
 
     let span = Span::new(0, 0);
     let mut stmts = vec![];
@@ -300,8 +301,9 @@ pub(crate) fn metadata_to_extern_stmts(
 }
 
 fn params_to_ast(params: &[(String, String)]) -> Result<Vec<crate::ast::Param>, String> {
-    use crate::ast::{Ident, Mutability, Param};
     use internment::Intern;
+
+    use crate::ast::{Ident, Mutability, Param};
 
     params
         .iter()

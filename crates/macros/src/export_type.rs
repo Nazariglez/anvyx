@@ -5,8 +5,10 @@ use syn::{
     parse::{Parse, ParseStream},
 };
 
-use crate::codegen;
-use crate::type_map::{ClassifiedReturn, ReturnMode, ReturnWrapper};
+use crate::{
+    codegen,
+    type_map::{ClassifiedReturn, ReturnMode, ReturnWrapper},
+};
 
 struct ExportTypeArgs {
     name: String,
@@ -31,11 +33,12 @@ impl Parse for ExportTypeArgs {
 }
 
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
-    match do_expand(attr, item.clone()) {
+    let item_for_error = item.clone();
+    match do_expand(attr, item) {
         Ok(ts) => ts,
         Err(e) => {
             let err = e.to_compile_error();
-            quote! { #err #item }
+            quote! { #err #item_for_error }
         }
     }
 }

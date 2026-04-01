@@ -96,7 +96,7 @@ fn analyze_with_extern_meta(
     // parse extern metadata JSON and extract provider names for resolve skip list
     let mut parsed_providers = std::collections::HashMap::new();
     for (name, json) in extern_metadata {
-        let meta = metadata::parse_provider_json(json)
+        let meta = parse_provider_json(json)
             .map_err(|e| format!("Failed to parse metadata for extern '{name}': {e}"))?;
         parsed_providers.insert(name.clone(), meta);
     }
@@ -342,8 +342,9 @@ pub(crate) const TEST_CORE_SOURCE: &str = "";
 
 #[cfg(test)]
 mod extern_import_tests {
-    use super::*;
     use std::collections::HashMap;
+
+    use super::*;
 
     fn sample_metadata() -> HashMap<String, String> {
         let json = r#"{"types":[],"functions":[
@@ -486,8 +487,9 @@ mod extern_import_tests {
 
 #[cfg(test)]
 mod std_import_tests {
-    use super::*;
     use std::collections::HashMap;
+
+    use super::*;
 
     fn math_std_modules() -> HashMap<String, StdModuleSource> {
         let mut m = HashMap::new();

@@ -48,10 +48,7 @@ fn collect_reassigned_stmt(stmt: &Stmt, set: &mut HashSet<LocalId>) {
         StmtKind::Assign { local, .. } => {
             set.insert(*local);
         }
-        StmtKind::SetField { object, .. } => {
-            set.insert(*object);
-        }
-        StmtKind::SetIndex { object, .. } => {
+        StmtKind::SetField { object, .. } | StmtKind::SetIndex { object, .. } => {
             set.insert(*object);
         }
         StmtKind::If {
@@ -182,8 +179,7 @@ fn analyze_block(block: &mut Block, ctx: &mut LivenessCtx) {
 
 fn analyze_stmt(stmt: &mut Stmt, ctx: &mut LivenessCtx) {
     match &mut stmt.kind {
-        StmtKind::Expr(e) => analyze_expr(e, ctx),
-        StmtKind::Return(Some(e)) => analyze_expr(e, ctx),
+        StmtKind::Expr(e) | StmtKind::Return(Some(e)) => analyze_expr(e, ctx),
         StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
         StmtKind::Let { init, .. } => analyze_expr(init, ctx),
         StmtKind::Assign { local, value } => {
@@ -572,8 +568,10 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut LivenessCtx) {
 
 #[cfg(test)]
 mod tests {
-    use crate::hir::{ExprKind, Ownership, StmtKind};
-    use crate::test_helpers::TestCtx;
+    use crate::{
+        hir::{ExprKind, Ownership, StmtKind},
+        test_helpers::TestCtx,
+    };
 
     fn lower(source: &str) -> crate::hir::Program {
         TestCtx::lower_ok(source)

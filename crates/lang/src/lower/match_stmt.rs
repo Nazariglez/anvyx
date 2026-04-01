@@ -1,19 +1,19 @@
-use crate::ast::{self, BinaryOp, FloatSuffix, Ident, Lit, Pattern, Type, UnaryOp};
-use crate::hir;
-use crate::span::Span;
-use crate::typecheck::ConstValue;
 use internment::Intern;
 
 use super::{
     FuncLower, LowerCtx, LowerError, lower_block, lower_expr, register_named_local,
     resolve_variant_index,
 };
+use crate::{
+    ast::{self, BinaryOp, FloatSuffix, Ident, Lit, Pattern, Type, UnaryOp},
+    hir,
+    span::Span,
+    typecheck::ConstValue,
+};
 
-fn needs_write_through(arms: &[hir::MatchArm], else_body: &Option<hir::MatchElse>) -> bool {
+fn needs_write_through(arms: &[hir::MatchArm], else_body: Option<&hir::MatchElse>) -> bool {
     let arms_have_var = arms.iter().any(|a| a.bindings.iter().any(|b| b.mutable));
-    let else_has_var = else_body
-        .as_ref()
-        .is_some_and(|e| matches!(e.binding, Some((_, true))));
+    let else_has_var = else_body.is_some_and(|e| matches!(e.binding, Some((_, true))));
     arms_have_var || else_has_var
 }
 
@@ -121,7 +121,7 @@ pub(super) fn lower_match_stmts(
 
 fn lower_match_enum(
     mcx: MatchLowerCtx,
-    enum_name: ast::Ident,
+    enum_name: Ident,
     type_args: &[Type],
 ) -> Result<hir::Stmt, LowerError> {
     let MatchLowerCtx {
@@ -746,7 +746,7 @@ fn lower_match_enum(
         fc.leave_scope(mark);
     }
 
-    let write_through = if needs_write_through(&arms, &else_body) {
+    let write_through = if needs_write_through(&arms, else_body.as_ref()) {
         alloc_write_through(&scrutinee_expr, fc)
     } else {
         None
@@ -894,28 +894,7 @@ fn lower_match_non_enum(
                                 rhs,
                             ));
                         }
-                        Pattern::Ident(name) => {
-                            let local = register_named_local(fc, *name, elem_ty.clone());
-                            preamble.push(hir::Stmt {
-                                span,
-                                kind: hir::StmtKind::Let {
-                                    local,
-                                    init: hir::Expr::new(
-                                        elem_ty,
-                                        span,
-                                        hir::ExprKind::TupleIndex {
-                                            tuple: Box::new(hir::Expr::local(
-                                                scrutinee_ty.clone(),
-                                                span,
-                                                scrutinee_local,
-                                            )),
-                                            index: i as u16,
-                                        },
-                                    ),
-                                },
-                            });
-                        }
-                        Pattern::VarIdent(name) => {
+                        Pattern::Ident(name) | Pattern::VarIdent(name) => {
                             let local = register_named_local(fc, *name, elem_ty.clone());
                             preamble.push(hir::Stmt {
                                 span,
@@ -1226,19 +1205,7 @@ fn build_non_enum_cond_preamble(
             Ok((Some(cond), vec![]))
         }
 
-        Pattern::Ident(name) => {
-            let local = register_named_local(fc, *name, scrutinee_ty.clone());
-            let binding = hir::Stmt {
-                span,
-                kind: hir::StmtKind::Let {
-                    local,
-                    init: hir::Expr::local(scrutinee_ty.clone(), span, scrutinee_local),
-                },
-            };
-            Ok((None, vec![binding]))
-        }
-
-        Pattern::VarIdent(name) => {
+        Pattern::Ident(name) | Pattern::VarIdent(name) => {
             let local = register_named_local(fc, *name, scrutinee_ty.clone());
             let binding = hir::Stmt {
                 span,
@@ -1286,28 +1253,7 @@ fn build_non_enum_cond_preamble(
                             rhs,
                         ));
                     }
-                    Pattern::Ident(name) => {
-                        let local = register_named_local(fc, *name, elem_ty.clone());
-                        preamble.push(hir::Stmt {
-                            span,
-                            kind: hir::StmtKind::Let {
-                                local,
-                                init: hir::Expr::new(
-                                    elem_ty,
-                                    span,
-                                    hir::ExprKind::TupleIndex {
-                                        tuple: Box::new(hir::Expr::local(
-                                            scrutinee_ty.clone(),
-                                            span,
-                                            scrutinee_local,
-                                        )),
-                                        index: i as u16,
-                                    },
-                                ),
-                            },
-                        });
-                    }
-                    Pattern::VarIdent(name) => {
+                    Pattern::Ident(name) | Pattern::VarIdent(name) => {
                         let local = register_named_local(fc, *name, elem_ty.clone());
                         preamble.push(hir::Stmt {
                             span,
@@ -1738,25 +1684,7 @@ pub(super) fn lower_let_else(
             });
             return Ok(None);
         }
-        Pattern::Ident(name) => {
-            let binding_local = register_named_local(fc, *name, scrutinee_ty.clone());
-            out.push(hir::Stmt {
-                span,
-                kind: hir::StmtKind::Let {
-                    local: scrutinee_local,
-                    init: scrutinee_expr,
-                },
-            });
-            out.push(hir::Stmt {
-                span,
-                kind: hir::StmtKind::Let {
-                    local: binding_local,
-                    init: hir::Expr::local(scrutinee_ty.clone(), span, scrutinee_local),
-                },
-            });
-            return Ok(None);
-        }
-        Pattern::VarIdent(name) => {
+        Pattern::Ident(name) | Pattern::VarIdent(name) => {
             let binding_local = register_named_local(fc, *name, scrutinee_ty.clone());
             out.push(hir::Stmt {
                 span,

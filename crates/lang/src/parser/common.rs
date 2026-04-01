@@ -1,14 +1,16 @@
+use chumsky::prelude::*;
+use internment::Intern;
+
+use super::{
+    AnvParser, BoxedParser,
+    expr::expression,
+    types::{param_type_ident, type_ident},
+};
 use crate::{
     ast,
     lexer::{Delimiter, FloatSuffix, Keyword, LitToken, Op, Token},
     span::{Span, Spanned},
 };
-use chumsky::prelude::*;
-use internment::Intern;
-
-use super::expr::expression;
-use super::types::{param_type_ident, type_ident};
-use super::{AnvParser, BoxedParser};
 
 pub(super) fn identifier<'src>() -> BoxedParser<'src, ast::Ident> {
     select! {

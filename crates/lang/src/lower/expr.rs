@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 
+use internment::Intern;
+
+use super::*;
 use crate::{
     ast::{
         self, ArrayLen, BinaryOp, Ident, InferredEnumArgs, Lit, MethodReceiver, Mutability, Type,
@@ -9,15 +12,6 @@ use crate::{
     hir,
     span::Span,
     typecheck::{ConstValue, FieldDefault},
-};
-use internment::Intern;
-
-use super::{
-    FuncLower, LowerCtx, LowerError, alloc_and_bind, alloc_assign_temp, alloc_write_through,
-    build_method_ref_mask, emit_counter_increment, extern_binary_op_key, extern_unary_op_key,
-    lower_assign, lower_block, lower_block_to_target, lower_if_let, lower_match_stmts,
-    lower_string_interp, mangle_generic_name, mangle_method_spec_name, register_named_local,
-    register_param_local, resolve_enum_type_id, resolve_struct_type_id, resolve_variant_index,
 };
 
 fn lower_args(
@@ -512,7 +506,7 @@ pub(super) fn lower_expr(
             return lower_inferred_enum(node, ty, span, ctx, fc, out);
         }
 
-        other => {
+        other @ ast::ExprKind::Assign(_) => {
             return Err(LowerError::UnsupportedExprKind {
                 span,
                 kind: other.variant_name().to_string(),
@@ -1505,7 +1499,7 @@ fn lower_closure_call(
 
 fn lower_lambda(
     lambda: &ast::LambdaNode,
-    expr_id: ast::ExprId,
+    expr_id: ExprId,
     ty: Type,
     span: Span,
     ctx: &LowerCtx,
@@ -3448,7 +3442,6 @@ fn expr_has_return_in_loop(expr: &ast::ExprNode, in_loop: bool) -> bool {
             .arms
             .iter()
             .any(|arm| expr_has_return_in_loop(&arm.node.body, in_loop)),
-        ast::ExprKind::Lambda(_) => false,
         _ => false,
     }
 }

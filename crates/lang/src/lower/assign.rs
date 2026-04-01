@@ -1,9 +1,11 @@
-use crate::ast::{self, AssignOp, BinaryOp, Ident, Type};
-use crate::hir;
-use crate::span::Span;
 use internment::Intern;
 
 use super::{FuncLower, LowerCtx, LowerError, alloc_assign_temp, lower_expr};
+use crate::{
+    ast::{self, AssignOp, BinaryOp, Ident, Type},
+    hir,
+    span::Span,
+};
 
 fn field_index_for_assign(
     ctx: &LowerCtx,
@@ -64,8 +66,8 @@ struct AssignAccessChain<'a> {
 impl AssignAccessStep<'_> {
     fn value_type(&self) -> &Type {
         match self {
-            AssignAccessStep::Field { value_type, .. } => value_type,
-            AssignAccessStep::Index { value_type, .. } => value_type,
+            AssignAccessStep::Field { value_type, .. }
+            | AssignAccessStep::Index { value_type, .. } => value_type,
         }
     }
 }

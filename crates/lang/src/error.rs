@@ -1,12 +1,13 @@
 use std::ops::Range;
 
+use ariadne::{Color, Label, Report, ReportKind, Source};
+use chumsky::error::{Rich, RichPattern, RichReason};
+
 use crate::{
     lexer::{SpannedToken, Token},
     resolve::ImportError,
     typecheck::{Diagnostic, DiagnosticKind, Severity},
 };
-use ariadne::{Color, Label, Report, ReportKind, Source};
-use chumsky::error::{Rich, RichPattern, RichReason};
 
 pub fn report_lexer_errors(src: &str, file_path: &str, errors: Vec<Rich<'_, char>>) {
     for e in errors {
@@ -19,7 +20,7 @@ pub fn report_lexer_errors(src: &str, file_path: &str, errors: Vec<Rich<'_, char
 
         let custom_msg = match e.reason() {
             RichReason::Custom(msg) => Some(msg.clone()),
-            _ => None,
+            RichReason::ExpectedFound { .. } => None,
         };
 
         let (msg_title, msg_body) = if let Some(msg) = custom_msg {
@@ -61,7 +62,7 @@ pub fn report_parse_errors(
 
         let custom_msg = match e.reason() {
             RichReason::Custom(msg) => Some(msg.clone()),
-            _ => None,
+            RichReason::ExpectedFound { .. } => None,
         };
 
         let last_context = last_ctx(&e)

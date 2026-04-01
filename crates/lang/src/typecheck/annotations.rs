@@ -1,10 +1,13 @@
-use std::collections::{HashMap, HashSet};
-use std::fmt;
-
-use crate::ast::{AnnotationArgs, AnnotationNode, Ident, Lit};
-use crate::span::Span;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+};
 
 use super::error::{Diagnostic, DiagnosticKind};
+use crate::{
+    ast::{AnnotationArgs, AnnotationNode, Ident, Lit},
+    span::Span,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum AnnotationTarget {
@@ -129,7 +132,8 @@ pub(super) fn extract_deprecated(annotations: &[AnnotationNode]) -> Option<Optio
         .find(|a| a.node.name.to_string() == "deprecated")
         .map(|a| match &a.node.args {
             AnnotationArgs::Positional(Lit::String(s)) => Some(s.clone()),
-            _ => None,
+            AnnotationArgs::None => None,
+            AnnotationArgs::Positional(_) | AnnotationArgs::Named(_) => None,
         })
 }
 
@@ -153,8 +157,7 @@ fn validate_annotation_args(
             }
         }
         AnnotationArgSchema::OptionalPositionalString => match args {
-            AnnotationArgs::None => {}
-            AnnotationArgs::Positional(Lit::String(_)) => {}
+            AnnotationArgs::None | AnnotationArgs::Positional(Lit::String(_)) => {}
             _ => {
                 errors.push(Diagnostic::new(
                     span,

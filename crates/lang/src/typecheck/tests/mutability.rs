@@ -3,8 +3,10 @@ use super::helpers::{
     ident_expr, let_binding, lit_int, method, program, reset_expr_ids, run_err, run_ok,
     struct_decl, struct_literal_expr, var_binding,
 };
-use crate::ast::{AssignOp, MethodReceiver, Type};
-use crate::typecheck::error::DiagnosticKind;
+use crate::{
+    ast::{AssignOp, MethodReceiver, Type},
+    typecheck::error::DiagnosticKind,
+};
 
 // ---- assignment mutability ----
 

@@ -1,21 +1,24 @@
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+};
 
 use internment::Intern;
-
-use crate::ast::{self, Ident, MethodReceiver, Type, TypeVarId, VariantKind};
-use crate::hir;
-use crate::prelude_enums::OPTION_TYPE_ID;
-use crate::typecheck::{
-    ExtendSpecKey, MethodSpecKey, TypeChecker, resolve_type_param_names, subst_type,
-};
-use crate::vm::cycle_collector::make_dataref_vtable;
-use crate::vm::meta::{EnumMeta, StructMeta, VariantMeta, VariantMetaKind};
 
 use super::{
     FuncLower, LowerCtx, LowerError, SharedCtx, analyze_ownership, collect_declarations,
     lower_block, mangle_generic_name, mangle_method_spec_name, register_extend_declarations,
     register_named_local, register_param_local,
+};
+use crate::{
+    ast::{self, Ident, MethodReceiver, Type, TypeVarId, VariantKind},
+    hir,
+    prelude_enums::OPTION_TYPE_ID,
+    typecheck::{ExtendSpecKey, MethodSpecKey, TypeChecker, resolve_type_param_names, subst_type},
+    vm::{
+        cycle_collector::make_dataref_vtable,
+        meta::{EnumMeta, StructMeta, VariantMeta, VariantMetaKind},
+    },
 };
 
 pub fn lower_program(
@@ -110,7 +113,7 @@ pub fn lower_program(
             .struct_field_names(*name)
             .unwrap_or_default()
             .iter()
-            .map(std::string::ToString::to_string)
+            .map(ToString::to_string)
             .collect();
         let is_dataref = tcx.is_dataref(*name);
         let cycle_capable = tcx.is_cycle_capable(*name);

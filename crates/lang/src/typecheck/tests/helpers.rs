@@ -1,19 +1,12 @@
+use std::cell::Cell;
+
+use internment::Intern;
+
 use crate::{
-    ast::{
-        ArrayFill, ArrayFillNode, ArrayLiteral, ArrayLiteralNode, Assign, AssignNode, AssignOp,
-        Binary, BinaryNode, BinaryOp, Binding, BindingNode, Block, BlockNode, Call, CallNode, Cast,
-        CastNode, EnumDecl, EnumDeclNode, EnumVariant, Expr, ExprId, ExprKind, ExprNode,
-        FieldAccess, FieldAccessNode, Func, FuncNode, Ident, Index, IndexNode, Lit, MapLiteral,
-        MapLiteralNode, Method, MethodReceiver, Mutability, Param, Pattern, PatternNode, Program,
-        Range, RangeNode, Return, ReturnNode, Stmt, StmtNode, StringPart, StructDecl,
-        StructDeclNode, StructField, StructLiteral, StructLiteralNode, Type, TypeParam, TypeVarId,
-        Unary, UnaryNode, UnaryOp, VariantKind, Visibility,
-    },
+    ast::*,
     span::Span,
     typecheck::{check_program_with_modules, error::Diagnostic, types::TypeChecker},
 };
-use internment::Intern;
-use std::cell::Cell;
 
 thread_local! {
     static EXPR_ID_COUNTER: Cell<u64> = Cell::new(0);

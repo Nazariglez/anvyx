@@ -1,9 +1,8 @@
+use super::{error::Diagnostic, types::TypeChecker, unify::unify_equal};
 use crate::{
     ast::{ExprId, Ident, Type},
     span::Span,
 };
-
-use super::{error::Diagnostic, types::TypeChecker, unify::unify_equal};
 
 #[derive(Debug, Clone)]
 pub(super) enum TypeRef {
