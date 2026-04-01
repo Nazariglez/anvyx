@@ -26,11 +26,7 @@ pub(super) struct Constraint {
 
 pub(super) fn resolve_constraints(type_checker: &mut TypeChecker, errors: &mut Vec<Diagnostic>) {
     // keep going until we make no progress infering types
-    loop {
-        if !resolve_constraints_pass(type_checker, errors) {
-            break;
-        }
-    }
+    while resolve_constraints_pass(type_checker, errors) {}
 }
 
 fn resolve_constraints_pass(type_checker: &mut TypeChecker, errors: &mut Vec<Diagnostic>) -> bool {
@@ -43,7 +39,6 @@ fn resolve_constraints_pass(type_checker: &mut TypeChecker, errors: &mut Vec<Dia
             type_checker.constraints.push(c);
         }
 
-        // if unified just set made_progress to true otherwise keep it false
         made_progress |= unified;
     }
 

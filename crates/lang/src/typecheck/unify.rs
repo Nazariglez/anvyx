@@ -5,12 +5,16 @@ use super::{
     visit::type_any,
 };
 use crate::{
-    ast::{ArrayLen, FuncParam, Type},
+    ast::{ArrayLen, FuncParam, Ident, Type},
     span::Span,
 };
 
 pub(super) fn contains_infer(ty: &Type) -> bool {
     type_any(ty, &mut |t| matches!(t, Type::Infer))
+}
+
+fn named_type_args_assignable(ln: Ident, rn: Ident, la: &[Type], ra: &[Type]) -> bool {
+    ln == rn && la.len() == ra.len() && la.iter().zip(ra.iter()).all(|(a, b)| is_assignable(a, b))
 }
 
 /// Checks if 'from' is assignable to 'to'
@@ -52,52 +56,24 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
         // T? -> T is not assignable, must unwrap first
         (from_ty, to_ty) if from_ty.is_option() && !to_ty.is_option() => false,
 
-        // Enum<A> -> Enum<B> of same name is assignable if all type_args are assignable
-        (
-            Enum {
-                name: ln,
-                type_args: la,
-            },
-            Enum {
-                name: rn,
-                type_args: ra,
-            },
-        ) => {
-            ln == rn
-                && la.len() == ra.len()
-                && la.iter().zip(ra.iter()).all(|(a, b)| is_assignable(a, b))
-        }
-
-        // Struct<A> -> Struct<B> of same symbol is assignable if all type_args are assignable
-        (
-            Struct {
-                name: ln,
-                type_args: la,
-            },
-            Struct {
-                name: rn,
-                type_args: ra,
-            },
-        ) => {
-            ln == rn
-                && la.len() == ra.len()
-                && la.iter().zip(ra.iter()).all(|(a, b)| is_assignable(a, b))
-        }
-
-        // DataRef<A> -> DataRef<B> of same name is assignable if all type_args are assignable
-        (
-            DataRef {
-                name: ln,
-                type_args: la,
-            },
-            DataRef {
-                name: rn,
-                type_args: ra,
-            },
-        ) => {
-            ln == rn
-                && la.len() == ra.len()
-                && la.iter().zip(ra.iter()).all(|(a, b)| is_assignable(a, b))
+        // enums, structs, and datarefs are assignable if same variant, same name, and all type_args assignable
+        (from, to)
+            if matches!(from, Enum { .. } | Struct { .. } | DataRef { .. })
+                && std::mem::discriminant(from) == std::mem::discriminant(to) =>
+        {
+            let lhs = match from {
+                Enum { name, type_args }
+                | Struct { name, type_args }
+                | DataRef { name, type_args } => (*name, type_args.as_slice()),
+                _ => unreachable!(),
+            };
+            let rhs = match to {
+                Enum { name, type_args }
+                | Struct { name, type_args }
+                | DataRef { name, type_args } => (*name, type_args.as_slice()),
+                _ => unreachable!(),
+            };
+            named_type_args_assignable(lhs.0, rhs.0, lhs.1, rhs.1)
         }
 
         // function types needs to check the signature (params + return type)
@@ -172,6 +148,35 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
     }
 }
 
+fn unify_named_type_args(
+    ln: Ident,
+    la: &[Type],
+    rn: Ident,
+    ra: &[Type],
+    left: &Type,
+    right: &Type,
+    span: Span,
+    errors: &mut Vec<Diagnostic>,
+    make_type: impl Fn(Ident, Vec<Type>) -> Type,
+) -> Option<Type> {
+    if ln != rn || la.len() != ra.len() {
+        errors.push(Diagnostic::new(
+            span,
+            DiagnosticKind::MismatchedTypes {
+                expected: left.clone(),
+                found: right.clone(),
+            },
+        ));
+        return None;
+    }
+    let unified_args: Option<Vec<Type>> = la
+        .iter()
+        .zip(ra.iter())
+        .map(|(l_arg, r_arg)| unify_types(l_arg, r_arg, span, errors))
+        .collect();
+    unified_args.map(|type_args| make_type(ln, type_args))
+}
+
 /// Unifies two types returning the unified type if successful
 pub(super) fn unify_types(
     left: &Type,
@@ -207,29 +212,17 @@ pub(super) fn unify_types(
                 name: rn,
                 type_args: ra,
             },
-        ) => {
-            if ln != rn || la.len() != ra.len() {
-                errors.push(Diagnostic::new(
-                    span,
-                    DiagnosticKind::MismatchedTypes {
-                        expected: left.clone(),
-                        found: right.clone(),
-                    },
-                ));
-                return None;
-            }
-
-            let unified_args: Option<Vec<Type>> = la
-                .iter()
-                .zip(ra.iter())
-                .map(|(l_arg, r_arg)| unify_types(l_arg, r_arg, span, errors))
-                .collect();
-
-            unified_args.map(|type_args| Enum {
-                name: *ln,
-                type_args,
-            })
-        }
+        ) => unify_named_type_args(
+            *ln,
+            la,
+            *rn,
+            ra,
+            left,
+            right,
+            span,
+            errors,
+            |name, type_args| Enum { name, type_args },
+        ),
 
         // T with T? unifies to T?
         (other, opt) if opt.is_option() && !other.is_option() => {
@@ -287,29 +280,17 @@ pub(super) fn unify_types(
                 name: rn,
                 type_args: ra,
             },
-        ) => {
-            if ln != rn || la.len() != ra.len() {
-                errors.push(Diagnostic::new(
-                    span,
-                    DiagnosticKind::MismatchedTypes {
-                        expected: left.clone(),
-                        found: right.clone(),
-                    },
-                ));
-                return None;
-            }
-
-            let unified_args: Option<Vec<Type>> = la
-                .iter()
-                .zip(ra.iter())
-                .map(|(l_arg, r_arg)| unify_types(l_arg, r_arg, span, errors))
-                .collect();
-
-            unified_args.map(|type_args| Struct {
-                name: *ln,
-                type_args,
-            })
-        }
+        ) => unify_named_type_args(
+            *ln,
+            la,
+            *rn,
+            ra,
+            left,
+            right,
+            span,
+            errors,
+            |name, type_args| Struct { name, type_args },
+        ),
 
         // arrays unify if the len matches and the element types can unify
         // Fixed(N) only unifies with Fixed(N) or Infer

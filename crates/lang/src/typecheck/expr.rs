@@ -17,7 +17,8 @@ use super::{
 use crate::{
     ast::{
         CastNode, ExprKind, ExprNode, FloatSuffix, FormatKind, FormatSign, FormatSpec, FuncParam,
-        Ident, InferredEnumArgs, InferredEnumNode, LambdaNode, Lit, StringPart, Type, VariantKind,
+        Ident, InferredEnumArgs, InferredEnumNode, LambdaNode, Lit, StringPart, StructField, Type,
+        TypeVarId, VariantKind,
     },
     span::Span,
 };
@@ -520,49 +521,16 @@ fn check_inferred_enum(
         }
         (InferredEnumArgs::Struct(fields), VariantKind::Struct(expected_fields)) => {
             let subst = build_subst(type_params, &type_args);
-            let field_type_map: HashMap<Ident, &Type> =
-                expected_fields.iter().map(|f| (f.name, &f.ty)).collect();
-            for (name, field_expr) in fields {
-                let field_expected = field_type_map.get(name).map(|ty| subst_type(ty, &subst));
-                check_expr(field_expr, type_checker, errors, field_expected.as_ref());
-            }
-            let provided: Vec<(Ident, Span)> = fields.iter().map(|(n, e)| (*n, e.span)).collect();
-            validate_field_names(
-                &provided,
-                span,
+            validate_and_constrain_enum_struct_fields(
+                fields,
                 expected_fields,
-                false,
-                |field| DiagnosticKind::EnumVariantDuplicateField {
-                    enum_name,
-                    variant_name,
-                    field,
-                },
-                |field| DiagnosticKind::EnumVariantUnknownField {
-                    enum_name,
-                    variant_name,
-                    field,
-                },
-                |field| DiagnosticKind::EnumVariantMissingField {
-                    enum_name,
-                    variant_name,
-                    field,
-                },
-                None,
+                span,
+                enum_name,
+                variant_name,
+                &subst,
+                type_checker,
                 errors,
             );
-            for (name, field_expr) in fields {
-                if let Some(expected_def) = expected_fields.iter().find(|f| f.name == *name) {
-                    let substituted = subst_type(&expected_def.ty, &subst);
-                    let field_ref = TypeRef::Expr(field_expr.node.id);
-                    let expected_ref = TypeRef::concrete(&substituted);
-                    type_checker.constrain_assignable(
-                        field_expr.span,
-                        field_ref,
-                        expected_ref,
-                        errors,
-                    );
-                }
-            }
             Type::Enum {
                 name: enum_name,
                 type_args,
@@ -577,6 +545,56 @@ fn check_inferred_enum(
                 },
             ));
             Type::Infer
+        }
+    }
+}
+
+fn validate_and_constrain_enum_struct_fields(
+    fields: &[(Ident, ExprNode)],
+    expected_fields: &[StructField],
+    span: Span,
+    enum_name: Ident,
+    variant_name: Ident,
+    subst: &HashMap<TypeVarId, Type>,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) {
+    let field_type_map: HashMap<Ident, &Type> =
+        expected_fields.iter().map(|f| (f.name, &f.ty)).collect();
+    for (name, field_expr) in fields {
+        let field_expected = field_type_map.get(name).map(|ty| subst_type(ty, subst));
+        check_expr(field_expr, type_checker, errors, field_expected.as_ref());
+    }
+    let provided: Vec<(Ident, Span)> = fields.iter().map(|(n, e)| (*n, e.span)).collect();
+    validate_field_names(
+        &provided,
+        span,
+        expected_fields,
+        false,
+        |field| DiagnosticKind::EnumVariantDuplicateField {
+            enum_name,
+            variant_name,
+            field,
+        },
+        |field| DiagnosticKind::EnumVariantUnknownField {
+            enum_name,
+            variant_name,
+            field,
+        },
+        |field| DiagnosticKind::EnumVariantMissingField {
+            enum_name,
+            variant_name,
+            field,
+        },
+        None,
+        errors,
+    );
+    for (name, field_expr) in fields {
+        if let Some(expected_def) = expected_fields.iter().find(|f| f.name == *name) {
+            let substituted = subst_type(&expected_def.ty, subst);
+            let field_ref = TypeRef::Expr(field_expr.node.id);
+            let expected_ref = TypeRef::concrete(&substituted);
+            type_checker.constrain_assignable(field_expr.span, field_ref, expected_ref, errors);
         }
     }
 }

@@ -40,8 +40,17 @@ pub fn fold_type(ty: &Type, f: &mut impl FnMut(Type) -> Type) -> Type {
             value: Box::new(fold_type(value, f)),
         },
         // leaves: Infer, Any, Int, Float, Double, Bool, String, Void, Var, UnresolvedName, Extern
-        // TODO: should be explicit here to avoid forgetting to add new leaves?
-        _ => ty.clone(),
+        Type::Infer
+        | Type::Any
+        | Type::Int
+        | Type::Float
+        | Type::Double
+        | Type::Bool
+        | Type::String
+        | Type::Void
+        | Type::Var(_)
+        | Type::UnresolvedName(_)
+        | Type::Extern { .. } => ty.clone(),
     };
     f(folded)
 }

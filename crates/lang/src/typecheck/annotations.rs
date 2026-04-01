@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    sync::LazyLock,
 };
 
 use super::{
@@ -44,7 +45,7 @@ struct AnnotationDef {
     args: AnnotationArgSchema,
 }
 
-fn known_annotations() -> HashMap<&'static str, AnnotationDef> {
+static KNOWN_ANNOTATIONS: LazyLock<HashMap<&'static str, AnnotationDef>> = LazyLock::new(|| {
     let mut map = HashMap::new();
     map.insert(
         "test",
@@ -67,14 +68,14 @@ fn known_annotations() -> HashMap<&'static str, AnnotationDef> {
         },
     );
     map
-}
+});
 
 pub(super) fn validate_annotations(
     annotations: &[AnnotationNode],
     target: AnnotationTarget,
     errors: &mut Vec<Diagnostic>,
 ) {
-    let registry = known_annotations();
+    let registry = &*KNOWN_ANNOTATIONS;
     let mut seen = HashSet::new();
 
     for annotation in annotations {

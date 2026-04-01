@@ -54,23 +54,10 @@ pub(super) fn check_binary(
         Add | Sub | Mul | Div | Rem => {
             if left_ty.is_num() && same_ty {
                 left_ty
-            } else if let Some(result) =
-                resolve_extern_binary_op(node.op, &left_ty, &right_ty, type_checker)
+            } else if let Some(ty) =
+                apply_extern_binary_op(node.op, &left_ty, &right_ty, bin.span, type_checker, errors)
             {
-                match result {
-                    ExternOpResult::Found(ret) => ret,
-                    ExternOpResult::Ambiguous => {
-                        errors.push(Diagnostic::new(
-                            bin.span,
-                            DiagnosticKind::AmbiguousOperator {
-                                op: node.op.to_string(),
-                                left: left_ty.clone(),
-                                right: right_ty.clone(),
-                            },
-                        ));
-                        Type::Infer
-                    }
-                }
+                ty
             } else {
                 binary_type_error(bin.span, node.op, same_ty, left_ty, right_ty, errors)
             }
@@ -159,23 +146,10 @@ pub(super) fn check_binary(
         BitAnd | BitOr => {
             if left_ty.is_int() && same_ty {
                 Type::Int
-            } else if let Some(result) =
-                resolve_extern_binary_op(node.op, &left_ty, &right_ty, type_checker)
+            } else if let Some(ty) =
+                apply_extern_binary_op(node.op, &left_ty, &right_ty, bin.span, type_checker, errors)
             {
-                match result {
-                    ExternOpResult::Found(ret) => ret,
-                    ExternOpResult::Ambiguous => {
-                        errors.push(Diagnostic::new(
-                            bin.span,
-                            DiagnosticKind::AmbiguousOperator {
-                                op: node.op.to_string(),
-                                left: left_ty.clone(),
-                                right: right_ty.clone(),
-                            },
-                        ));
-                        Type::Infer
-                    }
-                }
+                ty
             } else {
                 binary_type_error(bin.span, node.op, same_ty, left_ty, right_ty, errors)
             }
@@ -282,6 +256,31 @@ fn check_coalesce(
 enum ExternOpResult {
     Found(Type),
     Ambiguous,
+}
+
+fn apply_extern_binary_op(
+    op: BinaryOp,
+    left_ty: &Type,
+    right_ty: &Type,
+    span: Span,
+    type_checker: &TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) -> Option<Type> {
+    let result = resolve_extern_binary_op(op, left_ty, right_ty, type_checker)?;
+    Some(match result {
+        ExternOpResult::Found(ret) => ret,
+        ExternOpResult::Ambiguous => {
+            errors.push(Diagnostic::new(
+                span,
+                DiagnosticKind::AmbiguousOperator {
+                    op: op.to_string(),
+                    left: left_ty.clone(),
+                    right: right_ty.clone(),
+                },
+            ));
+            Type::Infer
+        }
+    })
 }
 
 fn resolve_extern_binary_op(

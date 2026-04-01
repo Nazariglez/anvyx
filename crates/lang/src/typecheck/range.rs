@@ -1,3 +1,5 @@
+use std::sync::LazyLock;
+
 use internment::Intern;
 
 use crate::ast::{Ident, Type};
@@ -52,11 +54,14 @@ pub(super) fn range_element_type(ty: &Type) -> Option<&Type> {
     }
 }
 
+static RANGE_IDENT: LazyLock<Ident> = LazyLock::new(|| Ident(Intern::new("Range".to_string())));
+static RANGE_INCLUSIVE_IDENT: LazyLock<Ident> =
+    LazyLock::new(|| Ident(Intern::new("RangeInclusive".to_string())));
+
 pub(super) fn range_ident() -> Ident {
-    // TODO: define a const for Range and RangeInclusive to be reused across the code
-    Ident(Intern::new("Range".to_string()))
+    *RANGE_IDENT
 }
 
 pub(super) fn range_inclusive_ident() -> Ident {
-    Ident(Intern::new("RangeInclusive".to_string()))
+    *RANGE_INCLUSIVE_IDENT
 }
