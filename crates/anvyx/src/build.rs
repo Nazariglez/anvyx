@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn generate_runner_crate_creates_files() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-test-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-test-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("my_externs/engine")).unwrap();
 
@@ -594,7 +594,7 @@ mod tests {
 
     #[test]
     fn generate_runner_validates_extern_paths() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-validate-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-validate-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
@@ -625,7 +625,7 @@ mod tests {
 
     #[test]
     fn build_runner_invalid_crate_returns_error() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-build-err-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-build-err-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
@@ -646,7 +646,7 @@ mod tests {
 
     #[test]
     fn execute_runner_missing_binary_returns_error() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-exec-err-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-exec-err-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
@@ -696,7 +696,7 @@ mod tests {
         assert!(manifest.has_externs());
         assert_eq!(manifest.externs.len(), 2);
 
-        let tmp = std::env::temp_dir().join(format!("anvyx-integration-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-integration-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("my_externs/engine")).unwrap();
         fs::create_dir_all(tmp.join("my_externs/audio")).unwrap();
@@ -724,7 +724,7 @@ mod tests {
 
     #[test]
     fn read_metadata_missing_file_returns_error() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-meta-read-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-meta-read-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
@@ -742,7 +742,7 @@ mod tests {
 
     #[test]
     fn read_metadata_reads_json_files() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-meta-ok-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-meta-ok-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
         let metadata_dir = tmp.join("build/metadata");
         fs::create_dir_all(&metadata_dir).unwrap();
@@ -800,7 +800,7 @@ mod tests {
 
     #[test]
     fn extract_metadata_missing_binary_returns_error() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-meta-err-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-meta-err-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
@@ -818,7 +818,7 @@ mod tests {
 
     #[test]
     fn generate_runner_crate_includes_metadata_mode() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-meta-gen-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-meta-gen-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("my_externs/engine")).unwrap();
 
@@ -895,7 +895,7 @@ mod tests {
     #[test]
     fn build_main_rs_hardcoded_entry() {
         let manifest = Manifest {
-            project: crate::manifest::Project {
+            project: Project {
                 name: None,
                 entry: "game/start.anv".into(),
             },
@@ -927,7 +927,7 @@ mod tests {
 
     #[test]
     fn generate_build_runner_crate_creates_files() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-build-crate-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-build-crate-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("my_externs/engine")).unwrap();
 
@@ -953,7 +953,7 @@ mod tests {
 
     #[test]
     fn generate_build_runner_crate_no_externs() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-build-noext-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-build-noext-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
@@ -979,7 +979,7 @@ mod tests {
     #[test]
     fn resolve_project_name_from_manifest() {
         let manifest = Manifest {
-            project: crate::manifest::Project {
+            project: Project {
                 name: Some("my_game".into()),
                 entry: "src/main.anv".into(),
             },
@@ -994,7 +994,7 @@ mod tests {
     #[test]
     fn resolve_project_name_from_directory() {
         let manifest = Manifest {
-            project: crate::manifest::Project {
+            project: Project {
                 name: None,
                 entry: "src/main.anv".into(),
             },
@@ -1009,7 +1009,7 @@ mod tests {
     #[test]
     fn resolve_project_name_sanitizes() {
         let manifest = Manifest {
-            project: crate::manifest::Project {
+            project: Project {
                 name: Some("My Cool Game!".into()),
                 entry: "src/main.anv".into(),
             },
@@ -1024,7 +1024,7 @@ mod tests {
     #[test]
     fn resolve_project_name_fallback() {
         let manifest = Manifest {
-            project: crate::manifest::Project {
+            project: Project {
                 name: None,
                 entry: "src/main.anv".into(),
             },
@@ -1038,7 +1038,7 @@ mod tests {
 
     #[test]
     fn assemble_dist_copies_binary() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-dist-copy-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-dist-copy-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
 
         let binary_dir = tmp.join("build/runner/target/release");
@@ -1058,7 +1058,7 @@ mod tests {
 
     #[test]
     fn assemble_dist_cleans_previous() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-dist-clean-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-dist-clean-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
 
         let stale_dir = tmp.join("build/dist");
@@ -1079,7 +1079,7 @@ mod tests {
 
     #[test]
     fn assemble_dist_missing_binary_errors() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-dist-missing-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-dist-missing-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
@@ -1094,7 +1094,7 @@ mod tests {
 
     #[test]
     fn bundle_sources_copies_anv_files() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-bundle-copy-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-bundle-copy-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
 
         fs::create_dir_all(tmp.join("src/utils")).unwrap();
@@ -1122,7 +1122,7 @@ mod tests {
 
     #[test]
     fn bundle_sources_skips_non_anv() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-bundle-non-anv-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-bundle-non-anv-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
 
         fs::create_dir_all(tmp.join("src")).unwrap();
@@ -1144,7 +1144,7 @@ mod tests {
 
     #[test]
     fn bundle_sources_skips_build_dir() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-bundle-build-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-bundle-build-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
 
         fs::create_dir_all(tmp.join("src")).unwrap();
@@ -1166,7 +1166,7 @@ mod tests {
 
     #[test]
     fn bundle_sources_skips_extern_dirs() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-bundle-extern-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-bundle-extern-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
 
         fs::create_dir_all(tmp.join("src")).unwrap();
@@ -1187,8 +1187,7 @@ mod tests {
 
     #[test]
     fn bundle_sources_skips_dotprefix_extern_path() {
-        let tmp =
-            std::env::temp_dir().join(format!("anvyx-bundle-dotprefix-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-bundle-dotprefix-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
 
         fs::create_dir_all(tmp.join("src")).unwrap();
@@ -1202,12 +1201,12 @@ mod tests {
         let mut externs = HashMap::new();
         externs.insert(
             "my_extern".into(),
-            crate::manifest::ExternEntry {
+            ExternEntry {
                 path: "./my_extern".into(),
             },
         );
         let manifest = Manifest {
-            project: crate::manifest::Project {
+            project: Project {
                 name: None,
                 entry: "src/main.anv".into(),
             },
@@ -1224,7 +1223,7 @@ mod tests {
 
     #[test]
     fn bundle_sources_skips_hidden_dirs() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-bundle-hidden-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-bundle-hidden-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
 
         fs::create_dir_all(tmp.join("src")).unwrap();
@@ -1248,7 +1247,7 @@ mod tests {
 
     #[test]
     fn bundle_sources_validates_entry_point() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-bundle-entry-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-bundle-entry-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
 
         fs::create_dir_all(tmp.join("other")).unwrap();
@@ -1270,7 +1269,7 @@ mod tests {
 
     #[test]
     fn build_e2e_no_externs() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-e2e-noext-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-e2e-noext-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
 
         fs::create_dir_all(tmp.join("src")).unwrap();
@@ -1307,7 +1306,7 @@ mod tests {
 
     #[test]
     fn build_e2e_with_externs_generates_correct_runner() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-e2e-ext-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-e2e-ext-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
 
         fs::create_dir_all(tmp.join("src")).unwrap();
@@ -1343,7 +1342,7 @@ mod tests {
 
     #[test]
     fn build_dist_layout_with_sources() {
-        let tmp = std::env::temp_dir().join(format!("anvyx-e2e-layout-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("anvyx-e2e-layout-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
 
         let binary_dir = tmp.join("build/runner/target/release");
