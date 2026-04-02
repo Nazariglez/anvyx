@@ -4,18 +4,32 @@ use internment::Intern;
 
 use super::{FuncLower, LowerCtx, LowerError, SharedCtx};
 use crate::{
-    ast::{self, BinaryOp, Ident, Mutability, Stmt, Type, UnaryOp},
+    ast::{self, BinaryOp, ConstParam, Ident, Mutability, Stmt, Type, UnaryOp},
     hir,
     span::Span,
     typecheck::ExternTypeDef,
 };
 
-pub(super) fn mangle_generic_name(name: Ident, type_args: &[Type]) -> Ident {
+fn build_generic_suffix(type_args: &[Type], const_args: &[usize]) -> String {
     let suffix = type_args
         .iter()
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join("$");
+    if const_args.is_empty() {
+        suffix
+    } else {
+        let csuffix = const_args
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("$");
+        format!("{suffix}$c{csuffix}")
+    }
+}
+
+pub(super) fn mangle_generic_name(name: Ident, type_args: &[Type], const_args: &[usize]) -> Ident {
+    let suffix = build_generic_suffix(type_args, const_args);
     Ident(Intern::new(format!("{name}${suffix}")))
 }
 
@@ -23,15 +37,12 @@ pub(super) fn mangle_method_spec_name(
     struct_name: Ident,
     method_name: Ident,
     type_args: &[Type],
+    const_args: &[usize],
 ) -> Ident {
-    if type_args.is_empty() {
+    if type_args.is_empty() && const_args.is_empty() {
         return Ident(Intern::new(format!("{struct_name}::{method_name}")));
     }
-    let suffix = type_args
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join("$");
+    let suffix = build_generic_suffix(type_args, const_args);
     Ident(Intern::new(format!(
         "{struct_name}::{method_name}${suffix}"
     )))
@@ -214,7 +225,8 @@ pub(super) fn collect_declarations<'a>(
     for stmt_node in stmts {
         match &stmt_node.node {
             Stmt::Func(func_node) => {
-                if !func_node.node.type_params.is_empty() {
+                if !func_node.node.type_params.is_empty() || !func_node.node.const_params.is_empty()
+                {
                     continue;
                 }
                 if skip_existing && ctx.funcs.contains_key(&func_node.node.name) {
@@ -330,7 +342,7 @@ pub(super) fn register_extend_declarations<'a>(
         let Stmt::Extend(node) = &stmt_node.node else {
             continue;
         };
-        if !node.node.type_params.is_empty() {
+        if !node.node.type_params.is_empty() || !node.node.const_params.is_empty() {
             continue;
         }
         let Some(resolved_ty) = resolve_extend_ty(&node.node.ty, ctx) else {
@@ -426,6 +438,40 @@ pub(super) fn register_param_local(
     let local_id = register_named_local(fc, name, ty);
     if mutability == Mutability::Mutable {
         fc.locals[local_id.0 as usize].is_ref = true;
+    }
+}
+
+pub(super) fn register_const_param_locals(
+    fc: &mut FuncLower,
+    const_params: &[ConstParam],
+    const_args: &[usize],
+) -> Vec<(hir::LocalId, usize)> {
+    const_params
+        .iter()
+        .zip(const_args.iter())
+        .map(|(param, &value)| {
+            let local = register_named_local(fc, param.name, Type::Int);
+            (local, value)
+        })
+        .collect()
+}
+
+pub(super) fn prepend_const_param_stmts(
+    body: &mut hir::Block,
+    locals: Vec<(hir::LocalId, usize)>,
+    span: Span,
+) {
+    for (local, value) in locals.into_iter().rev() {
+        body.stmts.insert(
+            0,
+            hir::Stmt {
+                span,
+                kind: hir::StmtKind::Let {
+                    local,
+                    init: hir::Expr::int_lit(span, value as i64),
+                },
+            },
+        );
     }
 }
 

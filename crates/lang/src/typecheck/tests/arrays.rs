@@ -824,6 +824,7 @@ fn test_view_indexing_ok() {
             name: ident("head"),
             visibility: Visibility::Private,
             type_params: vec![],
+            const_params: vec![],
             params: vec![Param {
                 mutability: Mutability::Immutable,
                 name: ident("xs"),

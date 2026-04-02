@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: 1
+
+fn first<T, N: int>(arr: [T; N]) -> T {
+    arr[0]
+}
+
+fn main() {
+    println(first<int>([1, 2, 3]));
+}

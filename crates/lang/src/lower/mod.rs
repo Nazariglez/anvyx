@@ -122,11 +122,11 @@ pub(super) struct LowerCtx<'a> {
 
 impl LowerCtx<'_> {
     pub(super) fn expr_type(&self, id: ExprId, span: Span) -> Result<Type, LowerError> {
-        let (_, ty) = self
+        let result = self
             .type_overrides
             .and_then(|overrides| overrides.get(&id))
-            .or_else(|| self.shared.tcx.get_type(id))
-            .ok_or(LowerError::MissingExprType { span })?;
+            .or_else(|| self.shared.tcx.get_type(id));
+        let (_, ty) = result.ok_or(LowerError::MissingExprType { span })?;
         Ok(ty.clone())
     }
 }

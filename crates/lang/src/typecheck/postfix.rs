@@ -7,7 +7,7 @@ use super::{
     decl::check_body_common,
     error::{Diagnostic, DiagnosticKind},
     expr::check_expr,
-    infer::{build_subst, resolve_type_param_names, subst_type},
+    infer::{build_const_subst, build_subst, resolve_type_param_names, subst_type},
     stmt::extend_base_key,
     types::{
         ExtendEntry, ExtendMethodDef, ExtendSpecKey, GenericExtendTemplate, PostfixNodeRef,
@@ -15,7 +15,10 @@ use super::{
     },
 };
 use crate::{
-    ast::{CallNode, ExprId, ExprKind, ExprNode, FuncParam, Ident, Mutability, Type, TypeParam},
+    ast::{
+        ArrayLen, CallNode, ConstParam, ConstParamId, ExprId, ExprKind, ExprNode, FuncParam, Ident,
+        Mutability, Type, TypeParam,
+    },
     span::Span,
 };
 
@@ -224,12 +227,14 @@ fn named_type_parts(ty: &Type) -> (Ident, &[Type]) {
     }
 }
 
-/// Checks whether "receiver" fits "pattern", recording any type parameter bindings along the way
+/// Check whether "receiver" matches "pattern", binding type params and fixed array lengths along the way
 fn match_type_pattern(
     receiver: &Type,
     pattern: &Type,
     type_params: &[TypeParam],
     bindings: &mut HashMap<Ident, Type>,
+    const_params: &[ConstParam],
+    const_bindings: &mut HashMap<ConstParamId, usize>,
 ) -> bool {
     // pattern is a type variable, bind or check consistency
     if let Type::UnresolvedName(name) = pattern {
@@ -262,31 +267,43 @@ fn match_type_pattern(
             let (n2, a2) = named_type_parts(p);
             n1 == n2
                 && a1.len() == a2.len()
-                && a1
-                    .iter()
-                    .zip(a2.iter())
-                    .all(|(rv, pv)| match_type_pattern(rv, pv, type_params, bindings))
+                && a1.iter().zip(a2.iter()).all(|(rv, pv)| {
+                    match_type_pattern(rv, pv, type_params, bindings, const_params, const_bindings)
+                })
         }
 
         (Type::List { elem: e1 }, Type::List { elem: e2 }) => {
-            match_type_pattern(e1, e2, type_params, bindings)
+            match_type_pattern(e1, e2, type_params, bindings, const_params, const_bindings)
         }
 
         (Type::Map { key: k1, value: v1 }, Type::Map { key: k2, value: v2 }) => {
-            match_type_pattern(k1, k2, type_params, bindings)
-                && match_type_pattern(v1, v2, type_params, bindings)
+            match_type_pattern(k1, k2, type_params, bindings, const_params, const_bindings)
+                && match_type_pattern(v1, v2, type_params, bindings, const_params, const_bindings)
         }
 
         (Type::Tuple(f1), Type::Tuple(f2)) => {
             f1.len() == f2.len()
-                && f1
-                    .iter()
-                    .zip(f2.iter())
-                    .all(|(r, p)| match_type_pattern(r, p, type_params, bindings))
+                && f1.iter().zip(f2.iter()).all(|(r, p)| {
+                    match_type_pattern(r, p, type_params, bindings, const_params, const_bindings)
+                })
         }
 
         (Type::Array { elem: e1, len: l1 }, Type::Array { elem: e2, len: l2 }) => {
-            l1 == l2 && match_type_pattern(e1, e2, type_params, bindings)
+            let len_ok = match (l1, l2) {
+                (ArrayLen::Fixed(n), ArrayLen::Param(id))
+                    if const_params.iter().any(|p| p.id == *id) =>
+                {
+                    if let Some(&existing) = const_bindings.get(id) {
+                        existing == *n
+                    } else {
+                        const_bindings.insert(*id, *n);
+                        true
+                    }
+                }
+                _ => l1 == l2,
+            };
+            len_ok
+                && match_type_pattern(e1, e2, type_params, bindings, const_params, const_bindings)
         }
 
         _ => false,
@@ -350,17 +367,33 @@ fn substitute_fresh(pattern: &Type, type_params: &[TypeParam]) -> Type {
 fn compare_specificity(
     a_target: &Type,
     a_params: &[TypeParam],
+    a_const_params: &[ConstParam],
     b_target: &Type,
     b_params: &[TypeParam],
+    b_const_params: &[ConstParam],
 ) -> Specificity {
     let a_concrete = substitute_fresh(a_target, a_params);
     let b_concrete = substitute_fresh(b_target, b_params);
 
     let mut a_bindings = HashMap::new();
-    let a_fits_b = match_type_pattern(&a_concrete, b_target, b_params, &mut a_bindings);
+    let a_fits_b = match_type_pattern(
+        &a_concrete,
+        b_target,
+        b_params,
+        &mut a_bindings,
+        b_const_params,
+        &mut HashMap::new(),
+    );
 
     let mut b_bindings = HashMap::new();
-    let b_fits_a = match_type_pattern(&b_concrete, a_target, a_params, &mut b_bindings);
+    let b_fits_a = match_type_pattern(
+        &b_concrete,
+        a_target,
+        a_params,
+        &mut b_bindings,
+        a_const_params,
+        &mut HashMap::new(),
+    );
 
     match (a_fits_b, b_fits_a) {
         (true, true) => Specificity::Equal,
@@ -374,6 +407,7 @@ fn compare_specificity(
 fn try_specialize_extend(
     receiver_ty: &Type,
     type_args: &[Type],
+    const_args: &[usize],
     template: &GenericExtendTemplate,
     method_name: Ident,
     call_node: &CallNode,
@@ -390,6 +424,7 @@ fn try_specialize_extend(
         base_name,
         method_name,
         type_args: type_args.to_vec(),
+        const_args: const_args.to_vec(),
         target_type: template.target_type.clone(),
     };
 
@@ -420,6 +455,7 @@ fn try_specialize_extend(
             .store_extend_ref_mask(call_node.node.func.node.id, &template.method.node.params);
         let specialized_params: Vec<Type> = {
             let subst = build_subst(&template.type_params, type_args);
+            let const_subst = build_const_subst(&template.const_params, const_args);
             template
                 .method
                 .node
@@ -434,7 +470,7 @@ fn try_specialize_extend(
                             &type_checker.resolve_type(&p.ty),
                             &template.type_params,
                         );
-                        subst_type(&resolved, &subst)
+                        subst_type(&resolved, &subst, &const_subst)
                     }
                 })
                 .collect()
@@ -460,6 +496,7 @@ fn try_specialize_extend(
     }
 
     let subst = build_subst(&template.type_params, type_args);
+    let const_subst = build_const_subst(&template.const_params, const_args);
     let method = &template.method.node;
     let type_params = &template.type_params;
 
@@ -473,12 +510,12 @@ fn try_specialize_extend(
             } else {
                 let resolved =
                     resolve_type_param_names(&type_checker.resolve_type(&p.ty), type_params);
-                subst_type(&resolved, &subst)
+                subst_type(&resolved, &subst, &const_subst)
             }
         })
         .collect();
     let raw_ret = resolve_type_param_names(&type_checker.resolve_type(&method.ret), type_params);
-    let specialized_ret = subst_type(&raw_ret, &subst);
+    let specialized_ret = subst_type(&raw_ret, &subst, &const_subst);
 
     let prev_snapshot = type_checker.spec_type_snapshot.take();
     type_checker.spec_type_snapshot = Some(HashMap::new());
@@ -498,7 +535,7 @@ fn try_specialize_extend(
         }
     }
 
-    let body_params: Vec<(Ident, Type, bool)> = method
+    let mut body_params: Vec<(Ident, Type, bool)> = method
         .params
         .iter()
         .zip(specialized_params.iter())
@@ -510,6 +547,9 @@ fn try_specialize_extend(
             )
         })
         .collect();
+    for param in &template.const_params {
+        body_params.push((param.name, Type::Int, false));
+    }
 
     let mut body_errors = vec![];
     check_body_common(
@@ -744,21 +784,29 @@ fn try_resolve_generic_extend(
     let templates = type_checker.generic_extend_templates.get(&key)?.clone();
 
     // try matching each templates target_type pattern against the receiver
-    let mut matches: Vec<(GenericExtendTemplate, Vec<Type>)> = vec![];
+    let mut matches: Vec<(GenericExtendTemplate, Vec<Type>, Vec<usize>)> = vec![];
     for template in &templates {
         let mut bindings = HashMap::new();
+        let mut const_bindings = HashMap::new();
         if match_type_pattern(
             receiver_ty,
             &template.target_type,
             &template.type_params,
             &mut bindings,
+            &template.const_params,
+            &mut const_bindings,
         ) {
             let type_args: Vec<Type> = template
                 .type_params
                 .iter()
                 .map(|p| bindings.get(&p.name).cloned().unwrap_or(Type::Infer))
                 .collect();
-            matches.push((template.clone(), type_args));
+            let const_args: Vec<usize> = template
+                .const_params
+                .iter()
+                .map(|p| const_bindings.get(&p.id).copied().unwrap_or(0))
+                .collect();
+            matches.push((template.clone(), type_args, const_args));
         }
     }
 
@@ -766,10 +814,11 @@ fn try_resolve_generic_extend(
         return None;
     }
     if matches.len() == 1 {
-        let (template, type_args) = matches.remove(0);
+        let (template, type_args, const_args) = matches.remove(0);
         return Some(try_specialize_extend(
             receiver_ty,
             &type_args,
+            &const_args,
             &template,
             method_name,
             call_node,
@@ -786,13 +835,15 @@ fn try_resolve_generic_extend(
         match compare_specificity(
             &matches[best_idx].0.target_type,
             &matches[best_idx].0.type_params,
+            &matches[best_idx].0.const_params,
             &matches[i].0.target_type,
             &matches[i].0.type_params,
+            &matches[i].0.const_params,
         ) {
             Specificity::LessSpecific | Specificity::Equal => best_idx = i,
             Specificity::MoreSpecific => {}
             Specificity::Incomparable => {
-                let candidates = matches.iter().map(|(t, _)| t.binding).collect();
+                let candidates = matches.iter().map(|(t, _, _)| t.binding).collect();
                 errors.push(Diagnostic::new(
                     span,
                     DiagnosticKind::AmbiguousExtendMethod {
@@ -814,14 +865,16 @@ fn try_resolve_generic_extend(
         match compare_specificity(
             &matches[best_idx].0.target_type,
             &matches[best_idx].0.type_params,
+            &matches[best_idx].0.const_params,
             &matches[i].0.target_type,
             &matches[i].0.type_params,
+            &matches[i].0.const_params,
         ) {
             Specificity::MoreSpecific => {}
             Specificity::Equal => {
                 // if two matches are equally specific only cross-module ties are ambiguous
                 if matches[best_idx].0.source_module != matches[i].0.source_module {
-                    let candidates = matches.iter().map(|(t, _)| t.binding).collect();
+                    let candidates = matches.iter().map(|(t, _, _)| t.binding).collect();
                     errors.push(Diagnostic::new(
                         span,
                         DiagnosticKind::AmbiguousExtendMethod {
@@ -834,7 +887,7 @@ fn try_resolve_generic_extend(
                 }
             }
             _ => {
-                let candidates = matches.iter().map(|(t, _)| t.binding).collect();
+                let candidates = matches.iter().map(|(t, _, _)| t.binding).collect();
                 errors.push(Diagnostic::new(
                     span,
                     DiagnosticKind::AmbiguousExtendMethod {
@@ -848,10 +901,11 @@ fn try_resolve_generic_extend(
         }
     }
 
-    let (template, type_args) = matches.swap_remove(best_idx);
+    let (template, type_args, const_args) = matches.swap_remove(best_idx);
     Some(try_specialize_extend(
         receiver_ty,
         &type_args,
+        &const_args,
         &template,
         method_name,
         call_node,
@@ -1505,19 +1559,27 @@ fn try_module_dispatch(
             });
             let first_arg_expr = call_node.node.args.first();
 
-            let mut matches: Vec<(GenericExtendTemplate, Vec<Type>)> = vec![];
+            let mut matches: Vec<(GenericExtendTemplate, Vec<Type>, Vec<usize>)> = vec![];
             for entry in &generic_entries {
                 let mut bindings = HashMap::new();
+                let mut const_bindings = HashMap::new();
                 if match_type_pattern(
                     &first_arg_ty,
                     &entry.target_type,
                     &entry.type_params,
                     &mut bindings,
+                    &entry.const_params,
+                    &mut const_bindings,
                 ) {
                     let type_args: Vec<Type> = entry
                         .type_params
                         .iter()
                         .map(|p| bindings.get(&p.name).cloned().unwrap_or(Type::Infer))
+                        .collect();
+                    let const_args: Vec<usize> = entry
+                        .const_params
+                        .iter()
+                        .map(|p| const_bindings.get(&p.id).copied().unwrap_or(0))
                         .collect();
 
                     // rebuild a temporary GenericExtendTemplate from the module entry
@@ -1534,16 +1596,17 @@ fn try_module_dispatch(
                             })
                     });
                     if let Some(template) = stored {
-                        matches.push((template, type_args));
+                        matches.push((template, type_args, const_args));
                     }
                 }
             }
 
             if matches.len() == 1 {
-                let (template, type_args) = matches.remove(0);
+                let (template, type_args, const_args) = matches.remove(0);
                 let ty = try_specialize_extend(
                     &first_arg_ty,
                     &type_args,
+                    &const_args,
                     &template,
                     member_name,
                     call_node,
@@ -1560,13 +1623,15 @@ fn try_module_dispatch(
                     match compare_specificity(
                         &matches[best_idx].0.target_type,
                         &matches[best_idx].0.type_params,
+                        &matches[best_idx].0.const_params,
                         &matches[i].0.target_type,
                         &matches[i].0.type_params,
+                        &matches[i].0.const_params,
                     ) {
                         Specificity::LessSpecific | Specificity::Equal => best_idx = i,
                         Specificity::MoreSpecific => {}
                         Specificity::Incomparable => {
-                            let candidates = matches.iter().map(|(t, _)| t.binding).collect();
+                            let candidates = matches.iter().map(|(t, _, _)| t.binding).collect();
                             errors.push(Diagnostic::new(
                                 field_node.span,
                                 DiagnosticKind::AmbiguousExtendMethod {
@@ -1579,10 +1644,11 @@ fn try_module_dispatch(
                         }
                     }
                 }
-                let (template, type_args) = matches.swap_remove(best_idx);
+                let (template, type_args, const_args) = matches.swap_remove(best_idx);
                 let ty = try_specialize_extend(
                     &first_arg_ty,
                     &type_args,
+                    &const_args,
                     &template,
                     member_name,
                     call_node,
@@ -1844,10 +1910,15 @@ fn apply_postfix_op(
                         },
                     ));
                 }
-                let is_generic = type_checker
+                let has_type_params = type_checker
                     .func_type_params
                     .get(name)
                     .is_some_and(|p| !p.is_empty());
+                let has_const_params = type_checker
+                    .func_const_params
+                    .get(name)
+                    .is_some_and(|cp| !cp.is_empty());
+                let is_generic = has_type_params || has_const_params;
                 let has_type_args = !call_node.node.type_args.is_empty();
                 // delegate generic and explicit type ar calls to check_call
                 if is_generic || has_type_args {
@@ -1918,11 +1989,11 @@ mod tests {
 
         // [T] vs [[T]]: [T] is less specific, [[T]] is more specific
         assert!(matches!(
-            compare_specificity(&list_t, &params, &nested_t, &params),
+            compare_specificity(&list_t, &params, &[], &nested_t, &params, &[]),
             Specificity::LessSpecific
         ));
         assert!(matches!(
-            compare_specificity(&nested_t, &params, &list_t, &params),
+            compare_specificity(&nested_t, &params, &[], &list_t, &params, &[]),
             Specificity::MoreSpecific
         ));
     }
@@ -1940,7 +2011,7 @@ mod tests {
 
         // [T] vs [U] — structurally identical, just different param names
         assert!(matches!(
-            compare_specificity(&list_t, &t_params, &list_u, &u_params),
+            compare_specificity(&list_t, &t_params, &[], &list_u, &u_params, &[]),
             Specificity::Equal
         ));
     }
@@ -1953,7 +2024,7 @@ mod tests {
 
         // (T, int) vs (string, T) — incomparable
         assert!(matches!(
-            compare_specificity(&tuple_t_int, &params, &tuple_str_t, &params),
+            compare_specificity(&tuple_t_int, &params, &[], &tuple_str_t, &params, &[]),
             Specificity::Incomparable
         ));
     }
@@ -1974,7 +2045,7 @@ mod tests {
 
         // Option<T> is less specific than Option<[T]>
         assert!(matches!(
-            compare_specificity(&opt_t, &params, &opt_list_t, &params),
+            compare_specificity(&opt_t, &params, &[], &opt_list_t, &params, &[]),
             Specificity::LessSpecific
         ));
     }

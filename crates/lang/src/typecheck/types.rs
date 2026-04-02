@@ -11,7 +11,7 @@ use super::{
 };
 use crate::{
     ast::{
-        ArrayLen, BinaryOp, BlockNode, CallNode, EnumDecl, ExprId, ExtendMethodNode,
+        ArrayLen, BinaryOp, BlockNode, CallNode, ConstParam, EnumDecl, ExprId, ExtendMethodNode,
         FieldAccessNode, FuncNode, FuncParam, Ident, IndexNode, Method, MethodReceiver, Mutability,
         Param, StmtNode, StructDecl, StructField, Type, TypeParam, TypeVarId, UnaryOp, VariantKind,
     },
@@ -34,6 +34,8 @@ pub(super) struct EnumVariantDef {
 #[derive(Debug, Clone)]
 pub(super) struct EnumDef {
     pub type_params: Vec<TypeParam>,
+    #[allow(dead_code)] // stored for future enum const param support
+    pub const_params: Vec<ConstParam>,
     pub variants: Vec<EnumVariantDef>,
     pub deprecated: Deprecated,
 }
@@ -51,6 +53,7 @@ impl EnumDef {
             .collect();
         Self {
             type_params: decl.type_params.clone(),
+            const_params: decl.const_params.clone(),
             variants,
             deprecated: extract_deprecated(&decl.annotations),
         }
@@ -259,6 +262,7 @@ pub struct ModuleExtendEntry {
 #[derive(Debug, Clone)]
 pub struct GenericExtendTemplate {
     pub type_params: Vec<TypeParam>,
+    pub const_params: Vec<ConstParam>,
     pub target_type: Type,
     pub method: ExtendMethodNode,
     pub source_module: Vec<String>,
@@ -270,6 +274,7 @@ pub struct ExtendSpecKey {
     pub base_name: Ident,
     pub method_name: Ident,
     pub type_args: Vec<Type>,
+    pub const_args: Vec<usize>,
     pub target_type: Type,
 }
 
@@ -287,7 +292,19 @@ impl ExtendSpecKey {
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join(", ");
-        let type_str = format!("{}[{}]", self.target_type, args_str);
+        let const_str = if self.const_args.is_empty() {
+            String::new()
+        } else {
+            format!(
+                ";{}",
+                self.const_args
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        };
+        let type_str = format!("{}[{}{}]", self.target_type, args_str, const_str);
         let name = format!(
             "__extend::{}::{}::{}",
             module_part, type_str, self.method_name
@@ -300,6 +317,7 @@ impl ExtendSpecKey {
 pub struct ModuleGenericExtendEntry {
     pub base_name: Ident,
     pub type_params: Vec<TypeParam>,
+    pub const_params: Vec<ConstParam>,
     pub target_type: Type,
     pub method_name: Ident,
     pub method: ExtendMethodNode,
@@ -325,6 +343,7 @@ pub(super) struct MethodContext {
 pub struct SpecializationKey {
     pub func_name: Ident,
     pub type_args: Vec<Type>,
+    pub const_args: Vec<usize>,
 }
 
 /// Key for caching specialized generic method bodies
@@ -334,6 +353,7 @@ pub struct MethodSpecKey {
     pub method_name: Ident,
     /// Struct type args concatenated with method type args
     pub type_args: Vec<Type>,
+    pub const_args: Vec<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -357,6 +377,7 @@ pub(super) struct ModuleDef {
     pub enum_defs: HashMap<Ident, EnumDef>,
     pub extern_types: HashMap<Ident, ExternTypeDef>,
     pub func_type_params: HashMap<Ident, Vec<TypeParam>>,
+    pub func_const_params: HashMap<Ident, Vec<ConstParam>>,
     pub generic_func_templates: HashMap<Ident, FuncNode>,
 
     //  all top-level declaration names (public and private) for private vs missing checks
@@ -411,6 +432,12 @@ pub struct TypeChecker {
     /// Generic type params declared for function
     pub(super) func_type_params: HashMap<Ident, Vec<TypeParam>>,
 
+    /// Generic const params declared for function (N: int)
+    pub(super) func_const_params: HashMap<Ident, Vec<ConstParam>>,
+
+    /// Const params currently in scope for resolve_type (push/pop around generic decl processing)
+    pub(super) current_const_params: Vec<ConstParam>,
+
     /// Identify inference slots uniquely across multiple generic calls
     pub(super) next_infer_call_id: usize,
 
@@ -457,8 +484,8 @@ pub struct TypeChecker {
     /// Active snapshot for capturing expression types during generic body specialization
     pub(super) spec_type_snapshot: Option<HashMap<ExprId, (Span, Type)>>,
 
-    /// Resolved type args per call site, keyed by callee ExprId
-    pub resolved_call_type_args: HashMap<ExprId, (Ident, Vec<Type>)>,
+    /// Resolved type args and const args per call site, keyed by callee ExprId
+    pub resolved_call_type_args: HashMap<ExprId, (Ident, Vec<Type>, Vec<usize>)>,
 
     /// Tracks which module a generic function was imported from
     pub(super) generic_func_source_module: HashMap<Ident, Vec<String>>,
@@ -530,6 +557,15 @@ impl TypeChecker {
 
     pub(super) fn pop_method_context(&mut self) {
         self.method_contexts.pop();
+    }
+
+    pub(super) fn push_const_params(&mut self, params: &[ConstParam]) {
+        self.current_const_params.extend_from_slice(params);
+    }
+
+    pub(super) fn pop_const_params(&mut self, count: usize) {
+        self.current_const_params
+            .truncate(self.current_const_params.len() - count);
     }
 
     pub(super) fn current_method(&self) -> Option<&MethodContext> {
@@ -710,12 +746,18 @@ impl TypeChecker {
         let variant = def.variants.iter().find(|v| v.name == variant_name)?;
         let subst = build_subst(&def.type_params, type_args);
         match &variant.kind {
-            VariantKind::Tuple(types) => {
-                Some(types.iter().map(|t| subst_type(t, &subst)).collect())
-            }
-            VariantKind::Struct(fields) => {
-                Some(fields.iter().map(|f| subst_type(&f.ty, &subst)).collect())
-            }
+            VariantKind::Tuple(types) => Some(
+                types
+                    .iter()
+                    .map(|t| subst_type(t, &subst, &HashMap::new()))
+                    .collect(),
+            ),
+            VariantKind::Struct(fields) => Some(
+                fields
+                    .iter()
+                    .map(|f| subst_type(&f.ty, &subst, &HashMap::new()))
+                    .collect(),
+            ),
             VariantKind::Unit => Some(vec![]),
         }
     }
@@ -794,13 +836,23 @@ impl TypeChecker {
             },
             Type::Array { elem, len } => {
                 let resolved_len = match len {
-                    ArrayLen::Named(ident) => match self.const_defs.get(ident) {
-                        Some(def) => match &def.value {
-                            ConstValue::Int(n) if *n >= 0 => ArrayLen::Fixed(*n as usize),
-                            _ => ArrayLen::Named(*ident),
-                        },
-                        None => ArrayLen::Named(*ident),
-                    },
+                    ArrayLen::Named(ident) => {
+                        if let Some(cp) = self
+                            .current_const_params
+                            .iter()
+                            .find(|cp| cp.name == *ident)
+                        {
+                            ArrayLen::Param(cp.id)
+                        } else {
+                            match self.const_defs.get(ident) {
+                                Some(def) => match &def.value {
+                                    ConstValue::Int(n) if *n >= 0 => ArrayLen::Fixed(*n as usize),
+                                    _ => ArrayLen::Named(*ident),
+                                },
+                                None => ArrayLen::Named(*ident),
+                            }
+                        }
+                    }
                     other => *other,
                 };
                 Type::Array {
@@ -873,7 +925,10 @@ impl TypeChecker {
         self.generic_func_templates.get(&name)
     }
 
-    pub fn call_type_args(&self, callee_expr_id: ExprId) -> Option<&(Ident, Vec<Type>)> {
+    pub fn call_type_args(
+        &self,
+        callee_expr_id: ExprId,
+    ) -> Option<&(Ident, Vec<Type>, Vec<usize>)> {
         self.resolved_call_type_args.get(&callee_expr_id)
     }
 
@@ -1309,7 +1364,7 @@ pub(super) fn type_field_on_base(
                             },
                         ));
                     }
-                    let field_ty = subst_type(&struct_field.ty, &subst);
+                    let field_ty = subst_type(&struct_field.ty, &subst, &HashMap::new());
                     return type_checker.resolve_type(&field_ty);
                 }
             }
@@ -1501,12 +1556,14 @@ fn check_type_property(ty: &Type, tc: &TypeChecker, prop: TypeProperty) -> Resul
             for v in &enum_def.variants {
                 let resolved_types: Vec<Type> = match &v.kind {
                     VariantKind::Unit => continue,
-                    VariantKind::Tuple(types) => {
-                        types.iter().map(|t| subst_type(t, &subst)).collect()
-                    }
-                    VariantKind::Struct(fields) => {
-                        fields.iter().map(|f| subst_type(&f.ty, &subst)).collect()
-                    }
+                    VariantKind::Tuple(types) => types
+                        .iter()
+                        .map(|t| subst_type(t, &subst, &HashMap::new()))
+                        .collect(),
+                    VariantKind::Struct(fields) => fields
+                        .iter()
+                        .map(|f| subst_type(&f.ty, &subst, &HashMap::new()))
+                        .collect(),
                 };
                 for resolved in &resolved_types {
                     check_type_property(resolved, tc, prop).map_err(|msg| {
@@ -1522,7 +1579,7 @@ fn check_type_property(ty: &Type, tc: &TypeChecker, prop: TypeProperty) -> Resul
             };
             let subst = build_subst(&struct_def.type_params, type_args);
             for f in &struct_def.fields {
-                let resolved = subst_type(&f.ty, &subst);
+                let resolved = subst_type(&f.ty, &subst, &HashMap::new());
                 check_type_property(&resolved, tc, prop)
                     .map_err(|msg| format!("field '{}' has type '{resolved}': {msg}", f.name))?;
             }

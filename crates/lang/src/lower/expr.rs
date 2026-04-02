@@ -1142,7 +1142,7 @@ fn lower_safe_call_expr(
             type_args,
         } = &inner_ty
         {
-            let mangled = mangle_method_spec_name(*struct_name, method_name, type_args);
+            let mangled = mangle_method_spec_name(*struct_name, method_name, type_args, &[]);
             let &func_id =
                 ctx.shared
                     .funcs
@@ -2829,7 +2829,7 @@ fn try_lower_method_call(
         type_args,
     } = &target_ty
     {
-        let mangled = mangle_method_spec_name(*struct_name, method_name, type_args);
+        let mangled = mangle_method_spec_name(*struct_name, method_name, type_args, &[]);
         if let Some(&func_id) = ctx.shared.funcs.get(&mangled) {
             let receiver = lower_expr(&field.node.target, ctx, fc, out)?;
             let (recv_kind, method_params) = ctx
@@ -2983,11 +2983,12 @@ fn lower_direct_call(
         })
     } else if let Some(&extern_id) = ctx.shared.externs.get(&callee_name) {
         Ok(hir::ExprKind::CallExtern { extern_id, args })
-    } else if let Some((func_name, type_args)) = ctx.shared.tcx.call_type_args(c.node.func.node.id)
+    } else if let Some((func_name, type_args, const_args)) =
+        ctx.shared.tcx.call_type_args(c.node.func.node.id)
     {
         let defaults = ctx.shared.tcx.func_param_defaults(*func_name);
         inject_defaults(&mut args, defaults);
-        let mangled = mangle_generic_name(*func_name, type_args);
+        let mangled = mangle_generic_name(*func_name, type_args, const_args);
         let &func_id = ctx
             .shared
             .funcs

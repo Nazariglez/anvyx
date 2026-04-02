@@ -9,7 +9,8 @@ use super::{
     error::{Diagnostic, DiagnosticKind},
     expr::{check_expr, field_path, root_ident},
     infer::{
-        build_param_ref, build_subst, constrain_slots_from_type, create_inference_slots,
+        ConstInferenceSlots, build_const_subst, build_param_ref, build_subst,
+        constrain_slots_from_type, create_inference_slots, infer_const_args_from_checked_args,
         infer_type_args_from_call, subst_type,
     },
     postfix::resolve_builtin_or_extend,
@@ -565,8 +566,13 @@ fn check_generic_call(
 ) -> Type {
     let node = &call.node;
     let has_type_args = !node.type_args.is_empty();
+    let const_params = type_checker
+        .func_const_params
+        .get(&func_name)
+        .cloned()
+        .unwrap_or_default();
 
-    let type_args = if has_type_args {
+    let (type_args, const_args) = if has_type_args {
         let same_param_count = type_params.len() == node.type_args.len();
         if !same_param_count {
             errors.push(Diagnostic::new(
@@ -614,12 +620,25 @@ fn check_generic_call(
 
         let subst = build_subst(type_params, &node.type_args);
 
-        for (arg_expr, param_ty) in node.args.iter().zip(params.iter()) {
-            let instantiated = subst_type(&param_ty.ty, &subst);
+        type_checker.push_const_params(&const_params);
+        let resolved_param_tys: Vec<Type> = params
+            .iter()
+            .map(|p| type_checker.resolve_type(&p.ty))
+            .collect();
+        type_checker.pop_const_params(const_params.len());
+
+        for (arg_expr, resolved_ty) in node.args.iter().zip(resolved_param_tys.iter()) {
+            let instantiated = subst_type(resolved_ty, &subst, &HashMap::new());
             check_and_constrain_arg(arg_expr, &instantiated, type_checker, errors);
         }
 
-        node.type_args.clone()
+        let inferred_const_args = infer_const_args_from_checked_args(
+            &resolved_param_tys,
+            &node.args,
+            &const_params,
+            type_checker,
+        );
+        (node.type_args.clone(), inferred_const_args)
     } else {
         let Type::Func { params, ret } = func_ty else {
             errors.push(Diagnostic::new(
@@ -632,9 +651,12 @@ fn check_generic_call(
         };
 
         let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
-        let Some(inferred) = infer_type_args_from_call(
+        // put const params in scope so inference can resolve named lengths and extract their values
+        type_checker.push_const_params(&const_params);
+        let result = infer_type_args_from_call(
             call.span,
             type_params,
+            &const_params,
             &param_tys,
             &node.args,
             func_ty.clone(),
@@ -642,21 +664,30 @@ fn check_generic_call(
             expected,
             type_checker,
             errors,
-        ) else {
+        );
+        type_checker.pop_const_params(const_params.len());
+        let Some((inferred, inferred_const_args)) = result else {
             return Type::Infer;
         };
 
-        inferred
+        (inferred, inferred_const_args)
     };
 
     if let Some(param_info) = type_checker.func_param_info.get(&func_name).cloned() {
         check_var_param_args(param_info, &node.args, type_checker, errors);
     }
 
-    let ret = instantiate_and_check_fn(func_name, &type_args, call.span, type_checker, errors);
+    let ret = instantiate_and_check_fn(
+        func_name,
+        &type_args,
+        &const_args,
+        call.span,
+        type_checker,
+        errors,
+    );
     type_checker
         .resolved_call_type_args
-        .insert(node.func.node.id, (func_name, type_args));
+        .insert(node.func.node.id, (func_name, type_args, const_args));
     ret
 }
 
@@ -688,7 +719,11 @@ pub(super) fn check_call(
         .cloned()
         .unwrap_or_default();
 
-    let is_generic = !type_params.is_empty();
+    let has_const_params = func_name
+        .and_then(|name| type_checker.func_const_params.get(&name))
+        .is_some_and(|cp| !cp.is_empty());
+
+    let is_generic = !type_params.is_empty() || has_const_params;
     let has_type_args = !node.type_args.is_empty();
 
     // handle generic function calls with template instantiation
@@ -892,18 +927,36 @@ pub(super) fn check_module_func_call(
 
         let node = &call.node;
         let has_explicit_type_args = !node.type_args.is_empty();
+        let module_const_params = module_def
+            .func_const_params
+            .get(&func_name)
+            .cloned()
+            .unwrap_or_default();
 
         let result = if has_explicit_type_args {
+            let const_args = if let Type::Func { params, .. } = &func_ty {
+                let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
+                infer_const_args_from_checked_args(
+                    &param_tys,
+                    &node.args,
+                    &module_const_params,
+                    type_checker,
+                )
+            } else {
+                vec![]
+            };
             let ret = instantiate_and_check_fn(
                 func_name,
                 &node.type_args,
+                &const_args,
                 call.span,
                 type_checker,
                 errors,
             );
-            type_checker
-                .resolved_call_type_args
-                .insert(node.func.node.id, (func_name, node.type_args.clone()));
+            type_checker.resolved_call_type_args.insert(
+                node.func.node.id,
+                (func_name, node.type_args.clone(), const_args),
+            );
             ret
         } else {
             let Type::Func { params, ret } = &func_ty else {
@@ -916,9 +969,10 @@ pub(super) fn check_module_func_call(
             };
 
             let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
-            let Some(inferred) = infer_type_args_from_call(
+            let Some((inferred, inferred_const_args)) = infer_type_args_from_call(
                 call.span,
                 &type_params,
+                &module_const_params,
                 &param_tys,
                 &node.args,
                 func_ty.clone(),
@@ -931,11 +985,18 @@ pub(super) fn check_module_func_call(
                 return Type::Infer;
             };
 
-            let ret =
-                instantiate_and_check_fn(func_name, &inferred, call.span, type_checker, errors);
-            type_checker
-                .resolved_call_type_args
-                .insert(node.func.node.id, (func_name, inferred));
+            let ret = instantiate_and_check_fn(
+                func_name,
+                &inferred,
+                &inferred_const_args,
+                call.span,
+                type_checker,
+                errors,
+            );
+            type_checker.resolved_call_type_args.insert(
+                node.func.node.id,
+                (func_name, inferred, inferred_const_args),
+            );
             ret
         };
 
@@ -1103,6 +1164,7 @@ fn check_enum_tuple_variant(
     } else {
         HashMap::new()
     };
+    let mut enum_const_slots: ConstInferenceSlots = HashMap::new();
 
     // check argument count
     if node.args.len() != expected_types.len() {
@@ -1129,12 +1191,13 @@ fn check_enum_tuple_variant(
                     expected_ty,
                     &arg_ty,
                     &slots,
+                    &mut enum_const_slots,
                     arg_expr.span,
                     type_checker,
                     errors,
                 );
             }
-            build_param_ref(expected_ty, &slots, type_checker)
+            build_param_ref(expected_ty, &slots, &enum_const_slots, type_checker)
         } else {
             let resolved = type_checker.resolve_type(expected_ty);
             TypeRef::concrete(&resolved)
@@ -1203,9 +1266,10 @@ fn check_generic_static_method(
                     .collect(),
                 ret: Box::new(method.ret.clone()),
             };
-            let Some(inferred) = infer_type_args_from_call(
+            let Some((inferred, _)) = infer_type_args_from_call(
                 call.span,
                 &struct_def.type_params,
+                &[],
                 &param_templates,
                 &node.args,
                 expected_ty,
@@ -1239,9 +1303,10 @@ fn check_generic_static_method(
             ret: Box::new(method.ret.clone()),
         };
 
-        let Some(all_inferred) = infer_type_args_from_call(
+        let Some((all_inferred, _)) = infer_type_args_from_call(
             call.span,
             &all_type_params,
+            &[],
             &param_templates,
             &node.args,
             expected_ty,
@@ -1335,9 +1400,10 @@ pub(super) fn check_static_method_call(
                 .collect(),
             ret: Box::new(method.ret.clone()),
         };
-        let Some(inferred_type_args) = infer_type_args_from_call(
+        let Some((inferred_type_args, _)) = infer_type_args_from_call(
             call.span,
             &struct_def.type_params,
+            &[],
             &param_templates,
             &node.args,
             expected_ty,
@@ -1351,7 +1417,7 @@ pub(super) fn check_static_method_call(
 
         let subst = build_subst(&struct_def.type_params, &inferred_type_args);
 
-        let ret_ty = subst_type(&method.ret, &subst);
+        let ret_ty = subst_type(&method.ret, &subst, &HashMap::new());
 
         check_var_param_args(
             method.params.iter().map(|p| (p.name, p.mutability)),
@@ -1422,7 +1488,7 @@ fn check_generic_instance_method(
     let partially_subst_params: Vec<Type> = method
         .params
         .iter()
-        .map(|p| subst_type(&p.ty, &struct_subst))
+        .map(|p| subst_type(&p.ty, &struct_subst, &HashMap::new()))
         .collect();
 
     let has_explicit_type_args = !node.type_args.is_empty();
@@ -1444,13 +1510,13 @@ fn check_generic_instance_method(
         combined_subst.extend(build_subst(&method.type_params, &node.type_args));
 
         for (arg_expr, param_ty) in node.args.iter().zip(partially_subst_params.iter()) {
-            let instantiated = subst_type(param_ty, &combined_subst);
+            let instantiated = subst_type(param_ty, &combined_subst, &HashMap::new());
             check_and_constrain_arg(arg_expr, &instantiated, type_checker, errors);
         }
 
         node.type_args.clone()
     } else {
-        let partially_subst_ret = subst_type(&method.ret, &struct_subst);
+        let partially_subst_ret = subst_type(&method.ret, &struct_subst, &HashMap::new());
         let expected_ty = Type::Func {
             params: partially_subst_params
                 .iter()
@@ -1459,9 +1525,10 @@ fn check_generic_instance_method(
             ret: Box::new(partially_subst_ret.clone()),
         };
 
-        let Some(inferred) = infer_type_args_from_call(
+        let Some((inferred, _)) = infer_type_args_from_call(
             call.span,
             &method.type_params,
+            &[],
             &partially_subst_params,
             &node.args,
             expected_ty,
@@ -1563,9 +1630,9 @@ pub(super) fn check_instance_method_call(
     let param_types: Vec<Type> = method
         .params
         .iter()
-        .map(|p| subst_type(&p.ty, &subst))
+        .map(|p| subst_type(&p.ty, &subst, &HashMap::new()))
         .collect();
-    let ret_type = subst_type(&method.ret, &subst);
+    let ret_type = subst_type(&method.ret, &subst, &HashMap::new());
     let required = required_param_count(&method.param_defaults, param_types.len());
 
     let result = check_call_signature(
@@ -1926,6 +1993,7 @@ fn instantiate_generic_body(
 fn instantiate_and_check_fn(
     func_name: Ident,
     type_args: &[Type],
+    const_args: &[usize],
     call_span: Span,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
@@ -1942,6 +2010,7 @@ fn instantiate_and_check_fn(
     let cache_key = SpecializationKey {
         func_name,
         type_args: type_args.to_vec(),
+        const_args: const_args.to_vec(),
     };
 
     // check cache first
@@ -1979,23 +2048,37 @@ fn instantiate_and_check_fn(
         return Type::Infer;
     }
 
-    // build substitution map to convert TypeVarId -> concrete Type
+    // build substitution maps
     let subst = build_subst(&type_params, type_args);
+    let fn_const_params = type_checker
+        .func_const_params
+        .get(&func_name)
+        .cloned()
+        .unwrap_or_default();
+    let const_subst = build_const_subst(&fn_const_params, const_args);
 
     let func = &fn_template.node;
 
-    let params: Vec<(Ident, Type, bool)> = func
+    // put const params in scope so named lengths can resolve first and then become concrete values
+    type_checker.push_const_params(&fn_const_params);
+    let mut params: Vec<(Ident, Type, bool)> = func
         .params
         .iter()
         .map(|p| {
             (
                 p.name,
-                subst_type(&type_checker.resolve_type(&p.ty), &subst),
+                subst_type(&type_checker.resolve_type(&p.ty), &subst, &const_subst),
                 matches!(p.mutability, Mutability::Mutable),
             )
         })
         .collect();
-    let ret_ty = subst_type(&type_checker.resolve_type(&func.ret), &subst);
+    let ret_ty = subst_type(&type_checker.resolve_type(&func.ret), &subst, &const_subst);
+    type_checker.pop_const_params(fn_const_params.len());
+
+    // inject const params as immutable variables so the body can reference them by name
+    for param in &fn_const_params {
+        params.push((param.name, Type::Int, false));
+    }
 
     let module_scope = type_checker
         .generic_func_source_module
@@ -2060,6 +2143,7 @@ fn instantiate_method_body(
         struct_name,
         method_name,
         type_args: all_type_args.clone(),
+        const_args: vec![],
     };
 
     if let Some(cached) = type_checker.method_spec_cache.get(&cache_key) {
@@ -2081,9 +2165,9 @@ fn instantiate_method_body(
     let specialized_param_types: Vec<Type> = method
         .params
         .iter()
-        .map(|p| subst_type(&p.ty, &subst))
+        .map(|p| subst_type(&p.ty, &subst, &HashMap::new()))
         .collect();
-    let specialized_ret = subst_type(&method.ret, &subst);
+    let specialized_ret = subst_type(&method.ret, &subst, &HashMap::new());
 
     let self_type = struct_def.make_type(struct_name, struct_type_args.to_vec());
     let self_ident = Ident(Intern::new("self".to_string()));

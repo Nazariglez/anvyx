@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// 3
+// 5
+// @match-end
+
+fn size<T, N: int>(arr: [T; N]) -> int { N }
+
+fn main() {
+    println(size([1, 2, 3]));
+    println(size([1, 2, 3, 4, 5]));
+}

@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: type parameters must come before value parameters
+
+fn bad<N: int, T>(arr: [T; N]) -> T { arr[0] }
+
+fn main() {}

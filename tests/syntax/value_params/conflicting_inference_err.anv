@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: Conflicting const inference
+
+fn same_len<T, N: int>(a: [T; N], b: [T; N]) -> T {
+    a[0]
+}
+
+fn main() {
+    same_len([1, 2, 3], [4, 5]);
+}

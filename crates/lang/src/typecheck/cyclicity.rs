@@ -119,13 +119,13 @@ fn extract_dataref_refs(
                             VariantKind::Unit => {}
                             VariantKind::Tuple(tys) => {
                                 for field_ty in tys {
-                                    let resolved = subst_type(field_ty, &subst);
+                                    let resolved = subst_type(field_ty, &subst, &HashMap::new());
                                     extract_dataref_refs(&resolved, struct_defs, enum_defs, out);
                                 }
                             }
                             VariantKind::Struct(fields) => {
                                 for field in fields {
-                                    let resolved = subst_type(&field.ty, &subst);
+                                    let resolved = subst_type(&field.ty, &subst, &HashMap::new());
                                     extract_dataref_refs(&resolved, struct_defs, enum_defs, out);
                                 }
                             }
@@ -150,11 +150,11 @@ fn type_contains_func(ty: &Type, enum_defs: &HashMap<Ident, EnumDef>) -> bool {
                 def.variants.iter().any(|v| match &v.kind {
                     VariantKind::Unit => false,
                     VariantKind::Tuple(tys) => tys.iter().any(|t| {
-                        let resolved = subst_type(t, &subst);
+                        let resolved = subst_type(t, &subst, &HashMap::new());
                         type_contains_func(&resolved, enum_defs)
                     }),
                     VariantKind::Struct(fields) => fields.iter().any(|f| {
-                        let resolved = subst_type(&f.ty, &subst);
+                        let resolved = subst_type(&f.ty, &subst, &HashMap::new());
                         type_contains_func(&resolved, enum_defs)
                     }),
                 })

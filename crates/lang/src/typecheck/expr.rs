@@ -498,7 +498,7 @@ fn check_inferred_enum(
             }
             let subst = build_subst(type_params, &type_args);
             for (arg_expr, field_ty) in args.iter().zip(expected_types.iter()) {
-                let substituted = subst_type(field_ty, &subst);
+                let substituted = subst_type(field_ty, &subst, &HashMap::new());
                 check_expr(arg_expr, type_checker, errors, Some(&substituted));
                 let arg_ref = TypeRef::Expr(arg_expr.node.id);
                 let expected_ref = TypeRef::concrete(&substituted);
@@ -562,7 +562,9 @@ fn validate_and_constrain_enum_struct_fields(
     let field_type_map: HashMap<Ident, &Type> =
         expected_fields.iter().map(|f| (f.name, &f.ty)).collect();
     for (name, field_expr) in fields {
-        let field_expected = field_type_map.get(name).map(|ty| subst_type(ty, subst));
+        let field_expected = field_type_map
+            .get(name)
+            .map(|ty| subst_type(ty, subst, &HashMap::new()));
         check_expr(field_expr, type_checker, errors, field_expected.as_ref());
     }
     let provided: Vec<(Ident, Span)> = fields.iter().map(|(n, e)| (*n, e.span)).collect();
@@ -591,7 +593,7 @@ fn validate_and_constrain_enum_struct_fields(
     );
     for (name, field_expr) in fields {
         if let Some(expected_def) = expected_fields.iter().find(|f| f.name == *name) {
-            let substituted = subst_type(&expected_def.ty, subst);
+            let substituted = subst_type(&expected_def.ty, subst, &HashMap::new());
             let field_ref = TypeRef::Expr(field_expr.node.id);
             let expected_ref = TypeRef::concrete(&substituted);
             type_checker.constrain_assignable(field_expr.span, field_ref, expected_ref, errors);

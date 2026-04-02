@@ -25,7 +25,7 @@ pub use const_eval::ConstValue;
 use const_eval::evaluate_and_export_consts;
 use constraint::resolve_constraints;
 pub use error::{Diagnostic, DiagnosticKind, Severity};
-pub use infer::{resolve_type_param_names, subst_type};
+pub use infer::{build_const_subst, resolve_type_param_names, subst_type};
 use internment::Intern;
 use stmt::{build_module_def_with_reexports, check_block_stmts};
 use types::{ExtendEntry, GenericExtendTemplate};
@@ -154,6 +154,7 @@ pub fn check_program_with_modules(
                     .or_default()
                     .push(GenericExtendTemplate {
                         type_params: entry.type_params.clone(),
+                        const_params: entry.const_params.clone(),
                         target_type: entry.target_type.clone(),
                         method: entry.method.clone(),
                         source_module: path.clone(),

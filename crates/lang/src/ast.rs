@@ -173,11 +173,29 @@ pub struct TypeParam {
     pub id: TypeVarId,
 }
 
+/// Id for a generic const/value parameter (N: int)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct ConstParamId(pub u32);
+
+impl Display for ConstParamId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "$c{}", self.0)
+    }
+}
+
+/// A const/value parameter declared on a generic item (N in fn foo<T, N: int>)
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConstParam {
+    pub name: Ident,
+    pub id: ConstParamId,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ArrayLen {
     Fixed(usize),
     Infer,
     Named(Ident),
+    Param(ConstParamId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -466,6 +484,7 @@ impl Display for Type {
                 ArrayLen::Fixed(n) => write!(f, "[{elem}; {n}]"),
                 ArrayLen::Infer => write!(f, "[{elem}; _]"),
                 ArrayLen::Named(ident) => write!(f, "[{elem}; {ident}]"),
+                ArrayLen::Param(id) => write!(f, "[{elem}; {id}]"),
             },
             Type::Map { key, value } => write!(f, "[{key}: {value}]"),
             Type::ArrayView { elem } => write!(f, "[{elem}; ..]"),
@@ -606,6 +625,7 @@ pub struct Func {
     pub name: Ident,
     pub visibility: Visibility,
     pub type_params: Vec<TypeParam>,
+    pub const_params: Vec<ConstParam>,
     pub params: Vec<Param>,
     pub ret: Type,
     pub body: BlockNode,
@@ -1082,6 +1102,7 @@ pub struct StructDecl {
     pub name: Ident,
     pub visibility: Visibility,
     pub type_params: Vec<TypeParam>,
+    pub const_params: Vec<ConstParam>,
     pub fields: Vec<StructField>,
     pub methods: Vec<Method>,
 }
@@ -1097,6 +1118,7 @@ pub struct Method {
     pub name: Ident,
     pub visibility: Visibility,
     pub type_params: Vec<TypeParam>,
+    pub const_params: Vec<ConstParam>,
     pub receiver: Option<MethodReceiver>,
     pub params: Vec<Param>,
     pub ret: Type,
@@ -1132,6 +1154,7 @@ pub struct EnumDecl {
     pub name: Ident,
     pub visibility: Visibility,
     pub type_params: Vec<TypeParam>,
+    pub const_params: Vec<ConstParam>,
     pub variants: Vec<EnumVariant>,
 }
 
@@ -1140,6 +1163,7 @@ pub struct ExtendDecl {
     pub visibility: Visibility,
     pub ty: Type,
     pub type_params: Vec<TypeParam>,
+    pub const_params: Vec<ConstParam>,
     pub methods: Vec<ExtendMethodNode>,
 }
 

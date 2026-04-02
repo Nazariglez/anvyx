@@ -351,6 +351,7 @@ pub(super) fn fn_decl(
                 name: dummy_ident(name),
                 visibility: Visibility::Private,
                 type_params: vec![],
+                const_params: vec![],
                 params: params
                     .into_iter()
                     .map(|(n, t)| Param {
@@ -388,6 +389,7 @@ pub(super) fn generic_fn_decl(
                 name: dummy_ident(name),
                 visibility: Visibility::Private,
                 type_params,
+                const_params: vec![],
                 params: params
                     .into_iter()
                     .map(|(n, t)| Param {
@@ -430,6 +432,7 @@ pub(super) fn func_decl(
                 name: dummy_ident(name),
                 visibility: Visibility::Private,
                 type_params: vec![],
+                const_params: vec![],
                 params: params
                     .into_iter()
                     .map(|(n, t)| Param {
@@ -548,6 +551,7 @@ pub(super) fn method(
         name: dummy_ident(name),
         visibility: Visibility::Private,
         type_params: vec![],
+        const_params: vec![],
         receiver,
         params: param_list,
         ret,
@@ -580,6 +584,7 @@ pub(super) fn generic_method(
         name: dummy_ident(name),
         visibility: Visibility::Private,
         type_params,
+        const_params: vec![],
         receiver,
         params: param_list,
         ret,
@@ -617,6 +622,7 @@ pub(super) fn generic_struct_decl(
                 name: dummy_ident(name),
                 visibility: Visibility::Public,
                 type_params,
+                const_params: vec![],
                 fields: struct_fields,
                 methods,
             },
@@ -643,6 +649,7 @@ pub(super) fn enum_decl(name: &str, variants: Vec<(&str, VariantKind)>) -> StmtN
                 name: dummy_ident(name),
                 visibility: Visibility::Public,
                 type_params: vec![],
+                const_params: vec![],
                 variants: enum_variants,
             },
             span: dummy_span(),
@@ -679,6 +686,7 @@ pub(super) fn fn_decl_var_params(
                 name: dummy_ident(name),
                 visibility: Visibility::Private,
                 type_params: vec![],
+                const_params: vec![],
                 params: param_list,
                 ret,
                 body: BlockNode {

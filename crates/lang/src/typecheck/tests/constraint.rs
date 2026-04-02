@@ -950,6 +950,7 @@ fn test_constrain_generic_enum_type_arg_assignable() {
                     name: dummy_ident("T"),
                     id: t_id,
                 }],
+                const_params: vec![],
                 variants: vec![EnumVariant {
                     annotations: vec![],
                     name: dummy_ident("Wrap"),
@@ -996,6 +997,7 @@ fn test_constrain_generic_enum_type_arg_mismatch_errors() {
                     name: dummy_ident("T"),
                     id: t_id,
                 }],
+                const_params: vec![],
                 variants: vec![EnumVariant {
                     annotations: vec![],
                     name: dummy_ident("Wrap"),

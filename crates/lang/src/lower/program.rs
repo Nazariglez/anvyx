@@ -7,16 +7,17 @@ use internment::Intern;
 
 use super::{
     FuncLower, LowerCtx, LowerError, SharedCtx, analyze_ownership, collect_declarations,
-    lower_block, mangle_generic_name, mangle_method_spec_name, register_extend_declarations,
-    register_named_local, register_param_local, resolve_extend_ty,
+    lower_block, mangle_generic_name, mangle_method_spec_name, prepend_const_param_stmts,
+    register_const_param_locals, register_extend_declarations, register_named_local,
+    register_param_local, resolve_extend_ty,
 };
 use crate::{
     ast::{self, Ident, MethodReceiver, Type, TypeVarId, VariantKind},
     hir,
     prelude_enums::OPTION_TYPE_ID,
     typecheck::{
-        ExtendSpecKey, MethodSpecKey, SpecializationKey, TypeChecker, resolve_type_param_names,
-        subst_type,
+        ExtendSpecKey, MethodSpecKey, SpecializationKey, TypeChecker, build_const_subst,
+        resolve_type_param_names, subst_type,
     },
     vm::{
         cycle_collector::make_dataref_vtable,
@@ -130,14 +131,15 @@ pub fn lower_program(
             .zip(spec_key.type_args.iter())
             .map(|(param, arg)| (param.id, arg.clone()))
             .collect();
+        let const_subst = build_const_subst(&template.node.const_params, &spec_key.const_args);
 
         let specialized_params: Vec<Type> = template
             .node
             .params
             .iter()
-            .map(|p| subst_type(&p.ty, &subst))
+            .map(|p| subst_type(&p.ty, &subst, &const_subst))
             .collect();
-        let specialized_ret = subst_type(&template.node.ret, &subst);
+        let specialized_ret = subst_type(&template.node.ret, &subst, &const_subst);
 
         let spec_ctx = LowerCtx {
             shared: &shared,
@@ -151,13 +153,18 @@ pub fn lower_program(
         }
         let params_len = fc.locals.len() as u32;
 
-        let body = lower_block(
+        let const_param_locals =
+            register_const_param_locals(&mut fc, &template.node.const_params, &spec_key.const_args);
+
+        let mut body = lower_block(
             &template.node.body,
             &spec_ctx,
             &mut fc,
             true,
             &specialized_ret,
         )?;
+
+        prepend_const_param_stmts(&mut body, const_param_locals, template.span);
 
         funcs.push(hir::Func {
             id,
@@ -199,9 +206,9 @@ pub fn lower_program(
         let specialized_params: Vec<Type> = method
             .params
             .iter()
-            .map(|p| subst_type(&p.ty, &subst))
+            .map(|p| subst_type(&p.ty, &subst, &HashMap::new()))
             .collect();
-        let specialized_ret = subst_type(&method.ret, &subst);
+        let specialized_ret = subst_type(&method.ret, &subst, &HashMap::new());
         let self_type = struct_def.make_type(spec_key.struct_name, struct_type_args.to_vec());
 
         let spec_ctx = LowerCtx {
@@ -311,9 +318,10 @@ pub fn lower_program(
             .zip(spec_key.type_args.iter())
             .map(|(param, arg)| (param.id, arg.clone()))
             .collect();
+        let const_subst = build_const_subst(&template.const_params, &spec_key.const_args);
         let target_resolved =
             resolve_type_param_names(&template.target_type, &template.type_params);
-        let self_ty = subst_type(&target_resolved, &subst);
+        let self_ty = subst_type(&target_resolved, &subst, &const_subst);
 
         let method = &template.method.node;
 
@@ -326,12 +334,12 @@ pub fn lower_program(
                     self_ty.clone()
                 } else {
                     let resolved = resolve_type_param_names(&p.ty, &template.type_params);
-                    subst_type(&resolved, &subst)
+                    subst_type(&resolved, &subst, &const_subst)
                 }
             })
             .collect();
         let raw_ret = resolve_type_param_names(&method.ret, &template.type_params);
-        let specialized_ret = subst_type(&raw_ret, &subst);
+        let specialized_ret = subst_type(&raw_ret, &subst, &const_subst);
 
         let spec_ctx = LowerCtx {
             shared: &shared,
@@ -345,7 +353,12 @@ pub fn lower_program(
         }
         let params_len = fc.locals.len() as u32;
 
-        let body = lower_block(&method.body, &spec_ctx, &mut fc, true, &specialized_ret)?;
+        let const_param_locals =
+            register_const_param_locals(&mut fc, &template.const_params, &spec_key.const_args);
+
+        let mut body = lower_block(&method.body, &spec_ctx, &mut fc, true, &specialized_ret)?;
+
+        prepend_const_param_stmts(&mut body, const_param_locals, template.method.span);
 
         funcs.push(hir::Func {
             id,
@@ -540,7 +553,11 @@ fn lower_all_specializations(shared: &mut SharedCtx, next_func_id: &mut u32) -> 
         if shared.tcx.generic_template(spec_key.func_name).is_none() {
             continue;
         }
-        let mangled = mangle_generic_name(spec_key.func_name, &spec_key.type_args);
+        let mangled = mangle_generic_name(
+            spec_key.func_name,
+            &spec_key.type_args,
+            &spec_key.const_args,
+        );
         if shared.funcs.contains_key(&mangled) {
             continue;
         }
@@ -555,13 +572,14 @@ fn lower_all_specializations(shared: &mut SharedCtx, next_func_id: &mut u32) -> 
         if spec_result.err.is_some() {
             continue;
         }
-        if spec_key.type_args.is_empty() {
+        if spec_key.type_args.is_empty() && spec_key.const_args.is_empty() {
             continue;
         }
         let mangled = mangle_method_spec_name(
             spec_key.struct_name,
             spec_key.method_name,
             &spec_key.type_args,
+            &spec_key.const_args,
         );
         if shared.funcs.contains_key(&mangled) {
             continue;
@@ -640,19 +658,34 @@ fn collect_struct_methods_from<'a>(
     struct_methods: &mut Vec<(Ident, u32, &'a ast::Method, bool)>,
 ) {
     for stmt_node in stmts {
-        let (struct_name, type_params, methods, is_dataref) = match &stmt_node.node {
-            ast::Stmt::Struct(s) => (s.node.name, &s.node.type_params, &s.node.methods, false),
-            ast::Stmt::DataRef(s) => (s.node.name, &s.node.type_params, &s.node.methods, true),
+        let (struct_name, type_params, const_params, methods, is_dataref) = match &stmt_node.node {
+            ast::Stmt::Struct(s) => (
+                s.node.name,
+                &s.node.type_params,
+                &s.node.const_params,
+                &s.node.methods,
+                false,
+            ),
+            ast::Stmt::DataRef(s) => (
+                s.node.name,
+                &s.node.type_params,
+                &s.node.const_params,
+                &s.node.methods,
+                true,
+            ),
             _ => continue,
         };
         let Some(&type_id) = shared.struct_type_ids.get(&struct_name) else {
             continue;
         };
-        if !type_params.is_empty() {
+        if !type_params.is_empty() || !const_params.is_empty() {
             continue;
         }
         for method in methods {
-            if method.receiver.is_none() || !method.type_params.is_empty() {
+            if method.receiver.is_none()
+                || !method.type_params.is_empty()
+                || !method.const_params.is_empty()
+            {
                 continue;
             }
             let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
@@ -677,7 +710,7 @@ fn lower_extend_methods_from<'a>(
         let ast::Stmt::Extend(node) = &stmt_node.node else {
             continue;
         };
-        if !node.node.type_params.is_empty() {
+        if !node.node.type_params.is_empty() || !node.node.const_params.is_empty() {
             continue;
         }
         let Some(resolved_ty) = resolve_extend_ty(&node.node.ty, shared) else {

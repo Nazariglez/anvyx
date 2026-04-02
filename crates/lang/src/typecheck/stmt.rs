@@ -27,9 +27,9 @@ use super::{
 };
 use crate::{
     ast::{
-        ArrayLen, BlockNode, ConstDeclNode, DeferBody, ExprId, ExprKind, ExprNode, ExternFunc,
-        ExternTypeMember, Func, FuncNode, FuncParam, Ident, ImportKind, Mutability, Param,
-        ReturnNode, Stmt, StmtNode, Type, TypeParam, VariantKind, Visibility,
+        ArrayLen, BlockNode, ConstDeclNode, ConstParam, DeferBody, ExprId, ExprKind, ExprNode,
+        ExternFunc, ExternTypeMember, Func, FuncNode, FuncParam, Ident, ImportKind, Mutability,
+        Param, ReturnNode, Stmt, StmtNode, Type, TypeParam, VariantKind, Visibility,
     },
     span::Span,
 };
@@ -185,6 +185,7 @@ struct FuncRegistration {
     func_ty: Type,
     param_info: Vec<(Ident, Mutability)>,
     type_params: Option<Vec<TypeParam>>,
+    const_params: Option<Vec<ConstParam>>,
     template: Option<FuncNode>,
 }
 
@@ -195,12 +196,15 @@ fn build_func_registration(
 ) -> FuncRegistration {
     let func_ty = resolve(&type_from_fn(func));
     let param_info = build_param_info(&func.params);
-    let type_params = (!func.type_params.is_empty()).then(|| func.type_params.clone());
-    let template = type_params.is_some().then(|| node.clone());
+    let is_generic = !func.type_params.is_empty() || !func.const_params.is_empty();
+    let type_params = is_generic.then(|| func.type_params.clone());
+    let const_params = is_generic.then(|| func.const_params.clone());
+    let template = is_generic.then(|| node.clone());
     FuncRegistration {
         func_ty,
         param_info,
         type_params,
+        const_params,
         template,
     }
 }
@@ -252,6 +256,9 @@ fn merge_symbol(name: Ident, bind_as: Ident, source: &ModuleDef, target: &mut Mo
         if let Some(tp) = source.func_type_params.get(&name) {
             target.func_type_params.insert(bind_as, tp.clone());
         }
+        if let Some(cp) = source.func_const_params.get(&name) {
+            target.func_const_params.insert(bind_as, cp.clone());
+        }
         if let Some(tmpl) = source.generic_func_templates.get(&name) {
             target.generic_func_templates.insert(bind_as, tmpl.clone());
         }
@@ -289,6 +296,9 @@ fn inject_module_item(
         }
         if let Some(tp) = module_def.func_type_params.get(&name) {
             type_checker.func_type_params.insert(bind_as, tp.clone());
+        }
+        if let Some(cp) = module_def.func_const_params.get(&name) {
+            type_checker.func_const_params.insert(bind_as, cp.clone());
         }
         if let Some(tmpl) = module_def.generic_func_templates.get(&name) {
             type_checker
@@ -478,12 +488,16 @@ pub(super) fn collect_scope_types(
                     func_ty,
                     param_info,
                     type_params,
+                    const_params,
                     template,
                 } = build_func_registration(func, node, |ty| type_checker.resolve_type(ty));
                 type_checker.set_var(func.name, func_ty, false);
                 type_checker.func_param_info.insert(func.name, param_info);
                 if let Some(tp) = type_params {
                     type_checker.func_type_params.insert(func.name, tp);
+                }
+                if let Some(cp) = const_params {
+                    type_checker.func_const_params.insert(func.name, cp);
                 }
                 if let Some(tmpl) = template {
                     type_checker.generic_func_templates.insert(func.name, tmpl);
@@ -577,6 +591,7 @@ pub(super) fn collect_scope_types(
                     if !already_registered {
                         entries.push(GenericExtendTemplate {
                             type_params: entry.type_params.clone(),
+                            const_params: entry.const_params.clone(),
                             target_type: entry.target_type.clone(),
                             method: entry.method.clone(),
                             source_module: path_key.clone(),
@@ -700,8 +715,8 @@ pub(super) fn collect_scope_types(
 
             Stmt::Extend(node) => {
                 let decl = &node.node;
-                if !decl.type_params.is_empty() {
-                    // generic template are registered by check_extend_decl, not here
+                if !decl.type_params.is_empty() || !decl.const_params.is_empty() {
+                    // generic templates are registered by check_extend_decl, not here
                     continue;
                 }
                 let resolved_ty = type_checker.resolve_type(&decl.ty);
@@ -806,12 +821,16 @@ pub(super) fn build_module_def_with_reexports(
                     func_ty,
                     param_info,
                     type_params,
+                    const_params,
                     template,
                 } = build_func_registration(func, node, resolve);
                 module_def.funcs.insert(func.name, func_ty);
                 module_def.func_param_info.insert(func.name, param_info);
                 if let Some(tp) = type_params {
                     module_def.func_type_params.insert(func.name, tp);
+                }
+                if let Some(cp) = const_params {
+                    module_def.func_const_params.insert(func.name, cp);
                 }
                 if let Some(tmpl) = template {
                     module_def.generic_func_templates.insert(func.name, tmpl);
@@ -961,7 +980,7 @@ pub(super) fn build_module_def_with_reexports(
                     continue;
                 }
 
-                if !decl.type_params.is_empty() {
+                if !decl.type_params.is_empty() || !decl.const_params.is_empty() {
                     // build the exported extend target, unresolved names
                     // use the correct concrete type variant while typed targets resolve directly
                     let target_type = if let Type::UnresolvedName(name) = &decl.ty {
@@ -1004,6 +1023,7 @@ pub(super) fn build_module_def_with_reexports(
                             .push(ModuleGenericExtendEntry {
                                 base_name: base_key,
                                 type_params: decl.type_params.clone(),
+                                const_params: decl.const_params.clone(),
                                 target_type: target_type.clone(),
                                 method_name: method.node.name,
                                 method: method.clone(),
@@ -1267,6 +1287,30 @@ fn collect_undeclared_type_param_names(ty: &Type, declared: &[TypeParam], out: &
     }
 }
 
+fn type_contains_const_param(ty: &Type, id: crate::ast::ConstParamId) -> bool {
+    match ty {
+        Type::Array { elem, len } => {
+            matches!(len, ArrayLen::Param(pid) if *pid == id) || type_contains_const_param(elem, id)
+        }
+        Type::List { elem } | Type::ArrayView { elem } => type_contains_const_param(elem, id),
+        Type::Map { key, value } => {
+            type_contains_const_param(key, id) || type_contains_const_param(value, id)
+        }
+        Type::Tuple(elems) => elems.iter().any(|e| type_contains_const_param(e, id)),
+        Type::NamedTuple(fields) => fields.iter().any(|(_, t)| type_contains_const_param(t, id)),
+        Type::Struct { type_args, .. }
+        | Type::DataRef { type_args, .. }
+        | Type::Enum { type_args, .. } => {
+            type_args.iter().any(|a| type_contains_const_param(a, id))
+        }
+        Type::Func { params, ret } => {
+            params.iter().any(|p| type_contains_const_param(&p.ty, id))
+                || type_contains_const_param(ret, id)
+        }
+        _ => false,
+    }
+}
+
 fn is_valid_concrete_extend_type(ty: &Type) -> bool {
     match ty {
         Type::Int
@@ -1294,7 +1338,7 @@ fn check_extend_decl(
 ) {
     let decl = &node.node;
 
-    if !decl.type_params.is_empty() {
+    if !decl.type_params.is_empty() || !decl.const_params.is_empty() {
         check_generic_extend_decl(node, type_checker, errors);
         return;
     }
@@ -1457,6 +1501,10 @@ fn check_generic_extend_decl(
 ) {
     let decl = &node.node;
 
+    // put const params in scope
+    let const_param_count = decl.const_params.len();
+    type_checker.push_const_params(&decl.const_params);
+
     // build the full extend target type, constructing legacy name-based forms manually and resolving typed forms directly
     let target_type = if let Type::UnresolvedName(base_name) = &decl.ty {
         let resolved = type_checker.resolve_type(&decl.ty);
@@ -1476,6 +1524,7 @@ fn check_generic_extend_decl(
                     node.span,
                     errors,
                 ) else {
+                    type_checker.pop_const_params(const_param_count);
                     return;
                 };
                 ty
@@ -1485,11 +1534,13 @@ fn check_generic_extend_decl(
                     node.span,
                     DiagnosticKind::ExtendUnsupportedType { ty: resolved },
                 ));
+                type_checker.pop_const_params(const_param_count);
                 return;
             }
         }
     } else {
-        // new path: "extend<T> type_expr", resolve concrete parts, type params stay as UnresolvedName
+        // new path: "extend<T, N: int> type_expr" — resolve concrete parts;
+        // type params stay as UnresolvedName, const params are converted to ArrayLen::Param
         type_checker.resolve_type(&decl.ty)
     };
 
@@ -1499,6 +1550,7 @@ fn check_generic_extend_decl(
             node.span,
             DiagnosticKind::ExtendUnsupportedType { ty: target_type },
         ));
+        type_checker.pop_const_params(const_param_count);
         return;
     };
 
@@ -1525,6 +1577,22 @@ fn check_generic_extend_decl(
                     param_name: param.name,
                 },
             ));
+            type_checker.pop_const_params(const_param_count);
+            return;
+        }
+    }
+
+    // validate all declared const params appear somewhere in target_type
+    for param in &decl.const_params {
+        let used = type_contains_const_param(&target_type, param.id);
+        if !used {
+            errors.push(Diagnostic::new(
+                node.span,
+                DiagnosticKind::ExtendUnusedTypeParam {
+                    param_name: param.name,
+                },
+            ));
+            type_checker.pop_const_params(const_param_count);
             return;
         }
     }
@@ -1599,12 +1667,15 @@ fn check_generic_extend_decl(
             .or_default()
             .push(GenericExtendTemplate {
                 type_params: decl.type_params.clone(),
+                const_params: decl.const_params.clone(),
                 target_type: target_type.clone(),
                 method: method.clone(),
                 source_module: vec![],
                 binding: Ident(Intern::new(String::new())),
             });
     }
+
+    type_checker.pop_const_params(const_param_count);
 }
 
 pub(super) fn check_binding(

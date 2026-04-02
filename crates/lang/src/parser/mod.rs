@@ -24,7 +24,7 @@ use decl::{
 use stmt::statement;
 
 use crate::{
-    ast::{self, ExprId, TypeVarId},
+    ast::{self, ConstParamId, ExprId, TypeVarId},
     lexer::SpannedToken,
     span::Spanned,
 };
@@ -34,6 +34,7 @@ static NEXT_EXPR_ID: AtomicU64 = AtomicU64::new(0);
 #[derive(Debug, Default)]
 pub(super) struct ParserState {
     next_type_var_id: TypeVarId,
+    next_const_param_id: ConstParamId,
 }
 
 pub(super) fn new_expr_id() -> ExprId {
@@ -44,6 +45,12 @@ impl ParserState {
     pub(super) fn new_type_var_id(&mut self) -> TypeVarId {
         let id = TypeVarId(self.next_type_var_id.0);
         self.next_type_var_id = TypeVarId(id.0 + 1);
+        id
+    }
+
+    pub(super) fn new_const_param_id(&mut self) -> ConstParamId {
+        let id = ConstParamId(self.next_const_param_id.0);
+        self.next_const_param_id = ConstParamId(id.0 + 1);
         id
     }
 }

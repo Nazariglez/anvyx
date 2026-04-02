@@ -232,6 +232,10 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
             "Wrong number of type arguments".to_string(),
             format!("expected {expected} type argument(s), found {found}"),
         ),
+        DiagnosticKind::ConflictingConstInference { first, second } => (
+            "Conflicting const inference".to_string(),
+            format!("const parameter inferred as both {first} and {second}"),
+        ),
         DiagnosticKind::NotGenericFunction => (
             "Function is not generic".to_string(),
             "type arguments cannot be provided for a non-generic function".to_string(),

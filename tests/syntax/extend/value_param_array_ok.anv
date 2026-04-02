@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+extend<T, N: int> [T; N] {
+    fn capacity(self) -> int { N }
+}
+
+fn main() {}

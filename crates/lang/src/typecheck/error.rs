@@ -511,6 +511,11 @@ pub enum DiagnosticKind {
     ReturnInDefer,
     BreakInDefer,
     ContinueInDefer,
+
+    ConflictingConstInference {
+        first: usize,
+        second: usize,
+    },
 }
 
 impl DiagnosticKind {

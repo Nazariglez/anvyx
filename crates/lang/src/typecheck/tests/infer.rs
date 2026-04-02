@@ -18,7 +18,7 @@ fn test_subst_type_simple() {
     let mut subst = HashMap::new();
     subst.insert(TypeVarId(0), Type::Int);
 
-    let result = subst_type(&t_var, &subst);
+    let result = subst_type(&t_var, &subst, &HashMap::new());
     assert_eq!(result, Type::Int);
 }
 
@@ -30,7 +30,7 @@ fn test_subst_type_optional() {
     let mut subst = HashMap::new();
     subst.insert(TypeVarId(0), Type::Int);
 
-    let result = subst_type(&opt_t, &subst);
+    let result = subst_type(&opt_t, &subst, &HashMap::new());
     assert_eq!(result, opt_type(Type::Int));
 }
 
@@ -47,7 +47,7 @@ fn test_subst_type_func() {
     subst.insert(TypeVarId(0), Type::Int);
     subst.insert(TypeVarId(1), Type::Bool);
 
-    let result = subst_type(&func_ty, &subst);
+    let result = subst_type(&func_ty, &subst, &HashMap::new());
     assert_eq!(
         result,
         Type::Func {
@@ -71,7 +71,7 @@ fn test_subst_type_repeated_var() {
     let mut subst = HashMap::new();
     subst.insert(TypeVarId(0), Type::Int);
 
-    let result = subst_type(&func_ty, &subst);
+    let result = subst_type(&func_ty, &subst, &HashMap::new());
     assert_eq!(
         result,
         Type::Func {
@@ -87,7 +87,7 @@ fn test_subst_type_no_change_for_concrete() {
     let mut subst = HashMap::new();
     subst.insert(TypeVarId(0), Type::Int);
 
-    let result = subst_type(&Type::Bool, &subst);
+    let result = subst_type(&Type::Bool, &subst, &HashMap::new());
     assert_eq!(result, Type::Bool);
 }
 
@@ -205,7 +205,7 @@ fn test_subst_type_list() {
     let list_t = Type::List {
         elem: Box::new(type_var(0)),
     };
-    let result = subst_type(&list_t, &subst);
+    let result = subst_type(&list_t, &subst, &HashMap::new());
     assert_eq!(
         result,
         Type::List {
@@ -225,7 +225,7 @@ fn test_subst_type_map() {
         key: Box::new(type_var(0)),
         value: Box::new(type_var(1)),
     };
-    let result = subst_type(&map_tu, &subst);
+    let result = subst_type(&map_tu, &subst, &HashMap::new());
     assert_eq!(
         result,
         Type::Map {
@@ -244,7 +244,7 @@ fn test_subst_type_array_view() {
     let view_t = Type::ArrayView {
         elem: Box::new(type_var(0)),
     };
-    let result = subst_type(&view_t, &subst);
+    let result = subst_type(&view_t, &subst, &HashMap::new());
     assert_eq!(
         result,
         Type::ArrayView {

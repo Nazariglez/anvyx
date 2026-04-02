@@ -197,7 +197,7 @@ pub(super) fn check_func(
 
     // if the function is generic we skip checking here
     // it will be done at instantiation time with concrete types
-    let is_generic = !func.type_params.is_empty();
+    let is_generic = !func.type_params.is_empty() || !func.const_params.is_empty();
     if is_generic {
         return;
     }

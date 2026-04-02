@@ -463,7 +463,7 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
                 .iter()
                 .zip(expected_types.iter())
                 .any(|(subpat, expected_ty)| {
-                    let resolved_ty = subst_type(expected_ty, &subst);
+                    let resolved_ty = subst_type(expected_ty, &subst, &HashMap::new());
                     is_refutable(&subpat.node, &resolved_ty, type_checker)
                 })
         }
@@ -491,7 +491,7 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
                 let Some(field_def) = expected_fields.iter().find(|f| f.name == *name) else {
                     return true;
                 };
-                let resolved_ty = subst_type(&field_def.ty, &subst);
+                let resolved_ty = subst_type(&field_def.ty, &subst, &HashMap::new());
                 is_refutable(&subpat.node, &resolved_ty, type_checker)
             })
         }
@@ -529,7 +529,7 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
                 .iter()
                 .zip(expected_types.iter())
                 .any(|(subpat, expected_ty)| {
-                    let resolved_ty = subst_type(expected_ty, &subst);
+                    let resolved_ty = subst_type(expected_ty, &subst, &HashMap::new());
                     is_refutable(&subpat.node, &resolved_ty, type_checker)
                 })
         }
@@ -555,7 +555,7 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
                 let Some(field_def) = expected_fields.iter().find(|f| f.name == *name) else {
                     return true;
                 };
-                let resolved_ty = subst_type(&field_def.ty, &subst);
+                let resolved_ty = subst_type(&field_def.ty, &subst, &HashMap::new());
                 is_refutable(&subpat.node, &resolved_ty, type_checker)
             })
         }
@@ -1010,7 +1010,8 @@ fn check_enum_pattern(
             let subst = build_subst(&enum_def.type_params, type_args);
 
             for (subpat, expected_ty) in fields.iter().zip(expected_types.iter()) {
-                let resolved_ty = type_checker.resolve_type(&subst_type(expected_ty, &subst));
+                let resolved_ty =
+                    type_checker.resolve_type(&subst_type(expected_ty, &subst, &HashMap::new()));
                 check_pattern_inner(
                     subpat,
                     &resolved_ty,
@@ -1111,7 +1112,7 @@ fn check_enum_struct_pattern(
         let Some(expected_field) = matched_def else {
             continue;
         };
-        let resolved_ty = subst_type(&expected_field.ty, &subst);
+        let resolved_ty = subst_type(&expected_field.ty, &subst, &HashMap::new());
         check_pattern_inner(
             subpat,
             &resolved_ty,
@@ -1180,7 +1181,7 @@ fn check_struct_destructure_pattern(
             let resolved_ty = if subst.is_empty() {
                 field_def.ty.clone()
             } else {
-                subst_type(&field_def.ty, &subst)
+                subst_type(&field_def.ty, &subst, &HashMap::new())
             };
             check_pattern_inner(
                 subpat,

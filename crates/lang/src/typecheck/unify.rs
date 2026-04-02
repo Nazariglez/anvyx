@@ -108,7 +108,12 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
         ) => {
             let len_ok = match (len_from, len_to) {
                 (ArrayLen::Fixed(n), ArrayLen::Fixed(m)) => n == m,
-                (ArrayLen::Infer, _) | (_, ArrayLen::Infer) => true,
+                // infer and unresolved length params match any concrete size, specialization checks the actual value later
+                (ArrayLen::Infer, _)
+                | (_, ArrayLen::Infer)
+                | (ArrayLen::Fixed(_), ArrayLen::Param(_) | ArrayLen::Named(_))
+                | (ArrayLen::Param(_) | ArrayLen::Named(_), ArrayLen::Fixed(_)) => true,
+                (ArrayLen::Param(a), ArrayLen::Param(b)) => a == b,
                 _ => false,
             };
             len_ok && is_assignable(elem_from, elem_to)
@@ -301,6 +306,7 @@ pub(super) fn unify_types(
                     ArrayLen::Fixed(*a)
                 }
                 (ArrayLen::Infer, ArrayLen::Infer) => ArrayLen::Infer,
+                (ArrayLen::Param(a), ArrayLen::Param(b)) if a == b => ArrayLen::Param(*a),
                 _ => {
                     errors.push(Diagnostic::new(
                         span,

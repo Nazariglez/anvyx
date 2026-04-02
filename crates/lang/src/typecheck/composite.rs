@@ -6,7 +6,9 @@ use super::{
     constraint::TypeRef,
     error::{Diagnostic, DiagnosticKind},
     expr::check_expr,
-    infer::{build_param_ref, constrain_slots_from_type, create_inference_slots},
+    infer::{
+        ConstInferenceSlots, build_param_ref, constrain_slots_from_type, create_inference_slots,
+    },
     range::{
         range_from_type, range_inclusive_type, range_to_inclusive_type, range_to_type, range_type,
     },
@@ -119,6 +121,7 @@ fn constrain_fields_and_extract_type_args(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Vec<Type> {
+    let mut struct_const_slots: ConstInferenceSlots = HashMap::new();
     for ((_, field_expr), matched_def) in fields.iter().zip(matched.iter()) {
         let Some(expected) = matched_def else {
             continue;
@@ -131,12 +134,13 @@ fn constrain_fields_and_extract_type_args(
                     &expected.ty,
                     &field_ty,
                     slots,
+                    &mut struct_const_slots,
                     field_expr.span,
                     type_checker,
                     errors,
                 );
             }
-            build_param_ref(&expected.ty, slots, type_checker)
+            build_param_ref(&expected.ty, slots, &struct_const_slots, type_checker)
         } else {
             let resolved = type_checker.resolve_type(&expected.ty);
             TypeRef::concrete(&resolved)
