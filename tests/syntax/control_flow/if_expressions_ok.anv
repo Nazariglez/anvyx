@@ -1,0 +1,20 @@
+// @mode: check
+// @expect: success
+
+fn scale_if(a: int, nice: bool) -> int {
+    if nice { a } else { a * 10 }
+}
+
+fn scale_ternary(a: int, nice: bool) -> int {
+    nice ? a : a * 10
+}
+
+fn main() {
+    let a: bool = if true { false } else { true };
+    let b = if a { a } else { !a };
+    let cond: bool = true;
+    let c: int = cond ? 1 : 2;
+    let d = cond ? c : c * 2;
+    let e: int = scale_if(2, true);
+    let f: int = scale_ternary(2, true);
+}

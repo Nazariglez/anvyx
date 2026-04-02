@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+fn literal_ret() -> int {
+    1
+}
+
+fn block_ret() -> int {
+    let x: int = 1;
+    x
+}
+
+fn explicit_ret() -> int {
+    return 10;
+}

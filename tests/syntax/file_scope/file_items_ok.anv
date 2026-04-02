@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+// this is an allowed comment
+fn whatever() {}
+fn add() {}
+
+fn main() {}

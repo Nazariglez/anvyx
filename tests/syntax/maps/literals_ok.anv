@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let m = ["hp": 100, "mp": 50];
+    let n = [1: "one", 2: "two"];
+    let o = [true: 1, false: 0];
+    let p: [string: int] = [:];
+    let q: [int: bool] = [:];
+    let r = ["outer": ["inner": 1]];
+    let s: [string: [int: bool]] = [:];
+    let t = ["a": 1,];
+    let u = ["a": 1, "b": 2,];
+    let v: [string: int] = ["hp": 100];
+    let w: [int: string] = [1: "one"];
+}

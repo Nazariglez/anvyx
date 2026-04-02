@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+fn apply(f: fn(int) -> int, x: int) -> int {
+    return f(x);
+}
+
+fn nested(f: fn(fn(int) -> int) -> int, g: fn(int) -> int) -> int {
+    return f(g);
+}
+
+fn main() {
+    apply(|x| x * 2, 5);
+    let f: fn(int) -> int = |x| x + 1;
+    let g: fn(int, int) -> int = |a, b| a + b;
+}

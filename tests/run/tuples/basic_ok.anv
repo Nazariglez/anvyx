@@ -3,10 +3,18 @@
 // @match-begin
 // 10
 // hello
+// 30
 // @match-end
+
+fn sum(t: (int, int)) -> int {
+    t.0 + t.1
+}
 
 fn main() {
     let t = (10, "hello");
     println(f"{t.0}");
     println(t.1);
+
+    let nums = (10, 20);
+    println(f"{sum(nums)}");
 }

@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    defer println("cleanup");
+    defer {
+        let x = 1;
+        println(x);
+    }
+
+    defer {
+        defer println("inner");
+        println("outer");
+    }
+}

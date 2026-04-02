@@ -10,4 +10,7 @@ fn main() {
     let n = Node { value: 42, label: "root" };
     let v: int = n.value;
     let l: string = n.label;
+    let other = n;
+    let eq: bool = n == other;
+    let ne: bool = n != other;
 }

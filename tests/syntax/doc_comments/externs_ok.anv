@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: success
+
+/// Adds two integers.
+extern fn add(a: int, b: int) -> int;
+
+/// A 2D point.
+extern type Point {
+    x: float;
+    y: float;
+}
+
+fn main() {}

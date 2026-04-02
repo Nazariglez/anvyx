@@ -3,6 +3,8 @@
 // @match-begin
 // .Some(10)
 // .Some(20)
+// .None<int>
+// .None<int>
 // @match-end
 
 struct Point { x: int, y: int }
@@ -13,4 +15,10 @@ fn main() {
     let y = p?.y;
     println(x);
     println(y);
+
+    let none_point: Point? = nil;
+    let none_x = none_point?.x;
+    let none_y = none_point?.y;
+    println(none_x);
+    println(none_y);
 }

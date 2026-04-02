@@ -3,6 +3,7 @@
 // @match-begin
 // hello
 // arm1: hello
+// b-value
 // @match-end
 
 fn main() {
@@ -13,5 +14,14 @@ fn main() {
         1 => { println("arm1: " + s); },
         2 => { println("arm2"); },
         _ => { println("other"); },
+    }
+
+    let a = "a-value";
+    let b = "b-value";
+    let tag2 = 2;
+    match tag2 {
+        1 => { println(a); },
+        2 => { println(b); },
+        _ => {},
     }
 }

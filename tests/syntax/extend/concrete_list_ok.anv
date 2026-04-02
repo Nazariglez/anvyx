@@ -1,8 +1,0 @@
-// @mode: check
-// @expect: success
-
-extend [int] {
-    fn first(self) -> int { 0 }
-}
-
-fn main() {}

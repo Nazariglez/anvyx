@@ -1,6 +1,0 @@
-// @mode: check
-// @expect: success
-
-fn main() {
-    let o: Option<int> = Option.Some(42);
-}

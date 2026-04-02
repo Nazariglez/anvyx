@@ -1,0 +1,20 @@
+// @mode: check
+// @expect: success
+
+struct Foo {
+    fn make<T>(x: T) -> T {
+        x
+    }
+
+    fn pair<A, B>(self, a: A, b: B) -> B {
+        b
+    }
+}
+
+fn main() {
+    let f = Foo {};
+    let a: int = Foo.make(42);
+    let b: string = Foo.make("hello");
+    let c: string = f.pair(42, "hello");
+    let d: int = f.pair("hello", 42);
+}

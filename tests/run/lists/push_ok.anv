@@ -1,9 +1,0 @@
-// @mode: run
-// @expect: success
-// @match: 4
-
-fn main() {
-    var list: [int] = [1, 2, 3];
-    list.push(4);
-    println(list[3]);
-}

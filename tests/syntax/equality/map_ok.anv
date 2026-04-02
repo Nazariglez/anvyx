@@ -1,8 +1,0 @@
-// @mode: check
-// @expect: success
-
-fn main() {
-    let a: [string: int] = ["hp": 100, "mp": 50];
-    let b: [string: int] = ["hp": 100, "mp": 50];
-    let eq = a == b;
-}

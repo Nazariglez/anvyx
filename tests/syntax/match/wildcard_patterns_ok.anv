@@ -1,0 +1,26 @@
+// @mode: check
+// @expect: success
+
+enum Color { Red, Green, Blue }
+
+fn main() {
+    let n = 42;
+    match n {
+        0 => {},
+        1 => {},
+        _ => {},
+    }
+
+    let s = "hello";
+    match s {
+        "hello" => {},
+        "world" => {},
+        _ => {},
+    }
+
+    let c = Color.Red;
+    match c {
+        Color.Red => {},
+        _ => {},
+    }
+}

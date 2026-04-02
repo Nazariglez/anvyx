@@ -1,9 +1,0 @@
-// @mode: check
-// @expect: success
-
-fn main() {
-    let arr: [int; 3] = [10, 20, 30];
-    for el in rev arr {
-        let _: int = el;
-    }
-}

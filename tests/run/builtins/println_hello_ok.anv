@@ -1,7 +1,0 @@
-// @mode: run
-// @expect: success
-// @match: hello world
-
-fn main() {
-    println("hello world");
-}

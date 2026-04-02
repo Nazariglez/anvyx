@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+fn explicit_void() -> void {
+    return;
+}
+
+fn implicit_void() {
+    return;
+}
+
+fn empty_void() -> void {}

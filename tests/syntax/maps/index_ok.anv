@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let stats = ["hp": 100, "mp": 50];
+    let hp = stats["hp"];
+    let hp_val = stats["hp"] ?? 0;
+
+    let m = ["a": 1];
+    let v: int? = m["a"];
+    let w: int = m["a"] ?? 0;
+}

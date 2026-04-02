@@ -1,0 +1,25 @@
+// @mode: check
+// @expect: success
+
+fn first<T, N: int>(arr: [T; N]) -> T {
+    arr[0]
+}
+
+fn both<T, N: int, M: int>(a: [T; N], b: [T; M]) -> T {
+    a[0]
+}
+
+struct FixedBuf<T, N: int> {
+    data: [T; N]
+}
+
+fn main() {
+    let x = first([1, 2, 3]);
+    let _: int = x;
+
+    let y = first(["a", "b"]);
+    let _: string = y;
+
+    let z = both([1, 2, 3], [4, 5]);
+    let _: int = z;
+}

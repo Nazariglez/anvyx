@@ -1,0 +1,17 @@
+// @mode: check
+// @expect: success
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+fn main() {
+    let c1 = Color.Red;
+    let c2 = Color.Green;
+    let c3 = Color.Blue;
+    let c4: Color = Color.Red;
+    let same = c1 == c4;
+    let different = c1 != c3;
+}

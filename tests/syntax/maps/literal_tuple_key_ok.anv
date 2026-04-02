@@ -1,7 +1,0 @@
-// @mode: check
-// @expect: success
-
-fn main() {
-    let m = [(0, 0): "origin", (1, 1): "diagonal"];
-    let n: [(int, int): string] = [:];
-}

@@ -1,8 +1,0 @@
-// @mode: check
-// @expect: success
-
-fn add(a: int, b: int) -> int { a + b }
-
-fn main() {
-    let c: int = add(10, 20);
-}

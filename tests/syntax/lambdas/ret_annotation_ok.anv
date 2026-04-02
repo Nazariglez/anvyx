@@ -1,6 +1,0 @@
-// @mode: check
-// @expect: success
-
-fn main() {
-    let f = |x: int| -> int { return x * 2; };
-}

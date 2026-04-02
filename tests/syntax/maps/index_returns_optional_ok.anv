@@ -1,8 +1,0 @@
-// @mode: check
-// @expect: success
-
-fn main() {
-    let m = ["a": 1];
-    let v: int? = m["a"];
-    let w: int = m["a"] ?? 0;
-}

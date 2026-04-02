@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let a: int? = nil;
+    let b: int? = 10;
+    var c: string? = nil;
+    c = "whatever";
+    var d: float? = 10.0;
+    d = nil;
+    let e: int? = a;
+    let f: int? = Option.Some(42);
+    let g: string? = Option.Some("hello");
+    let h: int? = Option.None;
+}

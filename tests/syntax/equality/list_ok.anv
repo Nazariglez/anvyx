@@ -1,9 +1,0 @@
-// @mode: check
-// @expect: success
-
-fn main() {
-    let a: [int] = [1, 2];
-    let b: [int] = [1, 2];
-    let eq = a == b;
-    let neq = a != b;
-}

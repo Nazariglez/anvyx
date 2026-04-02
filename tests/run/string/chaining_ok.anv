@@ -1,7 +1,0 @@
-// @mode: run
-// @expect: success
-// @contains: HELLO
-
-fn main() {
-    println("  hello  ".trim().to_upper());
-}

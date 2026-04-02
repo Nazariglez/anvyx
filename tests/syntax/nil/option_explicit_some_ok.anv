@@ -1,8 +1,0 @@
-// @mode: check
-// @expect: success
-
-fn main() {
-    let a: int? = Option.Some(42);
-    let b: string? = Option.Some("hello");
-    let c: int? = Option.None;
-}

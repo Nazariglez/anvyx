@@ -1,0 +1,20 @@
+// @mode: check
+// @expect: success
+
+struct Container<T> {
+    value: T,
+}
+
+struct Position {
+    coords: (int, int),
+    label: string,
+}
+
+fn main() {
+    let c: Container<(int, int)> = Container { value: (1, 2) };
+    let pair: (int, int) = c.value;
+    let pos = Position { coords: (10, 20), label: "origin" };
+    let x = pos.coords.0;
+    let y = pos.coords.1;
+    let name: string = pos.label;
+}

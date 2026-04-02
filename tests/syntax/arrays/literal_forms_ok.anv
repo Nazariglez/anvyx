@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let a: [int; 3] = [1, 2, 3];
+    let b: [string; 2] = ["x", "y"];
+    let c: [int; _] = [1, 2, 3];
+    let d: [int] = [1, 2, 3];
+    let e = [1, 2, 3];
+    let f = ["a", "b"];
+    let g = [[1, 2], [3, 4]];
+    let h: [int; 2] = [1, 2];
+    let xs = [h, [3, 4]];
+    var nils_fixed: [int?; _] = [nil, nil];
+    var nils_list: [int?] = [nil, nil];
+}

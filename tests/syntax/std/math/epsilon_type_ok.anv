@@ -1,9 +1,0 @@
-// @mode: check
-// @expect: success
-
-import std.math { EPSILON, EPSILON_D };
-
-fn main() {
-    let a: float = EPSILON;
-    let b: double = EPSILON_D;
-}

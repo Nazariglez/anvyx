@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+enum Dir { N, S, E, W }
+
+fn main() {
+    let m = [(0, 0): "origin", (1, 1): "diagonal"];
+    let n: [(int, int): string] = [:];
+    let o = [Dir.N: 0, Dir.S: 180];
+}

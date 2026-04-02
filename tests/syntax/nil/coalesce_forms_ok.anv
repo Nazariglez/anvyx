@@ -1,0 +1,16 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let a: int = nil ?? 10;
+    let b: string? = nil;
+    let c: string = b ?? "fallback";
+    let d: string? = "1st";
+    let e: string = d ?? "2nd";
+    let f: int? = nil;
+    let g: int? = nil;
+    let h: int = f ?? g ?? 10;
+    let i: int = nil ?? 10;
+    var j: int? = nil;
+    let k: int = j ?? 10;
+}

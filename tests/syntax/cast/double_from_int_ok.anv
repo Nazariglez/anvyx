@@ -1,6 +1,0 @@
-// @mode: check
-// @expect: success
-
-fn main() {
-    let x: double = 1 as double;
-}

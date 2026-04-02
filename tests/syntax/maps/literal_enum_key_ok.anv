@@ -1,8 +1,0 @@
-// @mode: check
-// @expect: success
-
-enum Dir { N, S, E, W }
-
-fn main() {
-    let m = [Dir.N: 0, Dir.S: 180];
-}

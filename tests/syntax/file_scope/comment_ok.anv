@@ -1,5 +1,0 @@
-// @mode: check
-// @expect: success
-
-// this is an allowed comment
-fn main() {}

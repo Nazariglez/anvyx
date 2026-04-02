@@ -1,0 +1,20 @@
+// @mode: check
+// @expect: success
+
+enum GameState { Menu, Playing, Paused }
+
+fn main() {
+    let state = GameState.Playing;
+    match state {
+        GameState.Menu => {},
+        GameState.Playing => {},
+        GameState.Paused => {},
+    }
+
+    let other = GameState.Menu;
+    let name: string = match other {
+        GameState.Menu => "Menu",
+        GameState.Playing => "Playing",
+        GameState.Paused => "Paused",
+    };
+}

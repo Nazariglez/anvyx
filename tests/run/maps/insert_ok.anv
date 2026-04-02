@@ -1,9 +1,0 @@
-// @mode: run
-// @expect: success
-
-fn main() {
-    var m = ["a": 1];
-    m.insert("b", 2);
-    let v: int? = m["b"];
-    assert(v != nil);
-}

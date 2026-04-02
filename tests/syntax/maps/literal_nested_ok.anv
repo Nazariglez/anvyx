@@ -1,7 +1,0 @@
-// @mode: check
-// @expect: success
-
-fn main() {
-    let m = ["outer": ["inner": 1]];
-    let n: [string: [int: bool]] = [:];
-}

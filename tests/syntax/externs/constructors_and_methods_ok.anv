@@ -1,0 +1,19 @@
+// @mode: check
+// @expect: success
+
+extern type Rect {
+    w: float;
+    h: float;
+    fn new(w: float, h: float) -> Self;
+    fn area(self) -> float;
+}
+
+extern fn make_rect(w: float, h: float) -> Rect;
+
+fn main() {
+    let r = Rect.new(10.0, 20.0);
+    let a: float = r.area();
+    let w: float = r.w;
+    let s = make_rect(5.0, 6.0);
+    let b: float = s.area();
+}

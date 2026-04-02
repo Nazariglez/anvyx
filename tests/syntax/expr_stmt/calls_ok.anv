@@ -1,0 +1,17 @@
+// @mode: check
+// @expect: success
+
+fn noop() {}
+fn foo() { }
+
+fn bar() {
+    foo();
+}
+
+fn main() {
+    noop();
+    noop();
+    noop();
+    foo();
+    foo();
+}

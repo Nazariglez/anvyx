@@ -2,6 +2,7 @@
 // @expect: success
 
 import std.math { PI, TAU, E, PI_D, TAU_D, E_D };
+import std.math { EPSILON, EPSILON_D };
 
 fn main() {
     let a: float = PI;
@@ -10,4 +11,6 @@ fn main() {
     let d: double = PI_D;
     let e: double = TAU_D;
     let f: double = E_D;
+    let g: float = EPSILON;
+    let h: double = EPSILON_D;
 }

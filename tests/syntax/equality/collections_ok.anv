@@ -1,0 +1,18 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    let a: [int; 3] = [1, 2, 3];
+    let b: [int; 3] = [4, 5, 6];
+    let eq = a == b;
+    let neq = a != b;
+
+    let c: [int] = [1, 2];
+    let d: [int] = [1, 2];
+    let eq_list = c == d;
+    let neq_list = c != d;
+
+    let e: [string: int] = ["hp": 100, "mp": 50];
+    let f: [string: int] = ["hp": 100, "mp": 50];
+    let eq_map = e == f;
+}

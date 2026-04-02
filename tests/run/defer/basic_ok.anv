@@ -2,10 +2,18 @@
 // @expect: success
 // @match-begin
 // hello
+// work
+// cleanup
 // cleanup
 // @match-end
+
+fn do_work() {
+    defer println("cleanup");
+    println("work");
+}
 
 fn main() {
     defer println("cleanup");
     println("hello");
+    do_work();
 }
