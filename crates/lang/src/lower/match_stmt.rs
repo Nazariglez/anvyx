@@ -806,7 +806,7 @@ fn lower_match_non_enum(
 
             Pattern::Ident(name) => {
                 let span_key = (arm.node.pattern.span.start, arm.node.pattern.span.end);
-                if let Some(cv) = ctx.shared.tcx.const_pattern_values.get(&span_key) {
+                if let Some(cv) = ctx.shared.tcx.const_pattern_value(span_key) {
                     let cond = build_const_cond(scrutinee_ty, scrutinee_local, cv, span);
                     let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
                     cond_arms.push((cond, body));
@@ -968,7 +968,7 @@ fn lower_match_non_enum(
                         }
                         Pattern::Ident(name) => {
                             let span_key = (alt.span.start, alt.span.end);
-                            if let Some(cv) = ctx.shared.tcx.const_pattern_values.get(&span_key) {
+                            if let Some(cv) = ctx.shared.tcx.const_pattern_value(span_key) {
                                 let cond =
                                     build_const_cond(scrutinee_ty, scrutinee_local, cv, span);
                                 or_conditions.push(cond);

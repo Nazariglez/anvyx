@@ -141,6 +141,67 @@ fn test_unify_function_types() {
 }
 
 #[test]
+fn test_assignable_func_var_to_var_ok() {
+    let func_type = Type::Func {
+        params: vec![FuncParam::new(Type::Int, true)],
+        ret: Box::new(Type::Void),
+    };
+
+    assert!(is_assignable(&func_type, &func_type));
+}
+
+#[test]
+fn test_assignable_func_var_to_immut_err() {
+    let from = Type::Func {
+        params: vec![FuncParam::new(Type::Int, true)],
+        ret: Box::new(Type::Void),
+    };
+    let to = Type::Func {
+        params: vec![FuncParam::immut(Type::Int)],
+        ret: Box::new(Type::Void),
+    };
+
+    assert!(!is_assignable(&from, &to));
+}
+
+#[test]
+fn test_assignable_func_immut_to_var_err() {
+    let from = Type::Func {
+        params: vec![FuncParam::immut(Type::Int)],
+        ret: Box::new(Type::Void),
+    };
+    let to = Type::Func {
+        params: vec![FuncParam::new(Type::Int, true)],
+        ret: Box::new(Type::Void),
+    };
+
+    assert!(!is_assignable(&from, &to));
+}
+
+#[test]
+fn test_unify_func_mutability_mismatch() {
+    let span = dummy_span();
+    let mut errors = vec![];
+    let left = Type::Func {
+        params: vec![FuncParam::new(Type::Int, true)],
+        ret: Box::new(Type::Void),
+    };
+    let right = Type::Func {
+        params: vec![FuncParam::immut(Type::Int)],
+        ret: Box::new(Type::Void),
+    };
+
+    let result = unify_types(&left, &right, span, &mut errors);
+    assert_eq!(result, None);
+    assert_eq!(errors.len(), 1);
+    assert!(matches!(
+        &errors[0].kind,
+        DiagnosticKind::MismatchedTypes { expected, found }
+        if *expected == left && *found == right
+    ));
+}
+
+#[test]
 fn test_unify_mismatched_types() {
     let span = dummy_span();
     let mut errors = vec![];

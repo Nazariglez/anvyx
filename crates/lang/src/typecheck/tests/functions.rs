@@ -351,7 +351,7 @@ fn test_nested_fn_implicit_return() {
 
 fn check_src(
     src: &str,
-) -> Result<crate::typecheck::TypeChecker, Vec<crate::typecheck::error::Diagnostic>> {
+) -> Result<crate::typecheck::TypecheckResult, Vec<crate::typecheck::error::Diagnostic>> {
     const TEST_CORE_PRELUDE: &str = concat!(
         include_str!("../../../../core/src/option.anv"),
         "\n",

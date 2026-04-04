@@ -1,0 +1,5 @@
+// @helper
+
+pub struct Wrapper<T> { val: T }
+
+pub fn wrap<T>(x: T) -> Wrapper<T> { Wrapper { val: x } }

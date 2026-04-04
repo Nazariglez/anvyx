@@ -1,0 +1,5 @@
+// @helper
+
+import plus_ext;
+
+pub fn alpha_value() -> float { 2.0.tweak() }

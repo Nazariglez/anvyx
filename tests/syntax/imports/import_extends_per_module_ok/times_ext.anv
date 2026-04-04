@@ -1,0 +1,5 @@
+// @helper
+
+pub extend float {
+    fn tweak(self) -> float { self * 2.0 }
+}

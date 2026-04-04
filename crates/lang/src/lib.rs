@@ -21,6 +21,7 @@ pub use metadata::{
     exports_to_json, parse_provider_json,
 };
 pub use prelude_enums::{OPTION_TYPE_ID, option_none, option_some};
+pub use typecheck::{map_type_structure, walk_type_structure};
 pub use vm::{
     AnvyxConvert, AnvyxExternType, DisplayDetect, DisplayDetectFallback, EnumData,
     ExternHandleData, ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData,
@@ -71,7 +72,7 @@ pub(crate) fn parse_source(
 type AnalyzeResult = Result<
     (
         ast::Program,
-        typecheck::TypeChecker,
+        typecheck::TypecheckResult,
         Vec<lexer::SpannedToken>,
         Vec<(Vec<String>, Vec<ast::StmtNode>)>,
     ),
@@ -160,12 +161,12 @@ fn analyze_with_extern_meta(
     let tcx =
         match typecheck::check_program_with_modules(&combined, &module_list, &auto_use_modules) {
             Ok(tcx) => {
-                if !tcx.warnings.is_empty() {
+                if !tcx.warnings().is_empty() {
                     error::report_diagnostics(
                         program,
                         file_path,
                         &user_tokens,
-                        tcx.warnings.clone(),
+                        tcx.warnings().to_vec(),
                     );
                 }
                 tcx

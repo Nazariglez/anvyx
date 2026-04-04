@@ -15,8 +15,9 @@ use super::{
     },
     postfix::resolve_builtin_or_extend,
     types::{
-        EnumDef, ExternMethodDef, ExternTypeDef, MethodContext, MethodDef, MethodSpecKey,
-        ModuleDef, SpecializationKey, SpecializationResult, StructDef, TypeChecker,
+        EnumDef, ExternMethodDef, ExternTypeDef, InstantiationContext, MethodContext, MethodDef,
+        MethodSpecKey, ModuleDef, SpecializationKey, SpecializationResult, StructDef, TypeChecker,
+        TypedBodyResult,
     },
 };
 use crate::{
@@ -261,6 +262,27 @@ fn check_predicate_combinator(
     )
 }
 
+fn callback_param_is_mutable(type_checker: &TypeChecker, arg: Option<&ExprNode>) -> bool {
+    let Some(arg) = arg else {
+        return false;
+    };
+    match &arg.node.kind {
+        ExprKind::Lambda(lambda) => lambda
+            .node
+            .params
+            .first()
+            .is_some_and(|param| param.mutable),
+        ExprKind::Ident(name) => type_checker
+            .get_var(*name)
+            .and_then(|info| match &info.ty {
+                Type::Func { params, .. } => params.first(),
+                _ => None,
+            })
+            .is_some_and(|param| param.mutable),
+        _ => false,
+    }
+}
+
 fn check_for_each_var_mutation(
     target: &ExprNode,
     args: &[ExprNode],
@@ -418,8 +440,9 @@ pub(super) fn check_list_method(
             init_ty
         }
         "for_each" => {
+            let is_mutating = callback_param_is_mutable(type_checker, node.args.first());
             let func_param = Type::Func {
-                params: vec![FuncParam::immut(elem.clone())],
+                params: vec![FuncParam::new(elem.clone(), is_mutating)],
                 ret: Box::new(Type::Void),
             };
             let param_types = [func_param];
@@ -908,22 +931,19 @@ pub(super) fn check_module_func_call(
             .cloned()
             .expect("generic template must exist when type_params are present");
 
-        // temporarily inject template into the global maps so instantiate_and_check_fn can find it
+        // temporarily register the template and its source module so instantiate_and_check_fn can look up the full ModuleCheckContext
         let prev_tp = type_checker.func_type_params.remove(&func_name);
         let prev_tmpl = type_checker.generic_func_templates.remove(&func_name);
+        let prev_source = type_checker.generic_func_source_module.remove(&func_name);
         type_checker
             .func_type_params
             .insert(func_name, type_params.clone());
         type_checker
             .generic_func_templates
             .insert(func_name, template);
-
-        type_checker.push_scope();
-        for (name, ty) in &module_def.funcs {
-            if *name != func_name {
-                type_checker.set_var(*name, ty.clone(), false);
-            }
-        }
+        type_checker
+            .generic_func_source_module
+            .insert(func_name, module_def.source_path.clone());
 
         let node = &call.node;
         let has_explicit_type_args = !node.type_args.is_empty();
@@ -964,7 +984,7 @@ pub(super) fn check_module_func_call(
                     call.span,
                     DiagnosticKind::NotAFunction { expr_type: func_ty },
                 ));
-                restore_generic_maps(type_checker, func_name, prev_tp, prev_tmpl);
+                restore_generic_maps(type_checker, func_name, prev_tp, prev_tmpl, prev_source);
                 return Type::Infer;
             };
 
@@ -981,7 +1001,7 @@ pub(super) fn check_module_func_call(
                 type_checker,
                 errors,
             ) else {
-                restore_generic_maps(type_checker, func_name, prev_tp, prev_tmpl);
+                restore_generic_maps(type_checker, func_name, prev_tp, prev_tmpl, prev_source);
                 return Type::Infer;
             };
 
@@ -1000,8 +1020,7 @@ pub(super) fn check_module_func_call(
             ret
         };
 
-        type_checker.pop_scope();
-        restore_generic_maps(type_checker, func_name, prev_tp, prev_tmpl);
+        restore_generic_maps(type_checker, func_name, prev_tp, prev_tmpl, prev_source);
 
         if let Some(param_info) = module_def.func_param_info.get(&func_name).cloned() {
             check_var_param_args(param_info, &call.node.args, type_checker, errors);
@@ -1028,28 +1047,27 @@ pub(super) fn check_module_func_call(
     result
 }
 
+fn restore_or_remove<V>(map: &mut HashMap<Ident, V>, key: Ident, prev: Option<V>) {
+    match prev {
+        Some(val) => {
+            map.insert(key, val);
+        }
+        None => {
+            map.remove(&key);
+        }
+    }
+}
+
 fn restore_generic_maps(
     tc: &mut TypeChecker,
     name: Ident,
     prev_tp: Option<Vec<TypeParam>>,
     prev_tmpl: Option<FuncNode>,
+    prev_source: Option<Vec<String>>,
 ) {
-    match prev_tp {
-        Some(tp) => {
-            tc.func_type_params.insert(name, tp);
-        }
-        None => {
-            tc.func_type_params.remove(&name);
-        }
-    }
-    match prev_tmpl {
-        Some(tmpl) => {
-            tc.generic_func_templates.insert(name, tmpl);
-        }
-        None => {
-            tc.generic_func_templates.remove(&name);
-        }
-    }
+    restore_or_remove(&mut tc.func_type_params, name, prev_tp);
+    restore_or_remove(&mut tc.generic_func_templates, name, prev_tmpl);
+    restore_or_remove(&mut tc.generic_func_source_module, name, prev_source);
 }
 
 fn try_check_method_call(
@@ -1332,12 +1350,14 @@ fn check_generic_static_method(
     );
 
     instantiate_method_body(
-        struct_name,
-        method_name,
-        &struct_type_args,
-        &method_type_args,
-        struct_def,
-        method,
+        &MethodSpec {
+            struct_name,
+            method_name,
+            struct_type_args: &struct_type_args,
+            method_type_args: &method_type_args,
+            struct_def,
+            method,
+        },
         call.span,
         type_checker,
         errors,
@@ -1428,12 +1448,14 @@ pub(super) fn check_static_method_call(
 
         let method = method.clone();
         instantiate_method_body(
-            struct_name,
-            method_name,
-            &inferred_type_args,
-            &[],
-            struct_def,
-            &method,
+            &MethodSpec {
+                struct_name,
+                method_name,
+                struct_type_args: &inferred_type_args,
+                method_type_args: &[],
+                struct_def,
+                method: &method,
+            },
             call.span,
             type_checker,
             errors,
@@ -1551,12 +1573,14 @@ fn check_generic_instance_method(
     );
 
     instantiate_method_body(
-        struct_name,
-        method_name,
-        type_args,
-        &method_type_args,
-        struct_def,
-        method,
+        &MethodSpec {
+            struct_name,
+            method_name,
+            struct_type_args: type_args,
+            method_type_args: &method_type_args,
+            struct_def,
+            method,
+        },
         call.span,
         type_checker,
         errors,
@@ -1655,12 +1679,14 @@ pub(super) fn check_instance_method_call(
     if !struct_def.type_params.is_empty() {
         let method = method.clone();
         instantiate_method_body(
-            struct_name,
-            method_name,
-            type_args,
-            &[],
-            struct_def,
-            &method,
+            &MethodSpec {
+                struct_name,
+                method_name,
+                struct_type_args: type_args,
+                method_type_args: &[],
+                struct_def,
+                method: &method,
+            },
             call.span,
             type_checker,
             errors,
@@ -1921,73 +1947,72 @@ pub(super) fn report_instantiation_errors(
         let mut new_err = Diagnostic::new(call_span, err.kind.clone())
             .with_secondary(body_span, "required by this expression".to_string())
             .with_note(note.clone());
-        for (sec_span, sec_msg) in &err.secondary {
-            new_err.secondary.push((*sec_span, sec_msg.clone()));
-        }
-        for n in &err.notes {
-            new_err.notes.push(n.clone());
-        }
+        new_err.secondary.extend(err.secondary.iter().cloned());
+        new_err.notes.extend(err.notes.iter().cloned());
         let help = generic_instantiation_help(&err.kind, context_name, type_params, type_args);
-        match help {
-            Some(h) => new_err.help = Some(h),
-            None => {
-                if let Some(h) = &err.help {
-                    new_err.help = Some(h.clone());
-                }
-            }
-        }
+        new_err.help = help.or_else(|| err.help.clone());
         errors.push(new_err);
     }
 }
 
-struct InstantiationConfig<'a> {
-    params: Vec<(Ident, Type, bool)>,
-    body: &'a BlockNode,
-    ret_ty: Type,
+pub(super) fn check_instantiated_body(
+    ictx: &InstantiationContext<'_>,
+    body: &BlockNode,
     call_span: Span,
-    context_name: String,
-    type_params: Vec<TypeParam>,
-    type_args: Vec<Type>,
-}
-
-fn instantiate_generic_body(
-    config: InstantiationConfig,
     type_checker: &mut TypeChecker,
-    errors: &mut Vec<Diagnostic>,
-) -> SpecializationResult {
-    let prev_snapshot = type_checker.spec_type_snapshot.take();
-    type_checker.spec_type_snapshot = Some(HashMap::new());
+    body_errors: &mut Vec<Diagnostic>,
+) -> TypedBodyResult {
+    // swap the types map so this body records expression types in its own slot,
+    // nested specializations make the same swap safely
+    let prev_types = std::mem::take(&mut type_checker.types);
 
-    let mut body_errors = vec![];
+    let prev_ctx = ictx.module_env.map(|env| {
+        let saved = type_checker.ctx.clone();
+        type_checker.ctx = env.clone();
+        saved
+    });
+
+    // bring the module's function bindings into scope so the specialized body can call
+    // both public and private siblings
+    if let Some(env) = ictx.module_env {
+        type_checker.push_scope();
+        for (name, info) in &env.func_bindings {
+            type_checker.set_var(*name, info.ty.clone(), info.mutable);
+        }
+    }
+
+    if let Some(method_ctx) = &ictx.method_ctx {
+        type_checker.push_method_context(method_ctx.clone());
+    }
+
     check_body_common(
-        &config.params,
-        config.body,
-        &config.ret_ty,
-        config.call_span,
+        &ictx.params,
+        body,
+        &ictx.ret_ty,
+        call_span,
         type_checker,
-        &mut body_errors,
-    );
-
-    let body_types = type_checker.spec_type_snapshot.take().unwrap_or_default();
-    type_checker.spec_type_snapshot = prev_snapshot;
-
-    let cached_err = body_errors.first().map(|err| (err.span, err.kind.clone()));
-    let result = SpecializationResult {
-        ret_ty: config.ret_ty,
-        err: cached_err,
-        body_types,
-    };
-
-    report_instantiation_errors(
         body_errors,
-        &config.context_name,
-        &config.type_params,
-        &config.type_args,
-        config.call_span,
-        errors,
     );
 
-    result
+    if ictx.method_ctx.is_some() {
+        type_checker.pop_method_context();
+    }
+
+    if ictx.module_env.is_some() {
+        type_checker.pop_scope();
+    }
+
+    if let Some(saved) = prev_ctx {
+        type_checker.ctx = saved;
+    }
+
+    let body_types = std::mem::replace(&mut type_checker.types, prev_types);
+
+    TypedBodyResult {
+        ret_ty: ictx.ret_ty.clone(),
+        body_types,
+        first_error: body_errors.first().map(|err| (err.span, err.kind.clone())),
+    }
 }
 
 fn instantiate_and_check_fn(
@@ -2013,7 +2038,6 @@ fn instantiate_and_check_fn(
         const_args: const_args.to_vec(),
     };
 
-    // check cache first
     if let Some(cached) = type_checker.specialization_cache.get(&cache_key) {
         report_cached_spec_error(
             cached,
@@ -2080,51 +2104,60 @@ fn instantiate_and_check_fn(
         params.push((param.name, Type::Int, false));
     }
 
-    let module_scope = type_checker
+    let owned_module_env = type_checker
         .generic_func_source_module
         .get(&func_name)
-        .and_then(|path| type_checker.resolved_module_defs.get(path).cloned());
-    if let Some(ref module_def) = module_scope {
-        type_checker.push_scope();
-        for (name, ty) in &module_def.funcs {
-            if *name != func_name {
-                type_checker.set_var(*name, ty.clone(), false);
-            }
-        }
-    }
+        .and_then(|path| type_checker.module_check_contexts.get(path).cloned());
 
-    let config = InstantiationConfig {
+    let ictx = InstantiationContext {
+        module_env: owned_module_env.as_ref(),
         params,
-        body: &func.body,
         ret_ty,
-        call_span,
-        context_name: func_name.to_string(),
-        type_params,
-        type_args: type_args.to_vec(),
+        method_ctx: None,
     };
-    let result = instantiate_generic_body(config, type_checker, errors);
+    let mut body_errors = vec![];
+    let result =
+        check_instantiated_body(&ictx, &func.body, call_span, type_checker, &mut body_errors)
+            .into_spec_result();
 
-    if module_scope.is_some() {
-        type_checker.pop_scope();
-    }
+    report_instantiation_errors(
+        body_errors,
+        &func_name.to_string(),
+        &type_params,
+        type_args,
+        call_span,
+        errors,
+    );
 
     let ret = result.ret_ty.clone();
     type_checker.specialization_cache.insert(cache_key, result);
     ret
 }
 
-#[allow(clippy::too_many_arguments)]
-fn instantiate_method_body(
+struct MethodSpec<'a> {
     struct_name: Ident,
     method_name: Ident,
-    struct_type_args: &[Type],
-    method_type_args: &[Type],
-    struct_def: &StructDef,
-    method: &MethodDef,
+    struct_type_args: &'a [Type],
+    method_type_args: &'a [Type],
+    struct_def: &'a StructDef,
+    method: &'a MethodDef,
+}
+
+fn instantiate_method_body(
+    target: &MethodSpec<'_>,
     call_span: Span,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
+    let MethodSpec {
+        struct_name,
+        method_name,
+        struct_type_args,
+        method_type_args,
+        struct_def,
+        method,
+    } = target;
+
     let all_type_args: Vec<Type> = struct_type_args
         .iter()
         .chain(method_type_args.iter())
@@ -2140,8 +2173,8 @@ fn instantiate_method_body(
         .collect();
 
     let cache_key = MethodSpecKey {
-        struct_name,
-        method_name,
+        struct_name: *struct_name,
+        method_name: *method_name,
         type_args: all_type_args.clone(),
         const_args: vec![],
     };
@@ -2169,7 +2202,7 @@ fn instantiate_method_body(
         .collect();
     let specialized_ret = subst_type(&method.ret, &subst, &HashMap::new());
 
-    let self_type = struct_def.make_type(struct_name, struct_type_args.to_vec());
+    let self_type = struct_def.make_type(*struct_name, struct_type_args.to_vec());
     let self_ident = Ident(Intern::new("self".to_string()));
 
     let mut params: Vec<(Ident, Type, bool)> = vec![];
@@ -2185,23 +2218,33 @@ fn instantiate_method_body(
         ));
     }
 
-    type_checker.push_method_context(MethodContext {
-        struct_name,
-        receiver: method.receiver,
-    });
-
-    let config = InstantiationConfig {
+    let ictx = InstantiationContext {
+        module_env: None,
         params,
-        body: &method.body,
         ret_ty: specialized_ret,
-        call_span,
-        context_name: format!("{struct_name}.{method_name}"),
-        type_params: all_type_params,
-        type_args: all_type_args,
+        method_ctx: Some(MethodContext {
+            struct_name: *struct_name,
+            receiver: method.receiver,
+        }),
     };
-    let result = instantiate_generic_body(config, type_checker, errors);
+    let mut body_errors = vec![];
+    let result = check_instantiated_body(
+        &ictx,
+        &method.body,
+        call_span,
+        type_checker,
+        &mut body_errors,
+    )
+    .into_spec_result();
 
-    type_checker.pop_method_context();
+    report_instantiation_errors(
+        body_errors,
+        &format!("{struct_name}.{method_name}"),
+        &all_type_params,
+        &all_type_args,
+        call_span,
+        errors,
+    );
 
     let ret = result.ret_ty.clone();
     type_checker.method_spec_cache.insert(cache_key, result);

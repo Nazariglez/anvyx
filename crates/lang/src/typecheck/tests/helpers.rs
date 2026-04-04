@@ -5,7 +5,7 @@ use internment::Intern;
 use crate::{
     ast::*,
     span::Span,
-    typecheck::{check_program_with_modules, error::Diagnostic, types::TypeChecker},
+    typecheck::{check_program_with_modules, error::Diagnostic, types::TypecheckResult},
 };
 
 thread_local! {
@@ -716,7 +716,7 @@ fn with_prelude(prog: Program) -> Program {
 }
 
 #[track_caller]
-pub(super) fn run_ok(prog: Program) -> TypeChecker {
+pub(super) fn run_ok(prog: Program) -> TypecheckResult {
     match check_program_with_modules(&with_prelude(prog), &[], &[]) {
         Ok(tcx) => tcx,
         Err(errors) => {
@@ -736,7 +736,7 @@ pub(super) fn run_err(prog: Program) -> Vec<Diagnostic> {
 // ---- assertion helpers ----
 
 #[track_caller]
-pub(super) fn assert_expr_type(tcx: &TypeChecker, id: ExprId, expected: Type) {
+pub(super) fn assert_expr_type(tcx: &TypecheckResult, id: ExprId, expected: Type) {
     match tcx.get_type(id) {
         Some((_, ty)) => assert_eq!(
             *ty, expected,

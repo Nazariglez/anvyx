@@ -16,7 +16,7 @@ use crate::{
     hir,
     prelude_enums::OPTION_TYPE_ID,
     typecheck::{
-        ExtendSpecKey, MethodSpecKey, SpecializationKey, TypeChecker, build_const_subst,
+        ExtendSpecKey, MethodSpecKey, SpecializationKey, TypecheckResult, build_const_subst,
         resolve_type_param_names, subst_type,
     },
     vm::{
@@ -33,9 +33,14 @@ type SpecRegistrations = (
 
 pub fn lower_program(
     ast: &ast::Program,
-    tcx: &TypeChecker,
+    tcx: &TypecheckResult,
     module_list: &[(Vec<String>, Vec<ast::StmtNode>)],
 ) -> Result<hir::Program, LowerError> {
+    for (path, _) in module_list {
+        tcx.module_check_context(path)
+            .expect("module lowering requires a stored check context for every resolved module");
+    }
+
     let (qualified_names, struct_type_ids, enum_type_ids) = assign_type_ids(tcx, module_list);
     let (mut struct_meta, enum_meta) =
         build_type_metadata(tcx, &struct_type_ids, &enum_type_ids, &qualified_names);
@@ -387,7 +392,7 @@ pub fn lower_program(
 }
 
 fn assign_type_ids(
-    tcx: &TypeChecker,
+    tcx: &TypecheckResult,
     module_list: &[(Vec<String>, Vec<ast::StmtNode>)],
 ) -> (
     HashMap<Ident, String>,
@@ -475,7 +480,7 @@ fn assign_type_ids(
 }
 
 fn build_type_metadata(
-    tcx: &TypeChecker,
+    tcx: &TypecheckResult,
     struct_type_ids: &HashMap<Ident, u32>,
     enum_type_ids: &HashMap<Ident, u32>,
     qualified_names: &HashMap<Ident, String>,

@@ -8,7 +8,7 @@ use super::{
     expr::check_expr,
     types::{InferenceSlots, TypeChecker},
     unify::contains_infer,
-    visit::fold_type,
+    visit::{fold_type, walk_type_structure},
 };
 use crate::{
     ast::{
@@ -20,7 +20,7 @@ use crate::{
 
 pub(super) type ConstInferenceSlots = HashMap<ConstParamId, Option<usize>>;
 
-/// Builds a fucntion type from the AST node
+/// Builds a function type from the AST node
 pub(super) fn type_from_fn(func: &Func) -> Type {
     Type::Func {
         params: func
@@ -273,7 +273,6 @@ pub(super) fn infer_type_args_from_call(
     Some((inferred_type_args, inferred_const_args))
 }
 
-#[allow(clippy::match_same_arms)] // container type-pair arms have distinct semantics and may diverge
 pub(super) fn constrain_slots_from_type(
     template: &Type,
     expected: &Type,
@@ -290,13 +289,6 @@ pub(super) fn constrain_slots_from_type(
                 let expected_ref = TypeRef::concrete(expected);
                 type_checker.constrain_equal(span, slot_ref, expected_ref, errors);
             }
-        }
-        (Type::Map { key: tk, value: tv }, Type::Map { key: ek, value: ev }) => {
-            constrain_slots_from_type(tk, ek, slots, const_slots, span, type_checker, errors);
-            constrain_slots_from_type(tv, ev, slots, const_slots, span, type_checker, errors);
-        }
-        (Type::List { elem: te }, Type::List { elem: ee }) => {
-            constrain_slots_from_type(te, ee, slots, const_slots, span, type_checker, errors);
         }
         (Type::Array { elem: te, len: tl }, Type::Array { elem: ee, len: el }) => {
             constrain_slots_from_type(te, ee, slots, const_slots, span, type_checker, errors);
@@ -318,15 +310,11 @@ pub(super) fn constrain_slots_from_type(
                 }
             }
         }
-        (Type::ArrayView { elem: te }, Type::ArrayView { elem: ee }) => {
+        // cross-shape coercions ArrayView accepts Array and List
+        (Type::ArrayView { elem: te }, Type::Array { elem: ee, .. } | Type::List { elem: ee }) => {
             constrain_slots_from_type(te, ee, slots, const_slots, span, type_checker, errors);
         }
-        (Type::ArrayView { elem: te }, Type::Array { elem: ee, .. }) => {
-            constrain_slots_from_type(te, ee, slots, const_slots, span, type_checker, errors);
-        }
-        (Type::ArrayView { elem: te }, Type::List { elem: ee }) => {
-            constrain_slots_from_type(te, ee, slots, const_slots, span, type_checker, errors);
-        }
+        // Func needs custom error reporting for mutability mismatches
         (
             Type::Func {
                 params: tp,
@@ -338,6 +326,22 @@ pub(super) fn constrain_slots_from_type(
             },
         ) => {
             for (t, e) in tp.iter().zip(ep.iter()) {
+                if t.mutable != e.mutable {
+                    errors.push(Diagnostic::new(
+                        span,
+                        DiagnosticKind::MismatchedTypes {
+                            expected: Type::Func {
+                                params: tp.clone(),
+                                ret: tr.clone(),
+                            },
+                            found: Type::Func {
+                                params: ep.clone(),
+                                ret: er.clone(),
+                            },
+                        },
+                    ));
+                    return;
+                }
                 constrain_slots_from_type(
                     &t.ty,
                     &e.ty,
@@ -350,59 +354,13 @@ pub(super) fn constrain_slots_from_type(
             }
             constrain_slots_from_type(tr, er, slots, const_slots, span, type_checker, errors);
         }
-        (Type::Tuple(te), Type::Tuple(ee)) => {
-            for (t, e) in te.iter().zip(ee.iter()) {
+        // structural cases (List, Map, ArrayView-ArrayView, Struct, DataRef, Enum, Tuple, NamedTuple)
+        _ => {
+            walk_type_structure(template, expected, &mut |t, e| {
                 constrain_slots_from_type(t, e, slots, const_slots, span, type_checker, errors);
-            }
+                true
+            });
         }
-        (Type::NamedTuple(tf), Type::NamedTuple(ef)) => {
-            for ((_, t), (_, e)) in tf.iter().zip(ef.iter()) {
-                constrain_slots_from_type(t, e, slots, const_slots, span, type_checker, errors);
-            }
-        }
-        (
-            Type::Struct {
-                name: tn,
-                type_args: ta,
-            },
-            Type::Struct {
-                name: en,
-                type_args: ea,
-            },
-        ) if tn == en => {
-            for (t, e) in ta.iter().zip(ea.iter()) {
-                constrain_slots_from_type(t, e, slots, const_slots, span, type_checker, errors);
-            }
-        }
-        (
-            Type::DataRef {
-                name: tn,
-                type_args: ta,
-            },
-            Type::DataRef {
-                name: en,
-                type_args: ea,
-            },
-        ) if tn == en => {
-            for (t, e) in ta.iter().zip(ea.iter()) {
-                constrain_slots_from_type(t, e, slots, const_slots, span, type_checker, errors);
-            }
-        }
-        (
-            Type::Enum {
-                name: tn,
-                type_args: ta,
-            },
-            Type::Enum {
-                name: en,
-                type_args: ea,
-            },
-        ) if tn == en => {
-            for (t, e) in ta.iter().zip(ea.iter()) {
-                constrain_slots_from_type(t, e, slots, const_slots, span, type_checker, errors);
-            }
-        }
-        _ => {}
     }
 }
 
@@ -428,28 +386,20 @@ pub(super) fn infer_const_args_from_checked_args(
 }
 
 fn collect_const_from_types(template: &Type, concrete: &Type, slots: &mut ConstInferenceSlots) {
-    match (template, concrete) {
-        (Type::Array { elem: te, len: tl }, Type::Array { elem: ee, len: el }) => {
-            if let (ArrayLen::Param(id), ArrayLen::Fixed(n)) = (tl, el) {
-                slots.insert(*id, Some(*n));
-            }
-            collect_const_from_types(te, ee, slots);
+    if let (Type::Array { elem: te, len: tl }, Type::Array { elem: ee, len: el }) =
+        (template, concrete)
+    {
+        if let (ArrayLen::Param(id), ArrayLen::Fixed(n)) = (tl, el) {
+            slots.insert(*id, Some(*n));
         }
-        (Type::List { elem: te }, Type::List { elem: ee })
-        | (Type::ArrayView { elem: te }, Type::ArrayView { elem: ee }) => {
-            collect_const_from_types(te, ee, slots);
-        }
-        (Type::Map { key: tk, value: tv }, Type::Map { key: ek, value: ev }) => {
-            collect_const_from_types(tk, ek, slots);
-            collect_const_from_types(tv, ev, slots);
-        }
-        (Type::Tuple(tf), Type::Tuple(ef)) => {
-            for (t, e) in tf.iter().zip(ef.iter()) {
-                collect_const_from_types(t, e, slots);
-            }
-        }
-        _ => {}
+        collect_const_from_types(te, ee, slots);
+        return;
     }
+
+    walk_type_structure(template, concrete, &mut |t, c| {
+        collect_const_from_types(t, c, slots);
+        true
+    });
 }
 
 pub fn resolve_type_param_names(ty: &Type, type_params: &[TypeParam]) -> Type {

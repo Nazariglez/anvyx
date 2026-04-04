@@ -1,0 +1,3 @@
+// @helper
+
+pub fn helper_len() -> int { "hello".len() }

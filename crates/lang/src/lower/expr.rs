@@ -190,7 +190,7 @@ pub(super) fn lower_expr(
 
     let kind = match &ast_expr.node.kind {
         ast::ExprKind::Ident(name) => {
-            if let Some(cv) = ctx.shared.tcx.const_values.get(&ast_expr.node.id) {
+            if let Some(cv) = ctx.shared.tcx.const_value(ast_expr.node.id) {
                 const_value_to_expr_kind(cv)
             } else if let Some(&local_id) = fc.local_map.get(name) {
                 hir::ExprKind::Local(local_id)
@@ -261,7 +261,7 @@ pub(super) fn lower_expr(
         }
 
         ast::ExprKind::Field(field_access) => {
-            if let Some(cv) = ctx.shared.tcx.const_values.get(&ast_expr.node.id) {
+            if let Some(cv) = ctx.shared.tcx.const_value(ast_expr.node.id) {
                 const_value_to_expr_kind(cv)
             } else {
                 return lower_field_expr(field_access, ty, span, ctx, fc, out);
@@ -301,7 +301,7 @@ pub(super) fn lower_expr(
                 } => *n,
                 Type::List { .. } => match &fill.node.len.node.kind {
                     ast::ExprKind::Lit(Lit::Int(n)) => *n as usize,
-                    _ => match ctx.shared.tcx.const_values.get(&fill.node.len.node.id) {
+                    _ => match ctx.shared.tcx.const_value(fill.node.len.node.id) {
                         Some(ConstValue::Int(n)) => *n as usize,
                         _ => {
                             return Err(LowerError::UnsupportedExprKind {
@@ -1508,13 +1508,7 @@ fn lower_lambda(
         _ => unreachable!("lambda must have Type::Func"),
     };
 
-    let captures = ctx
-        .shared
-        .tcx
-        .lambda_captures
-        .get(&expr_id)
-        .cloned()
-        .unwrap_or_default();
+    let captures = ctx.shared.tcx.lambda_captures(expr_id).to_vec();
 
     let lambda_func_id = ctx.shared.alloc_func_id();
 
@@ -2662,13 +2656,7 @@ fn lower_sort_by(
     };
 
     let lambda_expr_id = c.node.args[0].node.id;
-    let captures = ctx
-        .shared
-        .tcx
-        .lambda_captures
-        .get(&lambda_expr_id)
-        .cloned()
-        .unwrap_or_default();
+    let captures = ctx.shared.tcx.lambda_captures(lambda_expr_id).to_vec();
 
     // captures not supported via the opcode path , no closure-based sort infrastructure
     if !captures.is_empty() {

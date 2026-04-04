@@ -1,0 +1,3 @@
+// @helper
+
+pub fn hello() -> int { 42 }

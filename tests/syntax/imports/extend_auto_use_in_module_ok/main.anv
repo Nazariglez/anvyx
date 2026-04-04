@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+import helpers { helper_len };
+
+fn main() {
+    let n: int = helper_len();
+}

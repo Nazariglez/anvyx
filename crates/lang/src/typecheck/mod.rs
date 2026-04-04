@@ -28,11 +28,12 @@ pub use error::{Diagnostic, DiagnosticKind, Severity};
 pub use infer::{build_const_subst, resolve_type_param_names, subst_type};
 use internment::Intern;
 use stmt::{build_module_def_with_reexports, check_block_stmts};
-use types::{ExtendEntry, GenericExtendTemplate};
+use types::{ExtendEntry, GenericExtendTemplate, TypeChecker};
 pub use types::{
-    ExtendSpecKey, ExternTypeDef, FieldDefault, MethodSpecKey, SpecializationKey, TypeChecker,
+    ExtendSpecKey, ExternTypeDef, FieldDefault, MethodSpecKey, SpecializationKey, TypecheckResult,
 };
 use unify::contains_infer;
+pub use visit::{map_type_structure, walk_type_structure};
 
 use crate::{
     ast::{Ident, Program, Stmt, StmtNode, Visibility},
@@ -50,7 +51,7 @@ pub fn check_program_with_modules(
     program: &Program,
     module_list: &[(Vec<String>, Vec<StmtNode>)],
     auto_use_modules: &[Vec<String>],
-) -> Result<TypeChecker, Vec<Diagnostic>> {
+) -> Result<TypecheckResult, Vec<Diagnostic>> {
     let mut type_checker = TypeChecker::default();
     let mut errors = vec![];
 
@@ -62,17 +63,19 @@ pub fn check_program_with_modules(
         match &stmt.node {
             Stmt::Enum(node) => {
                 type_checker
+                    .ctx
                     .enum_defs
                     .insert(node.node.name, types::EnumDef::from_ast(&node.node));
             }
             Stmt::Struct(node) => {
-                type_checker.struct_defs.insert(
+                type_checker.ctx.struct_defs.insert(
                     node.node.name,
                     types::StructDef::from_ast(&node.node, false),
                 );
             }
             Stmt::DataRef(node) => {
                 type_checker
+                    .ctx
                     .struct_defs
                     .insert(node.node.name, types::StructDef::from_ast(&node.node, true));
             }
@@ -137,6 +140,7 @@ pub fn check_program_with_modules(
             for entry in &module_def.extend_methods {
                 let key = (entry.ty.clone(), entry.name);
                 type_checker
+                    .ctx
                     .extend_defs
                     .entry(key)
                     .or_default()
@@ -149,6 +153,7 @@ pub fn check_program_with_modules(
             for entry in &module_def.generic_extend_methods {
                 let key = (entry.base_name, entry.method_name);
                 type_checker
+                    .ctx
                     .generic_extend_templates
                     .entry(key)
                     .or_default()
@@ -164,32 +169,36 @@ pub fn check_program_with_modules(
         }
     }
 
+    let prelude_ctx = type_checker.ctx.clone();
+
     flush_errors(&mut errors, &mut type_checker)?;
 
-    // first pass we collect the types from the ast
-    // we don't need the type of the file scope blocks
+    // we typecheck modules first so the main pass can specialize against fully populated imported-module contexts
+    for (path, stmts) in module_list {
+        type_checker.ctx = prelude_ctx.clone();
+        type_checker.ctx.module_path = Some(path.clone());
+        let _ = check_block_stmts(stmts, None, &mut type_checker, &mut errors, None);
+        type_checker
+            .module_check_contexts
+            .insert(path.clone(), type_checker.ctx.clone());
+    }
+
+    flush_errors(&mut errors, &mut type_checker)?;
+
+    // this pass only records AST types, we do not care about file-scope block types here
+    type_checker.ctx = prelude_ctx.clone();
     let _ = check_block_stmts(&program.stmts, None, &mut type_checker, &mut errors, None);
 
     flush_errors(&mut errors, &mut type_checker)?;
 
-    let baseline_module_defs = type_checker.module_defs.clone();
-    let baseline_struct_defs = type_checker.struct_defs.clone();
-    let baseline_enum_defs = type_checker.enum_defs.clone();
-    let baseline_const_defs = type_checker.const_defs.clone();
-    let baseline_extend_defs = type_checker.extend_defs.clone();
-    let baseline_generic_extend_templates = type_checker.generic_extend_templates.clone();
-    for (path, stmts) in module_list {
-        type_checker.current_module_path = Some(path.clone());
-        let _ = check_block_stmts(stmts, None, &mut type_checker, &mut errors, None);
-        type_checker.current_module_path = None;
-        type_checker.module_defs.clone_from(&baseline_module_defs);
-        type_checker.struct_defs.clone_from(&baseline_struct_defs);
-        type_checker.enum_defs.clone_from(&baseline_enum_defs);
-        type_checker.const_defs.clone_from(&baseline_const_defs);
-        type_checker.extend_defs.clone_from(&baseline_extend_defs);
-        type_checker
-            .generic_extend_templates
-            .clone_from(&baseline_generic_extend_templates);
+    for module_def in type_checker.resolved_module_defs.values() {
+        for (name, def) in &module_def.extern_types {
+            type_checker
+                .ctx
+                .extern_type_defs
+                .entry(*name)
+                .or_insert_with(|| def.clone());
+        }
     }
 
     flush_errors(&mut errors, &mut type_checker)?;
@@ -210,9 +219,9 @@ pub fn check_program_with_modules(
     }
 
     type_checker.cycle_capable_types =
-        cyclicity::analyze_cyclicity(&type_checker.struct_defs, &type_checker.enum_defs);
+        cyclicity::analyze_cyclicity(&type_checker.ctx.struct_defs, &type_checker.ctx.enum_defs);
 
-    Ok(type_checker)
+    Ok(type_checker.into_result())
 }
 
 fn flush_errors(

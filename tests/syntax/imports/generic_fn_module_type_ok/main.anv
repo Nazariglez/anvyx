@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+import shapes { wrap, Wrapper };
+
+fn main() {
+    let w: Wrapper<int> = wrap(42);
+}

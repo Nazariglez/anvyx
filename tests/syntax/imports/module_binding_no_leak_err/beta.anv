@@ -1,0 +1,3 @@
+// @helper
+
+pub fn check() -> int { alpha.hello() }

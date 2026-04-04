@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+import alpha { alpha_value };
+import beta { beta_value };
+
+fn main() {
+    let a: float = alpha_value();
+    let b: float = beta_value();
+}

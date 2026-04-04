@@ -414,14 +414,13 @@ pub(super) fn check_assign(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
-    let maybe_error = readonly_self_mutation_error(assign, type_checker);
-    if let Some(error) = maybe_error {
+    if let Some(error) = readonly_self_mutation_error(assign, type_checker) {
         errors.push(error);
         return Type::Infer;
     }
 
     if let Some(name) = root_ident(&assign.node.target)
-        && type_checker.const_defs.contains_key(&name)
+        && type_checker.ctx.const_defs.contains_key(&name)
     {
         errors.push(Diagnostic::new(
             assign.span,

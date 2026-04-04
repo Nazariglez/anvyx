@@ -7,6 +7,7 @@ use super::{
     },
     constraint::TypeRef,
     control::{check_if, check_if_let, check_match},
+    decl::validate_block_return,
     error::{Diagnostic, DiagnosticKind},
     infer::{build_subst, subst_type},
     ops::{check_assign, check_binary, check_unary},
@@ -358,29 +359,15 @@ fn check_lambda(
                 check_block_expr(block_node, type_checker, errors, expected_tail);
             let had_explicit_return = type_checker.has_explicit_return();
 
-            if effective_ret.is_void() {
-                if !body_ty.is_void() {
-                    errors.push(Diagnostic::new(
-                        expr_node.span,
-                        DiagnosticKind::MismatchedTypes {
-                            expected: Type::Void,
-                            found: body_ty,
-                        },
-                    ));
-                }
-            } else if let Some(last_id) = last_expr_id {
-                let expr_ref = TypeRef::Expr(last_id);
-                let ret_ref = TypeRef::concrete(&effective_ret);
-                type_checker.constrain_assignable(expr_node.span, expr_ref, ret_ref, errors);
-            } else if !had_explicit_return {
-                errors.push(Diagnostic::new(
-                    expr_node.span,
-                    DiagnosticKind::MismatchedTypes {
-                        expected: effective_ret.clone(),
-                        found: Type::Void,
-                    },
-                ));
-            }
+            validate_block_return(
+                &effective_ret,
+                body_ty,
+                last_expr_id,
+                had_explicit_return,
+                expr_node.span,
+                type_checker,
+                errors,
+            );
             effective_ret.clone()
         }
     } else {

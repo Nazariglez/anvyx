@@ -58,7 +58,7 @@ impl TestCtx {
         vm::run_with_externs(&hir, HashMap::new()).expect_err("expected vm error")
     }
 
-    fn pipeline(source: &str) -> (ast::Program, typecheck::TypeChecker) {
+    fn pipeline(source: &str) -> (ast::Program, typecheck::TypecheckResult) {
         let prelude_tokens =
             crate::lexer::tokenize(TEST_CORE_PRELUDE).expect("prelude must tokenize");
         let prelude_ast = crate::parser::parse_ast(&prelude_tokens).expect("prelude must parse");

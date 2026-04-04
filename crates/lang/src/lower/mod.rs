@@ -8,7 +8,7 @@ use crate::{
     ast::{self, ExprId, Ident, Type},
     hir,
     span::Span,
-    typecheck::TypeChecker,
+    typecheck::TypecheckResult,
 };
 
 mod assign;
@@ -89,7 +89,7 @@ impl fmt::Display for LowerError {
 }
 
 pub(super) struct SharedCtx<'a> {
-    pub(super) tcx: &'a TypeChecker,
+    pub(super) tcx: &'a TypecheckResult,
     pub(super) funcs: HashMap<Ident, hir::FuncId>,
     pub(super) externs: HashMap<Ident, hir::ExternId>,
     pub(super) struct_type_ids: HashMap<Ident, u32>,

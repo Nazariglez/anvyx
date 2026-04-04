@@ -15,31 +15,21 @@ use super::{
 };
 use crate::{
     ast::{
-        ArrayLen, BlockNode, ExprKind, Func, FuncNode, Ident, MethodReceiver, Mutability, Param,
-        StructDeclNode, Type, TypeParam,
+        ArrayLen, BlockNode, ExprId, ExprKind, Func, FuncNode, Ident, MethodReceiver, Mutability,
+        Param, StructDeclNode, StructField, Type, TypeParam,
     },
     span::Span,
 };
 
-pub(super) fn check_body_common(
-    params: &[(Ident, Type, bool)],
-    body: &BlockNode,
+pub(super) fn validate_block_return(
     ret_ty: &Type,
+    body_ty: Type,
+    last_expr_id: Option<ExprId>,
+    had_explicit_return: bool,
     error_span: Span,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) {
-    type_checker.push_scope();
-    type_checker.push_return_type(ret_ty.clone(), None);
-
-    for (name, ty, mutable) in params {
-        type_checker.set_var(*name, ty.clone(), *mutable);
-    }
-
-    let expected_tail = if ret_ty.is_void() { None } else { Some(ret_ty) };
-    let (body_ty, last_expr_id) = check_block_expr(body, type_checker, errors, expected_tail);
-    let had_explicit_return = type_checker.has_explicit_return();
-
     if ret_ty.is_void() {
         if !body_ty.is_void() {
             errors.push(Diagnostic::new(
@@ -63,6 +53,36 @@ pub(super) fn check_body_common(
             },
         ));
     }
+}
+
+pub(super) fn check_body_common(
+    params: &[(Ident, Type, bool)],
+    body: &BlockNode,
+    ret_ty: &Type,
+    error_span: Span,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) {
+    type_checker.push_scope();
+    type_checker.push_return_type(ret_ty.clone(), None);
+
+    for (name, ty, mutable) in params {
+        type_checker.set_var(*name, ty.clone(), *mutable);
+    }
+
+    let expected_tail = if ret_ty.is_void() { None } else { Some(ret_ty) };
+    let (body_ty, last_expr_id) = check_block_expr(body, type_checker, errors, expected_tail);
+    let had_explicit_return = type_checker.has_explicit_return();
+
+    validate_block_return(
+        ret_ty,
+        body_ty,
+        last_expr_id,
+        had_explicit_return,
+        error_span,
+        type_checker,
+        errors,
+    );
 
     type_checker.pop_return_type();
     type_checker.pop_scope();
@@ -264,7 +284,7 @@ fn validate_param_defaults(
     type_checker: &TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Vec<Option<ConstValue>> {
-    let known_consts: HashSet<Ident> = type_checker.const_defs.keys().copied().collect();
+    let known_consts: HashSet<Ident> = type_checker.ctx.const_defs.keys().copied().collect();
     let mut seen_default = false;
     let mut defaults = Vec::with_capacity(params.len());
 
@@ -309,7 +329,7 @@ fn validate_param_defaults(
                     continue;
                 }
 
-                let Ok(value) = eval_const_expr(expr, &type_checker.const_defs) else {
+                let Ok(value) = eval_const_expr(expr, &type_checker.ctx.const_defs) else {
                     errors.push(Diagnostic::new(
                         expr.span,
                         DiagnosticKind::ParamDefaultNotConst {
@@ -361,35 +381,21 @@ fn validate_param_defaults(
     defaults
 }
 
-pub(super) fn check_struct(
-    struct_node: &StructDeclNode,
+fn validate_field_defaults(
+    struct_name: Ident,
+    fields: &[StructField],
+    type_params: &[TypeParam],
+    struct_def: &mut StructDef,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) {
-    let decl = &struct_node.node;
-    let struct_name = decl.name;
-
-    for field in &decl.fields {
-        validate_annotations(&field.annotations, AnnotationTarget::Field, errors);
-        if field.ty.contains_any() {
-            errors.push(Diagnostic::new(
-                struct_node.span,
-                DiagnosticKind::AnyTypeNotAllowed,
-            ));
-        }
-    }
-
-    let Some(mut struct_def) = type_checker.get_struct(struct_name).cloned() else {
-        return;
-    };
-
-    let known_consts: HashSet<Ident> = type_checker.const_defs.keys().copied().collect();
-    for field in &decl.fields {
+    let known_consts: HashSet<Ident> = type_checker.ctx.const_defs.keys().copied().collect();
+    for field in fields {
         let Some(expr) = &field.default else {
             continue;
         };
 
-        if type_references_generic(&field.ty, &decl.type_params) {
+        if type_references_generic(&field.ty, type_params) {
             errors.push(Diagnostic::new(
                 expr.span,
                 DiagnosticKind::FieldDefaultOnGenericType {
@@ -463,7 +469,7 @@ pub(super) fn check_struct(
             continue;
         }
 
-        let Ok(value) = eval_const_expr(expr, &type_checker.const_defs) else {
+        let Ok(value) = eval_const_expr(expr, &type_checker.ctx.const_defs) else {
             errors.push(Diagnostic::new(
                 expr.span,
                 DiagnosticKind::FieldDefaultNotConst {
@@ -507,6 +513,38 @@ pub(super) fn check_struct(
             .field_defaults
             .insert(field.name, FieldDefault::Const(value));
     }
+}
+
+pub(super) fn check_struct(
+    struct_node: &StructDeclNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) {
+    let decl = &struct_node.node;
+    let struct_name = decl.name;
+
+    for field in &decl.fields {
+        validate_annotations(&field.annotations, AnnotationTarget::Field, errors);
+        if field.ty.contains_any() {
+            errors.push(Diagnostic::new(
+                struct_node.span,
+                DiagnosticKind::AnyTypeNotAllowed,
+            ));
+        }
+    }
+
+    let Some(mut struct_def) = type_checker.get_struct(struct_name).cloned() else {
+        return;
+    };
+
+    validate_field_defaults(
+        struct_name,
+        &decl.fields,
+        &decl.type_params,
+        &mut struct_def,
+        type_checker,
+        errors,
+    );
 
     for method in &decl.methods {
         let has_defaults = method.params.iter().any(|p| p.default.is_some());
@@ -524,6 +562,7 @@ pub(super) fn check_struct(
     }
 
     type_checker
+        .ctx
         .struct_defs
         .insert(struct_name, struct_def.clone());
 

@@ -8,6 +8,7 @@ use super::{
     infer::{build_subst, subst_type},
     range::range_element_type,
     unify::{contains_infer, is_assignable, unify_equal},
+    visit::type_any,
 };
 use crate::{
     ast::{
@@ -123,33 +124,10 @@ pub enum FieldDefault {
 }
 
 pub(super) fn type_references_generic(ty: &Type, type_params: &[TypeParam]) -> bool {
-    match ty {
-        Type::Var(id) => type_params.iter().any(|p| p.id == *id),
-        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
-            type_references_generic(elem, type_params)
-        }
-        Type::Map { key, value } => {
-            type_references_generic(key, type_params) || type_references_generic(value, type_params)
-        }
-        Type::Tuple(elems) => elems
-            .iter()
-            .any(|e| type_references_generic(e, type_params)),
-        Type::NamedTuple(fields) => fields
-            .iter()
-            .any(|(_, t)| type_references_generic(t, type_params)),
-        Type::Struct { type_args, .. }
-        | Type::Enum { type_args, .. }
-        | Type::DataRef { type_args, .. } => type_args
-            .iter()
-            .any(|a| type_references_generic(a, type_params)),
-        Type::Func { params, ret } => {
-            params
-                .iter()
-                .any(|p| type_references_generic(&p.ty, type_params))
-                || type_references_generic(ret, type_params)
-        }
-        _ => false,
-    }
+    type_any(
+        ty,
+        &mut |t| matches!(t, Type::Var(id) if type_params.iter().any(|p| p.id == *id)),
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -338,7 +316,7 @@ pub(super) struct MethodContext {
     pub receiver: Option<MethodReceiver>,
 }
 
-/// Key for caching scpecialized generic functions (instantiated with concrete types)
+/// Key for caching specialized generic functions (instantiated with concrete types)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SpecializationKey {
     pub func_name: Ident,
@@ -363,6 +341,31 @@ pub struct SpecializationResult {
     pub body_types: HashMap<ExprId, (Span, Type)>,
 }
 
+#[derive(Debug)]
+pub(super) struct InstantiationContext<'a> {
+    pub(super) module_env: Option<&'a ModuleCheckContext>,
+    pub(super) params: Vec<(Ident, Type, bool)>,
+    pub(super) ret_ty: Type,
+    pub(super) method_ctx: Option<MethodContext>,
+}
+
+#[derive(Debug)]
+pub(super) struct TypedBodyResult {
+    pub(super) ret_ty: Type,
+    pub(super) body_types: HashMap<ExprId, (Span, Type)>,
+    pub(super) first_error: Option<(Span, DiagnosticKind)>,
+}
+
+impl TypedBodyResult {
+    pub(super) fn into_spec_result(self) -> SpecializationResult {
+        SpecializationResult {
+            ret_ty: self.ret_ty,
+            err: self.first_error,
+            body_types: self.body_types,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct VarInfo {
     pub ty: Type,
@@ -371,6 +374,7 @@ pub(super) struct VarInfo {
 
 #[derive(Debug, Clone, Default)]
 pub(super) struct ModuleDef {
+    pub source_path: Vec<String>,
     pub funcs: HashMap<Ident, Type>,
     pub func_param_info: HashMap<Ident, Vec<(Ident, Mutability)>>,
     pub struct_defs: HashMap<Ident, StructDef>,
@@ -412,8 +416,23 @@ impl ModuleDef {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ModuleCheckContext {
+    pub(super) struct_defs: HashMap<Ident, StructDef>,
+    pub(super) enum_defs: HashMap<Ident, EnumDef>,
+    pub(super) extern_type_defs: HashMap<Ident, ExternTypeDef>,
+    pub(super) const_defs: HashMap<Ident, ConstDef>,
+    pub(super) module_defs: HashMap<Ident, ModuleDef>,
+    pub(super) extend_defs: HashMap<(Type, Ident), Vec<ExtendEntry>>,
+    pub(super) generic_extend_templates: HashMap<(Ident, Ident), Vec<GenericExtendTemplate>>,
+    pub(super) module_path: Option<Vec<String>>,
+
+    /// Function bindings saved for specialization, including private sibling functions
+    pub(super) func_bindings: HashMap<Ident, VarInfo>,
+}
+
 #[derive(Debug, Default)]
-pub struct TypeChecker {
+pub(super) struct TypeChecker {
     /// Resolved type for each expression
     pub(super) types: HashMap<ExprId, (Span, Type)>,
 
@@ -451,14 +470,8 @@ pub struct TypeChecker {
     /// Stores specialized generic method bodies avoiding re-checking for same type arguments
     pub(super) method_spec_cache: HashMap<MethodSpecKey, SpecializationResult>,
 
-    /// Stores struct definitions (name -> fields)
-    pub(super) struct_defs: HashMap<Ident, StructDef>,
-
-    /// Stores enum definitions (name -> variants)
-    pub(super) enum_defs: HashMap<Ident, EnumDef>,
-
-    /// Stores extern type definitions declared with 'extern type'
-    pub(super) extern_type_defs: HashMap<Ident, ExternTypeDef>,
+    /// Module-local namespace and import-sensitive checking environment
+    pub(super) ctx: ModuleCheckContext,
 
     /// Stores param info for free functions
     pub(super) func_param_info: HashMap<Ident, Vec<(Ident, Mutability)>>,
@@ -478,35 +491,23 @@ pub struct TypeChecker {
     /// Pre-built ModuleDefs for each resolved module, keyed by import path segments
     pub(super) resolved_module_defs: HashMap<Vec<String>, ModuleDef>,
 
-    /// Module bindings for qualified access (binding_name -> module declarations)
-    pub(super) module_defs: HashMap<Ident, ModuleDef>,
-
-    /// Active snapshot for capturing expression types during generic body specialization
-    pub(super) spec_type_snapshot: Option<HashMap<ExprId, (Span, Type)>>,
+    /// Full body-check environments for modules, keyed by import path segments
+    pub(super) module_check_contexts: HashMap<Vec<String>, ModuleCheckContext>,
 
     /// Resolved type args and const args per call site, keyed by callee ExprId
-    pub resolved_call_type_args: HashMap<ExprId, (Ident, Vec<Type>, Vec<usize>)>,
+    pub(super) resolved_call_type_args: HashMap<ExprId, (Ident, Vec<Type>, Vec<usize>)>,
 
     /// Tracks which module a generic function was imported from
     pub(super) generic_func_source_module: HashMap<Ident, Vec<String>>,
 
-    /// Stores evaluated const definitions keyed by name
-    pub(super) const_defs: HashMap<Ident, ConstDef>,
-
     /// Maps expression IDs to their const values for inlining by the lowering pass
-    pub const_values: HashMap<ExprId, ConstValue>,
+    pub(super) const_values: HashMap<ExprId, ConstValue>,
 
     /// Maps pattern spans (start, end) to resolved const values for match-pattern lowering
-    pub const_pattern_values: HashMap<(usize, usize), ConstValue>,
+    pub(super) const_pattern_values: HashMap<(usize, usize), ConstValue>,
 
     /// Tracks const names introduced per block scope inside function bodies
     pub(super) const_scope_stack: Vec<HashSet<Ident>>,
-
-    /// Registered extend methods keyed by (extended type, method name)
-    pub(super) extend_defs: HashMap<(Type, Ident), Vec<ExtendEntry>>,
-
-    /// Generic extend templates keyed by (base type name, method name)
-    pub(super) generic_extend_templates: HashMap<(Ident, Ident), Vec<GenericExtendTemplate>>,
 
     /// Specialization cache for generic extend methods
     pub(super) extend_spec_cache: HashMap<ExtendSpecKey, SpecializationResult>,
@@ -524,27 +525,75 @@ pub struct TypeChecker {
     /// Each entry is the scope stack length when a lambda was entered
     pub(super) lambda_boundaries: Vec<usize>,
 
-    /// Module path being re-checked
-    pub(super) current_module_path: Option<Vec<String>>,
-
     /// Captures being collected for each active lambda (stack for nesting)
     /// Each entry maps captured variable names to their types
     pub(super) current_lambda_captures: Vec<HashMap<Ident, Type>>,
 
     /// Final capture lists, keyed by the lambda expression's ExprId
     /// Used by the lowering pass
-    pub lambda_captures: HashMap<ExprId, Vec<(Ident, Type)>>,
+    pub(super) lambda_captures: HashMap<ExprId, Vec<(Ident, Type)>>,
 
     /// Accumulated warnings (diagnostics with Severity::Warning)
     /// Populated during typechecking; reported after success
-    pub warnings: Vec<Diagnostic>,
+    pub(super) warnings: Vec<Diagnostic>,
 
     /// Deprecated status for free functions, keyed by function name
     /// Only contains entries for functions marked @deprecated
     pub(super) func_deprecated: HashMap<Ident, Option<String>>,
 }
 
+#[derive(Debug)]
+pub struct TypecheckResult {
+    pub(super) types: HashMap<ExprId, (Span, Type)>,
+    pub(super) struct_defs: HashMap<Ident, StructDef>,
+    pub(super) enum_defs: HashMap<Ident, EnumDef>,
+    pub(super) extern_type_defs: HashMap<Ident, ExternTypeDef>,
+    pub(super) cycle_capable_types: HashSet<Ident>,
+    pub(super) specialization_cache: HashMap<SpecializationKey, SpecializationResult>,
+    pub(super) method_spec_cache: HashMap<MethodSpecKey, SpecializationResult>,
+    pub(super) extend_spec_cache: HashMap<ExtendSpecKey, SpecializationResult>,
+    pub(super) resolved_call_type_args: HashMap<ExprId, (Ident, Vec<Type>, Vec<usize>)>,
+    pub(super) const_values: HashMap<ExprId, ConstValue>,
+    pub(super) const_pattern_values: HashMap<(usize, usize), ConstValue>,
+    pub(super) lambda_captures: HashMap<ExprId, Vec<(Ident, Type)>>,
+    pub(super) extend_call_targets: HashMap<ExprId, Ident>,
+    pub(super) extend_call_ref_masks: HashMap<ExprId, Vec<bool>>,
+    pub(super) func_param_info: HashMap<Ident, Vec<(Ident, Mutability)>>,
+    pub(super) func_param_defaults: HashMap<Ident, Vec<Option<ConstValue>>>,
+    pub(super) module_defs: HashMap<Ident, ModuleDef>,
+    pub(super) warnings: Vec<Diagnostic>,
+    pub(super) generic_func_templates: HashMap<Ident, FuncNode>,
+    pub(super) generic_extend_templates: HashMap<(Ident, Ident), Vec<GenericExtendTemplate>>,
+    pub(super) module_check_contexts: HashMap<Vec<String>, ModuleCheckContext>,
+}
+
 impl TypeChecker {
+    pub(super) fn into_result(self) -> TypecheckResult {
+        TypecheckResult {
+            types: self.types,
+            struct_defs: self.ctx.struct_defs,
+            enum_defs: self.ctx.enum_defs,
+            extern_type_defs: self.ctx.extern_type_defs,
+            cycle_capable_types: self.cycle_capable_types,
+            specialization_cache: self.specialization_cache,
+            method_spec_cache: self.method_spec_cache,
+            extend_spec_cache: self.extend_spec_cache,
+            resolved_call_type_args: self.resolved_call_type_args,
+            const_values: self.const_values,
+            const_pattern_values: self.const_pattern_values,
+            lambda_captures: self.lambda_captures,
+            extend_call_targets: self.extend_call_targets,
+            extend_call_ref_masks: self.extend_call_ref_masks,
+            func_param_info: self.func_param_info,
+            func_param_defaults: self.func_param_defaults,
+            module_defs: self.ctx.module_defs,
+            warnings: self.warnings,
+            generic_func_templates: self.generic_func_templates,
+            generic_extend_templates: self.ctx.generic_extend_templates,
+            module_check_contexts: self.module_check_contexts,
+        }
+    }
+
     pub(super) fn next_call_id(&mut self) -> usize {
         let id = self.next_infer_call_id;
         self.next_infer_call_id += 1;
@@ -572,236 +621,69 @@ impl TypeChecker {
         self.method_contexts.last()
     }
 
-    pub fn func_param_info(&self, name: Ident) -> &[(Ident, Mutability)] {
-        self.func_param_info
-            .get(&name)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-    }
-
-    pub fn func_param_defaults(&self, name: Ident) -> &[Option<ConstValue>] {
+    pub(super) fn func_param_defaults(&self, name: Ident) -> &[Option<ConstValue>] {
         self.func_param_defaults
             .get(&name)
             .map(Vec::as_slice)
             .unwrap_or_default()
     }
 
-    pub fn method_param_defaults(
-        &self,
-        struct_name: Ident,
-        method_name: Ident,
-    ) -> &[Option<ConstValue>] {
-        self.struct_defs
-            .get(&struct_name)
-            .and_then(|sd| sd.methods.get(&method_name))
-            .map(|m| m.param_defaults.as_slice())
-            .unwrap_or_default()
-    }
-
-    pub fn module_func_param_info(
-        &self,
-        module_name: Ident,
-        func_name: Ident,
-    ) -> &[(Ident, Mutability)] {
-        self.module_defs
-            .get(&module_name)
-            .and_then(|m| m.func_param_info.get(&func_name))
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-    }
-
-    pub fn module_func_param_defaults(
-        &self,
-        module_name: Ident,
-        func_name: Ident,
-    ) -> &[Option<ConstValue>] {
-        self.module_defs
-            .get(&module_name)
-            .and_then(|m| m.func_param_defaults.get(&func_name))
-            .map(Vec::as_slice)
-            .unwrap_or_default()
-    }
-
-    pub fn get_struct(&self, name: Ident) -> Option<&StructDef> {
-        self.struct_defs.get(&name)
+    pub(super) fn get_struct(&self, name: Ident) -> Option<&StructDef> {
+        self.ctx.struct_defs.get(&name)
     }
 
     pub(super) fn get_enum(&self, name: Ident) -> Option<&EnumDef> {
-        self.enum_defs.get(&name)
+        self.ctx.enum_defs.get(&name)
     }
 
     pub(super) fn get_const(&self, name: Ident) -> Option<&ConstDef> {
-        self.const_defs.get(&name)
+        self.ctx.const_defs.get(&name)
     }
 
-    pub fn get_extern_type(&self, name: Ident) -> Option<&ExternTypeDef> {
-        self.extern_type_defs.get(&name)
+    pub(super) fn get_extern_type(&self, name: Ident) -> Option<&ExternTypeDef> {
+        self.ctx.extern_type_defs.get(&name)
     }
 
-    pub fn extern_type_field_order(&self, name: Ident) -> Option<&[Ident]> {
-        self.extern_type_defs
+    pub(super) fn is_dataref(&self, name: Ident) -> bool {
+        self.ctx
+            .struct_defs
             .get(&name)
-            .map(|def| def.field_order.as_slice())
-    }
-
-    pub fn struct_names(&self) -> impl Iterator<Item = Ident> + '_ {
-        self.struct_defs.keys().copied()
-    }
-
-    pub fn is_dataref(&self, name: Ident) -> bool {
-        self.struct_defs.get(&name).is_some_and(|d| d.is_dataref)
-    }
-
-    pub fn is_cycle_capable(&self, name: Ident) -> bool {
-        self.cycle_capable_types.contains(&name)
-    }
-
-    pub fn struct_field_names(&self, name: Ident) -> Option<Vec<Ident>> {
-        self.struct_defs
-            .get(&name)
-            .map(|def| def.fields.iter().map(|f| f.name).collect())
-    }
-
-    pub fn struct_field_index(&self, struct_name: Ident, field_name: Ident) -> Option<usize> {
-        self.struct_defs
-            .get(&struct_name)?
-            .fields
-            .iter()
-            .position(|f| f.name == field_name)
-    }
-
-    pub fn struct_field_type(&self, struct_name: Ident, field_name: Ident) -> Option<Type> {
-        self.struct_defs
-            .get(&struct_name)?
-            .fields
-            .iter()
-            .find(|f| f.name == field_name)
-            .map(|f| f.ty.clone())
-    }
-
-    pub fn struct_field_default(
-        &self,
-        struct_name: Ident,
-        field_name: Ident,
-    ) -> Option<&FieldDefault> {
-        self.struct_defs
-            .get(&struct_name)?
-            .field_defaults
-            .get(&field_name)
-    }
-
-    pub fn struct_to_string_body(&self, name: Ident) -> Option<(&BlockNode, &Type)> {
-        use internment::Intern;
-        let def = self.struct_defs.get(&name)?;
-        if !def.type_params.is_empty() {
-            return None;
-        }
-        let to_string = Ident(Intern::new("to_string".to_string()));
-        let method = def.methods.get(&to_string)?;
-        if method.receiver != Some(MethodReceiver::Value) {
-            return None;
-        }
-        if method.ret != Type::String {
-            return None;
-        }
-        if !method.params.is_empty() {
-            return None;
-        }
-        if !method.type_params.is_empty() {
-            return None;
-        }
-        Some((&method.body, &method.ret))
-    }
-
-    pub fn enum_names(&self) -> impl Iterator<Item = Ident> + '_ {
-        self.enum_defs.keys().copied()
-    }
-
-    pub fn enum_variant_index(&self, enum_name: Ident, variant_name: Ident) -> Option<u16> {
-        let def = self.enum_defs.get(&enum_name)?;
-        let idx = def.variants.iter().position(|v| v.name == variant_name)?;
-        Some(idx as u16)
-    }
-
-    pub fn enum_variant_field_names(
-        &self,
-        enum_name: Ident,
-        variant_name: Ident,
-    ) -> Option<Vec<Ident>> {
-        let def = self.enum_defs.get(&enum_name)?;
-        let variant = def.variants.iter().find(|v| v.name == variant_name)?;
-        match &variant.kind {
-            VariantKind::Struct(fields) => Some(fields.iter().map(|f| f.name).collect()),
-            _ => None,
-        }
-    }
-
-    pub fn enum_variant_field_types(
-        &self,
-        enum_name: Ident,
-        variant_name: Ident,
-        type_args: &[Type],
-    ) -> Option<Vec<Type>> {
-        let def = self.enum_defs.get(&enum_name)?;
-        let variant = def.variants.iter().find(|v| v.name == variant_name)?;
-        let subst = build_subst(&def.type_params, type_args);
-        match &variant.kind {
-            VariantKind::Tuple(types) => Some(
-                types
-                    .iter()
-                    .map(|t| subst_type(t, &subst, &HashMap::new()))
-                    .collect(),
-            ),
-            VariantKind::Struct(fields) => Some(
-                fields
-                    .iter()
-                    .map(|f| subst_type(&f.ty, &subst, &HashMap::new()))
-                    .collect(),
-            ),
-            VariantKind::Unit => Some(vec![]),
-        }
-    }
-
-    pub fn enum_variant_kinds(&self, name: Ident) -> Option<Vec<(Ident, &VariantKind)>> {
-        self.enum_defs
-            .get(&name)
-            .map(|def| def.variants.iter().map(|v| (v.name, &v.kind)).collect())
+            .is_some_and(|d| d.is_dataref)
     }
 
     pub(super) fn get_extend_methods(&self, ty: &Type, name: Ident) -> &[ExtendEntry] {
-        self.extend_defs
+        self.ctx
+            .extend_defs
             .get(&(ty.clone(), name))
             .map_or(&[], Vec::as_slice)
     }
 
     pub(super) fn get_module(&self, name: Ident) -> Option<&ModuleDef> {
-        self.module_defs.get(&name)
-    }
-
-    pub fn is_module_name(&self, name: Ident) -> bool {
-        self.module_defs.contains_key(&name)
+        self.ctx.module_defs.get(&name)
     }
 
     pub(super) fn resolve_type(&self, ty: &Type) -> Type {
         match ty {
-            Type::UnresolvedName(name) if self.extern_type_defs.contains_key(name) => {
+            Type::UnresolvedName(name) if self.ctx.extern_type_defs.contains_key(name) => {
                 Type::Extern { name: *name }
             }
-            Type::UnresolvedName(name) if self.struct_defs.contains_key(name) => {
-                let def = &self.struct_defs[name];
+            Type::UnresolvedName(name) if self.ctx.struct_defs.contains_key(name) => {
+                let def = &self.ctx.struct_defs[name];
                 def.make_type(*name, vec![])
             }
-            Type::UnresolvedName(name) if self.enum_defs.contains_key(name) => Type::Enum {
+            Type::UnresolvedName(name) if self.ctx.enum_defs.contains_key(name) => Type::Enum {
                 name: *name,
                 type_args: vec![],
             },
-            // the parser creates a struce for any named type with type args, this can be an enum or a struct
-            Type::Struct { name, type_args } if self.enum_defs.contains_key(name) => Type::Enum {
-                name: *name,
-                type_args: type_args.iter().map(|t| self.resolve_type(t)).collect(),
-            },
+            // the parser creates a struct for any named type with type args, this can be an enum or a struct
+            Type::Struct { name, type_args } if self.ctx.enum_defs.contains_key(name) => {
+                Type::Enum {
+                    name: *name,
+                    type_args: type_args.iter().map(|t| self.resolve_type(t)).collect(),
+                }
+            }
             Type::Struct { name, type_args }
-                if self.struct_defs.get(name).is_some_and(|d| d.is_dataref) =>
+                if self.ctx.struct_defs.get(name).is_some_and(|d| d.is_dataref) =>
             {
                 Type::DataRef {
                     name: *name,
@@ -844,7 +726,7 @@ impl TypeChecker {
                         {
                             ArrayLen::Param(cp.id)
                         } else {
-                            match self.const_defs.get(ident) {
+                            match self.ctx.const_defs.get(ident) {
                                 Some(def) => match &def.value {
                                     ConstValue::Int(n) if *n >= 0 => ArrayLen::Fixed(*n as usize),
                                     _ => ArrayLen::Named(*ident),
@@ -892,55 +774,16 @@ impl TypeChecker {
             .collect()
     }
 
-    pub fn set_type(&mut self, id: ExprId, ty: Type, span: Span) {
-        if let Some(snapshot) = &mut self.spec_type_snapshot {
-            snapshot.insert(id, (span, ty));
-            return;
-        }
+    pub(super) fn set_type(&mut self, id: ExprId, ty: Type, span: Span) {
         self.types.insert(id, (span, ty));
     }
 
-    pub fn get_type(&self, id: ExprId) -> Option<&(Span, Type)> {
-        if let Some(snapshot) = &self.spec_type_snapshot
-            && let Some(entry) = snapshot.get(&id)
-        {
-            return Some(entry);
-        }
+    pub(super) fn get_type(&self, id: ExprId) -> Option<&(Span, Type)> {
         self.types.get(&id)
     }
 
-    pub fn types(&self) -> impl Iterator<Item = (&ExprId, &(Span, Type))> {
+    pub(super) fn types(&self) -> impl Iterator<Item = (&ExprId, &(Span, Type))> {
         self.types.iter()
-    }
-
-    pub fn specializations(&self) -> &HashMap<SpecializationKey, SpecializationResult> {
-        &self.specialization_cache
-    }
-
-    pub fn method_specializations(&self) -> &HashMap<MethodSpecKey, SpecializationResult> {
-        &self.method_spec_cache
-    }
-
-    pub fn generic_template(&self, name: Ident) -> Option<&FuncNode> {
-        self.generic_func_templates.get(&name)
-    }
-
-    pub fn call_type_args(
-        &self,
-        callee_expr_id: ExprId,
-    ) -> Option<&(Ident, Vec<Type>, Vec<usize>)> {
-        self.resolved_call_type_args.get(&callee_expr_id)
-    }
-
-    pub fn extend_call_target(&self, id: ExprId) -> Option<Ident> {
-        self.extend_call_targets.get(&id).copied()
-    }
-
-    pub fn extend_call_ref_mask(&self, id: ExprId) -> &[bool] {
-        self.extend_call_ref_masks
-            .get(&id)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
     }
 
     pub(super) fn store_extend_ref_mask(&mut self, call_id: ExprId, params: &[Param]) {
@@ -949,32 +792,6 @@ impl TypeChecker {
             .map(|p| p.mutability == Mutability::Mutable)
             .collect();
         self.extend_call_ref_masks.insert(call_id, ref_mask);
-    }
-
-    pub fn method_param_mutabilities(
-        &self,
-        struct_name: Ident,
-        method_name: Ident,
-    ) -> (Option<MethodReceiver>, &[Param]) {
-        self.struct_defs
-            .get(&struct_name)
-            .and_then(|s| s.methods.get(&method_name))
-            .map_or((None, &[]), |m| (m.receiver, m.params.as_slice()))
-    }
-
-    pub fn extend_specializations(&self) -> &HashMap<ExtendSpecKey, SpecializationResult> {
-        &self.extend_spec_cache
-    }
-
-    pub fn get_generic_extend_template(
-        &self,
-        base_name: Ident,
-        method_name: Ident,
-        target_type: &Type,
-    ) -> Option<&GenericExtendTemplate> {
-        self.generic_extend_templates
-            .get(&(base_name, method_name))
-            .and_then(|v| v.iter().find(|t| &t.target_type == target_type))
     }
 
     pub(super) fn set_var(&mut self, name: Ident, ty: Type, mutable: bool) {
@@ -1158,8 +975,8 @@ impl TypeChecker {
         }
 
         // optional values cannot be assigned to non-optional targets once the target is resolved
-        let from_is_optional = from_ty.is_optional();
-        let to_is_optional = to_ty.is_optional();
+        let from_is_optional = from_ty.is_option();
+        let to_is_optional = to_ty.is_option();
         if from_is_optional && !to_is_optional && !contains_infer(&to_ty) {
             errors.push(Diagnostic::new(
                 span,
@@ -1266,6 +1083,283 @@ impl TypeChecker {
 
         // otherwise just constrain them to be the same as fallback
         self.constrain_equal(span, from, to, errors);
+    }
+}
+
+impl TypecheckResult {
+    pub fn module_check_context(&self, path: &[String]) -> Option<&ModuleCheckContext> {
+        self.module_check_contexts.get(path)
+    }
+
+    pub fn func_param_info(&self, name: Ident) -> &[(Ident, Mutability)] {
+        self.func_param_info
+            .get(&name)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    pub fn func_param_defaults(&self, name: Ident) -> &[Option<ConstValue>] {
+        self.func_param_defaults
+            .get(&name)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    pub fn method_param_defaults(
+        &self,
+        struct_name: Ident,
+        method_name: Ident,
+    ) -> &[Option<ConstValue>] {
+        self.struct_defs
+            .get(&struct_name)
+            .and_then(|sd| sd.methods.get(&method_name))
+            .map(|m| m.param_defaults.as_slice())
+            .unwrap_or_default()
+    }
+
+    pub fn module_func_param_info(
+        &self,
+        module_name: Ident,
+        func_name: Ident,
+    ) -> &[(Ident, Mutability)] {
+        self.module_defs
+            .get(&module_name)
+            .and_then(|m| m.func_param_info.get(&func_name))
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    pub fn module_func_param_defaults(
+        &self,
+        module_name: Ident,
+        func_name: Ident,
+    ) -> &[Option<ConstValue>] {
+        self.module_defs
+            .get(&module_name)
+            .and_then(|m| m.func_param_defaults.get(&func_name))
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    pub fn get_struct(&self, name: Ident) -> Option<&StructDef> {
+        self.struct_defs.get(&name)
+    }
+
+    pub fn get_extern_type(&self, name: Ident) -> Option<&ExternTypeDef> {
+        self.extern_type_defs.get(&name)
+    }
+
+    pub fn extern_type_field_order(&self, name: Ident) -> Option<&[Ident]> {
+        self.extern_type_defs
+            .get(&name)
+            .map(|def| def.field_order.as_slice())
+    }
+
+    pub fn struct_names(&self) -> impl Iterator<Item = Ident> + '_ {
+        self.struct_defs.keys().copied()
+    }
+
+    pub fn is_dataref(&self, name: Ident) -> bool {
+        self.struct_defs.get(&name).is_some_and(|d| d.is_dataref)
+    }
+
+    pub fn is_cycle_capable(&self, name: Ident) -> bool {
+        self.cycle_capable_types.contains(&name)
+    }
+
+    pub fn struct_field_names(&self, name: Ident) -> Option<Vec<Ident>> {
+        self.struct_defs
+            .get(&name)
+            .map(|def| def.fields.iter().map(|f| f.name).collect())
+    }
+
+    pub fn struct_field_index(&self, struct_name: Ident, field_name: Ident) -> Option<usize> {
+        self.struct_defs
+            .get(&struct_name)?
+            .fields
+            .iter()
+            .position(|f| f.name == field_name)
+    }
+
+    pub fn struct_field_type(&self, struct_name: Ident, field_name: Ident) -> Option<Type> {
+        self.struct_defs
+            .get(&struct_name)?
+            .fields
+            .iter()
+            .find(|f| f.name == field_name)
+            .map(|f| f.ty.clone())
+    }
+
+    pub fn struct_field_default(
+        &self,
+        struct_name: Ident,
+        field_name: Ident,
+    ) -> Option<&FieldDefault> {
+        self.struct_defs
+            .get(&struct_name)?
+            .field_defaults
+            .get(&field_name)
+    }
+
+    pub fn struct_to_string_body(&self, name: Ident) -> Option<(&BlockNode, &Type)> {
+        use internment::Intern;
+        let def = self.struct_defs.get(&name)?;
+        if !def.type_params.is_empty() {
+            return None;
+        }
+        let to_string = Ident(Intern::new("to_string".to_string()));
+        let method = def.methods.get(&to_string)?;
+        if method.receiver != Some(MethodReceiver::Value) {
+            return None;
+        }
+        if method.ret != Type::String {
+            return None;
+        }
+        if !method.params.is_empty() {
+            return None;
+        }
+        if !method.type_params.is_empty() {
+            return None;
+        }
+        Some((&method.body, &method.ret))
+    }
+
+    pub fn enum_names(&self) -> impl Iterator<Item = Ident> + '_ {
+        self.enum_defs.keys().copied()
+    }
+
+    pub fn enum_variant_index(&self, enum_name: Ident, variant_name: Ident) -> Option<u16> {
+        let def = self.enum_defs.get(&enum_name)?;
+        let idx = def.variants.iter().position(|v| v.name == variant_name)?;
+        Some(idx as u16)
+    }
+
+    pub fn enum_variant_field_names(
+        &self,
+        enum_name: Ident,
+        variant_name: Ident,
+    ) -> Option<Vec<Ident>> {
+        let def = self.enum_defs.get(&enum_name)?;
+        let variant = def.variants.iter().find(|v| v.name == variant_name)?;
+        match &variant.kind {
+            VariantKind::Struct(fields) => Some(fields.iter().map(|f| f.name).collect()),
+            _ => None,
+        }
+    }
+
+    pub fn enum_variant_field_types(
+        &self,
+        enum_name: Ident,
+        variant_name: Ident,
+        type_args: &[Type],
+    ) -> Option<Vec<Type>> {
+        let def = self.enum_defs.get(&enum_name)?;
+        let variant = def.variants.iter().find(|v| v.name == variant_name)?;
+        let subst = build_subst(&def.type_params, type_args);
+        match &variant.kind {
+            VariantKind::Tuple(types) => Some(
+                types
+                    .iter()
+                    .map(|t| subst_type(t, &subst, &HashMap::new()))
+                    .collect(),
+            ),
+            VariantKind::Struct(fields) => Some(
+                fields
+                    .iter()
+                    .map(|f| subst_type(&f.ty, &subst, &HashMap::new()))
+                    .collect(),
+            ),
+            VariantKind::Unit => Some(vec![]),
+        }
+    }
+
+    pub fn enum_variant_kinds(&self, name: Ident) -> Option<Vec<(Ident, &VariantKind)>> {
+        self.enum_defs
+            .get(&name)
+            .map(|def| def.variants.iter().map(|v| (v.name, &v.kind)).collect())
+    }
+
+    pub fn is_module_name(&self, name: Ident) -> bool {
+        self.module_defs.contains_key(&name)
+    }
+
+    pub fn get_type(&self, id: ExprId) -> Option<&(Span, Type)> {
+        self.types.get(&id)
+    }
+
+    pub fn specializations(&self) -> &HashMap<SpecializationKey, SpecializationResult> {
+        &self.specialization_cache
+    }
+
+    pub fn method_specializations(&self) -> &HashMap<MethodSpecKey, SpecializationResult> {
+        &self.method_spec_cache
+    }
+
+    pub fn call_type_args(
+        &self,
+        callee_expr_id: ExprId,
+    ) -> Option<&(Ident, Vec<Type>, Vec<usize>)> {
+        self.resolved_call_type_args.get(&callee_expr_id)
+    }
+
+    pub fn extend_call_target(&self, id: ExprId) -> Option<Ident> {
+        self.extend_call_targets.get(&id).copied()
+    }
+
+    pub fn extend_call_ref_mask(&self, id: ExprId) -> &[bool] {
+        self.extend_call_ref_masks
+            .get(&id)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    pub fn method_param_mutabilities(
+        &self,
+        struct_name: Ident,
+        method_name: Ident,
+    ) -> (Option<MethodReceiver>, &[Param]) {
+        self.struct_defs
+            .get(&struct_name)
+            .and_then(|s| s.methods.get(&method_name))
+            .map_or((None, &[]), |m| (m.receiver, m.params.as_slice()))
+    }
+
+    pub fn extend_specializations(&self) -> &HashMap<ExtendSpecKey, SpecializationResult> {
+        &self.extend_spec_cache
+    }
+
+    pub fn generic_template(&self, name: Ident) -> Option<&FuncNode> {
+        self.generic_func_templates.get(&name)
+    }
+
+    pub fn get_generic_extend_template(
+        &self,
+        base_name: Ident,
+        method_name: Ident,
+        target_type: &Type,
+    ) -> Option<&GenericExtendTemplate> {
+        self.generic_extend_templates
+            .get(&(base_name, method_name))
+            .and_then(|v| v.iter().find(|t| &t.target_type == target_type))
+    }
+
+    pub fn const_value(&self, id: ExprId) -> Option<&ConstValue> {
+        self.const_values.get(&id)
+    }
+
+    pub fn const_pattern_value(&self, key: (usize, usize)) -> Option<&ConstValue> {
+        self.const_pattern_values.get(&key)
+    }
+
+    pub fn lambda_captures(&self, id: ExprId) -> &[(Ident, Type)] {
+        self.lambda_captures
+            .get(&id)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    pub fn warnings(&self) -> &[Diagnostic] {
+        &self.warnings
     }
 }
 
@@ -1549,7 +1643,7 @@ fn check_type_property(ty: &Type, tc: &TypeChecker, prop: TypeProperty) -> Resul
                     }
                 };
             }
-            let Some(enum_def) = tc.enum_defs.get(name) else {
+            let Some(enum_def) = tc.ctx.enum_defs.get(name) else {
                 return Err(format!("enum '{name}' is not known"));
             };
             let subst = build_subst(&enum_def.type_params, type_args);
@@ -1574,7 +1668,7 @@ fn check_type_property(ty: &Type, tc: &TypeChecker, prop: TypeProperty) -> Resul
             Ok(())
         }
         Type::Struct { name, type_args } => {
-            let Some(struct_def) = tc.struct_defs.get(name) else {
+            let Some(struct_def) = tc.ctx.struct_defs.get(name) else {
                 return Err(format!("struct '{name}' is not known"));
             };
             let subst = build_subst(&struct_def.type_params, type_args);

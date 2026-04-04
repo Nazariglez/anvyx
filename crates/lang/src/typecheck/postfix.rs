@@ -3,16 +3,16 @@ use std::collections::HashMap;
 use internment::Intern;
 
 use super::{
-    call::*,
-    decl::check_body_common,
+    call::{check_instantiated_body, *},
     error::{Diagnostic, DiagnosticKind},
     expr::check_expr,
     infer::{build_const_subst, build_subst, resolve_type_param_names, subst_type},
     stmt::extend_base_key,
     types::{
-        ExtendEntry, ExtendMethodDef, ExtendSpecKey, GenericExtendTemplate, PostfixNodeRef,
-        SpecializationResult, TypeChecker, type_field_on_base, type_index_on_base, unwrap_opt_typ,
+        ExtendEntry, ExtendMethodDef, ExtendSpecKey, GenericExtendTemplate, InstantiationContext,
+        PostfixNodeRef, TypeChecker, type_field_on_base, type_index_on_base, unwrap_opt_typ,
     },
+    visit::fold_type,
 };
 use crate::{
     ast::{
@@ -318,50 +318,12 @@ enum Specificity {
 }
 
 fn substitute_fresh(pattern: &Type, type_params: &[TypeParam]) -> Type {
-    match pattern {
-        Type::UnresolvedName(name) if type_params.iter().any(|p| p.name == *name) => Type::Extern {
+    fold_type(pattern, &mut |ty| match ty {
+        Type::UnresolvedName(name) if type_params.iter().any(|p| p.name == name) => Type::Extern {
             name: Ident(Intern::new(format!("__Fresh_{name}"))),
         },
-        Type::List { elem } => Type::List {
-            elem: Box::new(substitute_fresh(elem, type_params)),
-        },
-        Type::Map { key, value } => Type::Map {
-            key: Box::new(substitute_fresh(key, type_params)),
-            value: Box::new(substitute_fresh(value, type_params)),
-        },
-        Type::Tuple(fields) => Type::Tuple(
-            fields
-                .iter()
-                .map(|f| substitute_fresh(f, type_params))
-                .collect(),
-        ),
-        Type::Array { elem, len } => Type::Array {
-            elem: Box::new(substitute_fresh(elem, type_params)),
-            len: *len,
-        },
-        Type::Struct { name, type_args } => Type::Struct {
-            name: *name,
-            type_args: type_args
-                .iter()
-                .map(|a| substitute_fresh(a, type_params))
-                .collect(),
-        },
-        Type::DataRef { name, type_args } => Type::DataRef {
-            name: *name,
-            type_args: type_args
-                .iter()
-                .map(|a| substitute_fresh(a, type_params))
-                .collect(),
-        },
-        Type::Enum { name, type_args } => Type::Enum {
-            name: *name,
-            type_args: type_args
-                .iter()
-                .map(|a| substitute_fresh(a, type_params))
-                .collect(),
-        },
-        other => other.clone(),
-    }
+        other => other,
+    })
 }
 
 fn compare_specificity(
@@ -438,63 +400,6 @@ fn try_specialize_extend(
             .join(", ")
     );
 
-    if let Some(cached) = type_checker.extend_spec_cache.get(&cache_key).cloned() {
-        report_cached_spec_error(
-            &cached,
-            &context_name,
-            &template.type_params,
-            type_args,
-            span,
-            errors,
-        );
-        let mangled = cache_key.mangle(&template.source_module);
-        type_checker
-            .extend_call_targets
-            .insert(call_node.node.func.node.id, mangled);
-        type_checker
-            .store_extend_ref_mask(call_node.node.func.node.id, &template.method.node.params);
-        let specialized_params: Vec<Type> = {
-            let subst = build_subst(&template.type_params, type_args);
-            let const_subst = build_const_subst(&template.const_params, const_args);
-            template
-                .method
-                .node
-                .params
-                .iter()
-                .enumerate()
-                .map(|(i, p)| {
-                    if i == 0 {
-                        receiver_ty.clone()
-                    } else {
-                        let resolved = resolve_type_param_names(
-                            &type_checker.resolve_type(&p.ty),
-                            &template.type_params,
-                        );
-                        subst_type(&resolved, &subst, &const_subst)
-                    }
-                })
-                .collect()
-        };
-        check_call_signature(
-            call_node.span,
-            &specialized_params[1..],
-            specialized_params.len() - 1,
-            &cached.ret_ty.clone(),
-            &call_node.node.args,
-            type_checker,
-            errors,
-        );
-        check_extend_var_params(
-            &template.method.node.params,
-            receiver,
-            method_name,
-            call_node,
-            type_checker,
-            errors,
-        );
-        return cached.ret_ty;
-    }
-
     let subst = build_subst(&template.type_params, type_args);
     let const_subst = build_const_subst(&template.const_params, const_args);
     let method = &template.method.node;
@@ -514,90 +419,92 @@ fn try_specialize_extend(
             }
         })
         .collect();
-    let raw_ret = resolve_type_param_names(&type_checker.resolve_type(&method.ret), type_params);
-    let specialized_ret = subst_type(&raw_ret, &subst, &const_subst);
 
-    let prev_snapshot = type_checker.spec_type_snapshot.take();
-    type_checker.spec_type_snapshot = Some(HashMap::new());
-
-    let module_scope = if template.source_module.is_empty() {
-        None
-    } else {
+    let ret_ty = if let Some(cached) = type_checker.extend_spec_cache.get(&cache_key).cloned() {
+        report_cached_spec_error(
+            &cached,
+            &context_name,
+            &template.type_params,
+            type_args,
+            span,
+            errors,
+        );
+        let mangled = cache_key.mangle(&template.source_module);
         type_checker
-            .resolved_module_defs
-            .get(&template.source_module)
-            .cloned()
-    };
-    if let Some(ref module_def) = module_scope {
-        type_checker.push_scope();
-        for (name, ty) in &module_def.funcs {
-            type_checker.set_var(*name, ty.clone(), false);
+            .extend_call_targets
+            .insert(call_node.node.func.node.id, mangled);
+        type_checker
+            .store_extend_ref_mask(call_node.node.func.node.id, &template.method.node.params);
+        cached.ret_ty
+    } else {
+        let raw_ret =
+            resolve_type_param_names(&type_checker.resolve_type(&method.ret), type_params);
+        let specialized_ret = subst_type(&raw_ret, &subst, &const_subst);
+
+        let mut body_params: Vec<(Ident, Type, bool)> = method
+            .params
+            .iter()
+            .zip(specialized_params.iter())
+            .map(|(p, ty)| {
+                (
+                    p.name,
+                    ty.clone(),
+                    matches!(p.mutability, Mutability::Mutable),
+                )
+            })
+            .collect();
+        for param in &template.const_params {
+            body_params.push((param.name, Type::Int, false));
         }
-    }
 
-    let mut body_params: Vec<(Ident, Type, bool)> = method
-        .params
-        .iter()
-        .zip(specialized_params.iter())
-        .map(|(p, ty)| {
-            (
-                p.name,
-                ty.clone(),
-                matches!(p.mutability, Mutability::Mutable),
-            )
-        })
-        .collect();
-    for param in &template.const_params {
-        body_params.push((param.name, Type::Int, false));
-    }
+        let owned_module_env = if template.source_module.is_empty() {
+            None
+        } else {
+            type_checker
+                .module_check_contexts
+                .get(&template.source_module)
+                .cloned()
+        };
 
-    let mut body_errors = vec![];
-    check_body_common(
-        &body_params,
-        &method.body,
-        &specialized_ret,
-        span,
-        type_checker,
-        &mut body_errors,
-    );
-
-    if module_scope.is_some() {
-        type_checker.pop_scope();
-    }
-
-    let body_types = type_checker.spec_type_snapshot.take().unwrap_or_default();
-    type_checker.spec_type_snapshot = prev_snapshot;
-
-    let cached_err = body_errors.first().map(|err| (err.span, err.kind.clone()));
-    type_checker.extend_spec_cache.insert(
-        cache_key.clone(),
-        SpecializationResult {
+        let ictx = InstantiationContext {
+            module_env: owned_module_env.as_ref(),
+            params: body_params,
             ret_ty: specialized_ret.clone(),
-            err: cached_err,
-            body_types,
-        },
-    );
+            method_ctx: None,
+        };
+        let mut body_errors = vec![];
+        let spec_result =
+            check_instantiated_body(&ictx, &method.body, span, type_checker, &mut body_errors)
+                .into_spec_result();
 
-    report_instantiation_errors(
-        body_errors,
-        &context_name,
-        &template.type_params,
-        type_args,
-        span,
-        errors,
-    );
+        type_checker
+            .extend_spec_cache
+            .insert(cache_key.clone(), spec_result);
 
-    let mangled = cache_key.mangle(&template.source_module);
-    type_checker
-        .extend_call_targets
-        .insert(call_node.node.func.node.id, mangled);
-    type_checker.store_extend_ref_mask(call_node.node.func.node.id, &template.method.node.params);
+        report_instantiation_errors(
+            body_errors,
+            &context_name,
+            &template.type_params,
+            type_args,
+            span,
+            errors,
+        );
+
+        let mangled = cache_key.mangle(&template.source_module);
+        type_checker
+            .extend_call_targets
+            .insert(call_node.node.func.node.id, mangled);
+        type_checker
+            .store_extend_ref_mask(call_node.node.func.node.id, &template.method.node.params);
+
+        specialized_ret
+    };
 
     check_call_signature(
         call_node.span,
         &specialized_params[1..],
         specialized_params.len() - 1,
-        &specialized_ret,
+        &ret_ty,
         &call_node.node.args,
         type_checker,
         errors,
@@ -611,7 +518,7 @@ fn try_specialize_extend(
         errors,
     );
 
-    specialized_ret
+    ret_ty
 }
 
 fn check_extend_var_params(
@@ -644,8 +551,53 @@ fn check_extend_var_params(
     }
 }
 
-/// Type-check an extend method call in receiver position: `receiver.method(args...)`.
-/// Uses params[1..] — the self param is consumed by the receiver, not in args.
+fn check_extend_call_impl(
+    def: &ExtendMethodDef,
+    call_node: &CallNode,
+    receiver: Option<&ExprNode>,
+    method_name: Ident,
+    skip_receiver: bool,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) -> Type {
+    let param_start = usize::from(skip_receiver);
+    let param_types: Vec<Type> = def.params[param_start..]
+        .iter()
+        .map(|p| p.ty.clone())
+        .collect();
+    type_checker
+        .extend_call_targets
+        .insert(call_node.node.func.node.id, def.internal_name);
+    type_checker.store_extend_ref_mask(call_node.node.func.node.id, &def.params);
+    let result = check_call_signature(
+        call_node.span,
+        &param_types,
+        param_types.len(),
+        &def.ret,
+        &call_node.node.args,
+        type_checker,
+        errors,
+    );
+    if skip_receiver {
+        check_extend_var_params(
+            &def.params,
+            receiver,
+            method_name,
+            call_node,
+            type_checker,
+            errors,
+        );
+    } else {
+        check_var_param_args(
+            def.params.iter().map(|p| (p.name, p.mutability)),
+            &call_node.node.args,
+            type_checker,
+            errors,
+        );
+    }
+    result
+}
+
 fn check_extend_call(
     def: &ExtendMethodDef,
     call_node: &CallNode,
@@ -654,61 +606,32 @@ fn check_extend_call(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
-    let param_types: Vec<Type> = def.params[1..].iter().map(|p| p.ty.clone()).collect();
-    type_checker
-        .extend_call_targets
-        .insert(call_node.node.func.node.id, def.internal_name);
-    type_checker.store_extend_ref_mask(call_node.node.func.node.id, &def.params);
-    let result = check_call_signature(
-        call_node.span,
-        &param_types,
-        param_types.len(),
-        &def.ret,
-        &call_node.node.args,
-        type_checker,
-        errors,
-    );
-    check_extend_var_params(
-        &def.params,
+    check_extend_call_impl(
+        def,
+        call_node,
         receiver,
         method_name,
-        call_node,
+        true,
         type_checker,
         errors,
-    );
-    result
+    )
 }
 
-/// Type-check an extend method in qualified call position: `module.method(receiver, args...)`.
-/// Uses params[0..] — the receiver is explicitly the first argument.
 fn check_extend_qualified_call(
     def: &ExtendMethodDef,
     call_node: &CallNode,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
-    let param_types: Vec<Type> = def.params.iter().map(|p| p.ty.clone()).collect();
-    type_checker
-        .extend_call_targets
-        .insert(call_node.node.func.node.id, def.internal_name);
-    type_checker.store_extend_ref_mask(call_node.node.func.node.id, &def.params);
-    let result = check_call_signature(
-        call_node.span,
-        &param_types,
-        param_types.len(),
-        &def.ret,
-        &call_node.node.args,
+    check_extend_call_impl(
+        def,
+        call_node,
+        None,
+        Ident(Intern::new(String::new())),
+        false,
         type_checker,
         errors,
-    );
-
-    check_var_param_args(
-        def.params.iter().map(|p| (p.name, p.mutability)),
-        &call_node.node.args,
-        type_checker,
-        errors,
-    );
-    result
+    )
 }
 
 /// Look up extend methods for `receiver_ty.method_name(...)`. Returns Some(ty) if found,
@@ -781,7 +704,7 @@ fn try_resolve_generic_extend(
     let base_key = extend_base_key(receiver_ty)?;
 
     let key = (base_key, method_name);
-    let templates = type_checker.generic_extend_templates.get(&key)?.clone();
+    let templates = type_checker.ctx.generic_extend_templates.get(&key)?.clone();
 
     // try matching each templates target_type pattern against the receiver
     let mut matches: Vec<(GenericExtendTemplate, Vec<Type>, Vec<usize>)> = vec![];
@@ -1288,27 +1211,21 @@ fn handle_method_call_if_applicable(
         return None;
     }
 
-    let field_op = match chain[index] {
-        PostfixNodeRef::Field { .. } => chain[index],
-        _ => return None,
+    let PostfixNodeRef::Field {
+        node: field_node, ..
+    } = chain[index]
+    else {
+        return None;
     };
-    let call_op = match chain[index + 1] {
-        PostfixNodeRef::Call { .. } => chain[index + 1],
-        _ => return None,
-    };
+    let field_op = chain[index];
 
     let PostfixNodeRef::Call {
         node: call_node, ..
-    } = call_op
+    } = chain[index + 1]
     else {
-        unreachable!()
+        return None;
     };
-    let PostfixNodeRef::Field {
-        node: field_node, ..
-    } = field_op
-    else {
-        unreachable!()
-    };
+    let call_op = chain[index + 1];
 
     if call_node.node.func.node.id != field_op.expr_id() {
         return Some(MethodCallOutcome::NotMethod);
@@ -1586,6 +1503,7 @@ fn try_module_dispatch(
                     let base_key = extend_base_key(&first_arg_ty);
                     let stored = base_key.and_then(|k| {
                         type_checker
+                            .ctx
                             .generic_extend_templates
                             .get(&(k, member_name))
                             .and_then(|templates| {
