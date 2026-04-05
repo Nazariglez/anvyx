@@ -5,48 +5,10 @@ use internment::Intern;
 use super::{FuncLower, LowerCtx, LowerError, SharedCtx};
 use crate::{
     ast::{self, BinaryOp, ConstParam, Ident, Mutability, Stmt, Type, UnaryOp},
-    hir,
+    backend_names, hir,
     span::Span,
     typecheck::ExternTypeDef,
 };
-
-fn build_generic_suffix(type_args: &[Type], const_args: &[usize]) -> String {
-    let suffix = type_args
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join("$");
-    if const_args.is_empty() {
-        suffix
-    } else {
-        let csuffix = const_args
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("$");
-        format!("{suffix}$c{csuffix}")
-    }
-}
-
-pub(super) fn mangle_generic_name(name: Ident, type_args: &[Type], const_args: &[usize]) -> Ident {
-    let suffix = build_generic_suffix(type_args, const_args);
-    Ident(Intern::new(format!("{name}${suffix}")))
-}
-
-pub(super) fn mangle_method_spec_name(
-    struct_name: Ident,
-    method_name: Ident,
-    type_args: &[Type],
-    const_args: &[usize],
-) -> Ident {
-    if type_args.is_empty() && const_args.is_empty() {
-        return Ident(Intern::new(format!("{struct_name}::{method_name}")));
-    }
-    let suffix = build_generic_suffix(type_args, const_args);
-    Ident(Intern::new(format!(
-        "{struct_name}::{method_name}${suffix}"
-    )))
-}
 
 pub(super) fn register_extern_decl(
     name: Ident,
@@ -96,11 +58,14 @@ pub(super) fn extern_binary_op_key(
     self_on_right: bool,
 ) -> Ident {
     let op_str = binary_op_key_str(op);
-    let other = other_ty.to_string();
     if self_on_right {
-        Ident(Intern::new(format!("{type_name}::__op_r{op_str}__{other}")))
+        Ident(Intern::new(format!(
+            "{type_name}::__op_r{op_str}__{other_ty}"
+        )))
     } else {
-        Ident(Intern::new(format!("{type_name}::__op_{op_str}__{other}")))
+        Ident(Intern::new(format!(
+            "{type_name}::__op_{op_str}__{other_ty}"
+        )))
     }
 }
 
@@ -348,7 +313,6 @@ pub(super) fn register_extend_declarations<'a>(
         let Some(resolved_ty) = resolve_extend_ty(&node.node.ty, ctx) else {
             continue;
         };
-        let type_str = format!("{resolved_ty}");
         for method in &node.node.methods {
             if method.node.params.is_empty() {
                 continue;
@@ -356,10 +320,8 @@ pub(super) fn register_extend_declarations<'a>(
             if method.node.params[0].name.0.as_ref() != "self" {
                 continue;
             }
-            let internal_name = Ident(Intern::new(format!(
-                "__extend::{}::{}::{}",
-                module_str, type_str, method.node.name
-            )));
+            let internal_name =
+                backend_names::encode_extend_name(&module_str, &resolved_ty, method.node.name);
             if skip_existing && ctx.funcs.contains_key(&internal_name) {
                 continue;
             }

@@ -8,11 +8,11 @@ tests target="tests":
     cargo run --package test-runner -- {{target}} --quiet
 
 full-tests target="tests":
-    cargo test --workspace
+    cargo test -q --workspace
     cargo run --package test-runner -- {{target}} --quiet
 
 full-tests-release target="tests":
-    cargo test --workspace --release
+    cargo test -q --workspace --release
     cargo run --package test-runner -- {{target}} --release
 
 install:
@@ -20,6 +20,12 @@ install:
 
 miri:
     MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri test -p anvyx-lang --all-targets
+
+rust-coverage floor="837":
+    python3 ./scripts/rust_coverage.py --floor {{floor}}
+
+clean-rust-cache:
+    rm -rf .anvyx/cache/rust/artifacts
 
 scan-tests threshold="75":
     python3 ./scripts/scan_tests.py -t {{threshold}}

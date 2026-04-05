@@ -31,6 +31,7 @@ use crate::{
         ExternFunc, ExternTypeMember, Func, FuncNode, FuncParam, Ident, ImportKind, Mutability,
         Param, ReturnNode, Stmt, StmtNode, Type, TypeParam, VariantKind, Visibility,
     },
+    backend_names,
     span::Span,
 };
 
@@ -889,17 +890,17 @@ pub(super) fn collect_scope_types(
                         continue;
                     }
 
-                    let type_str = format!("{resolved_ty}");
                     let module_str = type_checker
                         .ctx
                         .module_path
                         .as_ref()
                         .map(|p| p.join("::"))
                         .unwrap_or_default();
-                    let internal_name = Ident(Intern::new(format!(
-                        "__extend::{}::{}::{}",
-                        module_str, type_str, method.node.name
-                    )));
+                    let internal_name = backend_names::encode_extend_name(
+                        &module_str,
+                        &resolved_ty,
+                        method.node.name,
+                    );
 
                     let mut params = method.node.params.clone();
                     params[0].ty = resolved_ty.clone();
@@ -1129,11 +1130,11 @@ pub(super) fn build_module_def_with_reexports(
                     if self_param.name.0.as_ref() != "self" {
                         continue;
                     }
-                    let type_str = format!("{resolved_ty}");
-                    let internal_name = Ident(Intern::new(format!(
-                        "__extend::{}::{}::{}",
-                        module_str, type_str, method.node.name
-                    )));
+                    let internal_name = backend_names::encode_extend_name(
+                        &module_str,
+                        &resolved_ty,
+                        method.node.name,
+                    );
                     let mut params = method.node.params.clone();
                     params[0].ty = resolved_ty.clone();
                     let ret = resolve(&method.node.ret);
@@ -1836,6 +1837,7 @@ pub(super) fn check_binding(
     };
 
     let mutable = matches!(node.mutability, Mutability::Mutable);
+    type_checker.set_binding_type(node.value.node.id, binding_ty.clone());
     check_pattern(&node.pattern, &binding_ty, mutable, type_checker, errors);
 }
 

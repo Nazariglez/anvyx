@@ -3,7 +3,6 @@ use internment::Intern;
 use crate::{
     ast,
     ast::{BinaryOp, Ident, Type},
-    hir,
     hir::{Block, Expr, Func, FuncId, Local, LocalId, Program, Stmt, StmtKind},
     lower,
     lower::LowerError,
@@ -20,7 +19,7 @@ use std::collections::HashMap;
 
 // ---- pipeline helpers ----
 
-pub(crate) fn generate_hir(source: &str, file_path: &str) -> Result<hir::Program, String> {
+pub(crate) fn generate_hir(source: &str, file_path: &str) -> Result<Program, String> {
     crate::generate_hir_with_std(
         source,
         file_path,
@@ -35,7 +34,7 @@ pub(crate) struct TestCtx;
 
 impl TestCtx {
     #[track_caller]
-    pub(crate) fn lower_ok(source: &str) -> hir::Program {
+    pub(crate) fn lower_ok(source: &str) -> Program {
         let (ast, tcx) = Self::pipeline(source);
         lower::lower_program(&ast, &tcx, &[]).expect("lowering should succeed")
     }
@@ -139,7 +138,7 @@ pub(crate) fn hir_program(func: Func) -> Program {
     Program {
         funcs: vec![func],
         externs: vec![],
-        struct_meta: vec![],
+        aggregate_meta: vec![],
         enum_meta: vec![],
     }
 }

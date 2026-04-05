@@ -3,7 +3,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendArg {
     Vm,
-    Transpiler,
+    Rust,
     Both,
 }
 
@@ -11,10 +11,10 @@ impl BackendArg {
     fn from_str(s: &str) -> Result<Self, String> {
         match s {
             "vm" => Ok(Self::Vm),
-            "transpiler" => Ok(Self::Transpiler),
+            "rust" => Ok(Self::Rust),
             "both" => Ok(Self::Both),
             _ => Err(format!(
-                "Unknown backend: '{s}'. Expected 'vm', 'transpiler', or 'both'"
+                "Unknown backend: '{s}'. Expected 'vm', 'rust', or 'both'"
             )),
         }
     }
@@ -22,7 +22,7 @@ impl BackendArg {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Vm => "vm",
-            Self::Transpiler => "transpiler",
+            Self::Rust => "rust",
             Self::Both => "both",
         }
     }
@@ -30,28 +30,38 @@ impl BackendArg {
 
 #[derive(Debug)]
 pub struct RunnerArgs {
-    pub root: PathBuf,
+    pub paths: Vec<PathBuf>,
     pub timeout_ms: u64,
     pub quiet: bool,
     pub release: bool,
-    pub file: Option<PathBuf>,
     pub backend: BackendArg,
 }
+
+pub const USAGE: &str = "\
+Usage: test-runner <PATH>... [OPTIONS]
+
+Arguments:
+  <PATH>...  One or more test files or directories
+
+Options:
+  --backend <vm|rust|both>  Backend to test (default: vm)
+  --timeout <ms>            Test timeout in milliseconds (default: 2000)
+  --quiet                   Suppress individual test output
+  --release                 Build in release mode";
 
 impl RunnerArgs {
     pub fn new() -> Result<Self, String> {
         let args = std::env::args().collect::<Vec<String>>();
-        let (root, file) = parse_root_file(&args)?;
+        let paths = parse_paths(&args)?;
         let quiet = parse_quiet(&args);
         let release = parse_release(&args);
         let timeout_ms = parse_timeout(&args);
         let backend = parse_backend(&args)?;
         Ok(Self {
-            root,
+            paths,
             timeout_ms,
             quiet,
             release,
-            file,
             backend,
         })
     }
@@ -72,21 +82,24 @@ fn parse_timeout(args: &[String]) -> u64 {
         .map_or(2000, |arg| arg.parse::<u64>().unwrap())
 }
 
-fn parse_root_file(args: &[String]) -> Result<(PathBuf, Option<PathBuf>), String> {
-    if args.len() == 1 || args[1].starts_with("--") {
-        return Err("Provide a directory or a file as first argument".to_string());
+fn parse_paths(args: &[String]) -> Result<Vec<PathBuf>, String> {
+    let paths: Vec<PathBuf> = args[1..]
+        .iter()
+        .take_while(|arg| !arg.starts_with("--"))
+        .map(PathBuf::from)
+        .collect();
+
+    if paths.is_empty() {
+        return Err("Provide one or more directories or files as arguments".to_string());
     }
 
-    let dir = std::path::Path::new(&args[1]);
-    if dir.is_dir() {
-        return Ok((dir.to_path_buf(), None));
+    for path in &paths {
+        if !path.is_file() && !path.is_dir() {
+            return Err(format!("Path not found: {}", path.display()));
+        }
     }
 
-    if dir.is_file() {
-        return Ok((dir.parent().unwrap().to_path_buf(), Some(dir.to_path_buf())));
-    }
-
-    Err("Provide a directory or a file as first argument".to_string())
+    Ok(paths)
 }
 
 fn parse_backend(args: &[String]) -> Result<BackendArg, String> {

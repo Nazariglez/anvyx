@@ -5,7 +5,6 @@ use super::{
     bytecode::{CastKind, Op},
     compiler::CompiledProgram,
     managed_rc::ManagedRc,
-    meta::VariantMetaKind,
     value::{
         ClosureData, EnumData, MapStorage, RefPath, RuntimeError, StructData, Value, type_name,
         value_add, value_and, value_bit_and, value_bit_not, value_bit_or, value_div, value_eq,
@@ -16,6 +15,7 @@ use super::{
 use crate::{
     ast::{FormatKind, FormatSpec},
     builtin::Builtin,
+    ir_meta::VariantShape,
     prelude_enums::OPTION_TYPE_ID,
 };
 
@@ -594,7 +594,7 @@ impl<'a> VM<'a> {
                     let start = self.stack.len() - count;
                     let fields: Vec<Value> = self.stack.drain(start..).collect();
                     let data = StructData { type_id, fields };
-                    let vtable = self.program.struct_meta[type_id as usize].vtable.unwrap();
+                    let vtable = self.program.aggregate_vtables[type_id as usize].unwrap();
                     self.push(Value::DataRef(ManagedRc::new_with_vtable(data, vtable)));
                 }
 
@@ -1119,16 +1119,16 @@ impl<'a> VM<'a> {
         s: &StructData,
         value: &Value,
     ) -> Result<String, RuntimeError> {
-        let meta = &self.program.struct_meta[s.type_id as usize];
-        if let Some(chunk_idx) = meta.to_string_fn {
-            let result = self.call_function(chunk_idx, vec![value.clone()])?;
+        let meta = &self.program.aggregate_meta[s.type_id as usize];
+        if let Some(func_id) = meta.display_func {
+            let result = self.call_function(func_id.0 as usize, vec![value.clone()])?;
             match result {
                 Value::String(s) => Ok((*s).clone()),
                 _ => Err(RuntimeError::new("to_string must return a string")),
             }
         } else {
             let name = meta.name.clone();
-            let field_names: Vec<String> = meta.field_names.clone();
+            let field_names: Vec<String> = meta.fields.iter().map(|f| f.name.clone()).collect();
             let fields: Vec<Value> = s.fields.clone();
             let mut out = format!("{name}(");
             for (i, (fname, val)) in field_names.iter().zip(fields.iter()).enumerate() {
@@ -1214,22 +1214,22 @@ impl<'a> VM<'a> {
                 let variant_idx = e.variant as usize;
                 let variant_name = meta.variants[variant_idx].name.clone();
                 let enum_name = meta.name.clone();
-                let kind = meta.variants[variant_idx].kind.clone();
+                let shape = meta.variants[variant_idx].shape.clone();
                 let fields: Vec<Value> = e.fields.clone();
-                match kind {
-                    VariantMetaKind::Unit => Ok(format!("{enum_name}.{variant_name}")),
-                    VariantMetaKind::Tuple(_) => {
+                match shape {
+                    VariantShape::Unit => Ok(format!("{enum_name}.{variant_name}")),
+                    VariantShape::Tuple(_) => {
                         let mut vals = vec![];
                         for v in &fields {
                             vals.push(self.format_value(v)?);
                         }
                         Ok(format!("{enum_name}.{variant_name}({})", vals.join(", ")))
                     }
-                    VariantMetaKind::Struct(field_names) => {
+                    VariantShape::Struct(field_defs) => {
                         let mut pairs = vec![];
-                        for (name, val) in field_names.iter().zip(fields.iter()) {
+                        for (fmeta, val) in field_defs.iter().zip(fields.iter()) {
                             let formatted = self.format_value(val)?;
-                            pairs.push(format!("{name}: {formatted}"));
+                            pairs.push(format!("{}: {formatted}", fmeta.name));
                         }
                         Ok(format!("{enum_name}.{variant_name}({})", pairs.join(", ")))
                     }
@@ -1310,8 +1310,9 @@ mod tests {
             chunks,
             main_idx,
             extern_names: vec![],
-            struct_meta: vec![],
+            aggregate_meta: vec![],
             enum_meta: vec![],
+            aggregate_vtables: vec![],
         }
     }
 

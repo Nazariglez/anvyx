@@ -6,10 +6,14 @@ mod lexer;
 mod lower;
 mod parser;
 mod resolve;
+mod rust;
 mod span;
 mod std_module;
 mod typecheck;
 mod vm;
+
+pub(crate) mod backend_names;
+pub(crate) mod ir_meta;
 
 pub mod metadata;
 pub mod prelude_enums;
@@ -247,11 +251,30 @@ pub(crate) fn generate_hir_with_std(
     lower::lower_program(&ast, &tcx, &module_list).map_err(|e| format!("Lowering error: {e}"))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum Profile {
+    #[default]
+    Debug,
+    Release,
+}
+
+pub struct RustBackendConfig {
+    pub profile: Profile,
+}
+
+impl Default for RustBackendConfig {
+    fn default() -> Self {
+        Self {
+            profile: Profile::Debug,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Backend {
     #[default]
     Vm,
-    Transpiler,
+    Rust,
 }
 
 impl std::str::FromStr for Backend {
@@ -260,10 +283,8 @@ impl std::str::FromStr for Backend {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "vm" => Ok(Self::Vm),
-            "transpiler" => Ok(Self::Transpiler),
-            _ => Err(format!(
-                "Unknown backend: '{s}'. Expected 'vm' or 'transpiler'"
-            )),
+            "rust" => Ok(Self::Rust),
+            _ => Err(format!("Unknown backend: '{s}'. Expected 'vm' or 'rust'")),
         }
     }
 }
@@ -273,6 +294,7 @@ pub fn run_program(
     file_path: &str,
     core_source: &str,
     backend: Backend,
+    rust_config: &RustBackendConfig,
 ) -> Result<String, String> {
     run_program_with_externs(
         program,
@@ -281,6 +303,7 @@ pub fn run_program(
         backend,
         std::collections::HashMap::new(),
         &std::collections::HashMap::new(),
+        rust_config,
     )
 }
 
@@ -291,6 +314,7 @@ pub fn run_program_with_externs(
     backend: Backend,
     externs: std::collections::HashMap<String, ExternHandler>,
     extern_metadata: &std::collections::HashMap<String, String>,
+    rust_config: &RustBackendConfig,
 ) -> Result<String, String> {
     let core = CoreSource {
         prelude: core_source.to_string(),
@@ -304,6 +328,7 @@ pub fn run_program_with_externs(
         extern_metadata,
         &std::collections::HashMap::new(),
         &core,
+        rust_config,
     )
 }
 
@@ -315,6 +340,7 @@ pub fn run_program_with_std(
     extern_metadata: &std::collections::HashMap<String, String>,
     std_modules: &std::collections::HashMap<String, StdModuleSource>,
     core: &CoreSource,
+    rust_config: &RustBackendConfig,
 ) -> Result<String, String> {
     let hir = generate_hir_with_std(
         program,
@@ -334,7 +360,7 @@ pub fn run_program_with_std(
 
     match backend {
         Backend::Vm => vm::run_with_externs(&hir, filtered),
-        Backend::Transpiler => Err("Transpiler backend is not yet implemented".to_string()),
+        Backend::Rust => rust::run(&hir, rust_config),
     }
 }
 

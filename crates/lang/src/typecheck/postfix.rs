@@ -19,6 +19,7 @@ use crate::{
         ArrayLen, CallNode, ConstParam, ConstParamId, ExprId, ExprKind, ExprNode, FuncParam, Ident,
         Mutability, Type, TypeParam,
     },
+    backend_names,
     span::Span,
 };
 
@@ -429,7 +430,8 @@ fn try_specialize_extend(
             span,
             errors,
         );
-        let mangled = cache_key.mangle(&template.source_module);
+        let mangled =
+            backend_names::encode_extend_specialization_name(&cache_key, &template.source_module);
         type_checker
             .extend_call_targets
             .insert(call_node.node.func.node.id, mangled);
@@ -490,7 +492,8 @@ fn try_specialize_extend(
             errors,
         );
 
-        let mangled = cache_key.mangle(&template.source_module);
+        let mangled =
+            backend_names::encode_extend_specialization_name(&cache_key, &template.source_module);
         type_checker
             .extend_call_targets
             .insert(call_node.node.func.node.id, mangled);

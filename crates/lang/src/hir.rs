@@ -1,8 +1,8 @@
 use crate::{
     ast::{BinaryOp, FormatSpec, Ident, Type, UnaryOp},
     builtin::Builtin,
+    ir_meta::{AggregateMeta, EnumMeta},
     span::Span,
-    vm::meta::{EnumMeta, StructMeta},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -13,12 +13,31 @@ pub enum Ownership {
     Move,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Program {
     pub funcs: Vec<Func>,
     pub externs: Vec<ExternDecl>,
-    pub struct_meta: Vec<StructMeta>,
+    pub aggregate_meta: Vec<AggregateMeta>,
     pub enum_meta: Vec<EnumMeta>,
+}
+
+impl PartialEq for Program {
+    fn eq(&self, other: &Self) -> bool {
+        self.funcs == other.funcs
+            && self.externs == other.externs
+            && self.aggregate_meta == other.aggregate_meta
+            && self.enum_meta == other.enum_meta
+    }
+}
+
+impl Program {
+    pub fn find_aggregate_by_name(&self, name: &str) -> Option<(u32, &AggregateMeta)> {
+        self.aggregate_meta
+            .iter()
+            .enumerate()
+            .find(|(_, m)| m.name == name)
+            .map(|(i, m)| (i as u32, m))
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -394,7 +413,7 @@ mod tests {
         let prog = Program {
             funcs: vec![],
             externs: vec![],
-            struct_meta: vec![],
+            aggregate_meta: vec![],
             enum_meta: vec![],
         };
         assert!(prog.funcs.is_empty());
@@ -414,7 +433,7 @@ mod tests {
         let prog = Program {
             funcs: vec![func],
             externs: vec![],
-            struct_meta: vec![],
+            aggregate_meta: vec![],
             enum_meta: vec![],
         };
         assert_eq!(prog.funcs.len(), 1);

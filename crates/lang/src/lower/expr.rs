@@ -6,6 +6,7 @@ use crate::{
         self, ArrayLen, BinaryOp, Ident, InferredEnumArgs, Lit, MethodReceiver, Mutability, Type,
         UnaryOp,
     },
+    backend_names,
     builtin::Builtin,
     hir,
     span::Span,
@@ -23,11 +24,8 @@ fn lower_args(
         .collect()
 }
 
-/// If `expr` is already a Local or FieldGet chain, return it as-is.
-/// Otherwise, spill it to a temp local so the compiler can emit PushRef.
-/// This is needed when a `var self` method is called on a temporary expression
-/// (function return, constructor, chain result) — the lowering must give the
-/// compiler a named local to take a reference to.
+/// Reuse the expression if it is already a local or field chain; otherwise spill it
+/// to a temp so PushRef has a named place to borrow from
 fn ensure_ref_target(
     expr: hir::Expr,
     span: Span,
@@ -1142,7 +1140,12 @@ fn lower_safe_call_expr(
             type_args,
         } = &inner_ty
         {
-            let mangled = mangle_method_spec_name(*struct_name, method_name, type_args, &[]);
+            let mangled = backend_names::encode_method_specialization_name(
+                *struct_name,
+                method_name,
+                type_args,
+                &[],
+            );
             let &func_id =
                 ctx.shared
                     .funcs
@@ -2817,7 +2820,12 @@ fn try_lower_method_call(
         type_args,
     } = &target_ty
     {
-        let mangled = mangle_method_spec_name(*struct_name, method_name, type_args, &[]);
+        let mangled = backend_names::encode_method_specialization_name(
+            *struct_name,
+            method_name,
+            type_args,
+            &[],
+        );
         if let Some(&func_id) = ctx.shared.funcs.get(&mangled) {
             let receiver = lower_expr(&field.node.target, ctx, fc, out)?;
             let (recv_kind, method_params) = ctx
@@ -2976,7 +2984,7 @@ fn lower_direct_call(
     {
         let defaults = ctx.shared.tcx.func_param_defaults(*func_name);
         inject_defaults(&mut args, defaults);
-        let mangled = mangle_generic_name(*func_name, type_args, const_args);
+        let mangled = backend_names::encode_specialization_name(*func_name, type_args, const_args);
         let &func_id = ctx
             .shared
             .funcs

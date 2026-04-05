@@ -13,6 +13,7 @@ use crate::{
 
 mod assign;
 mod block;
+mod coerce;
 mod expr;
 mod for_loop;
 mod helpers;
@@ -40,6 +41,7 @@ pub enum LowerError {
     UnknownLocal { name: Ident, span: Span },
     UnknownFunc { name: Ident, span: Span },
     MissingExprType { span: Span },
+    MissingBindingType { span: Span },
     NonDirectCall { span: Span },
 }
 
@@ -77,6 +79,11 @@ impl fmt::Display for LowerError {
             Self::MissingExprType { span } => write!(
                 f,
                 "expression at offset {} has no resolved type (compiler bug)",
+                span.start
+            ),
+            Self::MissingBindingType { span } => write!(
+                f,
+                "binding at offset {} has no resolved type (compiler bug)",
                 span.start
             ),
             Self::NonDirectCall { span } => write!(
@@ -118,6 +125,7 @@ impl SharedCtx<'_> {
 pub(super) struct LowerCtx<'a> {
     pub(super) shared: &'a SharedCtx<'a>,
     pub(super) type_overrides: Option<&'a HashMap<ExprId, (Span, Type)>>,
+    pub(super) binding_type_overrides: Option<&'a HashMap<ExprId, Type>>,
 }
 
 impl LowerCtx<'_> {
@@ -127,6 +135,15 @@ impl LowerCtx<'_> {
             .and_then(|overrides| overrides.get(&id))
             .or_else(|| self.shared.tcx.get_type(id));
         let (_, ty) = result.ok_or(LowerError::MissingExprType { span })?;
+        Ok(ty.clone())
+    }
+
+    pub(super) fn binding_type(&self, id: ExprId, span: Span) -> Result<Type, LowerError> {
+        let ty = self
+            .binding_type_overrides
+            .and_then(|overrides| overrides.get(&id))
+            .or_else(|| self.shared.tcx.binding_type(id))
+            .ok_or(LowerError::MissingBindingType { span })?;
         Ok(ty.clone())
     }
 }

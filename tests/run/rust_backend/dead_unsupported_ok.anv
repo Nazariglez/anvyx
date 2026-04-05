@@ -1,0 +1,15 @@
+// @mode: run
+// @expect: success
+// @match: hello
+
+dataref Node {
+    value: int,
+}
+
+fn unused() {
+    let n = Node { value: 1 };
+}
+
+fn main() {
+    println("hello");
+}

@@ -51,6 +51,54 @@ fn let_binding_int() {
 }
 
 #[test]
+fn annotated_optional_binding_uses_effective_binding_type() {
+    let prog = lower_ok(
+        "fn main() { let x: int? = 42; match x { Option.Some(v) => {}, Option.None => {}, } }",
+    );
+    let main = find_main(&prog);
+
+    assert_eq!(main.locals[0].ty, Type::option_of(Type::Int));
+
+    let StmtKind::Let { init, .. } = &main.body.stmts[0].kind else {
+        panic!("expected Let stmt")
+    };
+    let ExprKind::EnumLiteral {
+        type_id,
+        variant,
+        fields,
+    } = &init.kind
+    else {
+        panic!("expected coerced EnumLiteral, got {:?}", init.kind)
+    };
+    assert_eq!(*type_id, crate::prelude_enums::OPTION_TYPE_ID);
+    assert_eq!(*variant, 1);
+    assert_eq!(fields.len(), 1);
+    assert!(matches!(fields[0].kind, ExprKind::Int(42)));
+
+    let StmtKind::Match { scrutinee, .. } = &main.body.stmts[1].kind else {
+        panic!("expected Match stmt")
+    };
+    assert_eq!(
+        main.locals[scrutinee.0 as usize].ty,
+        Type::option_of(Type::Int)
+    );
+}
+
+#[test]
+fn annotated_array_infer_binding_uses_resolved_binding_type() {
+    let prog = lower_ok("fn main() { let xs: [int?; _] = [nil, 1]; }");
+    let main = find_main(&prog);
+
+    assert_eq!(
+        main.locals[0].ty,
+        Type::Array {
+            elem: Type::option_of(Type::Int).boxed(),
+            len: ast::ArrayLen::Fixed(2),
+        }
+    );
+}
+
+#[test]
 fn let_binding_binary() {
     let prog = lower_ok("fn main() { let x = 1 + 2; }");
     let main = find_main(&prog);
@@ -60,7 +108,7 @@ fn let_binding_binary() {
     assert!(matches!(
         init.kind,
         ExprKind::Binary {
-            op: crate::ast::BinaryOp::Add,
+            op: ast::BinaryOp::Add,
             ..
         }
     ));
@@ -76,7 +124,7 @@ fn let_binding_unary() {
     assert!(matches!(
         init.kind,
         ExprKind::Unary {
-            op: crate::ast::UnaryOp::Neg,
+            op: ast::UnaryOp::Neg,
             ..
         }
     ));
@@ -631,7 +679,7 @@ fn string_interp_with_var() {
     assert!(matches!(
         init.kind,
         ExprKind::Binary {
-            op: crate::ast::BinaryOp::Add,
+            op: ast::BinaryOp::Add,
             ..
         }
     ));
@@ -660,7 +708,7 @@ fn string_interp_multiple_parts() {
     assert!(matches!(
         init.kind,
         ExprKind::Binary {
-            op: crate::ast::BinaryOp::Add,
+            op: ast::BinaryOp::Add,
             ..
         }
     ));
@@ -770,7 +818,7 @@ fn lowers_compound_assignment() {
             StmtKind::Assign {
                 value: hir::Expr {
                     kind: ExprKind::Binary {
-                        op: crate::ast::BinaryOp::Add,
+                        op: ast::BinaryOp::Add,
                         ..
                     },
                     ..

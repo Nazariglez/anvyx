@@ -703,7 +703,7 @@ fn test_eq_array_view_errors() {
     let view_ty = Type::ArrayView {
         elem: Type::Int.boxed(),
     };
-    let fn_body = vec![super::helpers::return_stmt(Some(binary_expr(
+    let fn_body = vec![return_stmt(Some(binary_expr(
         ident_expr("a"),
         BinaryOp::Eq,
         ident_expr("b"),

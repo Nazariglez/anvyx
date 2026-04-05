@@ -2,14 +2,15 @@ use std::{collections::HashMap, fmt};
 
 use super::{
     bytecode::{CastKind, Chunk, Op},
+    cycle_collector::make_dataref_vtable,
     managed_rc::ManagedRc,
-    meta::{EnumMeta, StructMeta},
     value::Value,
 };
 use crate::{
     ast::{BinaryOp, Type, UnaryOp},
     builtin::Builtin,
     hir,
+    ir_meta::{AggregateKind, AggregateMeta, EnumMeta},
 };
 
 #[derive(Debug)]
@@ -48,8 +49,9 @@ pub struct CompiledProgram {
     pub chunks: Vec<Chunk>,
     pub main_idx: usize,
     pub extern_names: Vec<String>,
-    pub struct_meta: Vec<StructMeta>,
+    pub aggregate_meta: Vec<AggregateMeta>,
     pub enum_meta: Vec<EnumMeta>,
+    pub aggregate_vtables: Vec<Option<&'static anvyx_runtime::CycleVtable>>,
 }
 
 struct LoopState {
@@ -161,6 +163,21 @@ impl<'a> FuncCompiler<'a> {
     }
 }
 
+fn build_aggregate_vtables(
+    aggregate_meta: &[AggregateMeta],
+) -> Vec<Option<&'static anvyx_runtime::CycleVtable>> {
+    aggregate_meta
+        .iter()
+        .map(|meta| match meta.kind {
+            AggregateKind::DataRef => Some(make_dataref_vtable(
+                &meta.qualified_name,
+                meta.cycle_capable,
+            )),
+            AggregateKind::Struct => None,
+        })
+        .collect()
+}
+
 pub fn compile(hir: &hir::Program) -> Result<CompiledProgram, CompileError> {
     let mut chunks = vec![];
 
@@ -180,8 +197,9 @@ pub fn compile(hir: &hir::Program) -> Result<CompiledProgram, CompileError> {
         chunks,
         main_idx,
         extern_names,
-        struct_meta: hir.struct_meta.clone(),
+        aggregate_meta: hir.aggregate_meta.clone(),
         enum_meta: hir.enum_meta.clone(),
+        aggregate_vtables: build_aggregate_vtables(&hir.aggregate_meta),
     })
 }
 
@@ -1064,7 +1082,7 @@ mod tests {
         let program = Program {
             funcs: vec![helper, main],
             externs: vec![],
-            struct_meta: vec![],
+            aggregate_meta: vec![],
             enum_meta: vec![],
         };
         let compiled = compile(&program).unwrap();
@@ -1079,7 +1097,7 @@ mod tests {
         let program = Program {
             funcs: vec![simple_func("notmain", vec![], vec![], 0, Type::Void)],
             externs: vec![],
-            struct_meta: vec![],
+            aggregate_meta: vec![],
             enum_meta: vec![],
         };
         assert!(matches!(

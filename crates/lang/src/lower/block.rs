@@ -105,15 +105,15 @@ fn lower_stmt(
             match &binding.pattern.node {
                 Pattern::Ident(name) => {
                     let name = *name;
-                    let ty = ctx.expr_type(binding.value.node.id, span)?;
+                    let ty = ctx.binding_type(binding.value.node.id, span)?;
 
                     let local_id = hir::LocalId(fc.locals.len() as u32);
-                    let init = lower_expr(&binding.value, ctx, fc, out)?;
                     fc.locals.push(hir::Local {
                         name: Some(name),
                         ty,
                         is_ref: false,
                     });
+                    let init = lower_expr(&binding.value, ctx, fc, out)?;
                     fc.bind_local(name, local_id);
 
                     Ok(Some(hir::Stmt {
@@ -129,7 +129,7 @@ fn lower_stmt(
                     fields,
                 } => {
                     let type_name = *type_name;
-                    let rhs_ty = ctx.expr_type(binding.value.node.id, span)?;
+                    let rhs_ty = ctx.binding_type(binding.value.node.id, span)?;
                     let rhs_expr = lower_expr(&binding.value, ctx, fc, out)?;
                     let scrutinee_local = alloc_and_bind(fc, span, out, rhs_ty.clone(), rhs_expr);
 

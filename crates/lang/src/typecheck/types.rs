@@ -256,41 +256,6 @@ pub struct ExtendSpecKey {
     pub target_type: Type,
 }
 
-impl ExtendSpecKey {
-    pub fn mangle(&self, source_module: &[String]) -> Ident {
-        use internment::Intern;
-        let module_part = if source_module.is_empty() {
-            String::new()
-        } else {
-            source_module.join("::")
-        };
-        let args_str = self
-            .type_args
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        let const_str = if self.const_args.is_empty() {
-            String::new()
-        } else {
-            format!(
-                ";{}",
-                self.const_args
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )
-        };
-        let type_str = format!("{}[{}{}]", self.target_type, args_str, const_str);
-        let name = format!(
-            "__extend::{}::{}::{}",
-            module_part, type_str, self.method_name
-        );
-        Ident(Intern::new(name))
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct ModuleGenericExtendEntry {
     pub base_name: Ident,
@@ -339,6 +304,7 @@ pub struct SpecializationResult {
     pub ret_ty: Type,
     pub err: Option<(Span, DiagnosticKind)>,
     pub body_types: HashMap<ExprId, (Span, Type)>,
+    pub binding_types: HashMap<ExprId, Type>,
 }
 
 #[derive(Debug)]
@@ -353,6 +319,7 @@ pub(super) struct InstantiationContext<'a> {
 pub(super) struct TypedBodyResult {
     pub(super) ret_ty: Type,
     pub(super) body_types: HashMap<ExprId, (Span, Type)>,
+    pub(super) binding_types: HashMap<ExprId, Type>,
     pub(super) first_error: Option<(Span, DiagnosticKind)>,
 }
 
@@ -362,6 +329,7 @@ impl TypedBodyResult {
             ret_ty: self.ret_ty,
             err: self.first_error,
             body_types: self.body_types,
+            binding_types: self.binding_types,
         }
     }
 }
@@ -435,6 +403,9 @@ pub struct ModuleCheckContext {
 pub(super) struct TypeChecker {
     /// Resolved type for each expression
     pub(super) types: HashMap<ExprId, (Span, Type)>,
+
+    /// Effective type for each binding initializer expression
+    pub(super) binding_types: HashMap<ExprId, Type>,
 
     /// Stack of scopes for variable lookup
     pub(super) scopes: Vec<HashMap<Ident, VarInfo>>,
@@ -545,6 +516,7 @@ pub(super) struct TypeChecker {
 #[derive(Debug)]
 pub struct TypecheckResult {
     pub(super) types: HashMap<ExprId, (Span, Type)>,
+    pub(super) binding_types: HashMap<ExprId, Type>,
     pub(super) struct_defs: HashMap<Ident, StructDef>,
     pub(super) enum_defs: HashMap<Ident, EnumDef>,
     pub(super) extern_type_defs: HashMap<Ident, ExternTypeDef>,
@@ -571,6 +543,7 @@ impl TypeChecker {
     pub(super) fn into_result(self) -> TypecheckResult {
         TypecheckResult {
             types: self.types,
+            binding_types: self.binding_types,
             struct_defs: self.ctx.struct_defs,
             enum_defs: self.ctx.enum_defs,
             extern_type_defs: self.ctx.extern_type_defs,
@@ -776,6 +749,10 @@ impl TypeChecker {
 
     pub(super) fn set_type(&mut self, id: ExprId, ty: Type, span: Span) {
         self.types.insert(id, (span, ty));
+    }
+
+    pub(super) fn set_binding_type(&mut self, id: ExprId, ty: Type) {
+        self.binding_types.insert(id, ty);
     }
 
     pub(super) fn get_type(&self, id: ExprId) -> Option<&(Span, Type)> {
@@ -1087,6 +1064,10 @@ impl TypeChecker {
 }
 
 impl TypecheckResult {
+    pub fn binding_type(&self, id: ExprId) -> Option<&Type> {
+        self.binding_types.get(&id)
+    }
+
     pub fn module_check_context(&self, path: &[String]) -> Option<&ModuleCheckContext> {
         self.module_check_contexts.get(path)
     }

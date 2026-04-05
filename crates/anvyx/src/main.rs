@@ -30,6 +30,8 @@ enum Command {
         file: Option<PathBuf>,
         #[arg(long, default_value = "vm")]
         backend: String,
+        #[arg(long)]
+        release: bool,
     },
     #[command(about = "Check an Anvyx file")]
     Check { file: Option<PathBuf> },
@@ -49,7 +51,11 @@ fn main() {
 
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
-        Command::Run { file, backend } => {
+        Command::Run {
+            file,
+            backend,
+            release,
+        } => {
             let manifest = manifest::parse_manifest()?;
             let path = resolve_entry(file, manifest.as_ref())?;
 
@@ -64,7 +70,7 @@ fn run(cli: Cli) -> Result<(), String> {
             } else {
                 progress::status("Checking", &format!("{}...", path.display()));
                 progress::status("Running", &format!("{}...", path.display()));
-                run::cmd(&path, &backend)?;
+                run::cmd(&path, &backend, release)?;
             }
         }
         Command::Check { file } => {

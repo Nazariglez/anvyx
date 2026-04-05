@@ -7,21 +7,17 @@ use internment::Intern;
 
 use super::{
     FuncLower, LowerCtx, LowerError, SharedCtx, analyze_ownership, collect_declarations,
-    lower_block, mangle_generic_name, mangle_method_spec_name, prepend_const_param_stmts,
-    register_const_param_locals, register_extend_declarations, register_named_local,
-    register_param_local, resolve_extend_ty,
+    lower_block, prepend_const_param_stmts, register_const_param_locals,
+    register_extend_declarations, register_named_local, register_param_local, resolve_extend_ty,
 };
 use crate::{
     ast::{self, Ident, MethodReceiver, Type, TypeVarId, VariantKind},
-    hir,
+    backend_names, hir,
+    ir_meta::{AggregateKind, AggregateMeta, EnumMeta, FieldMeta, VariantMeta, VariantShape},
     prelude_enums::OPTION_TYPE_ID,
     typecheck::{
         ExtendSpecKey, MethodSpecKey, SpecializationKey, TypecheckResult, build_const_subst,
         resolve_type_param_names, subst_type,
-    },
-    vm::{
-        cycle_collector::make_dataref_vtable,
-        meta::{EnumMeta, StructMeta, VariantMeta, VariantMetaKind},
     },
 };
 
@@ -42,7 +38,7 @@ pub fn lower_program(
     }
 
     let (qualified_names, struct_type_ids, enum_type_ids) = assign_type_ids(tcx, module_list);
-    let (mut struct_meta, enum_meta) =
+    let (mut aggregate_meta, enum_meta) =
         build_type_metadata(tcx, &struct_type_ids, &enum_type_ids, &qualified_names);
 
     let mut shared = SharedCtx {
@@ -112,6 +108,7 @@ pub fn lower_program(
     let ctx = LowerCtx {
         shared: &shared,
         type_overrides: None,
+        binding_type_overrides: None,
     };
     let mut funcs = vec![];
     for func_node in func_nodes {
@@ -149,6 +146,7 @@ pub fn lower_program(
         let spec_ctx = LowerCtx {
             shared: &shared,
             type_overrides: Some(&spec_result.body_types),
+            binding_type_overrides: Some(&spec_result.binding_types),
         };
 
         let mut fc = FuncLower::new();
@@ -219,6 +217,7 @@ pub fn lower_program(
         let spec_ctx = LowerCtx {
             shared: &shared,
             type_overrides: Some(&spec_result.body_types),
+            binding_type_overrides: Some(&spec_result.binding_types),
         };
 
         let mut fc = FuncLower::new();
@@ -291,7 +290,7 @@ pub fn lower_program(
 
         if method.name == to_string_name && shared.tcx.struct_to_string_body(*struct_name).is_some()
         {
-            struct_meta[*type_id as usize].to_string_fn = Some(id.0 as usize);
+            aggregate_meta[*type_id as usize].display_func = Some(id);
         }
     }
 
@@ -349,6 +348,7 @@ pub fn lower_program(
         let spec_ctx = LowerCtx {
             shared: &shared,
             type_overrides: Some(&spec_result.body_types),
+            binding_type_overrides: Some(&spec_result.binding_types),
         };
 
         let mut fc = FuncLower::new();
@@ -382,10 +382,11 @@ pub fn lower_program(
     let mut program = hir::Program {
         funcs,
         externs: extern_decls,
-        struct_meta,
+        aggregate_meta,
         enum_meta,
     };
 
+    super::coerce::coerce_optionals(&mut program);
     analyze_ownership(&mut program);
 
     Ok(program)
@@ -484,38 +485,42 @@ fn build_type_metadata(
     struct_type_ids: &HashMap<Ident, u32>,
     enum_type_ids: &HashMap<Ident, u32>,
     qualified_names: &HashMap<Ident, String>,
-) -> (Vec<StructMeta>, Vec<EnumMeta>) {
+) -> (Vec<AggregateMeta>, Vec<EnumMeta>) {
     let struct_count = struct_type_ids.len();
-    let mut struct_meta_slots = vec![None; struct_count];
+    let mut aggregate_meta_slots = vec![None; struct_count];
     for (name, &type_id) in struct_type_ids {
-        let field_names = tcx
-            .struct_field_names(*name)
-            .unwrap_or_default()
+        let field_name_idents = tcx.struct_field_names(*name).unwrap_or_default();
+        let fields = field_name_idents
             .iter()
-            .map(ToString::to_string)
+            .map(|f| FieldMeta {
+                name: f.to_string(),
+                ty: tcx.struct_field_type(*name, *f).unwrap_or(Type::Void),
+            })
             .collect();
         let is_dataref = tcx.is_dataref(*name);
         let cycle_capable = tcx.is_cycle_capable(*name);
         let short_name = name.to_string();
-        let vtable = if is_dataref {
-            let vtable_name = qualified_names
-                .get(name)
-                .cloned()
-                .unwrap_or_else(|| short_name.clone());
-            Some(make_dataref_vtable(&vtable_name, cycle_capable))
-        } else {
-            None
-        };
-        struct_meta_slots[type_id as usize] = Some(StructMeta {
+        let qualified_name = qualified_names
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| short_name.clone());
+        aggregate_meta_slots[type_id as usize] = Some(AggregateMeta {
             name: short_name,
-            field_names,
-            to_string_fn: None,
-            is_dataref,
+            qualified_name,
+            kind: if is_dataref {
+                AggregateKind::DataRef
+            } else {
+                AggregateKind::Struct
+            },
+            fields,
+            display_func: None,
             cycle_capable,
-            vtable,
         });
     }
-    let struct_meta = struct_meta_slots.into_iter().map(|m| m.unwrap()).collect();
+    let aggregate_meta = aggregate_meta_slots
+        .into_iter()
+        .map(|m| m.unwrap())
+        .collect();
 
     let enum_count = enum_type_ids.len();
     let mut enum_meta_slots = vec![None; enum_count];
@@ -525,27 +530,38 @@ fn build_type_metadata(
             .unwrap_or_default()
             .into_iter()
             .map(|(vname, vkind)| {
-                let kind = match vkind {
-                    VariantKind::Unit => VariantMetaKind::Unit,
-                    VariantKind::Tuple(types) => VariantMetaKind::Tuple(types.len()),
-                    VariantKind::Struct(fields) => {
-                        VariantMetaKind::Struct(fields.iter().map(|f| f.name.to_string()).collect())
-                    }
+                let shape = match vkind {
+                    VariantKind::Unit => VariantShape::Unit,
+                    VariantKind::Tuple(types) => VariantShape::Tuple(types.clone()),
+                    VariantKind::Struct(fields) => VariantShape::Struct(
+                        fields
+                            .iter()
+                            .map(|f| FieldMeta {
+                                name: f.name.to_string(),
+                                ty: f.ty.clone(),
+                            })
+                            .collect(),
+                    ),
                 };
                 VariantMeta {
                     name: vname.to_string(),
-                    kind,
+                    shape,
                 }
             })
             .collect();
+        let qualified_name = qualified_names
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| name.to_string());
         enum_meta_slots[type_id as usize] = Some(EnumMeta {
             name: name.to_string(),
+            qualified_name,
             variants,
         });
     }
     let enum_meta = enum_meta_slots.into_iter().map(|m| m.unwrap()).collect();
 
-    (struct_meta, enum_meta)
+    (aggregate_meta, enum_meta)
 }
 
 fn lower_all_specializations(shared: &mut SharedCtx, next_func_id: &mut u32) -> SpecRegistrations {
@@ -558,7 +574,7 @@ fn lower_all_specializations(shared: &mut SharedCtx, next_func_id: &mut u32) -> 
         if shared.tcx.generic_template(spec_key.func_name).is_none() {
             continue;
         }
-        let mangled = mangle_generic_name(
+        let mangled = backend_names::encode_specialization_name(
             spec_key.func_name,
             &spec_key.type_args,
             &spec_key.const_args,
@@ -580,7 +596,7 @@ fn lower_all_specializations(shared: &mut SharedCtx, next_func_id: &mut u32) -> 
         if spec_key.type_args.is_empty() && spec_key.const_args.is_empty() {
             continue;
         }
-        let mangled = mangle_method_spec_name(
+        let mangled = backend_names::encode_method_specialization_name(
             spec_key.struct_name,
             spec_key.method_name,
             &spec_key.type_args,
@@ -606,7 +622,8 @@ fn lower_all_specializations(shared: &mut SharedCtx, next_func_id: &mut u32) -> 
             &spec_key.target_type,
         );
         let Some(template) = template else { continue };
-        let mangled = spec_key.mangle(&template.source_module);
+        let mangled =
+            backend_names::encode_extend_specialization_name(spec_key, &template.source_module);
         if shared.funcs.contains_key(&mangled) {
             continue;
         }
@@ -721,15 +738,12 @@ fn lower_extend_methods_from<'a>(
         let Some(resolved_ty) = resolve_extend_ty(&node.node.ty, shared) else {
             continue;
         };
-        let type_str = format!("{resolved_ty}");
         for method in &node.node.methods {
             if method.node.params.is_empty() || method.node.params[0].name.0.as_ref() != "self" {
                 continue;
             }
-            let internal_name = Ident(Intern::new(format!(
-                "__extend::{}::{}::{}",
-                module_prefix, type_str, method.node.name
-            )));
+            let internal_name =
+                backend_names::encode_extend_name(module_prefix, &resolved_ty, method.node.name);
             let &id = shared
                 .funcs
                 .get(&internal_name)

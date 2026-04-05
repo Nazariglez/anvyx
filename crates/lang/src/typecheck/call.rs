@@ -1965,6 +1965,7 @@ pub(super) fn check_instantiated_body(
     // swap the types map so this body records expression types in its own slot,
     // nested specializations make the same swap safely
     let prev_types = std::mem::take(&mut type_checker.types);
+    let prev_binding_types = std::mem::take(&mut type_checker.binding_types);
 
     let prev_ctx = ictx.module_env.map(|env| {
         let saved = type_checker.ctx.clone();
@@ -2007,10 +2008,12 @@ pub(super) fn check_instantiated_body(
     }
 
     let body_types = std::mem::replace(&mut type_checker.types, prev_types);
+    let binding_types = std::mem::replace(&mut type_checker.binding_types, prev_binding_types);
 
     TypedBodyResult {
         ret_ty: ictx.ret_ty.clone(),
         body_types,
+        binding_types,
         first_error: body_errors.first().map(|err| (err.span, err.kind.clone())),
     }
 }

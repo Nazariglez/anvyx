@@ -1,10 +1,10 @@
 use super::helpers::{
-    assert_expr_type, assign_expr, call_expr, expr_stmt, fn_decl, get_expr_id, ident_expr,
-    let_binding, lit_bool, lit_int, lit_nil, opt_type, program, reset_expr_ids, return_stmt,
-    run_err, run_ok, var_binding,
+    array_literal, assert_expr_type, assign_expr, call_expr, expr_stmt, fn_decl, get_expr_id,
+    ident_expr, let_binding, lit_bool, lit_int, lit_nil, opt_type, program, reset_expr_ids,
+    return_stmt, run_err, run_ok, var_binding,
 };
 use crate::{
-    ast::{AssignOp, Type},
+    ast::{ArrayLen, AssignOp, Type},
     typecheck::error::DiagnosticKind,
 };
 
@@ -156,6 +156,50 @@ fn test_assignability_int_to_optional_int() {
 
     let tcx = run_ok(prog);
     assert_expr_type(&tcx, value_id, Type::Int);
+}
+
+#[test]
+fn test_binding_type_tracks_effective_optional_annotation() {
+    reset_expr_ids();
+
+    let value_expr = lit_int(10);
+    let value_id = get_expr_id(&value_expr);
+    let prog = program(vec![let_binding(
+        "x",
+        Some(opt_type(Type::Int)),
+        value_expr,
+    )]);
+
+    let tcx = run_ok(prog);
+    assert_eq!(
+        tcx.binding_type(value_id).cloned(),
+        Some(opt_type(Type::Int))
+    );
+}
+
+#[test]
+fn test_binding_type_resolves_array_len_infer_annotation() {
+    reset_expr_ids();
+
+    let value_expr = array_literal(vec![lit_int(1), lit_int(2)]);
+    let value_id = get_expr_id(&value_expr);
+    let prog = program(vec![let_binding(
+        "xs",
+        Some(Type::Array {
+            elem: Type::Int.boxed(),
+            len: ArrayLen::Infer,
+        }),
+        value_expr,
+    )]);
+
+    let tcx = run_ok(prog);
+    assert_eq!(
+        tcx.binding_type(value_id).cloned(),
+        Some(Type::Array {
+            elem: Type::Int.boxed(),
+            len: ArrayLen::Fixed(2),
+        })
+    );
 }
 
 #[test]

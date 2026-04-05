@@ -5,7 +5,6 @@ pub(crate) mod cycle_collector;
 pub mod extern_type;
 pub mod handle_store;
 pub mod managed_rc;
-pub mod meta;
 mod runtime;
 mod value;
 

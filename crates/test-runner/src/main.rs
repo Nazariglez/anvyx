@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use args::BackendArg;
+use args::{BackendArg, USAGE};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use run_test::{ExpectedResult, TestResult, run_test_file};
 
@@ -23,16 +23,27 @@ const RESET: &str = "\x1b[0m";
 const GREY: &str = "\x1b[90m";
 
 fn main() {
-    let args = args::RunnerArgs::new().unwrap();
+    let args = args::RunnerArgs::new().unwrap_or_else(|e| {
+        eprintln!("Error: {e}");
+        eprintln!();
+        eprintln!("{USAGE}");
+        std::process::exit(1);
+    });
 
     let exe = run_test::compile_lang(args.release).unwrap();
 
     let start_time = Instant::now();
-    let files = if let Some(file) = args.file {
-        vec![file]
-    } else {
-        list_all_anv_files(&args.root)
-    };
+    let files: Vec<_> = args
+        .paths
+        .iter()
+        .flat_map(|path| {
+            if path.is_dir() {
+                list_all_anv_files(path)
+            } else {
+                vec![path.clone()]
+            }
+        })
+        .collect();
 
     let work: Vec<(PathBuf, Option<&'static str>)> = match args.backend {
         BackendArg::Both => files
@@ -40,7 +51,7 @@ fn main() {
             .flat_map(|f| {
                 vec![
                     (f.clone(), Some(BackendArg::Vm.as_str())),
-                    (f.clone(), Some(BackendArg::Transpiler.as_str())),
+                    (f.clone(), Some(BackendArg::Rust.as_str())),
                 ]
             })
             .collect(),
