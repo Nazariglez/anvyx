@@ -1,6 +1,5 @@
-// Items in this file (structs, fields, methods) are accessed through macro-generated dispatch
-// code (function pointers, static arrays) rather than direct Rust calls or construction.
-// Rustc cannot trace through proc macro expansion, so dead_code warnings are false positives.
+// many items here are only used via generated macro,
+// so we can safely ignore dead_code warnings
 #![allow(dead_code)]
 
 use anvyx_lang::{
