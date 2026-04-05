@@ -9,6 +9,27 @@ use crate::{
     typecheck::{Diagnostic, DiagnosticKind, Severity},
 };
 
+fn build_unexpected_msg(
+    custom_msg: Option<String>,
+    found_desc: Option<String>,
+    last_context: &str,
+    unexpected_label: &str,
+) -> (String, String) {
+    if let Some(msg) = custom_msg {
+        (msg, String::new())
+    } else if let Some(desc) = found_desc {
+        (
+            format!("Unexpected {unexpected_label} {last_context}"),
+            desc,
+        )
+    } else {
+        (
+            format!("Unexpected end of input {last_context}"),
+            "end of file".to_string(),
+        )
+    }
+}
+
 pub fn report_lexer_errors(src: &str, file_path: &str, errors: Vec<Rich<'_, char>>) {
     for e in errors {
         let span = e.span();
@@ -23,19 +44,9 @@ pub fn report_lexer_errors(src: &str, file_path: &str, errors: Vec<Rich<'_, char
             RichReason::ExpectedFound { .. } => None,
         };
 
-        let (msg_title, msg_body) = if let Some(msg) = custom_msg {
-            (msg, String::new())
-        } else if let Some(found_char) = e.found() {
-            (
-                format!("Unexpected character {last_context}"),
-                format!("'{found_char}'"),
-            )
-        } else {
-            (
-                format!("Unexpected end of input {last_context}"),
-                "end of file".to_string(),
-            )
-        };
+        let found_desc = e.found().map(|c| format!("'{c}'"));
+        let (msg_title, msg_body) =
+            build_unexpected_msg(custom_msg, found_desc, &last_context, "character");
 
         emit_report(
             src,
@@ -57,7 +68,6 @@ pub fn report_parse_errors(
 ) {
     for e in errors {
         let token_span = e.span();
-
         let byte_range = token_span_to_byte_range(tokens, token_span.start..token_span.end);
 
         let custom_msg = match e.reason() {
@@ -69,17 +79,9 @@ pub fn report_parse_errors(
             .map(|s| format!("while parsing a {s}"))
             .unwrap_or_default();
 
-        let (msg_title, msg_body) = if let Some(msg) = custom_msg {
-            (msg, String::new())
-        } else if let Some((found_token, _)) = e.found() {
-            let token_desc = describe_token(found_token);
-            (format!("Unexpected token {last_context}"), token_desc)
-        } else {
-            (
-                format!("Unexpected end of input {last_context}"),
-                "end of file".to_string(),
-            )
-        };
+        let found_desc = e.found().map(|(tok, _)| describe_token(tok));
+        let (msg_title, msg_body) =
+            build_unexpected_msg(custom_msg, found_desc, &last_context, "token");
 
         emit_report(
             src,
@@ -160,22 +162,6 @@ pub fn report_import_errors(
                         0..0,
                         format!("Failed to parse imported module '{imported_path}'"),
                         "the imported file contains errors".to_string(),
-                    ),
-                    vec![],
-                    vec![],
-                    None,
-                );
-            }
-            ImportError::CircularImport { path, span } => {
-                let byte_range = token_span_to_byte_range(tokens, span.start..span.end);
-                emit_report(
-                    src,
-                    file_path,
-                    Severity::Error,
-                    (
-                        byte_range,
-                        format!("Circular import detected for '{path}'"),
-                        "this import creates a cycle".to_string(),
                     ),
                     vec![],
                     vec![],
@@ -856,6 +842,10 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
         DiagnosticKind::ContinueInDefer => (
             "continue inside defer".to_string(),
             "'continue' is not allowed inside a defer body".to_string(),
+        ),
+        DiagnosticKind::InfiniteSizeType { type_name, cycle_field, cycle_target } => (
+            format!("type '{type_name}' has infinite size"),
+            format!("field '{cycle_field}' of type '{cycle_target}' creates a value-type cycle"),
         ),
     }
 }

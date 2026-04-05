@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+import facade { Widget, Layout };
+
+fn main() {
+    let w = Widget { name: "btn" };
+    let widgets: [Widget] = [w];
+    let l = Layout { widgets };
+}

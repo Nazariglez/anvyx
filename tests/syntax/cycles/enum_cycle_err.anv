@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: infinite size
+
+struct Wrapper { inner: Payload }
+enum Payload { Data(Wrapper) }
+
+fn main() {}

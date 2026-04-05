@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: infinite size
+
+struct Node { child: Node }
+
+fn main() {}

@@ -117,6 +117,7 @@ pub(super) fn type_references_generic(ty: &Type, type_params: &[TypeParam]) -> b
 #[derive(Debug, Clone)]
 pub struct StructDef {
     pub kind: AggregateKind,
+    pub span: Span,
     pub type_params: Vec<TypeParam>,
     pub fields: Vec<StructField>,
     pub methods: HashMap<Ident, MethodDef>,
@@ -126,10 +127,11 @@ pub struct StructDef {
 }
 
 impl StructDef {
-    pub(super) fn from_ast(decl: &StructDecl) -> Self {
+    pub(super) fn from_ast(decl: &StructDecl, span: Span) -> Self {
         let methods = decl.methods.iter().map(MethodDef::from_ast).collect();
         Self {
             kind: decl.kind,
+            span,
             type_params: decl.type_params.clone(),
             fields: decl.fields.clone(),
             methods,

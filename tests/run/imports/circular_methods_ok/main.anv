@@ -1,0 +1,10 @@
+// @mode: run
+// @expect: success
+// @match: HQ
+
+import owner { Owner };
+
+fn main() {
+    let o = Owner { name: "HQ" };
+    println(o.get_name());
+}

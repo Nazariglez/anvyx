@@ -520,6 +520,11 @@ pub enum DiagnosticKind {
     ReturnInDefer,
     BreakInDefer,
     ContinueInDefer,
+    InfiniteSizeType {
+        type_name: Ident,
+        cycle_field: Ident,
+        cycle_target: Ident,
+    },
 
     ConflictingConstInference {
         first: usize,

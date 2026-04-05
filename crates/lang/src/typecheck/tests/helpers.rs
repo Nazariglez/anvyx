@@ -1,23 +1,13 @@
 use std::cell::Cell;
 
-use internment::Intern;
-
+pub(super) use crate::test_helpers::{dummy_ident, dummy_span};
 use crate::{
     ast::*,
-    span::Span,
     typecheck::{check_program_with_modules, error::Diagnostic, types::TypecheckResult},
 };
 
 thread_local! {
     static EXPR_ID_COUNTER: Cell<u64> = Cell::new(0);
-}
-
-pub(super) fn dummy_span() -> Span {
-    Span::new(0, 0)
-}
-
-pub(super) fn dummy_ident(s: &str) -> Ident {
-    Ident(Intern::new(s.to_string()))
 }
 
 // reset the expression id counter for deterministic test ids
@@ -297,13 +287,13 @@ pub(super) fn dummy_pattern(name: &str) -> PatternNode {
     }
 }
 
-pub(super) fn let_binding(name: &str, ty: Option<Type>, value: ExprNode) -> StmtNode {
+fn binding_stmt(name: &str, ty: Option<Type>, value: ExprNode, mutability: Mutability) -> StmtNode {
     StmtNode {
         node: Stmt::Binding(BindingNode {
             node: Binding {
                 pattern: dummy_pattern(name),
                 ty,
-                mutability: Mutability::Immutable,
+                mutability,
                 value,
             },
             span: dummy_span(),
@@ -312,14 +302,37 @@ pub(super) fn let_binding(name: &str, ty: Option<Type>, value: ExprNode) -> Stmt
     }
 }
 
+pub(super) fn let_binding(name: &str, ty: Option<Type>, value: ExprNode) -> StmtNode {
+    binding_stmt(name, ty, value, Mutability::Immutable)
+}
+
 pub(super) fn var_binding(name: &str, ty: Option<Type>, value: ExprNode) -> StmtNode {
+    binding_stmt(name, ty, value, Mutability::Mutable)
+}
+
+fn build_func_stmt(
+    name: &str,
+    type_params: Vec<TypeParam>,
+    params: Vec<Param>,
+    ret: Type,
+    stmts: Vec<StmtNode>,
+    tail: Option<Box<ExprNode>>,
+) -> StmtNode {
     StmtNode {
-        node: Stmt::Binding(BindingNode {
-            node: Binding {
-                pattern: dummy_pattern(name),
-                ty,
-                mutability: Mutability::Mutable,
-                value,
+        node: Stmt::Func(FuncNode {
+            node: Func {
+                annotations: vec![],
+                doc: None,
+                name: dummy_ident(name),
+                visibility: Visibility::Private,
+                type_params,
+                const_params: vec![],
+                params,
+                ret,
+                body: BlockNode {
+                    node: Block { stmts, tail },
+                    span: dummy_span(),
+                },
             },
             span: dummy_span(),
         }),
@@ -343,35 +356,17 @@ pub(super) fn generic_fn_decl(
     ret: Type,
     body: Vec<StmtNode>,
 ) -> StmtNode {
+    let param_list = params
+        .into_iter()
+        .map(|(n, t)| Param {
+            mutability: Mutability::Immutable,
+            name: dummy_ident(n),
+            ty: t,
+            default: None,
+        })
+        .collect();
     let (stmts, tail) = split_body(body);
-    StmtNode {
-        node: Stmt::Func(FuncNode {
-            node: Func {
-                annotations: vec![],
-                doc: None,
-                name: dummy_ident(name),
-                visibility: Visibility::Private,
-                type_params,
-                const_params: vec![],
-                params: params
-                    .into_iter()
-                    .map(|(n, t)| Param {
-                        mutability: Mutability::Immutable,
-                        name: dummy_ident(n),
-                        ty: t,
-                        default: None,
-                    })
-                    .collect(),
-                ret,
-                body: BlockNode {
-                    node: Block { stmts, tail },
-                    span: dummy_span(),
-                },
-            },
-            span: dummy_span(),
-        }),
-        span: dummy_span(),
-    }
+    build_func_stmt(name, type_params, param_list, ret, stmts, tail)
 }
 
 pub(super) fn func_decl(
@@ -379,42 +374,22 @@ pub(super) fn func_decl(
     params: Vec<(&str, Type)>,
     ret: Type,
     body: Vec<StmtNode>,
-    _implicit_ret_ty: Type,
 ) -> StmtNode {
+    let param_list = params
+        .into_iter()
+        .map(|(n, t)| Param {
+            mutability: Mutability::Immutable,
+            name: dummy_ident(n),
+            ty: t,
+            default: None,
+        })
+        .collect();
     let (stmts, tail) = if body.is_empty() && !ret.is_void() {
         (vec![], Some(Box::new(lit_int(0))))
     } else {
         split_body(body)
     };
-
-    StmtNode {
-        node: Stmt::Func(FuncNode {
-            node: Func {
-                annotations: vec![],
-                doc: None,
-                name: dummy_ident(name),
-                visibility: Visibility::Private,
-                type_params: vec![],
-                const_params: vec![],
-                params: params
-                    .into_iter()
-                    .map(|(n, t)| Param {
-                        mutability: Mutability::Immutable,
-                        name: dummy_ident(n),
-                        ty: t,
-                        default: None,
-                    })
-                    .collect(),
-                ret,
-                body: BlockNode {
-                    node: Block { stmts, tail },
-                    span: dummy_span(),
-                },
-            },
-            span: dummy_span(),
-        }),
-        span: dummy_span(),
-    }
+    build_func_stmt(name, vec![], param_list, ret, stmts, tail)
 }
 
 pub(super) fn return_stmt(value: Option<ExprNode>) -> StmtNode {
@@ -621,26 +596,7 @@ pub(super) fn fn_decl_var_params(
         })
         .collect();
     let (stmts, tail) = split_body(body);
-    StmtNode {
-        node: Stmt::Func(FuncNode {
-            node: Func {
-                annotations: vec![],
-                doc: None,
-                name: dummy_ident(name),
-                visibility: Visibility::Private,
-                type_params: vec![],
-                const_params: vec![],
-                params: param_list,
-                ret,
-                body: BlockNode {
-                    node: Block { stmts, tail },
-                    span: dummy_span(),
-                },
-            },
-            span: dummy_span(),
-        }),
-        span: dummy_span(),
-    }
+    build_func_stmt(name, vec![], param_list, ret, stmts, tail)
 }
 
 // ---- runner helpers ----
@@ -660,7 +616,7 @@ fn with_prelude(prog: Program) -> Program {
 
 #[track_caller]
 pub(super) fn run_ok(prog: Program) -> TypecheckResult {
-    match check_program_with_modules(&with_prelude(prog), &[], &[]) {
+    match check_program_with_modules(&with_prelude(prog), &[], &[], &[]) {
         Ok(tcx) => tcx,
         Err(errors) => {
             panic!("Expected Ok, got errors: {:?}", errors);
@@ -670,10 +626,19 @@ pub(super) fn run_ok(prog: Program) -> TypecheckResult {
 
 #[track_caller]
 pub(super) fn run_err(prog: Program) -> Vec<Diagnostic> {
-    match check_program_with_modules(&with_prelude(prog), &[], &[]) {
+    match check_program_with_modules(&with_prelude(prog), &[], &[], &[]) {
         Ok(_) => panic!("Expected Err, got Ok"),
         Err(errors) => errors,
     }
+}
+
+pub(super) fn check_src(src: &str) -> Result<TypecheckResult, Vec<Diagnostic>> {
+    let user_tokens = crate::lexer::tokenize(src).unwrap();
+    let user_ast = crate::parser::parse_ast(&user_tokens).unwrap();
+    let prog = Program {
+        stmts: user_ast.stmts,
+    };
+    check_program_with_modules(&with_prelude(prog), &[], &[], &[])
 }
 
 // ---- assertion helpers ----

@@ -758,13 +758,7 @@ fn test_view_param_accepts_fixed_array() {
     // fn sum(xs: [int; ..]) -> int { xs[0] }
     // sum([1, 2, 3])
     let view_param = view_type(Type::Int);
-    let func = func_decl(
-        "sum",
-        vec![("xs", view_param)],
-        Type::Int,
-        vec![],
-        Type::Int,
-    );
+    let func = func_decl("sum", vec![("xs", view_param)], Type::Int, vec![]);
 
     let arr = array_literal(vec![lit_int(1), lit_int(2), lit_int(3)]);
     let call = call_expr(ident_expr("sum"), vec![arr]);
@@ -785,13 +779,7 @@ fn test_view_param_accepts_list() {
     // let lst: [int] = [1, 2, 3];
     // sum(lst)
     let view_param = view_type(Type::Int);
-    let func = func_decl(
-        "sum",
-        vec![("xs", view_param)],
-        Type::Int,
-        vec![],
-        Type::Int,
-    );
+    let func = func_decl("sum", vec![("xs", view_param)], Type::Int, vec![]);
 
     let lst = array_literal(vec![lit_int(1), lit_int(2), lit_int(3)]);
     let lst_annot = Type::List {
@@ -859,13 +847,7 @@ fn test_view_mismatched_element_type_err() {
     // fn f(xs: [int; ..]) {}
     // f(["a", "b"])
     let view_param = view_type(Type::Int);
-    let func = func_decl(
-        "f",
-        vec![("xs", view_param)],
-        Type::Void,
-        vec![],
-        Type::Void,
-    );
+    let func = func_decl("f", vec![("xs", view_param)], Type::Void, vec![]);
 
     let arr = array_literal(vec![lit_string("a"), lit_string("b")]);
     let call = call_expr(ident_expr("f"), vec![arr]);

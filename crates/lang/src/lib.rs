@@ -121,32 +121,44 @@ fn analyze_with_extern_meta(
         }
     };
 
-    let mut module_list: Vec<(Vec<String>, Vec<ast::StmtNode>)> = match resolve::resolve_imports(
+    let resolve_result = match resolve::resolve_imports(
         &user_ast.stmts,
         &project_root,
         &extern_names,
         std_modules,
     ) {
-        Ok(result) => result
-            .modules
-            .into_iter()
-            .map(|module| (module.path_key, module.stmts))
-            .collect(),
+        Ok(result) => result,
         Err(errors) => {
             error::report_import_errors(program, file_path, &user_tokens, &errors);
             return Err("Failed to resolve imports".to_string());
         }
     };
 
+    let mut module_list: Vec<(Vec<String>, Vec<ast::StmtNode>)> = vec![];
+    let mut scc_groups: Vec<Vec<usize>> = vec![];
+    for group in resolve_result.module_groups {
+        let group_indices = group
+            .into_iter()
+            .map(|module| {
+                let idx = module_list.len();
+                module_list.push((module.path_key, module.stmts));
+                idx
+            })
+            .collect();
+        scc_groups.push(group_indices);
+    }
+
     // convert extern metadata into synthetic ExternFunc stmts and append to module_list
     for (name, meta) in &parsed_providers {
         let stmts = metadata::metadata_to_extern_stmts(meta)
             .map_err(|e| format!("Failed to create extern stmts for '{name}': {e}"))?;
+        scc_groups.push(vec![module_list.len()]);
         module_list.push((vec![name.clone()], stmts));
     }
 
     // route core modules through the module system (extends auto-activated, externs scoped)
     let mut auto_use_modules: Vec<Vec<String>> = vec![];
+    let mut core_count = 0usize;
     for (name, source) in core_modules {
         let file_label = format!("<core.{name}>");
         let (module_ast, _) = parse_source(&source.anv_source, &file_label)
@@ -154,6 +166,16 @@ fn analyze_with_extern_meta(
         let path_key = vec![name.clone()];
         module_list.insert(0, (path_key.clone(), module_ast.stmts));
         auto_use_modules.push(path_key);
+        core_count += 1;
+    }
+    if core_count > 0 {
+        for group in &mut scc_groups {
+            for idx in group.iter_mut() {
+                *idx += core_count;
+            }
+        }
+        let core_groups: Vec<Vec<usize>> = (0..core_count).map(|i| vec![i]).collect();
+        scc_groups.splice(0..0, core_groups);
     }
 
     let mut combined_stmts = core_ast.stmts;
@@ -162,24 +184,28 @@ fn analyze_with_extern_meta(
         stmts: combined_stmts,
     };
 
-    let tcx =
-        match typecheck::check_program_with_modules(&combined, &module_list, &auto_use_modules) {
-            Ok(tcx) => {
-                if !tcx.warnings().is_empty() {
-                    error::report_diagnostics(
-                        program,
-                        file_path,
-                        &user_tokens,
-                        tcx.warnings().to_vec(),
-                    );
-                }
-                tcx
+    let tcx = match typecheck::check_program_with_modules(
+        &combined,
+        &module_list,
+        &scc_groups,
+        &auto_use_modules,
+    ) {
+        Ok(tcx) => {
+            if !tcx.warnings().is_empty() {
+                error::report_diagnostics(
+                    program,
+                    file_path,
+                    &user_tokens,
+                    tcx.warnings().to_vec(),
+                );
             }
-            Err(errors) => {
-                error::report_diagnostics(program, file_path, &user_tokens, errors);
-                return Err("Failed to typecheck program".to_string());
-            }
-        };
+            tcx
+        }
+        Err(errors) => {
+            error::report_diagnostics(program, file_path, &user_tokens, errors);
+            return Err("Failed to typecheck program".to_string());
+        }
+    };
 
     Ok((combined, tcx, user_tokens, module_list))
 }
@@ -258,16 +284,9 @@ pub enum Profile {
     Release,
 }
 
+#[derive(Default)]
 pub struct RustBackendConfig {
     pub profile: Profile,
-}
-
-impl Default for RustBackendConfig {
-    fn default() -> Self {
-        Self {
-            profile: Profile::Debug,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -383,9 +402,7 @@ mod extern_import_tests {
         m
     }
 
-    #[test]
-    fn selective_import_typechecks() {
-        let src = "import my_extern { add };\nfn main() { let x = add(3, 4); }";
+    fn analyze_ok(src: &str) {
         let result = analyze_with_extern_meta(
             src,
             "<test>",
@@ -395,90 +412,53 @@ mod extern_import_tests {
             &HashMap::new(),
         );
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+    }
+
+    fn analyze_err(src: &str) {
+        let result = analyze_with_extern_meta(
+            src,
+            "<test>",
+            TEST_CORE_SOURCE,
+            &sample_metadata(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn selective_import_typechecks() {
+        analyze_ok("import my_extern { add };\nfn main() { let x = add(3, 4); }");
     }
 
     #[test]
     fn qualified_import_typechecks() {
-        let src = "import my_extern;\nfn main() { let x = my_extern.add(3, 4); }";
-        let result = analyze_with_extern_meta(
-            src,
-            "<test>",
-            TEST_CORE_SOURCE,
-            &sample_metadata(),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+        analyze_ok("import my_extern;\nfn main() { let x = my_extern.add(3, 4); }");
     }
 
     #[test]
     fn wildcard_import_typechecks() {
-        let src = "import my_extern { * };\nfn main() { let x = add(3, 4); }";
-        let result = analyze_with_extern_meta(
-            src,
-            "<test>",
-            TEST_CORE_SOURCE,
-            &sample_metadata(),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+        analyze_ok("import my_extern { * };\nfn main() { let x = add(3, 4); }");
     }
 
     #[test]
     fn alias_import_typechecks() {
-        let src = "import my_extern { add as plus };\nfn main() { let x = plus(3, 4); }";
-        let result = analyze_with_extern_meta(
-            src,
-            "<test>",
-            TEST_CORE_SOURCE,
-            &sample_metadata(),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+        analyze_ok("import my_extern { add as plus };\nfn main() { let x = plus(3, 4); }");
     }
 
     #[test]
     fn module_alias_import_typechecks() {
-        let src = "import my_extern as ext;\nfn main() { let x = ext.add(3, 4); }";
-        let result = analyze_with_extern_meta(
-            src,
-            "<test>",
-            TEST_CORE_SOURCE,
-            &sample_metadata(),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+        analyze_ok("import my_extern as ext;\nfn main() { let x = ext.add(3, 4); }");
     }
 
     #[test]
     fn unknown_member_error() {
-        let src = "import my_extern { nonexistent };\nfn main() {}";
-        let result = analyze_with_extern_meta(
-            src,
-            "<test>",
-            TEST_CORE_SOURCE,
-            &sample_metadata(),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        assert!(result.is_err());
+        analyze_err("import my_extern { nonexistent };\nfn main() {}");
     }
 
     #[test]
     fn wrong_arg_type_error() {
-        let src = "import my_extern { add };\nfn main() { let x = add(true, 4); }";
-        let result = analyze_with_extern_meta(
-            src,
-            "<test>",
-            TEST_CORE_SOURCE,
-            &sample_metadata(),
-            &HashMap::new(),
-            &HashMap::new(),
-        );
-        assert!(result.is_err());
+        analyze_err("import my_extern { add };\nfn main() { let x = add(true, 4); }");
     }
 
     #[test]
@@ -499,9 +479,8 @@ mod extern_import_tests {
 
     #[test]
     fn no_extern_meta_still_works() {
-        let src = "fn main() { let x = 1; }";
         let result = analyze_with_extern_meta(
-            src,
+            "fn main() { let x = 1; }",
             "<test>",
             TEST_CORE_SOURCE,
             &HashMap::new(),
@@ -529,9 +508,7 @@ mod std_import_tests {
         m
     }
 
-    #[test]
-    fn std_qualified_import_typechecks() {
-        let src = "import std.math;\nfn main() { let x = math.PI; }";
+    fn analyze_ok(src: &str) {
         let result = analyze_with_extern_meta(
             src,
             "<test>",
@@ -541,47 +518,37 @@ mod std_import_tests {
             &HashMap::new(),
         );
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+    }
+
+    fn analyze_err(src: &str) {
+        let result = analyze_with_extern_meta(
+            src,
+            "<test>",
+            TEST_CORE_SOURCE,
+            &HashMap::new(),
+            &math_std_modules(),
+            &HashMap::new(),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn std_qualified_import_typechecks() {
+        analyze_ok("import std.math;\nfn main() { let x = math.PI; }");
     }
 
     #[test]
     fn std_selective_import_typechecks() {
-        let src = "import std.math { PI };\nfn main() { let x = PI; }";
-        let result = analyze_with_extern_meta(
-            src,
-            "<test>",
-            TEST_CORE_SOURCE,
-            &HashMap::new(),
-            &math_std_modules(),
-            &HashMap::new(),
-        );
-        assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+        analyze_ok("import std.math { PI };\nfn main() { let x = PI; }");
     }
 
     #[test]
     fn std_unknown_module_errors() {
-        let src = "import std.nonexistent;\nfn main() {}";
-        let result = analyze_with_extern_meta(
-            src,
-            "<test>",
-            TEST_CORE_SOURCE,
-            &HashMap::new(),
-            &math_std_modules(),
-            &HashMap::new(),
-        );
-        assert!(result.is_err());
+        analyze_err("import std.nonexistent;\nfn main() {}");
     }
 
     #[test]
     fn std_bare_import_errors() {
-        let src = "import std;\nfn main() {}";
-        let result = analyze_with_extern_meta(
-            src,
-            "<test>",
-            TEST_CORE_SOURCE,
-            &HashMap::new(),
-            &math_std_modules(),
-            &HashMap::new(),
-        );
-        assert!(result.is_err());
+        analyze_err("import std;\nfn main() {}");
     }
 }

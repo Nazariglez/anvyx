@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::LazyLock,
+};
 
 use internment::Intern;
 
@@ -34,6 +37,11 @@ use crate::{
     backend_names,
     span::Span,
 };
+
+static IDENT_LIST: LazyLock<Ident> = LazyLock::new(|| Ident(Intern::new("__List".to_string())));
+static IDENT_MAP: LazyLock<Ident> = LazyLock::new(|| Ident(Intern::new("__Map".to_string())));
+static IDENT_TUPLE: LazyLock<Ident> = LazyLock::new(|| Ident(Intern::new("__Tuple".to_string())));
+static IDENT_ARRAY: LazyLock<Ident> = LazyLock::new(|| Ident(Intern::new("__Array".to_string())));
 
 pub(super) fn check_block_stmts(
     stmts: &[StmtNode],
@@ -97,17 +105,17 @@ fn evaluate_module_consts(
     }
 }
 
-fn process_const_decl(
+fn eval_and_insert_const(
     decl: &ConstDeclNode,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
-) {
+) -> bool {
     let name = decl.node.name;
 
     let known_consts: HashSet<Ident> = type_checker.ctx.const_defs.keys().copied().collect();
     if let Err(err) = validate_const_expr(&decl.node.value, &known_consts) {
         errors.push(err);
-        return;
+        return false;
     }
 
     let annotated_ty = decl
@@ -127,7 +135,7 @@ fn process_const_decl(
         Ok(val) => val,
         Err(err) => {
             errors.push(err);
-            return;
+            return false;
         }
     };
 
@@ -142,11 +150,10 @@ fn process_const_decl(
                 got: value_ty,
             },
         ));
-        return;
+        return false;
     }
 
-    let final_ty = annotated_ty.unwrap_or_else(|| const_value.ty());
-
+    let final_ty = annotated_ty.unwrap_or(value_ty);
     type_checker.ctx.const_defs.insert(
         name,
         ConstDef {
@@ -155,6 +162,15 @@ fn process_const_decl(
             visibility: decl.node.visibility,
         },
     );
+    true
+}
+
+fn process_const_decl(
+    decl: &ConstDeclNode,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) {
+    eval_and_insert_const(decl, type_checker, errors);
 }
 
 pub(super) fn check_block_expr(
@@ -246,7 +262,7 @@ fn extract_decl(stmt: &StmtNode, resolve: &impl Fn(&Type) -> Type) -> Option<Dec
         Stmt::Aggregate(node) => Some(DeclInfo::Aggregate {
             name: node.node.name,
             visibility: node.node.visibility,
-            def: StructDef::from_ast(&node.node),
+            def: StructDef::from_ast(&node.node, node.span),
         }),
         Stmt::Enum(node) => Some(DeclInfo::Enum {
             name: node.node.name,
@@ -456,25 +472,66 @@ fn push_reexport_collision(
     );
 }
 
+fn copy_func_ancillary_to_module(
+    name: Ident,
+    bind_as: Ident,
+    source: &ModuleDef,
+    target: &mut ModuleDef,
+) {
+    if let Some(param_info) = source.func_param_info.get(&name) {
+        target.func_param_info.insert(bind_as, param_info.clone());
+    }
+    if let Some(tp) = source.func_type_params.get(&name) {
+        target.func_type_params.insert(bind_as, tp.clone());
+    }
+    if let Some(cp) = source.func_const_params.get(&name) {
+        target.func_const_params.insert(bind_as, cp.clone());
+    }
+    if let Some(tmpl) = source.generic_func_templates.get(&name) {
+        target.generic_func_templates.insert(bind_as, tmpl.clone());
+    }
+    if let Some(defaults) = source.func_param_defaults.get(&name) {
+        target.func_param_defaults.insert(bind_as, defaults.clone());
+    }
+}
+
+fn copy_func_ancillary_to_checker(
+    name: Ident,
+    bind_as: Ident,
+    source: &ModuleDef,
+    type_checker: &mut TypeChecker,
+) {
+    if let Some(param_info) = source.func_param_info.get(&name) {
+        type_checker
+            .func_param_info
+            .insert(bind_as, param_info.clone());
+    }
+    if let Some(tp) = source.func_type_params.get(&name) {
+        type_checker.func_type_params.insert(bind_as, tp.clone());
+    }
+    if let Some(cp) = source.func_const_params.get(&name) {
+        type_checker.func_const_params.insert(bind_as, cp.clone());
+    }
+    if let Some(tmpl) = source.generic_func_templates.get(&name) {
+        type_checker
+            .generic_func_templates
+            .insert(bind_as, tmpl.clone());
+        type_checker
+            .generic_func_source_module
+            .insert(bind_as, source.source_path.clone());
+    }
+    if let Some(defaults) = source.func_param_defaults.get(&name) {
+        type_checker
+            .func_param_defaults
+            .insert(bind_as, defaults.clone());
+    }
+}
+
 fn merge_symbol(name: Ident, bind_as: Ident, source: &ModuleDef, target: &mut ModuleDef) {
     if let Some(ty) = source.funcs.get(&name) {
         target.funcs.insert(bind_as, ty.clone());
         target.all_names.insert(bind_as);
-        if let Some(param_info) = source.func_param_info.get(&name) {
-            target.func_param_info.insert(bind_as, param_info.clone());
-        }
-        if let Some(tp) = source.func_type_params.get(&name) {
-            target.func_type_params.insert(bind_as, tp.clone());
-        }
-        if let Some(cp) = source.func_const_params.get(&name) {
-            target.func_const_params.insert(bind_as, cp.clone());
-        }
-        if let Some(tmpl) = source.generic_func_templates.get(&name) {
-            target.generic_func_templates.insert(bind_as, tmpl.clone());
-        }
-        if let Some(defaults) = source.func_param_defaults.get(&name) {
-            target.func_param_defaults.insert(bind_as, defaults.clone());
-        }
+        copy_func_ancillary_to_module(name, bind_as, source, target);
     } else if let Some(struct_def) = source.struct_defs.get(&name) {
         target.struct_defs.insert(bind_as, struct_def.clone());
         target.all_names.insert(bind_as);
@@ -498,30 +555,7 @@ fn inject_module_item(
 ) {
     if let Some(ty) = module_def.funcs.get(&name) {
         type_checker.set_var(bind_as, ty.clone(), false);
-        if let Some(param_info) = module_def.func_param_info.get(&name) {
-            type_checker
-                .func_param_info
-                .insert(bind_as, param_info.clone());
-        }
-        if let Some(tp) = module_def.func_type_params.get(&name) {
-            type_checker.func_type_params.insert(bind_as, tp.clone());
-        }
-        if let Some(cp) = module_def.func_const_params.get(&name) {
-            type_checker.func_const_params.insert(bind_as, cp.clone());
-        }
-        if let Some(tmpl) = module_def.generic_func_templates.get(&name) {
-            type_checker
-                .generic_func_templates
-                .insert(bind_as, tmpl.clone());
-            type_checker
-                .generic_func_source_module
-                .insert(bind_as, module_def.source_path.clone());
-        }
-        if let Some(defaults) = module_def.func_param_defaults.get(&name) {
-            type_checker
-                .func_param_defaults
-                .insert(bind_as, defaults.clone());
-        }
+        copy_func_ancillary_to_checker(name, bind_as, module_def, type_checker);
     } else if let Some(struct_def) = module_def.struct_defs.get(&name) {
         type_checker
             .ctx
@@ -775,71 +809,70 @@ pub(super) fn collect_scope_types(
                         }
                     }
                     ImportKind::Selective(items) => {
+                        let mut try_import =
+                            |source: Ident,
+                             bind_as: Ident,
+                             imported: &mut HashSet<Ident>,
+                             seen: &mut HashSet<Ident>,
+                             errors: &mut Vec<Diagnostic>| {
+                                let existing = if imported.contains(&bind_as) {
+                                    Some("a previously imported name")
+                                } else if seen.contains(&bind_as) {
+                                    Some("a locally defined type")
+                                } else {
+                                    None
+                                };
+                                if let Some(existing) = existing {
+                                    errors.push(Diagnostic::new(
+                                        stmt.span,
+                                        DiagnosticKind::ImportNameConflict {
+                                            name: bind_as,
+                                            existing,
+                                        },
+                                    ));
+                                } else {
+                                    inject_module_item(source, bind_as, &module_def, type_checker);
+                                    imported.insert(bind_as);
+                                    seen.insert(bind_as);
+                                }
+                            };
                         for item in items {
                             let bind_as = item.alias.unwrap_or(item.name);
-                            let existing = if imported.contains(&bind_as) {
-                                Some("a previously imported name")
-                            } else if seen.contains(&bind_as) {
-                                Some("a locally defined type")
-                            } else {
-                                None
-                            };
-                            if let Some(existing) = existing {
-                                errors.push(Diagnostic::new(
-                                    stmt.span,
-                                    DiagnosticKind::ImportNameConflict {
-                                        name: bind_as,
-                                        existing,
-                                    },
-                                ));
-                            } else {
-                                inject_module_item(item.name, bind_as, &module_def, type_checker);
-                                imported.insert(bind_as);
-                                seen.insert(bind_as);
-                            }
+                            try_import(item.name, bind_as, &mut imported, &mut seen, errors);
                         }
                     }
                     ImportKind::Wildcard => {
+                        let mut try_import =
+                            |name: Ident,
+                             imported: &mut HashSet<Ident>,
+                             seen: &mut HashSet<Ident>,
+                             errors: &mut Vec<Diagnostic>| {
+                                let existing = if imported.contains(&name) {
+                                    Some("a previously imported name")
+                                } else if seen.contains(&name) {
+                                    Some("a locally defined type")
+                                } else {
+                                    None
+                                };
+                                if let Some(existing) = existing {
+                                    errors.push(Diagnostic::new(
+                                        stmt.span,
+                                        DiagnosticKind::ImportNameConflict { name, existing },
+                                    ));
+                                } else {
+                                    inject_module_item(name, name, &module_def, type_checker);
+                                    imported.insert(name);
+                                    seen.insert(name);
+                                }
+                            };
                         let names: Vec<Ident> = module_def.all_public_names().collect();
                         for name in names {
-                            let existing = if imported.contains(&name) {
-                                Some("a previously imported name")
-                            } else if seen.contains(&name) {
-                                Some("a locally defined type")
-                            } else {
-                                None
-                            };
-                            if let Some(existing) = existing {
-                                errors.push(Diagnostic::new(
-                                    stmt.span,
-                                    DiagnosticKind::ImportNameConflict { name, existing },
-                                ));
-                            } else {
-                                inject_module_item(name, name, &module_def, type_checker);
-                                imported.insert(name);
-                                seen.insert(name);
-                            }
+                            try_import(name, &mut imported, &mut seen, errors);
                         }
                         let sub_module_names: Vec<Ident> =
                             module_def.re_exported_modules.keys().copied().collect();
                         for name in sub_module_names {
-                            let existing = if imported.contains(&name) {
-                                Some("a previously imported name")
-                            } else if seen.contains(&name) {
-                                Some("a locally defined type")
-                            } else {
-                                None
-                            };
-                            if let Some(existing) = existing {
-                                errors.push(Diagnostic::new(
-                                    stmt.span,
-                                    DiagnosticKind::ImportNameConflict { name, existing },
-                                ));
-                            } else {
-                                inject_module_item(name, name, &module_def, type_checker);
-                                imported.insert(name);
-                                seen.insert(name);
-                            }
+                            try_import(name, &mut imported, &mut seen, errors);
                         }
                     }
                 }
@@ -1295,60 +1328,9 @@ pub(super) fn check_stmt(
                 return;
             }
 
-            let known_consts: HashSet<Ident> =
-                type_checker.ctx.const_defs.keys().copied().collect();
-            if let Err(err) = validate_const_expr(&decl.node.value, &known_consts) {
-                errors.push(err);
-                return;
-            }
-
-            let annotated_ty = decl
-                .node
-                .ty
-                .as_ref()
-                .map(|ty| type_checker.resolve_type(ty));
-
-            let _ = check_expr(
-                &decl.node.value,
-                type_checker,
-                errors,
-                annotated_ty.as_ref(),
-            );
-
-            let const_value = match eval_const_expr(&decl.node.value, &type_checker.ctx.const_defs)
+            if eval_and_insert_const(decl, type_checker, errors)
+                && let Some(scope) = type_checker.const_scope_stack.last_mut()
             {
-                Ok(val) => val,
-                Err(err) => {
-                    errors.push(err);
-                    return;
-                }
-            };
-
-            let value_ty = const_value.ty();
-            if let Some(ref ann_ty) = annotated_ty
-                && *ann_ty != value_ty
-            {
-                errors.push(Diagnostic::new(
-                    decl.span,
-                    DiagnosticKind::ConstTypeMismatch {
-                        expected: ann_ty.clone(),
-                        got: value_ty,
-                    },
-                ));
-                return;
-            }
-
-            let final_ty = annotated_ty.unwrap_or_else(|| const_value.ty());
-            type_checker.ctx.const_defs.insert(
-                name,
-                ConstDef {
-                    ty: final_ty,
-                    value: const_value,
-                    visibility: decl.node.visibility,
-                },
-            );
-
-            if let Some(scope) = type_checker.const_scope_stack.last_mut() {
                 scope.insert(name);
             }
         }
@@ -1363,10 +1345,10 @@ pub(super) fn extend_base_key(ty: &Type) -> Option<Ident> {
     }
     match ty {
         Type::Enum { name, .. } | Type::Extern { name } => Some(*name),
-        Type::List { .. } => Some(Ident(Intern::new("__List".to_string()))),
-        Type::Map { .. } => Some(Ident(Intern::new("__Map".to_string()))),
-        Type::Tuple(_) => Some(Ident(Intern::new("__Tuple".to_string()))),
-        Type::Array { .. } => Some(Ident(Intern::new("__Array".to_string()))),
+        Type::List { .. } => Some(*IDENT_LIST),
+        Type::Map { .. } => Some(*IDENT_MAP),
+        Type::Tuple(_) => Some(*IDENT_TUPLE),
+        Type::Array { .. } => Some(*IDENT_ARRAY),
         _ => None,
     }
 }
@@ -1395,6 +1377,11 @@ fn collect_undeclared_type_param_names(ty: &Type, declared: &[TypeParam], out: &
         | Type::Enum { type_args, .. } => {
             for arg in type_args {
                 collect_undeclared_type_param_names(arg, declared, out);
+            }
+        }
+        Type::NamedTuple(fields) => {
+            for (_, field_ty) in fields {
+                collect_undeclared_type_param_names(field_ty, declared, out);
             }
         }
         Type::Func { params, ret } => {
@@ -1442,11 +1429,14 @@ fn is_valid_concrete_extend_type(ty: &Type) -> bool {
         Type::Struct { type_args, .. }
         | Type::DataRef { type_args, .. }
         | Type::Enum { type_args, .. } => type_args.iter().all(is_valid_concrete_extend_type),
-        Type::List { elem } | Type::Array { elem, .. } => is_valid_concrete_extend_type(elem),
+        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+            is_valid_concrete_extend_type(elem)
+        }
         Type::Map { key, value } => {
             is_valid_concrete_extend_type(key) && is_valid_concrete_extend_type(value)
         }
         Type::Tuple(fields) => fields.iter().all(is_valid_concrete_extend_type),
+        Type::NamedTuple(fields) => fields.iter().all(|(_, t)| is_valid_concrete_extend_type(t)),
         _ => false,
     }
 }

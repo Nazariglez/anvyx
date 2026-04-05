@@ -1,0 +1,5 @@
+// @helper
+
+import y { Y };
+
+pub struct X { y: Y }

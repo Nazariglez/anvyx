@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+struct Registry { entries: [string: Registry] = [:] }
+
+fn main() {
+    let r = Registry {};
+}

@@ -1,11 +1,22 @@
 use super::helpers::{
-    assert_expr_type, call_expr, expr_stmt, fn_decl, get_expr_id, ident_expr, let_binding,
-    lit_bool, lit_int, program, reset_expr_ids, return_stmt, run_err, run_ok,
+    assert_expr_type, call_expr, check_src, expr_stmt, fn_decl, get_expr_id, ident_expr,
+    let_binding, lit_bool, lit_int, program, reset_expr_ids, return_stmt, run_err, run_ok,
 };
 use crate::{
     ast::{FuncParam, Type},
-    typecheck::error::DiagnosticKind,
+    typecheck::error::{Diagnostic, DiagnosticKind},
 };
+
+fn assert_has_mismatch(errors: &[Diagnostic], a: Type, b: Type) {
+    let found = errors.iter().any(|e| {
+        matches!(&e.kind, DiagnosticKind::MismatchedTypes { expected, found }
+            if (*expected == a && *found == b) || (*expected == b && *found == a))
+    });
+    assert!(
+        found,
+        "Expected MismatchedTypes error with {a:?} and {b:?}, got: {errors:?}"
+    );
+}
 
 // ---- return tests ----
 
@@ -36,16 +47,7 @@ fn test_return_void_function_returning_value() {
 
     let errors = run_err(prog);
     assert!(!errors.is_empty());
-    assert!(
-        errors.iter().any(|e| matches!(
-            &e.kind,
-            DiagnosticKind::MismatchedTypes { expected, found }
-            if (*expected == Type::Void && *found == Type::Int) ||
-               (*expected == Type::Int && *found == Type::Void)
-        )),
-        "Expected MismatchedTypes error (void/int mismatch), got: {:?}",
-        errors
-    );
+    assert_has_mismatch(&errors, Type::Void, Type::Int);
 }
 
 #[test]
@@ -78,16 +80,7 @@ fn test_return_non_void_wrong_type() {
 
     let errors = run_err(prog);
     assert!(!errors.is_empty());
-    assert!(
-        errors.iter().any(|e| matches!(
-            &e.kind,
-            DiagnosticKind::MismatchedTypes { expected, found }
-            if (*expected == Type::Int && *found == Type::Bool) ||
-               (*expected == Type::Bool && *found == Type::Int)
-        )),
-        "Expected MismatchedTypes error (int/bool mismatch), got: {:?}",
-        errors
-    );
+    assert_has_mismatch(&errors, Type::Int, Type::Bool);
 }
 
 #[test]
@@ -102,11 +95,7 @@ fn test_return_non_void_without_value() {
     )]);
 
     let errors = run_err(prog);
-    assert!(errors.iter().any(|e| matches!(
-        &e.kind,
-        DiagnosticKind::MismatchedTypes { expected, found }
-        if *expected == Type::Int && *found == Type::Void
-    )));
+    assert_has_mismatch(&errors, Type::Int, Type::Void);
 }
 
 // ---- function as value tests ----
@@ -270,11 +259,7 @@ fn test_implicit_return_empty_body_non_void_error() {
     let prog = program(vec![fn_decl("f", vec![], Type::Int, vec![])]);
 
     let errors = run_err(prog);
-    assert!(errors.iter().any(|e| matches!(
-        &e.kind,
-        DiagnosticKind::MismatchedTypes { expected, found }
-        if *expected == Type::Int && *found == Type::Void
-    )));
+    assert_has_mismatch(&errors, Type::Int, Type::Void);
 }
 
 #[test]
@@ -289,11 +274,7 @@ fn test_implicit_return_wrong_type_error() {
     )]);
 
     let errors = run_err(prog);
-    assert!(errors.iter().any(|e| matches!(
-        &e.kind,
-        DiagnosticKind::MismatchedTypes { expected, found }
-        if *expected == Type::Int && *found == Type::Bool
-    )));
+    assert_has_mismatch(&errors, Type::Int, Type::Bool);
 }
 
 #[test]
@@ -309,11 +290,7 @@ fn test_void_fn_trailing_value_error() {
     )]);
 
     let errors = run_err(prog);
-    assert!(errors.iter().any(|e| matches!(
-        &e.kind,
-        DiagnosticKind::MismatchedTypes { expected, found }
-        if *expected == Type::Void && *found == Type::Int
-    )));
+    assert_has_mismatch(&errors, Type::Void, Type::Int);
 }
 
 #[test]
@@ -348,24 +325,6 @@ fn test_nested_fn_implicit_return() {
 }
 
 // ---- extern fn typechecker tests ----
-
-fn check_src(
-    src: &str,
-) -> Result<crate::typecheck::TypecheckResult, Vec<crate::typecheck::error::Diagnostic>> {
-    const TEST_CORE_PRELUDE: &str = concat!(
-        include_str!("../../../../core/src/option.anv"),
-        "\n",
-        include_str!("../../../../core/src/range.anv"),
-    );
-    let tokens = crate::lexer::tokenize(TEST_CORE_PRELUDE).unwrap();
-    let prelude = crate::parser::parse_ast(&tokens).unwrap();
-    let user_tokens = crate::lexer::tokenize(src).unwrap();
-    let user_ast = crate::parser::parse_ast(&user_tokens).unwrap();
-    let mut stmts = prelude.stmts;
-    stmts.extend(user_ast.stmts);
-    let combined = crate::ast::Program { stmts };
-    crate::typecheck::check_program_with_modules(&combined, &[], &[])
-}
 
 #[test]
 fn extern_fn_call_correct_types_ok() {

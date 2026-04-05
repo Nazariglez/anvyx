@@ -13,7 +13,6 @@ use crate::{
 pub enum ImportError {
     FileNotFound { path: String, span: Span },
     ParseError { file_path: String },
-    CircularImport { path: String, span: Span },
     UnknownStdModule { name: String, span: Span },
 }
 
@@ -23,7 +22,7 @@ pub struct ModuleSource {
 }
 
 pub struct ResolveResult {
-    pub modules: Vec<ModuleSource>,
+    pub module_groups: Vec<Vec<ModuleSource>>,
 }
 
 pub(crate) fn resolve_imports(
@@ -49,7 +48,8 @@ pub(crate) fn resolve_imports(
     );
 
     if errors.is_empty() {
-        Ok(ResolveResult { modules })
+        let module_groups = topological_sort_sccs(modules);
+        Ok(ResolveResult { module_groups })
     } else {
         Err(errors)
     }
@@ -79,15 +79,14 @@ fn collect_imports(
                 continue;
             }
 
-            let module_name = if let Some(name) = path_key.get(1) {
-                name.as_str()
-            } else {
+            let Some(module_name) = path_key.get(1) else {
                 errors.push(ImportError::UnknownStdModule {
                     name: "std".to_string(),
                     span: import_node.span,
                 });
                 continue;
             };
+            let module_name = module_name.as_str();
 
             let Some(source) = std_modules.get(module_name) else {
                 errors.push(ImportError::UnknownStdModule {
@@ -126,12 +125,7 @@ fn collect_imports(
             continue;
         }
 
-        // currently on the DFS stack, this is a real cycle
         if resolving.contains(&path_key) {
-            errors.push(ImportError::CircularImport {
-                path: path_key.join("."),
-                span: import_node.span,
-            });
             continue;
         }
 
@@ -181,12 +175,123 @@ fn collect_imports(
 
 fn build_file_path(project_root: &Path, path_key: &[String]) -> PathBuf {
     let mut p = project_root.to_path_buf();
-    for (i, segment) in path_key.iter().enumerate() {
-        if i < path_key.len() - 1 {
+    if let Some((last, dirs)) = path_key.split_last() {
+        for segment in dirs {
             p.push(segment);
-        } else {
-            p.push(format!("{segment}.anv"));
         }
+        p.push(format!("{last}.anv"));
     }
     p
+}
+
+fn topological_sort_sccs(modules: Vec<ModuleSource>) -> Vec<Vec<ModuleSource>> {
+    if modules.is_empty() {
+        return vec![];
+    }
+
+    let index: HashMap<Vec<String>, usize> = modules
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (m.path_key.clone(), i))
+        .collect();
+
+    let mut adj: Vec<Vec<usize>> = vec![vec![]; modules.len()];
+    for (i, module) in modules.iter().enumerate() {
+        for stmt in &module.stmts {
+            let Stmt::Import(import_node) = &stmt.node else {
+                continue;
+            };
+            let target: Vec<String> = import_node
+                .node
+                .path
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            if let Some(&j) = index.get(&target) {
+                adj[i].push(j);
+            }
+        }
+    }
+
+    let sccs = tarjan_scc(&adj);
+
+    let mut slots: Vec<Option<ModuleSource>> = modules.into_iter().map(Some).collect();
+    sccs.into_iter()
+        .map(|scc| scc.into_iter().map(|i| slots[i].take().unwrap()).collect())
+        .collect()
+}
+
+fn tarjan_scc(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let n = adj.len();
+    let mut index_counter = 0u32;
+    let mut stack: Vec<usize> = vec![];
+    let mut on_stack = vec![false; n];
+    let mut indices = vec![u32::MAX; n];
+    let mut lowlinks = vec![0u32; n];
+    let mut sccs: Vec<Vec<usize>> = vec![];
+
+    for i in 0..n {
+        if indices[i] == u32::MAX {
+            tarjan_visit(
+                i,
+                adj,
+                &mut index_counter,
+                &mut stack,
+                &mut on_stack,
+                &mut indices,
+                &mut lowlinks,
+                &mut sccs,
+            );
+        }
+    }
+
+    sccs
+}
+
+fn tarjan_visit(
+    v: usize,
+    adj: &[Vec<usize>],
+    index_counter: &mut u32,
+    stack: &mut Vec<usize>,
+    on_stack: &mut [bool],
+    indices: &mut [u32],
+    lowlinks: &mut [u32],
+    sccs: &mut Vec<Vec<usize>>,
+) {
+    indices[v] = *index_counter;
+    lowlinks[v] = *index_counter;
+    *index_counter += 1;
+    stack.push(v);
+    on_stack[v] = true;
+
+    for &w in &adj[v] {
+        if indices[w] == u32::MAX {
+            tarjan_visit(
+                w,
+                adj,
+                index_counter,
+                stack,
+                on_stack,
+                indices,
+                lowlinks,
+                sccs,
+            );
+            lowlinks[v] = lowlinks[v].min(lowlinks[w]);
+        } else if on_stack[w] {
+            lowlinks[v] = lowlinks[v].min(indices[w]);
+        }
+    }
+
+    if lowlinks[v] == indices[v] {
+        let mut scc = vec![];
+        loop {
+            let w = stack.pop().unwrap();
+            on_stack[w] = false;
+            scc.push(w);
+            if w == v {
+                break;
+            }
+        }
+        sccs.push(scc);
+    }
 }

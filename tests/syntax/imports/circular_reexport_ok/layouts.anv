@@ -1,0 +1,5 @@
+// @helper
+
+import widgets { Widget };
+
+pub struct Layout { widgets: [Widget] }

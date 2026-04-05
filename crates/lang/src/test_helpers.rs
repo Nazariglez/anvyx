@@ -69,7 +69,7 @@ impl TestCtx {
         stmts.extend(user_ast.stmts);
         let combined = ast::Program { stmts };
 
-        let tcx = typecheck::check_program_with_modules(&combined, &[], &[])
+        let tcx = typecheck::check_program_with_modules(&combined, &[], &[], &[])
             .expect("source must typecheck");
         (combined, tcx)
     }

@@ -1,7 +1,7 @@
 // @mode: check
 // @expect: error
-// @contains: Circular import
+// @contains: infinite size
 
-import a;
+import x { X };
 
 fn main() {}

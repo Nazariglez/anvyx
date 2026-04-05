@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: infinite size
+
+struct A { b: B }
+struct B { c: C }
+struct C { a: A }
+
+fn main() {}

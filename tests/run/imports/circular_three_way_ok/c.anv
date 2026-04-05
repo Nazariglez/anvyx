@@ -1,0 +1,5 @@
+// @helper
+
+import a { val_a };
+
+pub fn val_c() -> int { 3 }

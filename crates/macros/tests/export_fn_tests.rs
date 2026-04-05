@@ -1,3 +1,8 @@
+// Items in this file (structs, fields, methods) are accessed through macro-generated dispatch
+// code (function pointers, static arrays) rather than direct Rust calls or construction.
+// Rustc cannot trace through proc macro expansion, so dead_code warnings are false positives.
+#![allow(dead_code)]
+
 use anvyx_lang::{
     AnvyxExternType, ExternDecl, ExternHandleData, ExternTypeDeclConst, ManagedRc, OPTION_TYPE_ID,
     RuntimeError, Value, export_fn, export_type,

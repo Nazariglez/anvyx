@@ -50,6 +50,7 @@ fn register_builtins(type_checker: &mut TypeChecker) {
 pub fn check_program_with_modules(
     program: &Program,
     module_list: &[(Vec<String>, Vec<StmtNode>)],
+    scc_groups: &[Vec<usize>],
     auto_use_modules: &[Vec<String>],
 ) -> Result<TypecheckResult, Vec<Diagnostic>> {
     let mut type_checker = TypeChecker::default();
@@ -68,10 +69,10 @@ pub fn check_program_with_modules(
                     .insert(node.node.name, types::EnumDef::from_ast(&node.node));
             }
             Stmt::Aggregate(node) => {
-                type_checker
-                    .ctx
-                    .struct_defs
-                    .insert(node.node.name, types::StructDef::from_ast(&node.node));
+                type_checker.ctx.struct_defs.insert(
+                    node.node.name,
+                    types::StructDef::from_ast(&node.node, node.span),
+                );
             }
             _ => {}
         }
@@ -84,47 +85,67 @@ pub fn check_program_with_modules(
             .insert(path.clone(), stmts.clone());
     }
 
-    for (path, stmts) in module_list {
-        let (mut module_def, reexport_errors) =
-            build_module_def_with_reexports(stmts, &type_checker, path);
-        errors.extend(reexport_errors);
+    for group in scc_groups {
+        let mut group_defs = vec![];
+        for &idx in group {
+            let (path, stmts) = &module_list[idx];
+            let (mut module_def, reexport_errors) =
+                build_module_def_with_reexports(stmts, &type_checker, path);
+            errors.extend(reexport_errors);
 
-        let (const_defs, const_errors) =
-            evaluate_and_export_consts(stmts, &type_checker.resolved_module_defs);
-        errors.extend(const_errors);
+            let (const_defs, const_errors) =
+                evaluate_and_export_consts(stmts, &type_checker.resolved_module_defs);
+            errors.extend(const_errors);
 
-        for stmt in stmts {
-            let Stmt::Func(node) = &stmt.node else {
-                continue;
-            };
-            let func = &node.node;
-            if func.visibility != Visibility::Public {
-                continue;
+            for stmt in stmts {
+                let Stmt::Func(node) = &stmt.node else {
+                    continue;
+                };
+                let func = &node.node;
+                if func.visibility != Visibility::Public {
+                    continue;
+                }
+                if !func.params.iter().any(|p| p.default.is_some()) {
+                    continue;
+                }
+                let defaults: Vec<Option<ConstValue>> = func
+                    .params
+                    .iter()
+                    .map(|p| {
+                        p.default
+                            .as_ref()
+                            .and_then(|expr| const_eval::eval_const_expr(expr, &const_defs).ok())
+                    })
+                    .collect();
+                module_def.func_param_defaults.insert(func.name, defaults);
             }
-            if !func.params.iter().any(|p| p.default.is_some()) {
-                continue;
+
+            for (name, def) in const_defs {
+                if def.visibility == Visibility::Public {
+                    module_def.const_defs.insert(name, def);
+                }
             }
-            let defaults: Vec<Option<ConstValue>> = func
-                .params
-                .iter()
-                .map(|p| {
-                    p.default
-                        .as_ref()
-                        .and_then(|expr| const_eval::eval_const_expr(expr, &const_defs).ok())
-                })
-                .collect();
-            module_def.func_param_defaults.insert(func.name, defaults);
+
+            group_defs.push((path.clone(), module_def));
         }
 
-        for (name, def) in const_defs {
-            if def.visibility == Visibility::Public {
-                module_def.const_defs.insert(name, def);
-            }
+        for (path, def) in group_defs {
+            type_checker.resolved_module_defs.insert(path, def);
         }
+    }
 
-        type_checker
-            .resolved_module_defs
-            .insert(path.clone(), module_def);
+    // detect infinite size cycles across all registered types
+    {
+        let mut all_struct_defs = type_checker.ctx.struct_defs.clone();
+        let mut all_enum_defs = type_checker.ctx.enum_defs.clone();
+        for module_def in type_checker.resolved_module_defs.values() {
+            all_struct_defs.extend(module_def.struct_defs.clone());
+            all_enum_defs.extend(module_def.enum_defs.clone());
+        }
+        errors.extend(cyclicity::check_value_type_cycles(
+            &all_struct_defs,
+            &all_enum_defs,
+        ));
     }
 
     // auto activate extend methods from core modules (no import required)
@@ -212,8 +233,16 @@ pub fn check_program_with_modules(
         return Err(errors);
     }
 
-    type_checker.cycle_capable_types =
-        cyclicity::analyze_cyclicity(&type_checker.ctx.struct_defs, &type_checker.ctx.enum_defs);
+    {
+        let mut all_struct_defs = type_checker.ctx.struct_defs.clone();
+        let mut all_enum_defs = type_checker.ctx.enum_defs.clone();
+        for module_def in type_checker.resolved_module_defs.values() {
+            all_struct_defs.extend(module_def.struct_defs.clone());
+            all_enum_defs.extend(module_def.enum_defs.clone());
+        }
+        type_checker.cycle_capable_types =
+            cyclicity::analyze_cyclicity(&all_struct_defs, &all_enum_defs);
+    }
 
     Ok(type_checker.into_result())
 }
@@ -226,5 +255,12 @@ fn flush_errors(
         .drain(..)
         .partition(|d| d.kind.severity() == Severity::Error);
     type_checker.warnings.extend(warns);
-    if errs.is_empty() { Ok(()) } else { Err(errs) }
+    if errs.is_empty() {
+        Ok(())
+    } else {
+        // include the accumulated warnings in the error result
+        let mut all = type_checker.warnings.clone();
+        all.extend(errs);
+        Err(all)
+    }
 }

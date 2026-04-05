@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: success
+
+struct Config { max: int }
+struct App { config: Config }
+
+fn main() {
+    let a = App { config: Config { max: 10 } };
+}
