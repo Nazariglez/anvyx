@@ -13,7 +13,7 @@ pub(super) fn analyze_cyclicity(
 ) -> HashSet<Ident> {
     let datarefs: Vec<Ident> = struct_defs
         .iter()
-        .filter(|(_, def)| def.is_dataref)
+        .filter(|(_, def)| def.kind.is_dataref())
         .map(|(name, _)| *name)
         .collect();
 
@@ -105,7 +105,7 @@ fn extract_dataref_refs(
     type_any(ty, &mut |t| {
         match t {
             Type::DataRef { name, .. } | Type::Struct { name, .. } | Type::UnresolvedName(name) => {
-                if struct_defs.get(name).is_some_and(|d| d.is_dataref) {
+                if struct_defs.get(name).is_some_and(|d| d.kind.is_dataref()) {
                     out.push(*name);
                 }
             }

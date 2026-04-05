@@ -1,0 +1,21 @@
+// @mode: check
+// @expect: success
+
+dataref Node {
+    value: int,
+    label: string,
+}
+
+fn use_full(n: Node) {
+    let Node { value, label } = n;
+}
+
+fn use_partial(n: Node) {
+    let Node { value } = n;
+}
+
+fn main() {
+    let n = Node { value: 10, label: "root" };
+    use_full(n);
+    use_partial(n);
+}

@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown variable
+
+dataref Node { value: float, label: float }
+
+fn main() {
+    let n = Node { value, label };
+}

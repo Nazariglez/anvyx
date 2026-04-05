@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: Missing field
+
+dataref Player {
+    name: string,
+    health: float = 100.0,
+}
+
+fn main() {
+    let p = Player {};
+}

@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown field 'level'
+
+dataref Node {
+    value: int,
+    label: string,
+}
+
+fn main() {
+    let n = Node { value: 42, label: "root" };
+    let x = n.level;
+}

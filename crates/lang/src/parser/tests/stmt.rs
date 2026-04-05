@@ -254,8 +254,8 @@ fn test_mixed_params_parse() {
 fn test_var_self_parses() {
     let prog = parse_program("struct S { fn m(var self) {} }");
     assert_eq!(prog.stmts.len(), 1);
-    let ast::Stmt::Struct(struct_node) = &prog.stmts[0].node else {
-        panic!("expected Struct");
+    let ast::Stmt::Aggregate(struct_node) = &prog.stmts[0].node else {
+        panic!("expected Aggregate");
     };
     let methods = &struct_node.node.methods;
     assert_eq!(methods.len(), 1);

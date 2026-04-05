@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: mismatch
+
+dataref Bad {
+    health: float = "not a number",
+}
+
+fn main() {}

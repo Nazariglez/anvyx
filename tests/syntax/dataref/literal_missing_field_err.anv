@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: Missing field 'label'
+
+dataref Node {
+    value: int,
+    label: string,
+}
+
+fn main() {
+    let n = Node { value: 42 };
+}

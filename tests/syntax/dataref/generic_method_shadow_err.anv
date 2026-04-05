@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: method type parameter shadows dataref type parameter
+
+dataref Wrapper<T> {
+    fn bar<T>(self, x: T) -> T {
+        x
+    }
+}
+
+fn main() {}

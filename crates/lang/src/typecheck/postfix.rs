@@ -213,17 +213,15 @@ fn continue_postfix_chain(
 }
 
 fn is_named_type(ty: &Type) -> bool {
-    matches!(
-        ty,
-        Type::Struct { .. } | Type::DataRef { .. } | Type::Enum { .. }
-    )
+    ty.is_aggregate() || matches!(ty, Type::Enum { .. })
 }
 
 fn named_type_parts(ty: &Type) -> (Ident, &[Type]) {
+    if let Some(agg) = ty.as_aggregate() {
+        return (agg.name, agg.type_args);
+    }
     match ty {
-        Type::Struct { name, type_args }
-        | Type::DataRef { name, type_args }
-        | Type::Enum { name, type_args } => (*name, type_args.as_slice()),
+        Type::Enum { name, type_args } => (*name, type_args.as_slice()),
         _ => unreachable!("called named_type_parts on non-named type"),
     }
 }
@@ -1135,6 +1133,7 @@ fn emit_unknown_method(
     errors.push(Diagnostic::new(
         span,
         DiagnosticKind::UnknownMethod {
+            kind: "type",
             struct_name: type_ident,
             method: method_name,
         },
@@ -1281,10 +1280,10 @@ fn handle_method_call_if_applicable(
     }
 
     // struct and dataref method dispatch
-    if let Type::Struct { name, type_args } | Type::DataRef { name, type_args } = detection_ty {
+    if let Some(agg) = detection_ty.as_aggregate() {
         return match try_struct_method(
-            *name,
-            type_args,
+            agg.name,
+            agg.type_args,
             detection_ty,
             field_node,
             call_node,

@@ -1,0 +1,19 @@
+// @mode: check
+// @expect: success
+
+dataref Counter {
+    value: int,
+
+    fn get(self) -> int {
+        self.value
+    }
+
+    fn new(start: int) -> Self {
+        Counter { value: start }
+    }
+}
+
+fn main() {
+    let c = Counter.new(10);
+    let v: int = c.get();
+}

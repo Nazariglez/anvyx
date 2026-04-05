@@ -17,6 +17,7 @@ use crate::{
 pub(super) enum AnnotationTarget {
     Func,
     Struct,
+    DataRef,
     Enum,
     Field,
     Variant,
@@ -27,6 +28,7 @@ impl fmt::Display for AnnotationTarget {
         match self {
             Self::Func => write!(f, "function"),
             Self::Struct => write!(f, "struct"),
+            Self::DataRef => write!(f, "dataref"),
             Self::Enum => write!(f, "enum"),
             Self::Field => write!(f, "field"),
             Self::Variant => write!(f, "variant"),
@@ -60,6 +62,7 @@ static KNOWN_ANNOTATIONS: LazyLock<HashMap<&'static str, AnnotationDef>> = LazyL
             targets: &[
                 AnnotationTarget::Func,
                 AnnotationTarget::Struct,
+                AnnotationTarget::DataRef,
                 AnnotationTarget::Enum,
                 AnnotationTarget::Field,
                 AnnotationTarget::Variant,

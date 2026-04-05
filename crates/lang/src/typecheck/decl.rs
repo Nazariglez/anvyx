@@ -15,8 +15,8 @@ use super::{
 };
 use crate::{
     ast::{
-        ArrayLen, BlockNode, ExprId, ExprKind, Func, FuncNode, Ident, MethodReceiver, Mutability,
-        Param, StructDeclNode, StructField, Type, TypeParam,
+        AggregateDeclNode, ArrayLen, BlockNode, ExprId, ExprKind, Func, FuncNode, Ident,
+        MethodReceiver, Mutability, Param, StructField, Type, TypeParam,
     },
     span::Span,
 };
@@ -138,6 +138,7 @@ pub(super) fn check_method_body(
                 errors.push(Diagnostic::new(
                     error_span,
                     DiagnosticKind::MethodTypeParamShadowsStruct {
+                        kind: struct_def.kind.keyword(),
                         struct_name,
                         method: method_name,
                         param: method_param.name,
@@ -382,6 +383,7 @@ fn validate_param_defaults(
 }
 
 fn validate_field_defaults(
+    kind: &'static str,
     struct_name: Ident,
     fields: &[StructField],
     type_params: &[TypeParam],
@@ -399,6 +401,7 @@ fn validate_field_defaults(
             errors.push(Diagnostic::new(
                 expr.span,
                 DiagnosticKind::FieldDefaultOnGenericType {
+                    kind,
                     struct_name,
                     field: field.name,
                 },
@@ -420,6 +423,7 @@ fn validate_field_defaults(
                 errors.push(Diagnostic::new(
                     expr.span,
                     DiagnosticKind::FieldDefaultTypeMismatch {
+                        kind,
                         struct_name,
                         field: field.name,
                         expected: resolved_ty,
@@ -445,6 +449,7 @@ fn validate_field_defaults(
                 errors.push(Diagnostic::new(
                     expr.span,
                     DiagnosticKind::FieldDefaultTypeMismatch {
+                        kind,
                         struct_name,
                         field: field.name,
                         expected: resolved_ty,
@@ -462,6 +467,7 @@ fn validate_field_defaults(
             errors.push(Diagnostic::new(
                 expr.span,
                 DiagnosticKind::FieldDefaultNotConst {
+                    kind,
                     struct_name,
                     field: field.name,
                 },
@@ -473,6 +479,7 @@ fn validate_field_defaults(
             errors.push(Diagnostic::new(
                 expr.span,
                 DiagnosticKind::FieldDefaultNotConst {
+                    kind,
                     struct_name,
                     field: field.name,
                 },
@@ -485,6 +492,7 @@ fn validate_field_defaults(
                 errors.push(Diagnostic::new(
                     expr.span,
                     DiagnosticKind::FieldDefaultTypeMismatch {
+                        kind,
                         struct_name,
                         field: field.name,
                         expected: resolved_ty,
@@ -499,6 +507,7 @@ fn validate_field_defaults(
                 errors.push(Diagnostic::new(
                     expr.span,
                     DiagnosticKind::FieldDefaultTypeMismatch {
+                        kind,
                         struct_name,
                         field: field.name,
                         expected: resolved_ty,
@@ -516,12 +525,13 @@ fn validate_field_defaults(
 }
 
 pub(super) fn check_struct(
-    struct_node: &StructDeclNode,
+    struct_node: &AggregateDeclNode,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) {
     let decl = &struct_node.node;
     let struct_name = decl.name;
+    let kind = decl.kind.keyword();
 
     for field in &decl.fields {
         validate_annotations(&field.annotations, AnnotationTarget::Field, errors);
@@ -538,6 +548,7 @@ pub(super) fn check_struct(
     };
 
     validate_field_defaults(
+        kind,
         struct_name,
         &decl.fields,
         &decl.type_params,
@@ -568,7 +579,7 @@ pub(super) fn check_struct(
 
     let to_string_ident = Ident(Intern::new("to_string".to_string()));
     if let Some(method_def) = struct_def.methods.get(&to_string_ident) {
-        validate_to_string_signature(struct_name, method_def, struct_node.span, errors);
+        validate_to_string_signature(kind, struct_name, method_def, struct_node.span, errors);
     }
 
     for method in &decl.methods {
@@ -587,6 +598,7 @@ pub(super) fn check_struct(
 }
 
 fn validate_to_string_signature(
+    kind: &'static str,
     struct_name: Ident,
     method: &MethodDef,
     span: Span,
@@ -597,6 +609,7 @@ fn validate_to_string_signature(
             errors.push(Diagnostic::new(
                 span,
                 DiagnosticKind::InvalidToStringSignature {
+                    kind,
                     struct_name,
                     reason: "must have a 'self' receiver".to_string(),
                 },
@@ -607,6 +620,7 @@ fn validate_to_string_signature(
             errors.push(Diagnostic::new(
                 span,
                 DiagnosticKind::InvalidToStringSignature {
+                    kind,
                     struct_name,
                     reason: "receiver must be 'self', not 'var self'".to_string(),
                 },
@@ -620,6 +634,7 @@ fn validate_to_string_signature(
         errors.push(Diagnostic::new(
             span,
             DiagnosticKind::InvalidToStringSignature {
+                kind,
                 struct_name,
                 reason: format!("must return 'string', found '{found}'"),
             },
@@ -630,6 +645,7 @@ fn validate_to_string_signature(
         errors.push(Diagnostic::new(
             span,
             DiagnosticKind::InvalidToStringSignature {
+                kind,
                 struct_name,
                 reason: "must take no parameters besides 'self'".to_string(),
             },
@@ -640,6 +656,7 @@ fn validate_to_string_signature(
         errors.push(Diagnostic::new(
             span,
             DiagnosticKind::InvalidToStringSignature {
+                kind,
                 struct_name,
                 reason: "must not be generic".to_string(),
             },

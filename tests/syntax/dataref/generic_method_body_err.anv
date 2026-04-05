@@ -1,0 +1,14 @@
+// @mode: check
+// @expect: error
+// @contains: Invalid operand type
+
+dataref Foo {
+    fn bad<T>(self, x: T) -> T {
+        x - x
+    }
+}
+
+fn main() {
+    let f = Foo {};
+    let a: string = f.bad("oops");
+}

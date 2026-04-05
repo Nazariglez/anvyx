@@ -615,8 +615,9 @@ pub(super) fn generic_struct_decl(
         })
         .collect();
     StmtNode {
-        node: Stmt::Struct(StructDeclNode {
+        node: Stmt::Aggregate(AggregateDeclNode {
             node: StructDecl {
+                kind: AggregateKind::Struct,
                 annotations: vec![],
                 doc: None,
                 name: dummy_ident(name),

@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: error
+// @contains: instance method
+
+dataref Counter {
+    value: int,
+
+    fn get(self) -> int {
+        self.value
+    }
+}
+
+fn main() {
+    Counter.get();
+}

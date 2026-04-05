@@ -96,11 +96,11 @@ fn parser<'src>() -> BoxedParser<'src, ast::Program> {
     });
     let struct_decl = struct_declaration(stmt.clone()).map(|struct_node| {
         let span = struct_node.span;
-        Spanned::new(ast::Stmt::Struct(struct_node), span)
+        Spanned::new(ast::Stmt::Aggregate(struct_node), span)
     });
     let dataref_decl = dataref_declaration(stmt.clone()).map(|dataref_node| {
         let span = dataref_node.span;
-        Spanned::new(ast::Stmt::DataRef(dataref_node), span)
+        Spanned::new(ast::Stmt::Aggregate(dataref_node), span)
     });
     let enum_decl = enum_declaration(stmt.clone()).map(|enum_node| {
         let span = enum_node.span;
@@ -129,7 +129,7 @@ fn parser<'src>() -> BoxedParser<'src, ast::Program> {
                     f.node.doc = doc;
                     f.node.annotations = annots;
                 }
-                ast::Stmt::Struct(s) | ast::Stmt::DataRef(s) => {
+                ast::Stmt::Aggregate(s) => {
                     s.node.doc = doc;
                     s.node.annotations = annots;
                 }

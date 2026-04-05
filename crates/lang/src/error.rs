@@ -310,13 +310,13 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
             format!("Unknown struct '{name}'"),
             "This struct is not defined in this scope".to_string(),
         ),
-        DiagnosticKind::StructMissingField { struct_name, field } => (
-            format!("Missing field '{field}' in struct literal"),
-            format!("struct '{struct_name}' requires field '{field}'"),
+        DiagnosticKind::StructMissingField { kind, struct_name, field } => (
+            format!("Missing field '{field}' in {kind} literal"),
+            format!("{kind} '{struct_name}' requires field '{field}'"),
         ),
-        DiagnosticKind::StructUnknownField { struct_name, field } => (
-            format!("Unknown field '{field}' for struct '{struct_name}'"),
-            format!("struct '{struct_name}' has no field named '{field}'"),
+        DiagnosticKind::StructUnknownField { kind, struct_name, field } => (
+            format!("Unknown field '{field}' for {kind} '{struct_name}'"),
+            format!("{kind} '{struct_name}' has no field named '{field}'"),
         ),
         DiagnosticKind::ExternUnknownField { type_name, field } => (
             format!("Unknown field '{field}' on extern type '{type_name}'"),
@@ -350,28 +350,29 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
             format!("Duplicate field '{field}' in destructure of '{type_name}'"),
             format!("field '{field}' is specified more than once"),
         ),
-        DiagnosticKind::StructDuplicateField { struct_name, field } => (
-            format!("Duplicate field '{field}' in struct literal"),
+        DiagnosticKind::StructDuplicateField { kind, struct_name, field } => (
+            format!("Duplicate field '{field}' in {kind} literal"),
             format!("field '{field}' is specified more than once in '{struct_name}'"),
         ),
-        DiagnosticKind::FieldDefaultNotConst { struct_name, field } => (
+        DiagnosticKind::FieldDefaultNotConst { kind, struct_name, field } => (
             "default field value must be a constant expression".to_string(),
-            format!("field '{field}' on struct '{struct_name}' has a non-constant default"),
+            format!("field '{field}' on {kind} '{struct_name}' has a non-constant default"),
         ),
-        DiagnosticKind::FieldDefaultTypeMismatch { struct_name, field, expected, found } => (
+        DiagnosticKind::FieldDefaultTypeMismatch { kind, struct_name, field, expected, found } => (
             format!("default value type mismatch for field '{field}'"),
-            format!("field '{field}' on struct '{struct_name}': expected '{expected}', found '{found}'"),
+            format!("field '{field}' on {kind} '{struct_name}': expected '{expected}', found '{found}'"),
         ),
-        DiagnosticKind::FieldDefaultOnGenericType { struct_name, field } => (
+        DiagnosticKind::FieldDefaultOnGenericType { kind, struct_name, field } => (
             "default values are not allowed on fields with generic types".to_string(),
-            format!("field '{field}' on struct '{struct_name}' has a generic type"),
+            format!("field '{field}' on {kind} '{struct_name}' has a generic type"),
         ),
         DiagnosticKind::UnknownMethod {
+            kind,
             struct_name,
             method,
         } => (
-            format!("Unknown method '{method}' for struct '{struct_name}'"),
-            format!("struct '{struct_name}' has no method named '{method}'"),
+            format!("Unknown method '{method}' for {kind} '{struct_name}'"),
+            format!("{kind} '{struct_name}' has no method named '{method}'"),
         ),
         DiagnosticKind::StaticMethodOnValue {
             struct_name,
@@ -393,8 +394,8 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
                 "'self' is readonly in this method of '{struct_name}'; use 'var self' for mutating methods"
             ),
         ),
-        DiagnosticKind::InvalidToStringSignature { struct_name, reason } => (
-            format!("Invalid 'to_string' method on struct '{struct_name}'"),
+        DiagnosticKind::InvalidToStringSignature { kind, struct_name, reason } => (
+            format!("Invalid 'to_string' method on {kind} '{struct_name}'"),
             reason.clone(),
         ),
         DiagnosticKind::ForIterableNotSupported { found } => (
@@ -638,9 +639,9 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
             "Invalid cast".to_string(),
             format!("cannot cast '{from}' to '{to}'"),
         ),
-        DiagnosticKind::MethodTypeParamShadowsStruct { struct_name, method, param } => (
-            "method type parameter shadows struct type parameter".to_string(),
-            format!("method '{method}' on struct '{struct_name}' declares type parameter '{param}' which shadows a struct type parameter"),
+        DiagnosticKind::MethodTypeParamShadowsStruct { kind, struct_name, method, param } => (
+            format!("method type parameter shadows {kind} type parameter"),
+            format!("method '{method}' on {kind} '{struct_name}' declares type parameter '{param}' which shadows a {kind} type parameter"),
         ),
         DiagnosticKind::NotEquatable { ty } => (
             "type is not equatable".to_string(),

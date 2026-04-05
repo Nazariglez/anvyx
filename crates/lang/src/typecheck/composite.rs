@@ -192,7 +192,7 @@ pub(super) fn check_struct_lit(
         errors.push(Diagnostic::new(
             lit_node.span,
             DiagnosticKind::DeprecatedUsage {
-                kind: "struct",
+                kind: struct_def.kind.keyword(),
                 name: struct_name,
                 reason: reason.clone(),
             },
@@ -232,14 +232,27 @@ pub(super) fn check_struct_lit(
     } else {
         Some(&struct_def.field_defaults)
     };
+    let kind = struct_def.kind.keyword();
     let matched = validate_field_names(
         &provided,
         lit_node.span,
         &struct_def.fields,
         false,
-        |field| DiagnosticKind::StructDuplicateField { struct_name, field },
-        |field| DiagnosticKind::StructUnknownField { struct_name, field },
-        |field| DiagnosticKind::StructMissingField { struct_name, field },
+        |field| DiagnosticKind::StructDuplicateField {
+            kind,
+            struct_name,
+            field,
+        },
+        |field| DiagnosticKind::StructUnknownField {
+            kind,
+            struct_name,
+            field,
+        },
+        |field| DiagnosticKind::StructMissingField {
+            kind,
+            struct_name,
+            field,
+        },
         defaults,
         errors,
     );

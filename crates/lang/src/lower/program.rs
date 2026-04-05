@@ -84,7 +84,7 @@ pub fn lower_program(
     let (spec_registrations, method_spec_registrations, extend_spec_registrations) =
         lower_all_specializations(&mut shared, &mut next_func_id);
 
-    let mut struct_methods: Vec<(Ident, u32, &ast::Method, bool)> = vec![];
+    let mut struct_methods: Vec<(Ident, u32, &ast::Method, AggregateKind)> = vec![];
     let to_string_name = Ident(Intern::new("to_string".to_string()));
     let self_ident = Ident(Intern::new("self".to_string()));
     collect_struct_methods_from(
@@ -246,7 +246,7 @@ pub fn lower_program(
         });
     }
 
-    for (struct_name, type_id, method, is_dataref) in &struct_methods {
+    for (struct_name, type_id, method, kind) in &struct_methods {
         let mangled = Ident(Intern::new(format!("{struct_name}::{}", method.name)));
         let &id = shared
             .funcs
@@ -255,17 +255,7 @@ pub fn lower_program(
 
         let mut fc = FuncLower::new();
 
-        let self_type = if *is_dataref {
-            Type::DataRef {
-                name: *struct_name,
-                type_args: vec![],
-            }
-        } else {
-            Type::Struct {
-                name: *struct_name,
-                type_args: vec![],
-            }
-        };
+        let self_type = kind.make_type(*struct_name, vec![]);
         register_named_local(&mut fc, self_ident, self_type);
         if matches!(method.receiver, Some(MethodReceiver::Var)) {
             fc.locals[0].is_ref = true;
@@ -405,12 +395,7 @@ fn assign_type_ids(
         let prefix = path.join("::");
         for stmt_node in stmts {
             match &stmt_node.node {
-                ast::Stmt::Struct(s) => {
-                    qualified_names
-                        .entry(s.node.name)
-                        .or_insert_with(|| format!("{}::{}", prefix, s.node.name));
-                }
-                ast::Stmt::DataRef(s) => {
+                ast::Stmt::Aggregate(s) => {
                     qualified_names
                         .entry(s.node.name)
                         .or_insert_with(|| format!("{}::{}", prefix, s.node.name));
@@ -436,14 +421,7 @@ fn assign_type_ids(
     }
     for (_path, stmts) in module_list {
         for stmt_node in stmts {
-            if let ast::Stmt::Struct(s) = &stmt_node.node {
-                struct_type_ids.entry(s.node.name).or_insert_with(|| {
-                    let id = struct_next_id;
-                    struct_next_id += 1;
-                    id
-                });
-            }
-            if let ast::Stmt::DataRef(s) = &stmt_node.node {
+            if let ast::Stmt::Aggregate(s) = &stmt_node.node {
                 struct_type_ids.entry(s.node.name).or_insert_with(|| {
                     let id = struct_next_id;
                     struct_next_id += 1;
@@ -497,7 +475,7 @@ fn build_type_metadata(
                 ty: tcx.struct_field_type(*name, *f).unwrap_or(Type::Void),
             })
             .collect();
-        let is_dataref = tcx.is_dataref(*name);
+        let kind = tcx.aggregate_kind(*name).unwrap_or(AggregateKind::Struct);
         let cycle_capable = tcx.is_cycle_capable(*name);
         let short_name = name.to_string();
         let qualified_name = qualified_names
@@ -507,11 +485,7 @@ fn build_type_metadata(
         aggregate_meta_slots[type_id as usize] = Some(AggregateMeta {
             name: short_name,
             qualified_name,
-            kind: if is_dataref {
-                AggregateKind::DataRef
-            } else {
-                AggregateKind::Struct
-            },
+            kind,
             fields,
             display_func: None,
             cycle_capable,
@@ -677,26 +651,19 @@ fn collect_struct_methods_from<'a>(
     stmts: impl Iterator<Item = &'a ast::StmtNode>,
     shared: &mut SharedCtx,
     next_func_id: &mut u32,
-    struct_methods: &mut Vec<(Ident, u32, &'a ast::Method, bool)>,
+    struct_methods: &mut Vec<(Ident, u32, &'a ast::Method, AggregateKind)>,
 ) {
     for stmt_node in stmts {
-        let (struct_name, type_params, const_params, methods, is_dataref) = match &stmt_node.node {
-            ast::Stmt::Struct(s) => (
-                s.node.name,
-                &s.node.type_params,
-                &s.node.const_params,
-                &s.node.methods,
-                false,
-            ),
-            ast::Stmt::DataRef(s) => (
-                s.node.name,
-                &s.node.type_params,
-                &s.node.const_params,
-                &s.node.methods,
-                true,
-            ),
-            _ => continue,
+        let ast::Stmt::Aggregate(s) = &stmt_node.node else {
+            continue;
         };
+        let (struct_name, type_params, const_params, methods, kind) = (
+            s.node.name,
+            &s.node.type_params,
+            &s.node.const_params,
+            &s.node.methods,
+            s.node.kind,
+        );
         let Some(&type_id) = shared.struct_type_ids.get(&struct_name) else {
             continue;
         };
@@ -715,7 +682,7 @@ fn collect_struct_methods_from<'a>(
                 let id = hir::FuncId(*next_func_id);
                 *next_func_id += 1;
                 e.insert(id);
-                struct_methods.push((struct_name, type_id, method, is_dataref));
+                struct_methods.push((struct_name, type_id, method, kind));
             }
         }
     }

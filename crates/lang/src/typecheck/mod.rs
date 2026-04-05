@@ -67,17 +67,11 @@ pub fn check_program_with_modules(
                     .enum_defs
                     .insert(node.node.name, types::EnumDef::from_ast(&node.node));
             }
-            Stmt::Struct(node) => {
-                type_checker.ctx.struct_defs.insert(
-                    node.node.name,
-                    types::StructDef::from_ast(&node.node, false),
-                );
-            }
-            Stmt::DataRef(node) => {
+            Stmt::Aggregate(node) => {
                 type_checker
                     .ctx
                     .struct_defs
-                    .insert(node.node.name, types::StructDef::from_ast(&node.node, true));
+                    .insert(node.node.name, types::StructDef::from_ast(&node.node));
             }
             _ => {}
         }

@@ -1,10 +1,5 @@
+pub use crate::ast::AggregateKind;
 use crate::{ast::Type, hir::FuncId};
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub enum AggregateKind {
-    Struct,
-    DataRef,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldMeta {

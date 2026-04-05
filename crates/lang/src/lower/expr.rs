@@ -779,36 +779,31 @@ fn lower_safe_field_expr(
     });
 
     let field_name = field_access.node.field;
-    let field_index = match &inner_ty {
-        Type::Struct { name, .. } => ctx
-            .shared
+    let field_index = if let Some(agg) = inner_ty.as_aggregate() {
+        ctx.shared
             .tcx
-            .struct_field_index(*name, field_name)
+            .struct_field_index(agg.name, field_name)
             .ok_or_else(|| LowerError::UnsupportedExprKind {
                 span,
-                kind: format!("unknown field '{field_name}' on struct '{name}'"),
-            })? as u16,
-        Type::DataRef { name, .. } => ctx
-            .shared
-            .tcx
-            .struct_field_index(*name, field_name)
-            .ok_or_else(|| LowerError::UnsupportedExprKind {
-                span,
-                kind: format!("unknown field '{field_name}' on dataref '{name}'"),
-            })? as u16,
-        Type::NamedTuple(fields) => fields
+                kind: format!(
+                    "unknown field '{field_name}' on {} '{}'",
+                    agg.keyword(),
+                    agg.name
+                ),
+            })? as u16
+    } else if let Type::NamedTuple(fields) = &inner_ty {
+        fields
             .iter()
             .position(|(label, _)| *label == field_name)
             .ok_or_else(|| LowerError::UnsupportedExprKind {
                 span,
                 kind: format!("unknown field '{field_name}' on named tuple"),
-            })? as u16,
-        other => {
-            return Err(LowerError::UnsupportedExprKind {
-                span,
-                kind: format!("safe field access on unsupported inner type '{other}'"),
-            });
-        }
+            })? as u16
+    } else {
+        return Err(LowerError::UnsupportedExprKind {
+            span,
+            kind: format!("safe field access on unsupported inner type '{inner_ty}'"),
+        });
     };
 
     let field_ty = ty.option_inner().cloned().unwrap_or(ty.clone());
@@ -1135,15 +1130,11 @@ fn lower_safe_call_expr(
                 span,
                 hir::ExprKind::CallExtern { extern_id, args },
             )
-        } else if let Type::Struct {
-            name: struct_name,
-            type_args,
-        } = &inner_ty
-        {
+        } else if let Some(agg) = inner_ty.as_aggregate() {
             let mangled = backend_names::encode_method_specialization_name(
-                *struct_name,
+                agg.name,
                 method_name,
-                type_args,
+                agg.type_args,
                 &[],
             );
             let &func_id =
@@ -1152,20 +1143,21 @@ fn lower_safe_call_expr(
                     .get(&mangled)
                     .ok_or_else(|| LowerError::UnsupportedExprKind {
                         span,
-                        kind: format!("unknown method '{method_name}' on struct '{struct_name}'"),
+                        kind: format!(
+                            "unknown method '{method_name}' on {} '{}'",
+                            agg.keyword(),
+                            agg.name
+                        ),
                     })?;
             let (recv_kind, method_params) = ctx
                 .shared
                 .tcx
-                .method_param_mutabilities(*struct_name, method_name);
+                .method_param_mutabilities(agg.name, method_name);
             is_var_self = matches!(recv_kind, Some(MethodReceiver::Var));
             let receiver = hir::Expr::local(inner_ty.clone(), span, inner_local);
             let mut args = vec![receiver];
             args.extend(pre_args);
-            let defaults = ctx
-                .shared
-                .tcx
-                .method_param_defaults(*struct_name, method_name);
+            let defaults = ctx.shared.tcx.method_param_defaults(agg.name, method_name);
             for val in defaults.iter().skip(c.node.args.len()).flatten() {
                 args.push(const_value_to_hir_expr(val, span));
             }
@@ -2815,15 +2807,11 @@ fn try_lower_method_call(
         }
     }
 
-    if let Type::Struct {
-        name: struct_name,
-        type_args,
-    } = &target_ty
-    {
+    if let Some(agg) = target_ty.as_aggregate() {
         let mangled = backend_names::encode_method_specialization_name(
-            *struct_name,
+            agg.name,
             method_name,
-            type_args,
+            agg.type_args,
             &[],
         );
         if let Some(&func_id) = ctx.shared.funcs.get(&mangled) {
@@ -2831,7 +2819,7 @@ fn try_lower_method_call(
             let (recv_kind, method_params) = ctx
                 .shared
                 .tcx
-                .method_param_mutabilities(*struct_name, method_name);
+                .method_param_mutabilities(agg.name, method_name);
             let is_var_self = matches!(recv_kind, Some(MethodReceiver::Var));
             let receiver = if is_var_self {
                 ensure_ref_target(receiver, span, fc, out)
@@ -2840,10 +2828,7 @@ fn try_lower_method_call(
             };
             let mut args = vec![receiver];
             args.extend(lower_args(&c.node.args, ctx, fc, out)?);
-            let defaults = ctx
-                .shared
-                .tcx
-                .method_param_defaults(*struct_name, method_name);
+            let defaults = ctx.shared.tcx.method_param_defaults(agg.name, method_name);
             for val in defaults.iter().skip(c.node.args.len()).flatten() {
                 args.push(const_value_to_hir_expr(val, span));
             }
@@ -3213,45 +3198,30 @@ fn lower_field_expr(
     let field_name = field_access.node.field;
 
     if let Ok(target_ty) = ctx.expr_type(target.node.id, span) {
+        if let Some(agg) = target_ty.as_aggregate() {
+            let index = ctx
+                .shared
+                .tcx
+                .struct_field_index(agg.name, field_name)
+                .ok_or_else(|| LowerError::UnsupportedExprKind {
+                    span,
+                    kind: format!(
+                        "unknown field '{field_name}' on {} '{}'",
+                        agg.keyword(),
+                        agg.name
+                    ),
+                })? as u16;
+            let object = lower_expr(target, ctx, fc, out)?;
+            return Ok(hir::Expr::new(
+                ty,
+                span,
+                hir::ExprKind::FieldGet {
+                    object: Box::new(object),
+                    index,
+                },
+            ));
+        }
         match target_ty {
-            Type::Struct { name, .. } => {
-                let index = ctx
-                    .shared
-                    .tcx
-                    .struct_field_index(name, field_name)
-                    .ok_or_else(|| LowerError::UnsupportedExprKind {
-                        span,
-                        kind: format!("unknown field '{field_name}' on struct '{name}'"),
-                    })? as u16;
-                let object = lower_expr(target, ctx, fc, out)?;
-                return Ok(hir::Expr::new(
-                    ty,
-                    span,
-                    hir::ExprKind::FieldGet {
-                        object: Box::new(object),
-                        index,
-                    },
-                ));
-            }
-            Type::DataRef { name, .. } => {
-                let index = ctx
-                    .shared
-                    .tcx
-                    .struct_field_index(name, field_name)
-                    .ok_or_else(|| LowerError::UnsupportedExprKind {
-                        span,
-                        kind: format!("unknown field '{field_name}' on dataref '{name}'"),
-                    })? as u16;
-                let object = lower_expr(target, ctx, fc, out)?;
-                return Ok(hir::Expr::new(
-                    ty,
-                    span,
-                    hir::ExprKind::FieldGet {
-                        object: Box::new(object),
-                        index,
-                    },
-                ));
-            }
             Type::NamedTuple(fields) => {
                 let index = fields
                     .iter()

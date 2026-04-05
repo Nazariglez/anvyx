@@ -13,25 +13,22 @@ fn field_index_for_assign(
     field_name: Ident,
     span: Span,
 ) -> Result<u16, LowerError> {
+    if let Some(agg) = target_ty.as_aggregate() {
+        return ctx
+            .shared
+            .tcx
+            .struct_field_index(agg.name, field_name)
+            .ok_or_else(|| LowerError::UnsupportedAssign {
+                span,
+                detail: format!(
+                    "unknown field '{field_name}' on {} '{}'",
+                    agg.keyword(),
+                    agg.name
+                ),
+            })
+            .map(|i| i as u16);
+    }
     match target_ty {
-        Type::Struct { name, .. } => ctx
-            .shared
-            .tcx
-            .struct_field_index(*name, field_name)
-            .ok_or_else(|| LowerError::UnsupportedAssign {
-                span,
-                detail: format!("unknown field '{field_name}' on struct '{name}'"),
-            })
-            .map(|i| i as u16),
-        Type::DataRef { name, .. } => ctx
-            .shared
-            .tcx
-            .struct_field_index(*name, field_name)
-            .ok_or_else(|| LowerError::UnsupportedAssign {
-                span,
-                detail: format!("unknown field '{field_name}' on dataref '{name}'"),
-            })
-            .map(|i| i as u16),
         Type::NamedTuple(fields) => fields
             .iter()
             .position(|(label, _)| *label == field_name)

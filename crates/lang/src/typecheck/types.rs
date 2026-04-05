@@ -12,9 +12,10 @@ use super::{
 };
 use crate::{
     ast::{
-        ArrayLen, BinaryOp, BlockNode, CallNode, ConstParam, EnumDecl, ExprId, ExtendMethodNode,
-        FieldAccessNode, FuncNode, FuncParam, Ident, IndexNode, Method, MethodReceiver, Mutability,
-        Param, StmtNode, StructDecl, StructField, Type, TypeParam, TypeVarId, UnaryOp, VariantKind,
+        AggregateKind, ArrayLen, BinaryOp, BlockNode, CallNode, ConstParam, EnumDecl, ExprId,
+        ExtendMethodNode, FieldAccessNode, FuncNode, FuncParam, Ident, IndexNode, Method,
+        MethodReceiver, Mutability, Param, StmtNode, StructDecl, StructField, Type, TypeParam,
+        TypeVarId, UnaryOp, VariantKind,
     },
     span::Span,
 };
@@ -132,7 +133,7 @@ pub(super) fn type_references_generic(ty: &Type, type_params: &[TypeParam]) -> b
 
 #[derive(Debug, Clone)]
 pub struct StructDef {
-    pub is_dataref: bool,
+    pub kind: AggregateKind,
     pub type_params: Vec<TypeParam>,
     pub fields: Vec<StructField>,
     pub methods: HashMap<Ident, MethodDef>,
@@ -141,10 +142,10 @@ pub struct StructDef {
 }
 
 impl StructDef {
-    pub(super) fn from_ast(decl: &StructDecl, is_dataref: bool) -> Self {
+    pub(super) fn from_ast(decl: &StructDecl) -> Self {
         let methods = decl.methods.iter().map(MethodDef::from_ast).collect();
         Self {
-            is_dataref,
+            kind: decl.kind,
             type_params: decl.type_params.clone(),
             fields: decl.fields.clone(),
             methods,
@@ -154,11 +155,7 @@ impl StructDef {
     }
 
     pub fn make_type(&self, name: Ident, type_args: Vec<Type>) -> Type {
-        if self.is_dataref {
-            Type::DataRef { name, type_args }
-        } else {
-            Type::Struct { name, type_args }
-        }
+        self.kind.make_type(name, type_args)
     }
 }
 
@@ -617,13 +614,6 @@ impl TypeChecker {
         self.ctx.extern_type_defs.get(&name)
     }
 
-    pub(super) fn is_dataref(&self, name: Ident) -> bool {
-        self.ctx
-            .struct_defs
-            .get(&name)
-            .is_some_and(|d| d.is_dataref)
-    }
-
     pub(super) fn get_extend_methods(&self, ty: &Type, name: Ident) -> &[ExtendEntry] {
         self.ctx
             .extend_defs
@@ -656,7 +646,11 @@ impl TypeChecker {
                 }
             }
             Type::Struct { name, type_args }
-                if self.ctx.struct_defs.get(name).is_some_and(|d| d.is_dataref) =>
+                if self
+                    .ctx
+                    .struct_defs
+                    .get(name)
+                    .is_some_and(|d| d.kind.is_dataref()) =>
             {
                 Type::DataRef {
                     name: *name,
@@ -1140,8 +1134,8 @@ impl TypecheckResult {
         self.struct_defs.keys().copied()
     }
 
-    pub fn is_dataref(&self, name: Ident) -> bool {
-        self.struct_defs.get(&name).is_some_and(|d| d.is_dataref)
+    pub fn aggregate_kind(&self, name: Ident) -> Option<AggregateKind> {
+        self.struct_defs.get(&name).map(|d| d.kind)
     }
 
     pub fn is_cycle_capable(&self, name: Ident) -> bool {
@@ -1393,6 +1387,45 @@ pub(super) fn type_field_on_base(
     type_checker: &TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
+    if let Some(agg) = base_ty.as_aggregate() {
+        let Some(struct_def) = type_checker.get_struct(agg.name) else {
+            errors.push(Diagnostic::new(
+                span,
+                DiagnosticKind::UnknownStruct { name: agg.name },
+            ));
+            return Type::Infer;
+        };
+
+        let subst = build_subst(&struct_def.type_params, agg.type_args);
+
+        for struct_field in &struct_def.fields {
+            if struct_field.name == field {
+                if let Deprecated::Yes(reason) = extract_deprecated(&struct_field.annotations) {
+                    errors.push(Diagnostic::new(
+                        span,
+                        DiagnosticKind::DeprecatedUsage {
+                            kind: "field",
+                            name: field,
+                            reason,
+                        },
+                    ));
+                }
+                let field_ty = subst_type(&struct_field.ty, &subst, &HashMap::new());
+                return type_checker.resolve_type(&field_ty);
+            }
+        }
+
+        errors.push(Diagnostic::new(
+            span,
+            DiagnosticKind::StructUnknownField {
+                kind: agg.keyword(),
+                struct_name: agg.name,
+                field,
+            },
+        ));
+        return Type::Infer;
+    }
+
     match base_ty {
         Type::NamedTuple(fields) => {
             for (label, ty) in fields {
@@ -1405,50 +1438,6 @@ pub(super) fn type_field_on_base(
                 DiagnosticKind::NoSuchFieldOnTuple {
                     field,
                     tuple_type: base_ty.clone(),
-                },
-            ));
-            Type::Infer
-        }
-        Type::Struct {
-            name: struct_name,
-            type_args,
-        }
-        | Type::DataRef {
-            name: struct_name,
-            type_args,
-        } => {
-            let Some(struct_def) = type_checker.get_struct(*struct_name) else {
-                errors.push(Diagnostic::new(
-                    span,
-                    DiagnosticKind::UnknownStruct { name: *struct_name },
-                ));
-                return Type::Infer;
-            };
-
-            let subst = build_subst(&struct_def.type_params, type_args);
-
-            for struct_field in &struct_def.fields {
-                if struct_field.name == field {
-                    if let Deprecated::Yes(reason) = extract_deprecated(&struct_field.annotations) {
-                        errors.push(Diagnostic::new(
-                            span,
-                            DiagnosticKind::DeprecatedUsage {
-                                kind: "field",
-                                name: field,
-                                reason,
-                            },
-                        ));
-                    }
-                    let field_ty = subst_type(&struct_field.ty, &subst, &HashMap::new());
-                    return type_checker.resolve_type(&field_ty);
-                }
-            }
-
-            errors.push(Diagnostic::new(
-                span,
-                DiagnosticKind::StructUnknownField {
-                    struct_name: *struct_name,
-                    field,
                 },
             ));
             Type::Infer

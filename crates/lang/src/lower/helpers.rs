@@ -254,17 +254,11 @@ pub(super) fn resolve_extend_ty(ty: &Type, ctx: &SharedCtx) -> Option<Type> {
     match ty {
         Type::UnresolvedName(name) => {
             if ctx.struct_type_ids.contains_key(name) {
-                if ctx.tcx.is_dataref(*name) {
-                    Some(Type::DataRef {
-                        name: *name,
-                        type_args: vec![],
-                    })
-                } else {
-                    Some(Type::Struct {
-                        name: *name,
-                        type_args: vec![],
-                    })
-                }
+                let kind = ctx
+                    .tcx
+                    .aggregate_kind(*name)
+                    .unwrap_or(ast::AggregateKind::Struct);
+                Some(kind.make_type(*name, vec![]))
             } else if ctx.enum_type_ids.contains_key(name) {
                 Some(Type::Enum {
                     name: *name,
@@ -282,13 +276,12 @@ pub(super) fn resolve_extend_ty(ty: &Type, ctx: &SharedCtx) -> Option<Type> {
                     name: *name,
                     type_args: type_args.clone(),
                 })
-            } else if ctx.tcx.is_dataref(*name) {
-                Some(Type::DataRef {
-                    name: *name,
-                    type_args: type_args.clone(),
-                })
             } else {
-                Some(ty.clone())
+                let kind = ctx
+                    .tcx
+                    .aggregate_kind(*name)
+                    .unwrap_or(ast::AggregateKind::Struct);
+                Some(kind.make_type(*name, type_args.clone()))
             }
         }
         other => Some(other.clone()),

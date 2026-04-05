@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: generic
+
+dataref Container<T> {
+    items: [T] = [],
+}
+
+fn main() {}

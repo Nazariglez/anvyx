@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: mismatch
+
+dataref Bad {
+    name: string = nil,
+}
+
+fn main() {}

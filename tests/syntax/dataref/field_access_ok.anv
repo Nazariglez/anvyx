@@ -1,0 +1,17 @@
+// @mode: check
+// @expect: success
+
+dataref Node {
+    hp: int,
+    name: string,
+}
+
+fn main() {
+    let n = Node { hp: 100, name: "test" };
+    let _: int = n.hp;
+    let _: string = n.name;
+
+    var q = Node { hp: 100, name: "test" };
+    q.hp = 80;
+    q.name = "changed";
+}

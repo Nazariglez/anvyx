@@ -1,0 +1,19 @@
+// @mode: check
+// @expect: success
+
+dataref Wrapper<T> {
+    value: T,
+
+    fn create(value: T) -> Self {
+        Wrapper { value: value }
+    }
+
+    fn with_extra<U>(value: T, extra: U) -> U {
+        extra
+    }
+}
+
+fn main() {
+    let w = Wrapper.create(42);
+    let a: string = Wrapper.with_extra(42, "hello");
+}

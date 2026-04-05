@@ -1,0 +1,21 @@
+// @mode: check
+// @expect: success
+
+dataref Box<T> {
+    value: T,
+
+    fn get(self) -> T {
+        self.value
+    }
+
+    fn new(value: T) -> Self {
+        Box { value }
+    }
+}
+
+fn main() {
+    let b = Box.new(42);
+    let v: int = b.get();
+    let s = Box.new("hello");
+    let w: string = s.get();
+}

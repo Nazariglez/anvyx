@@ -133,118 +133,107 @@ fn lower_stmt(
                     let rhs_expr = lower_expr(&binding.value, ctx, fc, out)?;
                     let scrutinee_local = alloc_and_bind(fc, span, out, rhs_ty.clone(), rhs_expr);
 
-                    match &rhs_ty {
-                        Type::Struct { .. } => {
-                            for (field_name, subpat) in fields {
-                                let Pattern::Ident(binding_name) = &subpat.node else {
-                                    return Err(LowerError::UnsupportedPattern {
-                                        span: subpat.span,
-                                    });
-                                };
+                    if rhs_ty.is_aggregate() {
+                        let keyword = rhs_ty.as_aggregate().unwrap().keyword();
+                        for (field_name, subpat) in fields {
+                            let Pattern::Ident(binding_name) = &subpat.node else {
+                                return Err(LowerError::UnsupportedPattern { span: subpat.span });
+                            };
 
-                                let field_index = ctx
-                                    .shared
-                                    .tcx
-                                    .struct_field_index(type_name, *field_name)
-                                    .ok_or_else(|| LowerError::UnsupportedExprKind {
-                                        span,
-                                        kind: format!(
-                                            "unknown field '{field_name}' on struct '{type_name}'"
-                                        ),
-                                    })? as u16;
-
-                                let field_ty = ctx
-                                    .shared
-                                    .tcx
-                                    .struct_field_type(type_name, *field_name)
-                                    .ok_or_else(|| LowerError::UnsupportedExprKind {
-                                        span,
-                                        kind: format!(
-                                            "unknown field type for '{field_name}' on '{type_name}'"
-                                        ),
-                                    })?;
-
-                                let local_id =
-                                    register_named_local(fc, *binding_name, field_ty.clone());
-
-                                out.push(hir::Stmt {
+                            let field_index = ctx
+                                .shared
+                                .tcx
+                                .struct_field_index(type_name, *field_name)
+                                .ok_or_else(|| LowerError::UnsupportedExprKind {
                                     span,
-                                    kind: hir::StmtKind::Let {
-                                        local: local_id,
-                                        init: hir::Expr::new(
-                                            field_ty,
-                                            span,
-                                            hir::ExprKind::FieldGet {
-                                                object: Box::new(hir::Expr::new(
-                                                    rhs_ty.clone(),
-                                                    span,
-                                                    hir::ExprKind::Local(scrutinee_local),
-                                                )),
-                                                index: field_index,
-                                            },
-                                        ),
-                                    },
-                                });
-                            }
-                        }
-                        Type::Extern { name: extern_name } => {
-                            let extern_name = *extern_name;
-                            for (field_name, subpat) in fields {
-                                let Pattern::Ident(binding_name) = &subpat.node else {
-                                    return Err(LowerError::UnsupportedPattern {
-                                        span: subpat.span,
-                                    });
-                                };
+                                    kind: format!(
+                                        "unknown field '{field_name}' on {keyword} '{type_name}'"
+                                    ),
+                                })? as u16;
 
-                                let qualified = Ident(Intern::new(format!(
-                                    "{extern_name}::__get_{field_name}"
-                                )));
-                                let extern_id =
-                                    *ctx.shared.externs.get(&qualified).ok_or_else(|| {
-                                        LowerError::UnsupportedExprKind {
-                                            span,
-                                            kind: format!(
-                                                "unknown extern field getter '{qualified}'"
-                                            ),
-                                        }
-                                    })?;
-
-                                let field_ty = ctx
-                                    .shared
-                                    .tcx
-                                    .get_extern_type(extern_name)
-                                    .and_then(|def| def.fields.get(field_name))
-                                    .map_or(Type::Void, |f| f.ty.clone());
-
-                                let local_id =
-                                    register_named_local(fc, *binding_name, field_ty.clone());
-
-                                out.push(hir::Stmt {
+                            let field_ty = ctx
+                                .shared
+                                .tcx
+                                .struct_field_type(type_name, *field_name)
+                                .ok_or_else(|| LowerError::UnsupportedExprKind {
                                     span,
-                                    kind: hir::StmtKind::Let {
-                                        local: local_id,
-                                        init: hir::Expr::new(
-                                            field_ty,
-                                            span,
-                                            hir::ExprKind::CallExtern {
-                                                extern_id,
-                                                args: vec![hir::Expr::new(
-                                                    rhs_ty.clone(),
-                                                    span,
-                                                    hir::ExprKind::Local(scrutinee_local),
-                                                )],
-                                            },
-                                        ),
-                                    },
-                                });
-                            }
-                        }
-                        other => {
-                            return Err(LowerError::UnsupportedExprKind {
+                                    kind: format!(
+                                        "unknown field type for '{field_name}' on '{type_name}'"
+                                    ),
+                                })?;
+
+                            let local_id =
+                                register_named_local(fc, *binding_name, field_ty.clone());
+
+                            out.push(hir::Stmt {
                                 span,
-                                kind: format!("struct destructure on unsupported type '{other}'"),
+                                kind: hir::StmtKind::Let {
+                                    local: local_id,
+                                    init: hir::Expr::new(
+                                        field_ty,
+                                        span,
+                                        hir::ExprKind::FieldGet {
+                                            object: Box::new(hir::Expr::new(
+                                                rhs_ty.clone(),
+                                                span,
+                                                hir::ExprKind::Local(scrutinee_local),
+                                            )),
+                                            index: field_index,
+                                        },
+                                    ),
+                                },
                             });
                         }
+                    } else if let Type::Extern { name: extern_name } = &rhs_ty {
+                        for (field_name, subpat) in fields {
+                            let Pattern::Ident(binding_name) = &subpat.node else {
+                                return Err(LowerError::UnsupportedPattern { span: subpat.span });
+                            };
+
+                            let qualified =
+                                Ident(Intern::new(format!("{extern_name}::__get_{field_name}")));
+                            let extern_id =
+                                *ctx.shared.externs.get(&qualified).ok_or_else(|| {
+                                    LowerError::UnsupportedExprKind {
+                                        span,
+                                        kind: format!("unknown extern field getter '{qualified}'"),
+                                    }
+                                })?;
+
+                            let field_ty = ctx
+                                .shared
+                                .tcx
+                                .get_extern_type(*extern_name)
+                                .and_then(|def| def.fields.get(field_name))
+                                .map_or(Type::Void, |f| f.ty.clone());
+
+                            let local_id =
+                                register_named_local(fc, *binding_name, field_ty.clone());
+
+                            out.push(hir::Stmt {
+                                span,
+                                kind: hir::StmtKind::Let {
+                                    local: local_id,
+                                    init: hir::Expr::new(
+                                        field_ty,
+                                        span,
+                                        hir::ExprKind::CallExtern {
+                                            extern_id,
+                                            args: vec![hir::Expr::new(
+                                                rhs_ty.clone(),
+                                                span,
+                                                hir::ExprKind::Local(scrutinee_local),
+                                            )],
+                                        },
+                                    ),
+                                },
+                            });
+                        }
+                    } else {
+                        return Err(LowerError::UnsupportedExprKind {
+                            span,
+                            kind: format!("struct destructure on unsupported type '{rhs_ty}'"),
+                        });
                     }
 
                     Ok(None)
@@ -328,8 +317,7 @@ fn lower_stmt(
         Stmt::ExternFunc(_)
         | Stmt::ExternType(_)
         | Stmt::Import(_)
-        | Stmt::Struct(_)
-        | Stmt::DataRef(_)
+        | Stmt::Aggregate(_)
         | Stmt::Enum(_)
         | Stmt::Extend(_)
         | Stmt::Const(_) => Ok(None),

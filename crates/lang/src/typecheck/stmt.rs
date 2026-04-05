@@ -27,9 +27,9 @@ use super::{
 };
 use crate::{
     ast::{
-        ArrayLen, BlockNode, ConstDeclNode, ConstParam, DeferBody, ExprId, ExprKind, ExprNode,
-        ExternFunc, ExternTypeMember, Func, FuncNode, FuncParam, Ident, ImportKind, Mutability,
-        Param, ReturnNode, Stmt, StmtNode, Type, TypeParam, VariantKind, Visibility,
+        AggregateKind, ArrayLen, BlockNode, ConstDeclNode, ConstParam, DeferBody, ExprId, ExprKind,
+        ExprNode, ExternFunc, ExternTypeMember, Func, FuncNode, FuncParam, Ident, ImportKind,
+        Mutability, Param, ReturnNode, Stmt, StmtNode, Type, TypeParam, VariantKind, Visibility,
     },
     backend_names,
     span::Span,
@@ -206,12 +206,7 @@ enum DeclInfo {
         name: Ident,
         def: ExternTypeDef,
     },
-    Struct {
-        name: Ident,
-        visibility: Visibility,
-        def: StructDef,
-    },
-    DataRef {
+    Aggregate {
         name: Ident,
         visibility: Visibility,
         def: StructDef,
@@ -250,15 +245,10 @@ fn extract_decl(stmt: &StmtNode, resolve: &impl Fn(&Type) -> Type) -> Option<Dec
             name: node.node.name,
             def: build_extern_type_def(node.node.has_init, &node.node.members, resolve),
         }),
-        Stmt::Struct(node) => Some(DeclInfo::Struct {
+        Stmt::Aggregate(node) => Some(DeclInfo::Aggregate {
             name: node.node.name,
             visibility: node.node.visibility,
-            def: StructDef::from_ast(&node.node, false),
-        }),
-        Stmt::DataRef(node) => Some(DeclInfo::DataRef {
-            name: node.node.name,
-            visibility: node.node.visibility,
-            def: StructDef::from_ast(&node.node, true),
+            def: StructDef::from_ast(&node.node),
         }),
         Stmt::Enum(node) => Some(DeclInfo::Enum {
             name: node.node.name,
@@ -327,7 +317,7 @@ fn apply_decl_to_scope(decl: DeclInfo, type_checker: &mut TypeChecker) {
         DeclInfo::ExternType { name, def } => {
             type_checker.ctx.extern_type_defs.insert(name, def);
         }
-        DeclInfo::Struct { name, def, .. } | DeclInfo::DataRef { name, def, .. } => {
+        DeclInfo::Aggregate { name, def, .. } => {
             type_checker.ctx.struct_defs.insert(name, def);
         }
         DeclInfo::Enum { name, def, .. } => {
@@ -384,12 +374,7 @@ fn apply_decl_to_summary(decl: DeclInfo, module_def: &mut ModuleDef) -> Option<I
             module_def.extern_types.insert(name, def);
             None
         }
-        DeclInfo::Struct {
-            name,
-            visibility,
-            def,
-        }
-        | DeclInfo::DataRef {
+        DeclInfo::Aggregate {
             name,
             visibility,
             def,
@@ -699,8 +684,7 @@ pub(super) fn collect_scope_types(
         if let Some(decl) = extract_decl(stmt, &|ty| type_checker.resolve_type(ty)) {
             let duplicate_name = match &decl {
                 DeclInfo::ExternType { name, .. }
-                | DeclInfo::Struct { name, .. }
-                | DeclInfo::DataRef { name, .. }
+                | DeclInfo::Aggregate { name, .. }
                 | DeclInfo::Enum { name, .. } => Some(*name),
                 _ => None,
             };
@@ -1079,11 +1063,8 @@ pub(super) fn build_module_def_with_reexports(
                                 name: *name,
                                 type_args,
                             }
-                        } else if type_checker.is_dataref(*name) {
-                            Type::DataRef {
-                                name: *name,
-                                type_args,
-                            }
+                        } else if let Some(def) = type_checker.get_struct(*name) {
+                            def.kind.make_type(*name, type_args)
                         } else {
                             Type::Struct {
                                 name: *name,
@@ -1203,8 +1184,12 @@ pub(super) fn check_stmt(
             validate_annotations(&node.node.annotations, AnnotationTarget::Func, errors);
             check_func(node, type_checker, errors);
         }
-        Stmt::Struct(node) | Stmt::DataRef(node) => {
-            validate_annotations(&node.node.annotations, AnnotationTarget::Struct, errors);
+        Stmt::Aggregate(node) => {
+            let ann_target = match node.node.kind {
+                AggregateKind::DataRef => AnnotationTarget::DataRef,
+                AggregateKind::Struct => AnnotationTarget::Struct,
+            };
+            validate_annotations(&node.node.annotations, ann_target, errors);
             check_struct(node, type_checker, errors);
         }
         Stmt::Enum(node) => {
@@ -1325,11 +1310,11 @@ pub(super) fn check_stmt(
 }
 
 pub(super) fn extend_base_key(ty: &Type) -> Option<Ident> {
+    if let Some(agg) = ty.as_aggregate() {
+        return Some(agg.name);
+    }
     match ty {
-        Type::Struct { name, .. }
-        | Type::DataRef { name, .. }
-        | Type::Enum { name, .. }
-        | Type::Extern { name } => Some(*name),
+        Type::Enum { name, .. } | Type::Extern { name } => Some(*name),
         Type::List { .. } => Some(Ident(Intern::new("__List".to_string()))),
         Type::Map { .. } => Some(Ident(Intern::new("__Map".to_string()))),
         Type::Tuple(_) => Some(Ident(Intern::new("__Tuple".to_string()))),
@@ -1464,14 +1449,16 @@ fn check_extend_decl(
         }
 
         // Native conflict check
-        let has_native_conflict = match &resolved_ty {
-            Type::Struct { name, .. } | Type::DataRef { name, .. } => type_checker
-                .get_struct(*name)
-                .is_some_and(|def| def.methods.contains_key(&method.node.name)),
-            Type::Extern { name } => type_checker
+        let has_native_conflict = if let Some(agg) = resolved_ty.as_aggregate() {
+            type_checker
+                .get_struct(agg.name)
+                .is_some_and(|def| def.methods.contains_key(&method.node.name))
+        } else if let Type::Extern { name } = &resolved_ty {
+            type_checker
                 .get_extern_type(*name)
-                .is_some_and(|def| def.methods.contains_key(&method.node.name)),
-            _ => false,
+                .is_some_and(|def| def.methods.contains_key(&method.node.name))
+        } else {
+            false
         };
         if has_native_conflict {
             errors.push(Diagnostic::new(
@@ -1536,29 +1523,15 @@ fn resolve_generic_extend_named_type(
     span: Span,
     errors: &mut Vec<Diagnostic>,
 ) -> Option<Type> {
-    type MakeTy = fn(Ident, Vec<Type>) -> Type;
-    let (def_tp, make_ty): (usize, MakeTy) = if let Some(def) = type_checker.get_enum(name) {
-        (def.type_params.len(), |n, a| Type::Enum {
-            name: n,
-            type_args: a,
-        })
-    } else if type_checker.is_dataref(name) {
-        let def_tp = type_checker
-            .get_struct(name)
-            .map_or(0, |d| d.type_params.len());
-        (def_tp, |n, a| Type::DataRef {
-            name: n,
-            type_args: a,
-        })
-    } else {
-        let def_tp = type_checker
-            .get_struct(name)
-            .map_or(0, |d| d.type_params.len());
-        (def_tp, |n, a| Type::Struct {
-            name: n,
-            type_args: a,
-        })
-    };
+    // none means Enum while Some(kind) means Struct or DataRef
+    let (def_tp, agg_kind): (usize, Option<AggregateKind>) =
+        if let Some(def) = type_checker.get_enum(name) {
+            (def.type_params.len(), None)
+        } else if let Some(def) = type_checker.get_struct(name) {
+            (def.type_params.len(), Some(def.kind))
+        } else {
+            return None;
+        };
 
     if def_tp == 0 {
         errors.push(Diagnostic::new(
@@ -1578,7 +1551,10 @@ fn resolve_generic_extend_named_type(
         ));
         return None;
     }
-    Some(make_ty(name, type_args))
+    Some(match agg_kind {
+        None => Type::Enum { name, type_args },
+        Some(kind) => kind.make_type(name, type_args),
+    })
 }
 
 fn check_generic_extend_decl(
@@ -1600,31 +1576,31 @@ fn check_generic_extend_decl(
             .iter()
             .map(|p| Type::UnresolvedName(p.name))
             .collect();
-        match &resolved {
-            Type::Struct { name, .. } | Type::DataRef { name, .. } | Type::Enum { name, .. } => {
-                let Some(ty) = resolve_generic_extend_named_type(
-                    type_checker,
-                    *base_name,
-                    *name,
-                    type_args,
-                    decl.type_params.len(),
-                    node.span,
-                    errors,
-                ) else {
-                    type_checker.pop_const_params(const_param_count);
-                    return;
-                };
-                ty
-            }
-            _ => {
-                errors.push(Diagnostic::new(
-                    node.span,
-                    DiagnosticKind::ExtendUnsupportedType { ty: resolved },
-                ));
-                type_checker.pop_const_params(const_param_count);
-                return;
-            }
-        }
+        let target_name = if let Some(agg) = resolved.as_aggregate() {
+            agg.name
+        } else if let Type::Enum { name, .. } = &resolved {
+            *name
+        } else {
+            errors.push(Diagnostic::new(
+                node.span,
+                DiagnosticKind::ExtendUnsupportedType { ty: resolved },
+            ));
+            type_checker.pop_const_params(const_param_count);
+            return;
+        };
+        let Some(ty) = resolve_generic_extend_named_type(
+            type_checker,
+            *base_name,
+            target_name,
+            type_args,
+            decl.type_params.len(),
+            node.span,
+            errors,
+        ) else {
+            type_checker.pop_const_params(const_param_count);
+            return;
+        };
+        ty
     } else {
         // new path: "extend<T, N: int> type_expr" — resolve concrete parts;
         // type params stay as UnresolvedName, const params are converted to ArrayLen::Param
@@ -1708,12 +1684,10 @@ fn check_generic_extend_decl(
         }
 
         // native conflict check (only for named struct/dataref types)
-        let has_native_conflict = match &target_type {
-            Type::Struct { name, .. } | Type::DataRef { name, .. } => type_checker
-                .get_struct(*name)
-                .is_some_and(|def| def.methods.contains_key(&method.node.name)),
-            _ => false,
-        };
+        let has_native_conflict = target_type
+            .as_aggregate()
+            .and_then(|agg| type_checker.get_struct(agg.name))
+            .is_some_and(|def| def.methods.contains_key(&method.node.name));
         if has_native_conflict {
             errors.push(Diagnostic::new(
                 method.span,

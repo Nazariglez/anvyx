@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: Duplicate field 'value'
+
+dataref Node {
+    value: int,
+    label: string,
+}
+
+fn main() {
+    let n = Node { value: 1, value: 2, label: "root" };
+}

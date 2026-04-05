@@ -1106,14 +1106,14 @@ fn try_check_method_call(
     }
 
     let target_ty = check_expr(target, type_checker, errors, None);
-    if let Type::Struct { name, type_args } | Type::DataRef { name, type_args } = &target_ty
-        && let Some(struct_def) = type_checker.get_struct(*name).cloned()
+    if let Some(agg) = target_ty.as_aggregate()
+        && let Some(struct_def) = type_checker.get_struct(agg.name).cloned()
     {
         return Some(check_instance_method_call(
             call,
-            *name,
+            agg.name,
             method_name,
-            type_args,
+            agg.type_args,
             &struct_def,
             Some(target),
             type_checker,
@@ -1376,6 +1376,7 @@ pub(super) fn check_static_method_call(
         errors.push(Diagnostic::new(
             call.span,
             DiagnosticKind::UnknownMethod {
+                kind: struct_def.kind.keyword(),
                 struct_name,
                 method: method_name,
             },
@@ -1602,6 +1603,7 @@ pub(super) fn check_instance_method_call(
         errors.push(Diagnostic::new(
             call.span,
             DiagnosticKind::UnknownMethod {
+                kind: struct_def.kind.keyword(),
                 struct_name,
                 method: method_name,
             },
@@ -1881,6 +1883,7 @@ fn generic_instantiation_help(
             })
         }
         DiagnosticKind::UnknownMethod {
+            kind: _,
             struct_name,
             method,
         } => {

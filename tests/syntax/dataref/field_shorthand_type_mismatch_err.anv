@@ -1,0 +1,14 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+dataref Node {
+    value: float,
+    label: string,
+}
+
+fn main() {
+    let value = "not a float";
+    let label = "root";
+    let n = Node { value, label };
+}

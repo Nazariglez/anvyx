@@ -268,10 +268,7 @@ fn try_coerce(expr: &mut hir::Expr, target: &Type) {
 }
 
 fn resolve_struct_field_type(ctx: &CoerceCtx, obj_ty: &Type, field_index: u16) -> Option<Type> {
-    let name = match obj_ty {
-        Type::Struct { name, .. } | Type::DataRef { name, .. } => name.to_string(),
-        _ => return None,
-    };
+    let name = obj_ty.as_aggregate()?.name.to_string();
     ctx.struct_fields
         .iter()
         .find(|(n, _)| *n == name)

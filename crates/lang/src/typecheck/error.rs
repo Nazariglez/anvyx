@@ -116,10 +116,12 @@ pub enum DiagnosticKind {
         name: Ident,
     },
     StructMissingField {
+        kind: &'static str,
         struct_name: Ident,
         field: Ident,
     },
     StructUnknownField {
+        kind: &'static str,
         struct_name: Ident,
         field: Ident,
     },
@@ -155,20 +157,24 @@ pub enum DiagnosticKind {
         field: Ident,
     },
     StructDuplicateField {
+        kind: &'static str,
         struct_name: Ident,
         field: Ident,
     },
     FieldDefaultNotConst {
+        kind: &'static str,
         struct_name: Ident,
         field: Ident,
     },
     FieldDefaultTypeMismatch {
+        kind: &'static str,
         struct_name: Ident,
         field: Ident,
         expected: Type,
         found: Type,
     },
     FieldDefaultOnGenericType {
+        kind: &'static str,
         struct_name: Ident,
         field: Ident,
     },
@@ -199,6 +205,7 @@ pub enum DiagnosticKind {
         found: usize,
     },
     UnknownMethod {
+        kind: &'static str,
         struct_name: Ident,
         method: Ident,
     },
@@ -215,6 +222,7 @@ pub enum DiagnosticKind {
         field: Ident,
     },
     InvalidToStringSignature {
+        kind: &'static str,
         struct_name: Ident,
         reason: String,
     },
@@ -364,6 +372,7 @@ pub enum DiagnosticKind {
     },
 
     MethodTypeParamShadowsStruct {
+        kind: &'static str,
         struct_name: Ident,
         method: Ident,
         param: Ident,

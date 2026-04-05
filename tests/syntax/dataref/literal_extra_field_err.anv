@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown field 'extra'
+
+dataref Node {
+    value: int,
+    label: string,
+}
+
+fn main() {
+    let n = Node { value: 1, label: "root", extra: true };
+}

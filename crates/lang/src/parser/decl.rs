@@ -800,13 +800,15 @@ fn method_param_list<'src>(
     .boxed()
 }
 
-pub(super) fn struct_declaration<'src>(
+fn aggregate_declaration<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
-) -> BoxedParser<'src, ast::StructDeclNode> {
+    kind: ast::AggregateKind,
+) -> BoxedParser<'src, ast::AggregateDeclNode> {
     visibility()
-        .then_ignore(select! {
-            (Token::Keyword(Keyword::Struct), _) => (),
-        })
+        .then_ignore(any().filter(move |(t, _)| match kind {
+            ast::AggregateKind::Struct => matches!(t, Token::Keyword(Keyword::Struct)),
+            ast::AggregateKind::DataRef => matches!(t, Token::Keyword(Keyword::DataRef)),
+        }))
         .then(identifier())
         .then(generic_params())
         .then(
@@ -824,7 +826,7 @@ pub(super) fn struct_declaration<'src>(
                 (Token::Close(Delimiter::Brace), _) => (),
             }),
         )
-        .map_with(|(((vis, name), gp), (raw_fields, raw_methods)), e| {
+        .map_with(move |(((vis, name), gp), (raw_fields, raw_methods)), e| {
             let s = e.span();
             let GenericParams {
                 type_params,
@@ -836,10 +838,10 @@ pub(super) fn struct_declaration<'src>(
             let struct_const_param_map: HashMap<ast::Ident, ast::ConstParamId> =
                 const_params.iter().map(|cp| (cp.name, cp.id)).collect();
 
-            let self_type = ast::Type::Struct {
+            let self_type = kind.make_type(
                 name,
-                type_args: type_params.iter().map(|tp| ast::Type::Var(tp.id)).collect(),
-            };
+                type_params.iter().map(|tp| ast::Type::Var(tp.id)).collect(),
+            );
 
             let fields = raw_fields
                 .into_iter()
@@ -909,6 +911,7 @@ pub(super) fn struct_declaration<'src>(
 
             Spanned::new(
                 ast::StructDecl {
+                    kind,
                     annotations: vec![],
                     doc: None,
                     name,
@@ -921,135 +924,24 @@ pub(super) fn struct_declaration<'src>(
                 Span::new(s.start, s.end),
             )
         })
-        .labelled("struct declaration")
+        .labelled(match kind {
+            ast::AggregateKind::Struct => "struct declaration",
+            ast::AggregateKind::DataRef => "dataref declaration",
+        })
         .as_context()
         .boxed()
 }
 
+pub(super) fn struct_declaration<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::AggregateDeclNode> {
+    aggregate_declaration(stmt, ast::AggregateKind::Struct)
+}
+
 pub(super) fn dataref_declaration<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
-) -> BoxedParser<'src, ast::DataRefDeclNode> {
-    visibility()
-        .then_ignore(select! {
-            (Token::Keyword(Keyword::DataRef), _) => (),
-        })
-        .then(identifier())
-        .then(generic_params())
-        .then(
-            select! {
-                (Token::Open(Delimiter::Brace), _) => (),
-            }
-            .ignore_then(
-                struct_field(stmt.clone())
-                    .separated_by(select! { (Token::Comma, _) => () })
-                    .allow_trailing()
-                    .collect::<Vec<_>>(),
-            )
-            .then(struct_method(stmt).repeated().collect::<Vec<_>>())
-            .then_ignore(select! {
-                (Token::Close(Delimiter::Brace), _) => (),
-            }),
-        )
-        .map_with(|(((vis, name), gp), (raw_fields, raw_methods)), e| {
-            let s = e.span();
-            let GenericParams {
-                type_params,
-                const_params,
-            } = gp;
-
-            let struct_type_param_map: HashMap<ast::Ident, ast::TypeVarId> =
-                type_params.iter().map(|tp| (tp.name, tp.id)).collect();
-            let struct_const_param_map: HashMap<ast::Ident, ast::ConstParamId> =
-                const_params.iter().map(|cp| (cp.name, cp.id)).collect();
-
-            let self_type = ast::Type::DataRef {
-                name,
-                type_args: type_params.iter().map(|tp| ast::Type::Var(tp.id)).collect(),
-            };
-
-            let fields = raw_fields
-                .into_iter()
-                .map(|f| {
-                    let ty = resolve_type_params_with_self(
-                        &f.ty,
-                        &struct_type_param_map,
-                        &struct_const_param_map,
-                        Some(&self_type),
-                    );
-                    ast::StructField {
-                        annotations: f.annotations,
-                        name: f.name,
-                        ty,
-                        default: f.default,
-                    }
-                })
-                .collect();
-
-            let methods = raw_methods
-                .into_iter()
-                .map(|m| {
-                    let mut combined_type_param_map = struct_type_param_map.clone();
-                    let mut combined_const_param_map = struct_const_param_map.clone();
-                    for tp in &m.type_params {
-                        combined_type_param_map.insert(tp.name, tp.id);
-                    }
-                    for cp in &m.const_params {
-                        combined_const_param_map.insert(cp.name, cp.id);
-                    }
-
-                    let resolved_params = m
-                        .params
-                        .iter()
-                        .map(|p| ast::Param {
-                            mutability: p.mutability,
-                            name: p.name,
-                            ty: resolve_type_params_with_self(
-                                &p.ty,
-                                &combined_type_param_map,
-                                &combined_const_param_map,
-                                Some(&self_type),
-                            ),
-                            default: p.default.clone(),
-                        })
-                        .collect();
-
-                    let resolved_ret = resolve_type_params_with_self(
-                        &m.ret,
-                        &combined_type_param_map,
-                        &combined_const_param_map,
-                        Some(&self_type),
-                    );
-
-                    ast::Method {
-                        name: m.name,
-                        visibility: m.visibility,
-                        type_params: m.type_params,
-                        const_params: m.const_params,
-                        receiver: m.receiver,
-                        params: resolved_params,
-                        ret: resolved_ret,
-                        body: m.body,
-                    }
-                })
-                .collect();
-
-            Spanned::new(
-                ast::StructDecl {
-                    annotations: vec![],
-                    doc: None,
-                    name,
-                    visibility: vis,
-                    type_params,
-                    const_params,
-                    fields,
-                    methods,
-                },
-                Span::new(s.start, s.end),
-            )
-        })
-        .labelled("dataref declaration")
-        .as_context()
-        .boxed()
+) -> BoxedParser<'src, ast::AggregateDeclNode> {
+    aggregate_declaration(stmt, ast::AggregateKind::DataRef)
 }
 
 fn enum_variant_tuple_payload<'src>() -> BoxedParser<'src, ast::VariantKind> {

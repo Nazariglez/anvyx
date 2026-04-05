@@ -1,0 +1,21 @@
+// @mode: check
+// @expect: success
+
+dataref Inner {
+    x: int,
+    y: int,
+}
+
+dataref Outer {
+    inner: Inner,
+    name: string,
+}
+
+fn main() {
+    let o = Outer {
+        inner: Inner { x: 10, y: 20 },
+        name: "test",
+    };
+    let px: int = o.inner.x;
+    let py: int = o.inner.y;
+}

@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: Unknown field 'z'
+
+dataref Node {
+    value: int,
+    label: string,
+}
+
+fn main() {
+    let n = Node { value: 10, label: "root" };
+    let Node { z } = n;
+}

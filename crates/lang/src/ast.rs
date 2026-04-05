@@ -25,8 +25,7 @@ pub type LetElseNode = Spanned<LetElse>;
 pub type TupleIndexNode = Spanned<TupleIndex>;
 pub type PatternNode = Spanned<Pattern>;
 pub type FieldAccessNode = Spanned<FieldAccess>;
-pub type StructDeclNode = Spanned<StructDecl>;
-pub type DataRefDeclNode = Spanned<StructDecl>;
+pub type AggregateDeclNode = Spanned<StructDecl>;
 pub type StructLiteralNode = Spanned<StructLiteral>;
 pub type EnumDeclNode = Spanned<EnumDecl>;
 pub type ExtendDeclNode = Spanned<ExtendDecl>;
@@ -56,8 +55,7 @@ pub enum Stmt {
     Func(FuncNode),
     ExternFunc(ExternFuncNode),
     ExternType(ExternTypeNode),
-    Struct(StructDeclNode),
-    DataRef(DataRefDeclNode),
+    Aggregate(AggregateDeclNode),
     Enum(EnumDeclNode),
     Extend(ExtendDeclNode),
     Const(ConstDeclNode),
@@ -342,8 +340,24 @@ impl Type {
         matches!(self, Type::NamedTuple(_))
     }
 
-    pub fn is_struct(&self) -> bool {
-        matches!(self, Type::Struct { .. })
+    pub fn is_aggregate(&self) -> bool {
+        matches!(self, Type::Struct { .. } | Type::DataRef { .. })
+    }
+
+    pub fn as_aggregate(&self) -> Option<AggregateTypeRef<'_>> {
+        match self {
+            Type::Struct { name, type_args } => Some(AggregateTypeRef {
+                kind: AggregateKind::Struct,
+                name: *name,
+                type_args,
+            }),
+            Type::DataRef { name, type_args } => Some(AggregateTypeRef {
+                kind: AggregateKind::DataRef,
+                name: *name,
+                type_args,
+            }),
+            _ => None,
+        }
     }
 
     pub fn is_enum(&self) -> bool {
@@ -503,6 +517,44 @@ pub enum Visibility {
 pub enum Mutability {
     Mutable,
     Immutable,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum AggregateKind {
+    Struct,
+    DataRef,
+}
+
+impl AggregateKind {
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Self::Struct => "struct",
+            Self::DataRef => "dataref",
+        }
+    }
+
+    pub fn is_dataref(self) -> bool {
+        matches!(self, Self::DataRef)
+    }
+
+    pub fn make_type(self, name: Ident, type_args: Vec<Type>) -> Type {
+        match self {
+            Self::Struct => Type::Struct { name, type_args },
+            Self::DataRef => Type::DataRef { name, type_args },
+        }
+    }
+}
+
+pub struct AggregateTypeRef<'a> {
+    pub kind: AggregateKind,
+    pub name: Ident,
+    pub type_args: &'a [Type],
+}
+
+impl AggregateTypeRef<'_> {
+    pub fn keyword(&self) -> &'static str {
+        self.kind.keyword()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1097,6 +1149,7 @@ pub struct StructField {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDecl {
+    pub kind: AggregateKind,
     pub annotations: Vec<AnnotationNode>,
     pub doc: Option<String>,
     pub name: Ident,

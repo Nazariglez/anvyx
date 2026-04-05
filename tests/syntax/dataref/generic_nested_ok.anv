@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+dataref Box<T> {
+    inner: T,
+}
+
+dataref Wrapper<T> {
+    value: T,
+}
+
+fn main() {
+    let b = Box { inner: Wrapper { value: 42 } };
+    let x: int = b.inner.value;
+}

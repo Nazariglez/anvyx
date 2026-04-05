@@ -1138,10 +1138,9 @@ fn check_struct_destructure_pattern(
 ) {
     // try native struct first
     if let Some(struct_def) = type_checker.get_struct(type_name).cloned() {
-        let matches_type = matches!(
-            value_ty,
-            Type::Struct { name, .. } | Type::DataRef { name, .. } if *name == type_name
-        );
+        let matches_type = value_ty
+            .as_aggregate()
+            .is_some_and(|agg| agg.name == type_name);
         if !matches_type {
             let expected = struct_def.make_type(type_name, vec![]);
             errors.push(Diagnostic::new(
@@ -1167,12 +1166,10 @@ fn check_struct_destructure_pattern(
             errors,
         );
 
-        let subst = match value_ty {
-            Type::Struct { type_args, .. } | Type::DataRef { type_args, .. } => {
-                build_subst(&struct_def.type_params, type_args)
-            }
-            _ => HashMap::new(),
-        };
+        let subst = value_ty
+            .as_aggregate()
+            .map(|agg| build_subst(&struct_def.type_params, agg.type_args))
+            .unwrap_or_default();
 
         for ((_, subpat), matched_def) in fields.iter().zip(matched.iter()) {
             let Some(field_def) = matched_def else {
