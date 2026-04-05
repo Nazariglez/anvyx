@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: unknown annotation
+
+struct Foo { x: int }
+extend Foo {
+    @nonexistent
+    fn bar(self) -> int { self.x }
+}
+fn main() {}

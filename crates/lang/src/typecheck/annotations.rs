@@ -4,10 +4,7 @@ use std::{
     sync::LazyLock,
 };
 
-use super::{
-    error::{Diagnostic, DiagnosticKind},
-    types::Deprecated,
-};
+use super::error::{Diagnostic, DiagnosticKind};
 use crate::{
     ast::{AnnotationArgs, AnnotationNode, Ident, Lit},
     span::Span,
@@ -21,6 +18,11 @@ pub(super) enum AnnotationTarget {
     Enum,
     Field,
     Variant,
+    Const,
+    ExternFunc,
+    ExternType,
+    InlineMethod,
+    ExtendMethod,
 }
 
 impl fmt::Display for AnnotationTarget {
@@ -32,33 +34,97 @@ impl fmt::Display for AnnotationTarget {
             Self::Enum => write!(f, "enum"),
             Self::Field => write!(f, "field"),
             Self::Variant => write!(f, "variant"),
+            Self::Const => write!(f, "const"),
+            Self::ExternFunc => write!(f, "extern function"),
+            Self::ExternType => write!(f, "extern type"),
+            Self::InlineMethod => write!(f, "inline method"),
+            Self::ExtendMethod => write!(f, "extend method"),
         }
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum KnownAnnotationKind {
+    Test,
+    Deprecated,
+}
+
 #[derive(Debug, Clone, Copy)]
-enum AnnotationArgSchema {
+pub(super) enum AnnotationArgSchema {
     NoArgs,
     OptionalPositionalString,
 }
 
-struct AnnotationDef {
-    targets: &'static [AnnotationTarget],
-    args: AnnotationArgSchema,
+pub(super) struct AnnotationSpec {
+    pub kind: KnownAnnotationKind,
+    pub targets: &'static [AnnotationTarget],
+    pub args: AnnotationArgSchema,
 }
 
-static KNOWN_ANNOTATIONS: LazyLock<HashMap<&'static str, AnnotationDef>> = LazyLock::new(|| {
+#[derive(Debug, Clone)]
+pub(super) enum AppliedAnnotation {
+    Test,
+    Deprecated { reason: Option<String> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DeprecationInfo<'a> {
+    NotDeprecated,
+    Deprecated(Option<&'a str>),
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct AppliedAnnotations {
+    items: Vec<AppliedAnnotation>,
+}
+
+impl AppliedAnnotations {
+    fn deprecation(&self) -> DeprecationInfo<'_> {
+        self.items
+            .iter()
+            .find_map(|a| match a {
+                AppliedAnnotation::Deprecated { reason } => {
+                    Some(DeprecationInfo::Deprecated(reason.as_deref()))
+                }
+                AppliedAnnotation::Test => None,
+            })
+            .unwrap_or(DeprecationInfo::NotDeprecated)
+    }
+
+    pub(super) fn check_deprecation(
+        &self,
+        span: Span,
+        kind: &'static str,
+        name: Ident,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if let DeprecationInfo::Deprecated(reason) = self.deprecation() {
+            errors.push(Diagnostic::new(
+                span,
+                DiagnosticKind::DeprecatedUsage {
+                    kind,
+                    name,
+                    reason: reason.map(str::to_string),
+                },
+            ));
+        }
+    }
+}
+
+static KNOWN_ANNOTATIONS: LazyLock<HashMap<&'static str, AnnotationSpec>> = LazyLock::new(|| {
     let mut map = HashMap::new();
     map.insert(
         "test",
-        AnnotationDef {
+        AnnotationSpec {
+            kind: KnownAnnotationKind::Test,
             targets: &[AnnotationTarget::Func],
             args: AnnotationArgSchema::NoArgs,
         },
     );
     map.insert(
         "deprecated",
-        AnnotationDef {
+        AnnotationSpec {
+            kind: KnownAnnotationKind::Deprecated,
             targets: &[
                 AnnotationTarget::Func,
                 AnnotationTarget::Struct,
@@ -66,6 +132,11 @@ static KNOWN_ANNOTATIONS: LazyLock<HashMap<&'static str, AnnotationDef>> = LazyL
                 AnnotationTarget::Enum,
                 AnnotationTarget::Field,
                 AnnotationTarget::Variant,
+                AnnotationTarget::Const,
+                AnnotationTarget::ExternFunc,
+                AnnotationTarget::ExternType,
+                AnnotationTarget::InlineMethod,
+                AnnotationTarget::ExtendMethod,
             ],
             args: AnnotationArgSchema::OptionalPositionalString,
         },
@@ -73,13 +144,22 @@ static KNOWN_ANNOTATIONS: LazyLock<HashMap<&'static str, AnnotationDef>> = LazyL
     map
 });
 
-pub(super) fn validate_annotations(
+fn format_valid_targets(targets: &[AnnotationTarget]) -> String {
+    targets
+        .iter()
+        .map(|t| format!("{t}s"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub(super) fn normalize_annotations(
     annotations: &[AnnotationNode],
     target: AnnotationTarget,
     errors: &mut Vec<Diagnostic>,
-) {
+) -> AppliedAnnotations {
     let registry = &*KNOWN_ANNOTATIONS;
     let mut seen = HashSet::new();
+    let mut items = vec![];
 
     for annotation in annotations {
         let name = &annotation.node.name;
@@ -94,22 +174,18 @@ pub(super) fn validate_annotations(
         };
 
         if !def.targets.contains(&target) {
-            let valid_targets = def
-                .targets
-                .iter()
-                .map(|t| format!("{t}s"))
-                .collect::<Vec<_>>()
-                .join(", ");
+            let valid_targets = format_valid_targets(def.targets);
+            let help = format!("`@{name}` can only be applied to {valid_targets}");
             errors.push(
                 Diagnostic::new(
                     annotation.span,
                     DiagnosticKind::InvalidAnnotationTarget {
                         name: *name,
                         target: format!("{target}"),
-                        valid_targets: valid_targets.clone(),
+                        valid_targets,
                     },
                 )
-                .with_help(format!("`@{name}` can only be applied to {valid_targets}")),
+                .with_help(help),
             );
             continue;
         }
@@ -123,24 +199,30 @@ pub(super) fn validate_annotations(
         }
         seen.insert(name_str);
 
-        validate_annotation_args(
+        if !validate_annotation_args(
             &annotation.node.args,
             *name,
             def.args,
             annotation.span,
             errors,
-        );
-    }
-}
+        ) {
+            continue;
+        }
 
-pub(super) fn extract_deprecated(annotations: &[AnnotationNode]) -> Deprecated {
-    annotations
-        .iter()
-        .find(|a| a.node.name.to_string() == "deprecated")
-        .map_or(Deprecated::No, |a| match &a.node.args {
-            AnnotationArgs::Positional(Lit::String(s)) => Deprecated::Yes(Some(s.clone())),
-            _ => Deprecated::Yes(None),
-        })
+        let applied = match def.kind {
+            KnownAnnotationKind::Test => AppliedAnnotation::Test,
+            KnownAnnotationKind::Deprecated => {
+                let reason = match &annotation.node.args {
+                    AnnotationArgs::Positional(Lit::String(s)) => Some(s.clone()),
+                    _ => None,
+                };
+                AppliedAnnotation::Deprecated { reason }
+            }
+        };
+        items.push(applied);
+    }
+
+    AppliedAnnotations { items }
 }
 
 fn validate_annotation_args(
@@ -149,7 +231,7 @@ fn validate_annotation_args(
     schema: AnnotationArgSchema,
     span: Span,
     errors: &mut Vec<Diagnostic>,
-) {
+) -> bool {
     match schema {
         AnnotationArgSchema::NoArgs => {
             if !matches!(args, AnnotationArgs::None) {
@@ -160,6 +242,7 @@ fn validate_annotation_args(
                         message: "this annotation does not accept arguments".to_string(),
                     },
                 ));
+                return false;
             }
         }
         AnnotationArgSchema::OptionalPositionalString => match args {
@@ -172,7 +255,9 @@ fn validate_annotation_args(
                         message: "expected no arguments or a string argument".to_string(),
                     },
                 ));
+                return false;
             }
         },
     }
+    true
 }

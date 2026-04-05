@@ -567,6 +567,7 @@ pub struct Binding {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConstDecl {
+    pub annotations: Vec<AnnotationNode>,
     pub doc: Option<String>,
     pub name: Ident,
     pub ty: Option<Type>,
@@ -685,6 +686,7 @@ pub struct Func {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternFunc {
+    pub annotations: Vec<AnnotationNode>,
     pub doc: Option<String>,
     pub name: Ident,
     pub params: Vec<Param>,
@@ -693,6 +695,7 @@ pub struct ExternFunc {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternType {
+    pub annotations: Vec<AnnotationNode>,
     pub doc: Option<String>,
     pub name: Ident,
     pub has_init: bool,
@@ -1168,6 +1171,7 @@ pub enum MethodReceiver {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Method {
+    pub annotations: Vec<AnnotationNode>,
     pub name: Ident,
     pub visibility: Visibility,
     pub type_params: Vec<TypeParam>,
@@ -1222,6 +1226,7 @@ pub struct ExtendDecl {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExtendMethod {
+    pub annotations: Vec<AnnotationNode>,
     pub doc: Option<String>,
     pub name: Ident,
     pub params: Vec<Param>,

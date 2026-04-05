@@ -137,9 +137,18 @@ fn parser<'src>() -> BoxedParser<'src, ast::Program> {
                     e.node.doc = doc;
                     e.node.annotations = annots;
                 }
-                ast::Stmt::Const(c) => c.node.doc = doc,
-                ast::Stmt::ExternFunc(ef) => ef.node.doc = doc,
-                ast::Stmt::ExternType(et) => et.node.doc = doc,
+                ast::Stmt::Const(c) => {
+                    c.node.doc = doc;
+                    c.node.annotations = annots;
+                }
+                ast::Stmt::ExternFunc(ef) => {
+                    ef.node.doc = doc;
+                    ef.node.annotations = annots;
+                }
+                ast::Stmt::ExternType(et) => {
+                    et.node.doc = doc;
+                    et.node.annotations = annots;
+                }
                 _ => unreachable!(),
             }
             stmt_node

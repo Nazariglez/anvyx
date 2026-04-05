@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use internment::Intern;
 
 use super::{
-    annotations::{AnnotationTarget, validate_annotations},
+    annotations::{AnnotationTarget, normalize_annotations},
     const_eval::{ConstValue, eval_const_expr, validate_const_expr},
     constraint::TypeRef,
     error::{Diagnostic, DiagnosticKind},
@@ -533,8 +533,10 @@ pub(super) fn check_struct(
     let struct_name = decl.name;
     let kind = decl.kind.keyword();
 
+    let mut field_annotations = HashMap::new();
     for field in &decl.fields {
-        validate_annotations(&field.annotations, AnnotationTarget::Field, errors);
+        let f_ann = normalize_annotations(&field.annotations, AnnotationTarget::Field, errors);
+        field_annotations.insert(field.name, f_ann);
         if field.ty.contains_any() {
             errors.push(Diagnostic::new(
                 struct_node.span,
@@ -547,6 +549,8 @@ pub(super) fn check_struct(
         return;
     };
 
+    struct_def.field_annotations = field_annotations;
+
     validate_field_defaults(
         kind,
         struct_name,
@@ -558,6 +562,11 @@ pub(super) fn check_struct(
     );
 
     for method in &decl.methods {
+        if let Some(method_def) = struct_def.methods.get_mut(&method.name) {
+            method_def.annotations =
+                normalize_annotations(&method.annotations, AnnotationTarget::InlineMethod, errors);
+        }
+
         let has_defaults = method.params.iter().any(|p| p.default.is_some());
         if has_defaults && let Some(method_def) = struct_def.methods.get_mut(&method.name) {
             let defaults = validate_param_defaults(
@@ -630,13 +639,12 @@ fn validate_to_string_signature(
     }
 
     if method.ret != Type::String {
-        let found = method.ret.clone();
         errors.push(Diagnostic::new(
             span,
             DiagnosticKind::InvalidToStringSignature {
                 kind,
                 struct_name,
-                reason: format!("must return 'string', found '{found}'"),
+                reason: format!("must return 'string', found '{}'", method.ret),
             },
         ));
     }

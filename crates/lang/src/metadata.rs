@@ -270,6 +270,7 @@ pub(crate) fn metadata_to_extern_stmts(
 
         let node = Spanned::new(
             ExternType {
+                annotations: vec![],
                 doc: ty.doc.clone(),
                 name,
                 has_init: ty.has_init,
@@ -287,6 +288,7 @@ pub(crate) fn metadata_to_extern_stmts(
 
         let node = Spanned::new(
             ExternFunc {
+                annotations: vec![],
                 doc: func.doc.clone(),
                 name,
                 params,

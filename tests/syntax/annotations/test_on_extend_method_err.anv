@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: not valid on extend method
+
+struct Foo { x: int }
+extend Foo {
+    @test
+    fn bar(self) -> int { self.x }
+}
+fn main() {}

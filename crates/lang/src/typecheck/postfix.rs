@@ -561,6 +561,9 @@ fn check_extend_call_impl(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
+    def.annotations
+        .check_deprecation(call_node.span, "method", method_name, errors);
+
     let param_start = usize::from(skip_receiver);
     let param_types: Vec<Type> = def.params[param_start..]
         .iter()
@@ -1820,15 +1823,8 @@ fn apply_postfix_op(
             node: call_node, ..
         } => {
             if let ExprKind::Ident(name) = &call_node.node.func.node.kind {
-                if let Some(reason) = type_checker.func_deprecated.get(name).cloned() {
-                    errors.push(Diagnostic::new(
-                        call_node.span,
-                        DiagnosticKind::DeprecatedUsage {
-                            kind: "function",
-                            name: *name,
-                            reason,
-                        },
-                    ));
+                if let Some(ann) = type_checker.func_annotations.get(name) {
+                    ann.check_deprecation(call_node.span, "function", *name, errors);
                 }
                 let has_type_params = type_checker
                     .func_type_params

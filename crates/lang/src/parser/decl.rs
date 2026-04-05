@@ -245,6 +245,7 @@ pub(super) fn extern_declaration<'src>(
                     let resolved_ret = ret.unwrap_or(ast::Type::Void);
                     let node = Spanned::new(
                         ast::ExternFunc {
+                            annotations: vec![],
                             doc: None,
                             name,
                             params,
@@ -283,6 +284,7 @@ fn extern_type_declaration<'src>(
                 resolve_extern_members(members, &empty_map, &empty_const_map, &self_type);
             let node = Spanned::new(
                 ast::ExternType {
+                    annotations: vec![],
                     doc: None,
                     name,
                     has_init,
@@ -661,62 +663,66 @@ fn struct_method<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::Method> {
     let tail_expr = expression(stmt.clone());
-    select! {
-        (Token::Keyword(Keyword::Fn), _) => (),
-    }
-    .ignore_then(identifier())
-    .then(generic_params())
-    .then(method_params(stmt.clone()))
-    .then(return_type())
-    .then(block_stmt(stmt, tail_expr))
-    .map_with(|((((name, gp), (receiver, _, params)), ret), body), e| {
-        let s = e.span();
-        let GenericParams {
-            type_params: method_type_params,
-            const_params: method_const_params,
-        } = gp;
+    annotations()
+        .then_ignore(select! {
+            (Token::Keyword(Keyword::Fn), _) => (),
+        })
+        .then(identifier())
+        .then(generic_params())
+        .then(method_params(stmt.clone()))
+        .then(return_type())
+        .then(block_stmt(stmt, tail_expr))
+        .map_with(
+            |(((((annots, name), gp), (receiver, _, params)), ret), body), e| {
+                let s = e.span();
+                let GenericParams {
+                    type_params: method_type_params,
+                    const_params: method_const_params,
+                } = gp;
 
-        let type_param_map: HashMap<ast::Ident, ast::TypeVarId> = method_type_params
-            .iter()
-            .map(|tp| (tp.name, tp.id))
-            .collect();
-        let const_param_map: HashMap<ast::Ident, ast::ConstParamId> = method_const_params
-            .iter()
-            .map(|cp| (cp.name, cp.id))
-            .collect();
+                let type_param_map: HashMap<ast::Ident, ast::TypeVarId> = method_type_params
+                    .iter()
+                    .map(|tp| (tp.name, tp.id))
+                    .collect();
+                let const_param_map: HashMap<ast::Ident, ast::ConstParamId> = method_const_params
+                    .iter()
+                    .map(|cp| (cp.name, cp.id))
+                    .collect();
 
-        let resolved_params = params
-            .into_iter()
-            .map(|p| {
-                let ty = resolve_type_params(&p.ty, &type_param_map, &const_param_map);
-                ast::Param {
-                    mutability: p.mutability,
-                    name: p.name,
-                    ty,
-                    default: p.default,
+                let resolved_params = params
+                    .into_iter()
+                    .map(|p| {
+                        let ty = resolve_type_params(&p.ty, &type_param_map, &const_param_map);
+                        ast::Param {
+                            mutability: p.mutability,
+                            name: p.name,
+                            ty,
+                            default: p.default,
+                        }
+                    })
+                    .collect();
+
+                let resolved_ret = match ret {
+                    Some(ty) => resolve_type_params(&ty, &type_param_map, &const_param_map),
+                    None => ast::Type::Void,
+                };
+
+                ast::Method {
+                    annotations: annots,
+                    name,
+                    visibility: ast::Visibility::Private,
+                    type_params: method_type_params,
+                    const_params: method_const_params,
+                    receiver,
+                    params: resolved_params,
+                    ret: resolved_ret,
+                    body: Spanned::new(body.node, Span::new(s.start, s.end)),
                 }
-            })
-            .collect();
-
-        let resolved_ret = match ret {
-            Some(ty) => resolve_type_params(&ty, &type_param_map, &const_param_map),
-            None => ast::Type::Void,
-        };
-
-        ast::Method {
-            name,
-            visibility: ast::Visibility::Private,
-            type_params: method_type_params,
-            const_params: method_const_params,
-            receiver,
-            params: resolved_params,
-            ret: resolved_ret,
-            body: Spanned::new(body.node, Span::new(s.start, s.end)),
-        }
-    })
-    .labelled("method")
-    .as_context()
-    .boxed()
+            },
+        )
+        .labelled("method")
+        .as_context()
+        .boxed()
 }
 
 fn method_params<'src>(
@@ -897,6 +903,7 @@ fn aggregate_declaration<'src>(
                     );
 
                     ast::Method {
+                        annotations: m.annotations,
                         name: m.name,
                         visibility: m.visibility,
                         type_params: m.type_params,
@@ -1082,7 +1089,8 @@ fn extend_method<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::ExtendMethodNode> {
     let tail_expr = expression(stmt.clone());
-    doc_comment_block()
+    annotations()
+        .then(doc_comment_block())
         .then(
             select! {
                 (Token::Keyword(Keyword::Fn), _) => (),
@@ -1093,7 +1101,9 @@ fn extend_method<'src>(
             .then(block_stmt(stmt, tail_expr)),
         )
         .validate(
-            |(doc, (((name, (receiver, self_annotation, params)), ret), body)), extra, emitter| {
+            |((annots, doc), (((name, (receiver, self_annotation, params)), ret), body)),
+             extra,
+             emitter| {
                 let s = extra.span();
                 if self_annotation.is_some() {
                     emitter.emit(Rich::custom(
@@ -1114,6 +1124,7 @@ fn extend_method<'src>(
                 let ret_ty = ret.unwrap_or(ast::Type::Void);
                 Spanned::new(
                     ast::ExtendMethod {
+                        annotations: annots,
                         doc,
                         name,
                         params: all_params,
@@ -1211,6 +1222,7 @@ pub(super) fn const_decl<'src>(
             let span = Span::new(s.start, s.end);
             let node = Spanned::new(
                 ast::ConstDecl {
+                    annotations: vec![],
                     doc: None,
                     name,
                     ty,

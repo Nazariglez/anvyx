@@ -1395,6 +1395,10 @@ pub(super) fn check_static_method_call(
         return Type::Infer;
     }
 
+    method
+        .annotations
+        .check_deprecation(call.span, "method", method_name, errors);
+
     let node = &call.node;
     let has_method_type_params = !method.type_params.is_empty();
     let is_struct_generic = !struct_def.type_params.is_empty();
@@ -1621,6 +1625,10 @@ pub(super) fn check_instance_method_call(
         ));
         return Type::Infer;
     }
+
+    method
+        .annotations
+        .check_deprecation(call.span, "method", method_name, errors);
 
     if let Some(target) = target
         && matches!(method.receiver, Some(MethodReceiver::Var))

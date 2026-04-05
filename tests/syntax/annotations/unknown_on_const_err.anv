@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: unknown annotation
+
+@foo
+const X = 1;
+
+fn main() {}

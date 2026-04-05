@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use internment::Intern;
 
 use super::{
-    annotations::{AnnotationTarget, extract_deprecated, validate_annotations},
+    annotations::{AnnotationTarget, AppliedAnnotations, normalize_annotations},
     composite::{is_all_nil_array_literal, is_empty_map_literal},
     const_eval::{
         ConstDef, build_const_dependency_graph, collect_const_decls, eval_const_expr,
@@ -17,10 +17,10 @@ use super::{
     infer::type_from_fn,
     pattern::{check_pattern, is_refutable},
     types::{
-        Deprecated, EnumDef, ExtendEntry, ExtendMethodDef, ExternFieldDef, ExternMethodDef,
-        ExternOpDef, ExternTypeDef, ExternUnaryOpDef, GenericExtendTemplate, ModuleDef,
-        ModuleExtendEntry, ModuleGenericExtendEntry, StructDef, TypeChecker, VarInfo,
-        build_param_info, unwrap_opt_typ, validate_map_key_type,
+        EnumDef, ExtendEntry, ExtendMethodDef, ExternFieldDef, ExternMethodDef, ExternOpDef,
+        ExternTypeDef, ExternUnaryOpDef, GenericExtendTemplate, ModuleDef, ModuleExtendEntry,
+        ModuleGenericExtendEntry, StructDef, TypeChecker, VarInfo, build_param_info,
+        unwrap_opt_typ, validate_map_key_type,
     },
     unify::contains_infer,
     visit::type_any,
@@ -195,7 +195,6 @@ enum DeclInfo {
         name: Ident,
         visibility: Visibility,
         reg: FuncRegistration,
-        deprecated: Deprecated,
     },
     ExternFunc {
         name: Ident,
@@ -229,7 +228,6 @@ fn extract_decl(stmt: &StmtNode, resolve: &impl Fn(&Type) -> Type) -> Option<Dec
                 name: func.name,
                 visibility: func.visibility,
                 reg: build_func_registration(func, node, resolve),
-                deprecated: extract_deprecated(&func.annotations),
             })
         }
         Stmt::ExternFunc(node) => {
@@ -274,7 +272,6 @@ fn apply_decl_to_scope(decl: DeclInfo, type_checker: &mut TypeChecker) {
                     const_params,
                     template,
                 },
-            deprecated,
             ..
         } => {
             type_checker.ctx.func_bindings.insert(
@@ -294,9 +291,6 @@ fn apply_decl_to_scope(decl: DeclInfo, type_checker: &mut TypeChecker) {
             }
             if let Some(tmpl) = template {
                 type_checker.generic_func_templates.insert(name, tmpl);
-            }
-            if let Deprecated::Yes(reason) = deprecated {
-                type_checker.func_deprecated.insert(name, reason);
             }
         }
         DeclInfo::ExternFunc {
@@ -895,6 +889,7 @@ pub(super) fn collect_scope_types(
                         params,
                         ret,
                         internal_name,
+                        annotations: AppliedAnnotations::default(),
                     };
                     type_checker
                         .ctx
@@ -1119,10 +1114,16 @@ pub(super) fn build_module_def_with_reexports(
                     let mut params = method.node.params.clone();
                     params[0].ty = resolved_ty.clone();
                     let ret = resolve(&method.node.ret);
+                    let annotations = normalize_annotations(
+                        &method.node.annotations,
+                        AnnotationTarget::ExtendMethod,
+                        &mut errors,
+                    );
                     let def = ExtendMethodDef {
                         params,
                         ret,
                         internal_name,
+                        annotations,
                     };
                     module_def.extend_methods.push(ModuleExtendEntry {
                         ty: resolved_ty.clone(),
@@ -1179,9 +1180,23 @@ pub(super) fn check_stmt(
                 }
             }
         }
-        Stmt::ExternFunc(_) | Stmt::ExternType(_) => {}
+        Stmt::ExternFunc(node) => {
+            let annotations =
+                normalize_annotations(&node.node.annotations, AnnotationTarget::ExternFunc, errors);
+            type_checker
+                .func_annotations
+                .insert(node.node.name, annotations);
+        }
+        Stmt::ExternType(node) => {
+            let _ =
+                normalize_annotations(&node.node.annotations, AnnotationTarget::ExternType, errors);
+        }
         Stmt::Func(node) => {
-            validate_annotations(&node.node.annotations, AnnotationTarget::Func, errors);
+            let annotations =
+                normalize_annotations(&node.node.annotations, AnnotationTarget::Func, errors);
+            type_checker
+                .func_annotations
+                .insert(node.node.name, annotations);
             check_func(node, type_checker, errors);
         }
         Stmt::Aggregate(node) => {
@@ -1189,14 +1204,26 @@ pub(super) fn check_stmt(
                 AggregateKind::DataRef => AnnotationTarget::DataRef,
                 AggregateKind::Struct => AnnotationTarget::Struct,
             };
-            validate_annotations(&node.node.annotations, ann_target, errors);
+            let annotations = normalize_annotations(&node.node.annotations, ann_target, errors);
+            if let Some(sd) = type_checker.ctx.struct_defs.get_mut(&node.node.name) {
+                sd.annotations = annotations;
+            }
             check_struct(node, type_checker, errors);
         }
         Stmt::Enum(node) => {
-            validate_annotations(&node.node.annotations, AnnotationTarget::Enum, errors);
+            let enum_anns =
+                normalize_annotations(&node.node.annotations, AnnotationTarget::Enum, errors);
             let decl = &node.node;
+
+            let mut variant_anns: HashMap<Ident, AppliedAnnotations> = HashMap::new();
+            let mut variant_field_anns: HashMap<Ident, HashMap<Ident, AppliedAnnotations>> =
+                HashMap::new();
+
             for variant in &decl.variants {
-                validate_annotations(&variant.annotations, AnnotationTarget::Variant, errors);
+                let v_ann =
+                    normalize_annotations(&variant.annotations, AnnotationTarget::Variant, errors);
+                variant_anns.insert(variant.name, v_ann);
+
                 let has_any = match &variant.kind {
                     VariantKind::Unit => false,
                     VariantKind::Tuple(types) => types.iter().any(Type::contains_any),
@@ -1208,9 +1235,29 @@ pub(super) fn check_stmt(
                         DiagnosticKind::AnyTypeNotAllowed,
                     ));
                 }
+
                 if let VariantKind::Struct(fields) = &variant.kind {
+                    let mut field_map = HashMap::new();
                     for field in fields {
-                        validate_annotations(&field.annotations, AnnotationTarget::Field, errors);
+                        let f_ann = normalize_annotations(
+                            &field.annotations,
+                            AnnotationTarget::Field,
+                            errors,
+                        );
+                        field_map.insert(field.name, f_ann);
+                    }
+                    variant_field_anns.insert(variant.name, field_map);
+                }
+            }
+
+            if let Some(enum_def) = type_checker.ctx.enum_defs.get_mut(&decl.name) {
+                enum_def.annotations = enum_anns;
+                for variant_def in &mut enum_def.variants {
+                    if let Some(v_ann) = variant_anns.remove(&variant_def.name) {
+                        variant_def.annotations = v_ann;
+                    }
+                    if let Some(f_anns) = variant_field_anns.remove(&variant_def.name) {
+                        variant_def.field_annotations = Some(f_anns);
                     }
                 }
             }
@@ -1227,6 +1274,7 @@ pub(super) fn check_stmt(
         Stmt::Break => check_break(stmt.span, type_checker, errors),
         Stmt::Continue => check_continue(stmt.span, type_checker, errors),
         Stmt::Const(decl) => {
+            let _ = normalize_annotations(&decl.node.annotations, AnnotationTarget::Const, errors);
             // module-level consts are already processed by evaluate_module_consts,
             // only handle the function-body case here
             if type_checker.return_types.is_empty() {
@@ -1487,7 +1535,23 @@ fn check_extend_decl(
                     method: method.node.name,
                 },
             ));
-            // Don't skip — still typecheck the body
+            // Don't skip, still typecheck the body
+        }
+
+        // Normalize annotations and update the pre registered entry
+        let annotations = normalize_annotations(
+            &method.node.annotations,
+            AnnotationTarget::ExtendMethod,
+            errors,
+        );
+        let key = (resolved_ty.clone(), method.node.name);
+        if let Some(entry) = type_checker
+            .ctx
+            .extend_defs
+            .get_mut(&key)
+            .and_then(|entries| entries.iter_mut().find(|e| e.source_module.is_empty()))
+        {
+            entry.def.annotations = annotations;
         }
 
         // Build param list for body checking
@@ -1720,6 +1784,13 @@ fn check_generic_extend_decl(
             ));
             continue;
         }
+
+        // validate annotations eagerly for error reporting
+        normalize_annotations(
+            &method.node.annotations,
+            AnnotationTarget::ExtendMethod,
+            errors,
+        );
 
         // store template, body is NOT typechecked here (lazy specialization)
         type_checker

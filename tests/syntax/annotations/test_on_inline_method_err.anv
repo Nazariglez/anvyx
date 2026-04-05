@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: error
+// @contains: not valid on inline method
+
+struct Foo {
+    x: int,
+
+    @test
+    fn bar(self) -> int { self.x }
+}
+
+fn main() {}

@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: expected no arguments or a string argument
+
+@deprecated(val = 42)
+struct Bad { x: int }
+
+fn main() {
+    let b = Bad { x: 1 };
+}

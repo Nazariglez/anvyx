@@ -25,4 +25,41 @@ enum Status {
     Disabled,
 }
 
+@deprecated("use NEW_LIMIT")
+const OLD_LIMIT: int = 100;
+
+@deprecated("use new_extern")
+extern fn old_extern();
+
+@deprecated("use NewHandle")
+extern type OldHandle;
+
+struct Widget {
+    value: int,
+
+    @deprecated("use new_get")
+    fn old_get(self) -> int { self.value }
+
+    @deprecated
+    fn old_static() -> int { 0 }
+}
+
+dataref Buf {
+    size: int,
+
+    @deprecated("use byte_count")
+    fn len(self) -> int { self.size }
+}
+
+struct Item { n: int }
+extend Item {
+    @deprecated("use better_name")
+    fn old_name(self) -> int { self.n }
+}
+
+// stacking annotations
+@test
+@deprecated("obsolete test helper")
+fn stacked_ok() {}
+
 fn main() {}

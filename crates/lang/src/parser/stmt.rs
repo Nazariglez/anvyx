@@ -190,6 +190,7 @@ fn const_stmt<'src>(stmt: impl AnvParser<'src, ast::StmtNode>) -> BoxedParser<'s
             let span = Span::new(s.start, s.end);
             let node = Spanned::new(
                 ast::ConstDecl {
+                    annotations: vec![],
                     doc: None,
                     name,
                     ty,

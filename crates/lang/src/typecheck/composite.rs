@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{
-    annotations::extract_deprecated,
     const_eval::ConstValue,
     constraint::TypeRef,
     error::{Diagnostic, DiagnosticKind},
@@ -12,9 +11,7 @@ use super::{
     range::{
         range_from_type, range_inclusive_type, range_to_inclusive_type, range_to_type, range_type,
     },
-    types::{
-        Deprecated, ExternTypeDef, FieldDefault, InferenceSlots, TypeChecker, validate_map_key_type,
-    },
+    types::{ExternTypeDef, FieldDefault, InferenceSlots, TypeChecker, validate_map_key_type},
 };
 use crate::{
     ast::{
@@ -188,16 +185,12 @@ pub(super) fn check_struct_lit(
         return Type::Infer;
     };
 
-    if let Deprecated::Yes(reason) = &struct_def.deprecated {
-        errors.push(Diagnostic::new(
-            lit_node.span,
-            DiagnosticKind::DeprecatedUsage {
-                kind: struct_def.kind.keyword(),
-                name: struct_name,
-                reason: reason.clone(),
-            },
-        ));
-    }
+    struct_def.annotations.check_deprecation(
+        lit_node.span,
+        struct_def.kind.keyword(),
+        struct_name,
+        errors,
+    );
 
     let is_generic = !struct_def.type_params.is_empty();
     let slots = if is_generic {
@@ -212,17 +205,8 @@ pub(super) fn check_struct_lit(
     for (name, field_expr) in &lit.fields {
         let expected = field_type_map.get(name).copied();
         check_expr(field_expr, type_checker, errors, expected);
-        if let Some(sf) = struct_def.fields.iter().find(|f| f.name == *name)
-            && let Deprecated::Yes(reason) = extract_deprecated(&sf.annotations)
-        {
-            errors.push(Diagnostic::new(
-                field_expr.span,
-                DiagnosticKind::DeprecatedUsage {
-                    kind: "field",
-                    name: *name,
-                    reason,
-                },
-            ));
+        if let Some(ann) = struct_def.field_annotations.get(name) {
+            ann.check_deprecation(field_expr.span, "field", *name, errors);
         }
     }
 

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{
-    annotations::extract_deprecated,
+    annotations::AppliedAnnotations,
     const_eval::{ConstDef, ConstValue},
     constraint::{Constraint, TypeRef},
     error::{Diagnostic, DiagnosticKind},
@@ -21,16 +21,11 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub enum Deprecated {
-    No,
-    Yes(Option<String>),
-}
-
-#[derive(Debug, Clone)]
 pub(super) struct EnumVariantDef {
     pub name: Ident,
     pub kind: VariantKind,
-    pub deprecated: Deprecated,
+    pub annotations: AppliedAnnotations,
+    pub field_annotations: Option<HashMap<Ident, AppliedAnnotations>>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,7 +34,7 @@ pub(super) struct EnumDef {
     #[allow(dead_code)] // stored for future enum const param support
     pub const_params: Vec<ConstParam>,
     pub variants: Vec<EnumVariantDef>,
-    pub deprecated: Deprecated,
+    pub annotations: AppliedAnnotations,
 }
 
 impl EnumDef {
@@ -50,14 +45,15 @@ impl EnumDef {
             .map(|v| EnumVariantDef {
                 name: v.name,
                 kind: v.kind.clone(),
-                deprecated: extract_deprecated(&v.annotations),
+                annotations: AppliedAnnotations::default(),
+                field_annotations: None,
             })
             .collect();
         Self {
             type_params: decl.type_params.clone(),
             const_params: decl.const_params.clone(),
             variants,
-            deprecated: extract_deprecated(&decl.annotations),
+            annotations: AppliedAnnotations::default(),
         }
     }
 
@@ -68,26 +64,11 @@ impl EnumDef {
         span: Span,
         errors: &mut Vec<Diagnostic>,
     ) {
-        if let Deprecated::Yes(reason) = &self.deprecated {
-            errors.push(Diagnostic::new(
-                span,
-                DiagnosticKind::DeprecatedUsage {
-                    kind: "enum",
-                    name: enum_name,
-                    reason: reason.clone(),
-                },
-            ));
-        }
-        if let Deprecated::Yes(reason) = &variant.deprecated {
-            errors.push(Diagnostic::new(
-                span,
-                DiagnosticKind::DeprecatedUsage {
-                    kind: "variant",
-                    name: variant.name,
-                    reason: reason.clone(),
-                },
-            ));
-        }
+        self.annotations
+            .check_deprecation(span, "enum", enum_name, errors);
+        variant
+            .annotations
+            .check_deprecation(span, "variant", variant.name, errors);
     }
 }
 
@@ -99,6 +80,7 @@ pub struct MethodDef {
     pub param_defaults: Vec<Option<ConstValue>>,
     pub ret: Type,
     pub body: BlockNode,
+    pub(super) annotations: AppliedAnnotations,
 }
 
 impl MethodDef {
@@ -112,6 +94,7 @@ impl MethodDef {
                 param_defaults: vec![],
                 ret: method.ret.clone(),
                 body: method.body.clone(),
+                annotations: AppliedAnnotations::default(),
             },
         )
     }
@@ -138,7 +121,8 @@ pub struct StructDef {
     pub fields: Vec<StructField>,
     pub methods: HashMap<Ident, MethodDef>,
     pub field_defaults: HashMap<Ident, FieldDefault>,
-    pub deprecated: Deprecated,
+    pub(super) annotations: AppliedAnnotations,
+    pub(super) field_annotations: HashMap<Ident, AppliedAnnotations>,
 }
 
 impl StructDef {
@@ -150,7 +134,8 @@ impl StructDef {
             fields: decl.fields.clone(),
             methods,
             field_defaults: HashMap::new(),
-            deprecated: extract_deprecated(&decl.annotations),
+            annotations: AppliedAnnotations::default(),
+            field_annotations: HashMap::new(),
         }
     }
 
@@ -218,6 +203,7 @@ pub(super) struct ExtendMethodDef {
     pub params: Vec<Param>, // full param list including self
     pub ret: Type,
     pub internal_name: Ident,
+    pub annotations: AppliedAnnotations,
 }
 
 #[derive(Debug, Clone)]
@@ -505,9 +491,8 @@ pub(super) struct TypeChecker {
     /// Populated during typechecking; reported after success
     pub(super) warnings: Vec<Diagnostic>,
 
-    /// Deprecated status for free functions, keyed by function name
-    /// Only contains entries for functions marked @deprecated
-    pub(super) func_deprecated: HashMap<Ident, Option<String>>,
+    /// Normalized annotations for free functions, keyed by function name
+    pub(super) func_annotations: HashMap<Ident, AppliedAnnotations>,
 }
 
 #[derive(Debug)]
@@ -1400,15 +1385,8 @@ pub(super) fn type_field_on_base(
 
         for struct_field in &struct_def.fields {
             if struct_field.name == field {
-                if let Deprecated::Yes(reason) = extract_deprecated(&struct_field.annotations) {
-                    errors.push(Diagnostic::new(
-                        span,
-                        DiagnosticKind::DeprecatedUsage {
-                            kind: "field",
-                            name: field,
-                            reason,
-                        },
-                    ));
+                if let Some(ann) = struct_def.field_annotations.get(&field) {
+                    ann.check_deprecation(span, "field", field, errors);
                 }
                 let field_ty = subst_type(&struct_field.ty, &subst, &HashMap::new());
                 return type_checker.resolve_type(&field_ty);

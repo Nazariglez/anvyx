@@ -252,14 +252,14 @@ pub(super) fn array_fill(value: ExprNode, len: ExprNode) -> ExprNode {
     }
 }
 
-pub(super) fn index_expr(target: ExprNode, index: ExprNode) -> ExprNode {
+fn make_index_expr(target: ExprNode, index: ExprNode, safe: bool) -> ExprNode {
     ExprNode {
         node: Expr::new(
             ExprKind::Index(IndexNode {
                 node: Index {
                     target: Box::new(target),
                     index: Box::new(index),
-                    safe: false,
+                    safe,
                 },
                 span: dummy_span(),
             }),
@@ -269,21 +269,12 @@ pub(super) fn index_expr(target: ExprNode, index: ExprNode) -> ExprNode {
     }
 }
 
+pub(super) fn index_expr(target: ExprNode, index: ExprNode) -> ExprNode {
+    make_index_expr(target, index, false)
+}
+
 pub(super) fn safe_index_expr(target: ExprNode, index: ExprNode) -> ExprNode {
-    ExprNode {
-        node: Expr::new(
-            ExprKind::Index(IndexNode {
-                node: Index {
-                    target: Box::new(target),
-                    index: Box::new(index),
-                    safe: true,
-                },
-                span: dummy_span(),
-            }),
-            next_expr_id(),
-        ),
-        span: dummy_span(),
-    }
+    make_index_expr(target, index, true)
 }
 
 pub(super) fn map_literal_expr(entries: Vec<(ExprNode, ExprNode)>) -> ExprNode {
@@ -342,35 +333,7 @@ pub(super) fn fn_decl(
     ret: Type,
     body: Vec<StmtNode>,
 ) -> StmtNode {
-    let (stmts, tail) = split_body(body);
-    StmtNode {
-        node: Stmt::Func(FuncNode {
-            node: Func {
-                annotations: vec![],
-                doc: None,
-                name: dummy_ident(name),
-                visibility: Visibility::Private,
-                type_params: vec![],
-                const_params: vec![],
-                params: params
-                    .into_iter()
-                    .map(|(n, t)| Param {
-                        mutability: Mutability::Immutable,
-                        name: dummy_ident(n),
-                        ty: t,
-                        default: None,
-                    })
-                    .collect(),
-                ret,
-                body: BlockNode {
-                    node: Block { stmts, tail },
-                    span: dummy_span(),
-                },
-            },
-            span: dummy_span(),
-        }),
-        span: dummy_span(),
-    }
+    generic_fn_decl(name, vec![], params, ret, body)
 }
 
 pub(super) fn generic_fn_decl(
@@ -537,29 +500,7 @@ pub(super) fn method(
     ret: Type,
     body: Vec<StmtNode>,
 ) -> Method {
-    let param_list = params
-        .into_iter()
-        .map(|(n, ty)| Param {
-            name: dummy_ident(n),
-            ty,
-            mutability: Mutability::Immutable,
-            default: None,
-        })
-        .collect();
-    let (stmts, tail) = split_body(body);
-    Method {
-        name: dummy_ident(name),
-        visibility: Visibility::Private,
-        type_params: vec![],
-        const_params: vec![],
-        receiver,
-        params: param_list,
-        ret,
-        body: BlockNode {
-            node: Block { stmts, tail },
-            span: dummy_span(),
-        },
-    }
+    generic_method(name, vec![], receiver, params, ret, body)
 }
 
 pub(super) fn generic_method(
@@ -581,6 +522,7 @@ pub(super) fn generic_method(
         .collect();
     let (stmts, tail) = split_body(body);
     Method {
+        annotations: vec![],
         name: dummy_ident(name),
         visibility: Visibility::Private,
         type_params,
