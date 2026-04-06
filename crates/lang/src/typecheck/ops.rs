@@ -2,7 +2,7 @@ use super::{
     constraint::TypeRef,
     error::{Diagnostic, DiagnosticKind},
     expr::{check_expr, root_ident},
-    types::{TypeChecker, equatable_reason, is_equatable},
+    types::{DeepLookup, TypeChecker, equatable_reason, is_equatable},
     unify::unify_types,
 };
 use crate::{
@@ -73,8 +73,8 @@ pub(super) fn check_binary(
                     .then(|| unify_types(&left_ty, &right_ty, bin.span, &mut vec![]))
                     .flatten();
                 if let Some(ref ty) = unified {
-                    type_checker.set_type(node.left.node.id, ty.clone(), bin.span);
-                    type_checker.set_type(node.right.node.id, ty.clone(), bin.span);
+                    type_checker.set_type(node.left.node.id, ty.clone(), node.left.span);
+                    type_checker.set_type(node.right.node.id, ty.clone(), node.right.span);
                 } else {
                     errors.push(Diagnostic::new(
                         bin.span,
@@ -90,10 +90,13 @@ pub(super) fn check_binary(
             if let Some(ref ty) = eq_ty
                 && !ty.is_infer()
             {
-                let has_extern_eq = matches!(ty, Type::Extern { name }
-                        if type_checker
-                            .get_extern_type(*name)
-                            .is_some_and(|def| def.operators.iter().any(|o| o.op == Eq)));
+                let has_extern_eq = if let Type::Extern { name } = ty
+                    && let DeepLookup::Found(def) = type_checker.get_extern_type_deep(*name)
+                {
+                    def.operators.iter().any(|o| o.op == Eq)
+                } else {
+                    false
+                };
                 if !has_extern_eq && !is_equatable(ty, type_checker) {
                     let mut err =
                         Diagnostic::new(bin.span, DiagnosticKind::NotEquatable { ty: ty.clone() });
@@ -199,7 +202,6 @@ fn check_coalesce(
 ) -> Type {
     let node = &bin.node;
 
-    // left must be optional
     let Some(left_inner_ty) = left_ty.option_inner().cloned() else {
         errors.push(Diagnostic::new(
             bin.span,
@@ -213,37 +215,32 @@ fn check_coalesce(
 
     let right_ref = TypeRef::Expr(node.right.node.id);
 
-    // if right is optional too then we're chaining optionals
+    // if both sides are options, unify the inner types but keep the outer option
     if right_ty.is_option() {
         let right_inner_ty = right_ty.option_inner().cloned().unwrap_or(Type::Infer);
-        // constrain the inner types if both are optional
         let left_inner_ref = TypeRef::concrete(&left_inner_ty);
         let right_inner_ref = TypeRef::concrete(&right_inner_ty);
         type_checker.constrain_equal(bin.span, left_inner_ref, right_inner_ref, errors);
 
-        // get the unified inner type
         let unified_inner = type_checker
             .get_type_ref(&right_ref)
             .and_then(|t| t.option_inner().cloned())
             .unwrap_or(left_inner_ty.clone());
 
-        // set the left expression's type to the unified inner type
         let ty = Type::option_of(unified_inner);
         type_checker.set_type(node.left.node.id, ty.clone(), bin.span);
 
         return ty;
     }
 
-    // if right side is not optional then we're unwrapping or returning the right side
+    // if right is not option, unify the inner types and return the fallback
     let left_inner_ref = TypeRef::concrete(&left_inner_ty);
     type_checker.constrain_equal(bin.span, left_inner_ref, right_ref.clone(), errors);
 
-    // get the unified inner type
     let unified_inner = type_checker
         .get_type_ref(&right_ref)
         .unwrap_or(left_inner_ty);
 
-    // set the left expression's type to the unified inner type
     type_checker.set_type(
         node.left.node.id,
         Type::option_of(unified_inner.clone()),
@@ -290,23 +287,27 @@ fn resolve_extern_binary_op(
     type_checker: &TypeChecker,
 ) -> Option<ExternOpResult> {
     let left_match = if let Type::Extern { name } = left_ty {
-        type_checker.get_extern_type(*name).and_then(|def| {
-            def.operators
+        match type_checker.get_extern_type_deep(*name) {
+            DeepLookup::Found(def) => def
+                .operators
                 .iter()
                 .find(|o| o.op == op && !o.self_on_right && o.other_ty == *right_ty)
-                .map(|o| o.ret.clone())
-        })
+                .map(|o| o.ret.clone()),
+            _ => None,
+        }
     } else {
         None
     };
 
     let right_match = if let Type::Extern { name } = right_ty {
-        type_checker.get_extern_type(*name).and_then(|def| {
-            def.operators
+        match type_checker.get_extern_type_deep(*name) {
+            DeepLookup::Found(def) => def
+                .operators
                 .iter()
                 .find(|o| o.op == op && o.self_on_right && o.other_ty == *left_ty)
-                .map(|o| o.ret.clone())
-        })
+                .map(|o| o.ret.clone()),
+            _ => None,
+        }
     } else {
         None
     };
@@ -330,23 +331,14 @@ pub(super) fn check_unary(
         UnaryOp::Neg if expr_ty.is_num() => expr_ty,
         UnaryOp::Not if expr_ty.is_bool() => Type::Bool,
         UnaryOp::BitNot if expr_ty.is_int() => Type::Int,
-        UnaryOp::Neg => {
-            if let Type::Extern { name } = &expr_ty
-                && let Some(def) = type_checker.get_extern_type(*name)
+        _ => {
+            if node.op == UnaryOp::Neg
+                && let Type::Extern { name } = &expr_ty
+                && let DeepLookup::Found(def) = type_checker.get_extern_type_deep(*name)
                 && let Some(op_def) = def.unary_operators.iter().find(|o| o.op == UnaryOp::Neg)
             {
                 return op_def.ret.clone();
             }
-            errors.push(Diagnostic::new(
-                unary.span,
-                DiagnosticKind::InvalidOperand {
-                    op: node.op.to_string(),
-                    operand_type: expr_ty.clone(),
-                },
-            ));
-            Type::Infer
-        }
-        _ => {
             errors.push(Diagnostic::new(
                 unary.span,
                 DiagnosticKind::InvalidOperand {
@@ -501,13 +493,7 @@ fn check_compound_assign_op(
     let target_ty = type_checker.get_type_ref(target_ref).unwrap_or(Type::Infer);
     let value_ty = type_checker.get_type_ref(&value_ref).unwrap_or(Type::Infer);
 
-    let is_add_assign = assign.node.op == AssignOp::AddAssign;
-    let is_xor_assign = assign.node.op == AssignOp::XorAssign;
-    let is_bit_and_assign = assign.node.op == AssignOp::BitAndAssign;
-    let is_bit_or_assign = assign.node.op == AssignOp::BitOrAssign;
-    let is_shift_assign =
-        assign.node.op == AssignOp::ShlAssign || assign.node.op == AssignOp::ShrAssign;
-    let is_str_concat = is_add_assign
+    let is_str_concat = assign.node.op == AssignOp::AddAssign
         && target_ty.is_str()
         && (value_ty.is_str() || value_ty.is_stringable_primitive());
 
@@ -517,16 +503,16 @@ fn check_compound_assign_op(
 
     let target_ty = type_checker.get_type_ref(target_ref).unwrap_or(Type::Infer);
     let is_valid = target_ty.is_infer()
-        || (is_xor_assign && (target_ty.is_int() || target_ty.is_bool()))
-        || (is_bit_and_assign && target_ty.is_int())
-        || (is_bit_or_assign && target_ty.is_int())
-        || (is_shift_assign && target_ty.is_int())
-        || (!is_xor_assign
-            && !is_bit_and_assign
-            && !is_bit_or_assign
-            && !is_shift_assign
-            && target_ty.is_num())
-        || (is_add_assign && target_ty.is_str());
+        || match assign.node.op {
+            AssignOp::AddAssign => target_ty.is_num() || target_ty.is_str(),
+            AssignOp::SubAssign | AssignOp::MulAssign | AssignOp::DivAssign => target_ty.is_num(),
+            AssignOp::XorAssign => target_ty.is_int() || target_ty.is_bool(),
+            AssignOp::BitAndAssign
+            | AssignOp::BitOrAssign
+            | AssignOp::ShlAssign
+            | AssignOp::ShrAssign => target_ty.is_int(),
+            AssignOp::Assign => unreachable!(),
+        };
     if !is_valid {
         errors.push(Diagnostic::new(
             assign.span,

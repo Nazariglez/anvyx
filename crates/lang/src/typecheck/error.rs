@@ -436,6 +436,11 @@ pub enum DiagnosticKind {
         name: Ident,
     },
 
+    AmbiguousType {
+        name: Ident,
+        first_module: String,
+        second_module: String,
+    },
     AmbiguousExtendMethod {
         ty: Type,
         method: Ident,

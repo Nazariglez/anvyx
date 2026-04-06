@@ -9,7 +9,7 @@ use super::{
         check_match_pattern, check_pattern, check_pattern_in_match, pattern_has_var_binding,
     },
     stmt::{check_block_expr, check_block_stmts},
-    types::{EnumDef, TypeChecker},
+    types::{DeepLookup, EnumDef, TypeChecker},
     unify::{contains_infer, unify_types},
 };
 use crate::{
@@ -174,21 +174,36 @@ pub(super) fn check_while(
     type_checker.exit_loop();
 }
 
+fn check_let_scrutinee(
+    pattern: &ast::PatternNode,
+    value: &ExprNode,
+    keyword: &str,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) -> (Type, bool) {
+    let value_ty = check_expr(value, type_checker, errors, None);
+    check_bare_catchall_on_optional(pattern, &value_ty, keyword, errors);
+    let mutable = if pattern_has_var_binding(pattern) {
+        validate_var_scrutinee(value, type_checker, errors)
+    } else {
+        false
+    };
+    (value_ty, mutable)
+}
+
 pub(super) fn check_while_let(
     while_let_node: &WhileLetNode,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) {
     let node = &while_let_node.node;
-    let value_ty = check_expr(&node.value, type_checker, errors, None);
-
-    check_bare_catchall_on_optional(&node.pattern, &value_ty, "while let", errors);
-
-    let mutable = if pattern_has_var_binding(&node.pattern) {
-        validate_var_scrutinee(&node.value, type_checker, errors)
-    } else {
-        false
-    };
+    let (value_ty, mutable) = check_let_scrutinee(
+        &node.pattern,
+        &node.value,
+        "while let",
+        type_checker,
+        errors,
+    );
 
     type_checker.push_scope();
     check_pattern(&node.pattern, &value_ty, mutable, type_checker, errors);
@@ -290,17 +305,10 @@ pub(super) fn check_for(
     type_checker.pop_scope();
 }
 
-pub(super) fn extract_iterable_item_type(
-    ty: &Type,
-    span: Span,
-    errors: &mut Vec<Diagnostic>,
-) -> Type {
+fn extract_iterable_item_type(ty: &Type, span: Span, errors: &mut Vec<Diagnostic>) -> Type {
     match ty {
-        Type::Struct { name, type_args } => {
-            let name_str = name.0.as_ref();
-            let is_range =
-                name_str == "Range" || name_str == "RangeInclusive" || name_str == "RangeFrom";
-            if is_range && type_args.len() == 1 {
+        Type::Struct { type_args, .. } if is_range_type(ty) => {
+            if type_args.len() == 1 {
                 return type_args[0].clone();
             }
             errors.push(Diagnostic::new(
@@ -410,10 +418,7 @@ pub(super) fn check_if(
 }
 
 pub(super) fn is_if_without_else(expr: &ExprNode) -> bool {
-    match &expr.node.kind {
-        ExprKind::If(if_node) => if_node.node.else_block.is_none(),
-        _ => false,
-    }
+    matches!(&expr.node.kind, ExprKind::If(if_node) if if_node.node.else_block.is_none())
 }
 
 pub(super) fn block_always_diverges(block: &BlockNode) -> bool {
@@ -432,16 +437,8 @@ pub(super) fn check_if_let(
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let node = &if_let_node.node;
-
-    let value_ty = check_expr(&node.value, type_checker, errors, None);
-
-    check_bare_catchall_on_optional(&node.pattern, &value_ty, "if let", errors);
-
-    let mutable = if pattern_has_var_binding(&node.pattern) {
-        validate_var_scrutinee(&node.value, type_checker, errors)
-    } else {
-        false
-    };
+    let (value_ty, mutable) =
+        check_let_scrutinee(&node.pattern, &node.value, "if let", type_checker, errors);
 
     type_checker.push_scope();
     check_pattern(&node.pattern, &value_ty, mutable, type_checker, errors);
@@ -519,15 +516,27 @@ fn check_match_enum(
 ) -> Type {
     let scrutinee = &match_node.node.scrutinee;
 
-    let Some(enum_def) = type_checker.get_enum(enum_name) else {
-        errors.push(Diagnostic::new(
-            scrutinee.span,
-            DiagnosticKind::UnknownEnum { name: enum_name },
-        ));
-        return Type::Infer;
+    let enum_def = match type_checker.get_enum_deep(enum_name) {
+        DeepLookup::Found(def) => def.clone(),
+        DeepLookup::Ambiguous(first, second) => {
+            errors.push(Diagnostic::new(
+                scrutinee.span,
+                DiagnosticKind::AmbiguousType {
+                    name: enum_name,
+                    first_module: first,
+                    second_module: second,
+                },
+            ));
+            return Type::Infer;
+        }
+        DeepLookup::NotFound => {
+            errors.push(Diagnostic::new(
+                scrutinee.span,
+                DiagnosticKind::UnknownEnum { name: enum_name },
+            ));
+            return Type::Infer;
+        }
     };
-
-    let enum_def = enum_def.clone();
     let mut covered_variants: HashSet<Ident> = HashSet::new();
     let mut has_wildcard = false;
     let mut arm_types: Vec<Type> = vec![];

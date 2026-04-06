@@ -9,8 +9,9 @@ use super::{
     infer::{build_const_subst, build_subst, resolve_type_param_names, subst_type},
     stmt::extend_base_key,
     types::{
-        ExtendEntry, ExtendMethodDef, ExtendSpecKey, GenericExtendTemplate, InstantiationContext,
-        PostfixNodeRef, TypeChecker, type_field_on_base, type_index_on_base, unwrap_opt_typ,
+        DeepLookup, ExtendEntry, ExtendMethodDef, ExtendSpecKey, GenericExtendTemplate,
+        InstantiationContext, PostfixNodeRef, TypeChecker, type_field_on_base, type_index_on_base,
+        unwrap_opt_typ,
     },
     visit::fold_type,
 };
@@ -908,12 +909,26 @@ fn try_struct_method(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Option<MethodCallOutcome> {
-    let Some(struct_def) = type_checker.get_struct(struct_name).cloned() else {
-        errors.push(Diagnostic::new(
-            field_node.span,
-            DiagnosticKind::UnknownStruct { name: struct_name },
-        ));
-        return Some(handled_infer(op_safe, chain_is_optional, index, call_op));
+    let struct_def = match type_checker.get_struct_deep(struct_name) {
+        DeepLookup::Found(def) => def.clone(),
+        DeepLookup::Ambiguous(first, second) => {
+            errors.push(Diagnostic::new(
+                field_node.span,
+                DiagnosticKind::AmbiguousType {
+                    name: struct_name,
+                    first_module: first,
+                    second_module: second,
+                },
+            ));
+            return Some(handled_infer(op_safe, chain_is_optional, index, call_op));
+        }
+        DeepLookup::NotFound => {
+            errors.push(Diagnostic::new(
+                field_node.span,
+                DiagnosticKind::UnknownStruct { name: struct_name },
+            ));
+            return Some(handled_infer(op_safe, chain_is_optional, index, call_op));
+        }
     };
 
     let method_name = field_node.node.field;
@@ -987,7 +1002,21 @@ fn try_extern_method(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Option<MethodCallOutcome> {
-    let extern_def = type_checker.get_extern_type(extern_name).cloned()?;
+    let extern_def = match type_checker.get_extern_type_deep(extern_name) {
+        DeepLookup::Found(def) => def.clone(),
+        DeepLookup::Ambiguous(first, second) => {
+            errors.push(Diagnostic::new(
+                field_node.span,
+                DiagnosticKind::AmbiguousType {
+                    name: extern_name,
+                    first_module: first,
+                    second_module: second,
+                },
+            ));
+            return Some(handled_infer(op_safe, chain_is_optional, index, call_op));
+        }
+        DeepLookup::NotFound => return None,
+    };
 
     let method_name = field_node.node.field;
     let Some(method) = extern_def.methods.get(&method_name) else {

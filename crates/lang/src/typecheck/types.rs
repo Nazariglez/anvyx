@@ -8,7 +8,7 @@ use super::{
     infer::{build_subst, subst_type},
     range::range_element_type,
     unify::{contains_infer, is_assignable, unify_equal},
-    visit::type_any,
+    visit::{fold_type, type_any},
 };
 use crate::{
     ast::{
@@ -523,6 +523,12 @@ pub struct TypecheckResult {
     pub(super) module_check_contexts: HashMap<Vec<String>, ModuleCheckContext>,
 }
 
+pub(super) enum DeepLookup<'a, T> {
+    Found(&'a T),
+    NotFound,
+    Ambiguous(String, String),
+}
+
 impl TypeChecker {
     pub(super) fn into_result(self) -> TypecheckResult {
         TypecheckResult {
@@ -581,8 +587,7 @@ impl TypeChecker {
     pub(super) fn func_param_defaults(&self, name: Ident) -> &[Option<ConstValue>] {
         self.func_param_defaults
             .get(&name)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+            .map_or(&[], Vec::as_slice)
     }
 
     pub(super) fn get_struct(&self, name: Ident) -> Option<&StructDef> {
@@ -599,6 +604,43 @@ impl TypeChecker {
 
     pub(super) fn get_extern_type(&self, name: Ident) -> Option<&ExternTypeDef> {
         self.ctx.extern_type_defs.get(&name)
+    }
+
+    fn find_in_modules<T>(&self, accessor: impl Fn(&ModuleDef) -> Option<&T>) -> DeepLookup<'_, T> {
+        let mut found: Option<(&T, &[String])> = None;
+        for (path, module_def) in &self.resolved_module_defs {
+            if let Some(def) = accessor(module_def) {
+                if let Some((_, prev_path)) = found {
+                    return DeepLookup::Ambiguous(prev_path.join("."), path.join("."));
+                }
+                found = Some((def, path));
+            }
+        }
+        match found {
+            Some((def, _)) => DeepLookup::Found(def),
+            None => DeepLookup::NotFound,
+        }
+    }
+
+    pub(super) fn get_struct_deep(&self, name: Ident) -> DeepLookup<'_, StructDef> {
+        if let Some(def) = self.get_struct(name) {
+            return DeepLookup::Found(def);
+        }
+        self.find_in_modules(|m| m.struct_defs.get(&name))
+    }
+
+    pub(super) fn get_enum_deep(&self, name: Ident) -> DeepLookup<'_, EnumDef> {
+        if let Some(def) = self.get_enum(name) {
+            return DeepLookup::Found(def);
+        }
+        self.find_in_modules(|m| m.enum_defs.get(&name))
+    }
+
+    pub(super) fn get_extern_type_deep(&self, name: Ident) -> DeepLookup<'_, ExternTypeDef> {
+        if let Some(def) = self.get_extern_type(name) {
+            return DeepLookup::Found(def);
+        }
+        self.find_in_modules(|m| m.extern_types.get(&name))
     }
 
     pub(super) fn get_extend_methods(&self, ty: &Type, name: Ident) -> &[ExtendEntry] {
@@ -708,6 +750,38 @@ impl TypeChecker {
             },
             _ => ty.clone(),
         }
+    }
+
+    pub(super) fn resolve_type_with_module_fallback(&self, ty: &Type) -> Type {
+        let resolved = self.resolve_type(ty);
+        self.resolve_unresolved_from_modules(&resolved)
+    }
+
+    fn resolve_unresolved_from_modules(&self, ty: &Type) -> Type {
+        fold_type(ty, &mut |t| {
+            let Type::UnresolvedName(name) = t else {
+                return t;
+            };
+            if let DeepLookup::Found(def) = self.find_in_modules(|m| m.struct_defs.get(&name)) {
+                return def.make_type(name, vec![]);
+            }
+            if matches!(
+                self.find_in_modules(|m| m.enum_defs.get(&name)),
+                DeepLookup::Found(_)
+            ) {
+                return Type::Enum {
+                    name,
+                    type_args: vec![],
+                };
+            }
+            if matches!(
+                self.find_in_modules(|m| m.extern_types.get(&name)),
+                DeepLookup::Found(_)
+            ) {
+                return Type::Extern { name };
+            }
+            Type::UnresolvedName(name)
+        })
     }
 
     pub(super) fn push_scope(&mut self) {
@@ -1054,17 +1128,13 @@ impl TypecheckResult {
     }
 
     pub fn func_param_info(&self, name: Ident) -> &[(Ident, Mutability)] {
-        self.func_param_info
-            .get(&name)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+        self.func_param_info.get(&name).map_or(&[], Vec::as_slice)
     }
 
     pub fn func_param_defaults(&self, name: Ident) -> &[Option<ConstValue>] {
         self.func_param_defaults
             .get(&name)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+            .map_or(&[], Vec::as_slice)
     }
 
     pub fn method_param_defaults(
@@ -1075,8 +1145,7 @@ impl TypecheckResult {
         self.struct_defs
             .get(&struct_name)
             .and_then(|sd| sd.methods.get(&method_name))
-            .map(|m| m.param_defaults.as_slice())
-            .unwrap_or_default()
+            .map_or(&[], |m| m.param_defaults.as_slice())
     }
 
     pub fn module_func_param_info(
@@ -1087,8 +1156,7 @@ impl TypecheckResult {
         self.module_defs
             .get(&module_name)
             .and_then(|m| m.func_param_info.get(&func_name))
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+            .map_or(&[], Vec::as_slice)
     }
 
     pub fn module_func_param_defaults(
@@ -1099,8 +1167,7 @@ impl TypecheckResult {
         self.module_defs
             .get(&module_name)
             .and_then(|m| m.func_param_defaults.get(&func_name))
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+            .map_or(&[], Vec::as_slice)
     }
 
     pub fn get_struct(&self, name: Ident) -> Option<&StructDef> {
@@ -1271,8 +1338,7 @@ impl TypecheckResult {
     pub fn extend_call_ref_mask(&self, id: ExprId) -> &[bool] {
         self.extend_call_ref_masks
             .get(&id)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+            .map_or(&[], Vec::as_slice)
     }
 
     pub fn method_param_mutabilities(
@@ -1314,10 +1380,7 @@ impl TypecheckResult {
     }
 
     pub fn lambda_captures(&self, id: ExprId) -> &[(Ident, Type)] {
-        self.lambda_captures
-            .get(&id)
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+        self.lambda_captures.get(&id).map_or(&[], Vec::as_slice)
     }
 
     pub fn warnings(&self) -> &[Diagnostic] {
@@ -1375,12 +1438,26 @@ pub(super) fn type_field_on_base(
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
     if let Some(agg) = base_ty.as_aggregate() {
-        let Some(struct_def) = type_checker.get_struct(agg.name) else {
-            errors.push(Diagnostic::new(
-                span,
-                DiagnosticKind::UnknownStruct { name: agg.name },
-            ));
-            return Type::Infer;
+        let struct_def = match type_checker.get_struct_deep(agg.name) {
+            DeepLookup::Found(def) => def,
+            DeepLookup::Ambiguous(first, second) => {
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::AmbiguousType {
+                        name: agg.name,
+                        first_module: first,
+                        second_module: second,
+                    },
+                ));
+                return Type::Infer;
+            }
+            DeepLookup::NotFound => {
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::UnknownStruct { name: agg.name },
+                ));
+                return Type::Infer;
+            }
         };
 
         let subst = build_subst(&struct_def.type_params, agg.type_args);
@@ -1423,15 +1500,29 @@ pub(super) fn type_field_on_base(
             Type::Infer
         }
         Type::Extern { name } => {
-            let Some(extern_def) = type_checker.get_extern_type(*name) else {
-                errors.push(Diagnostic::new(
-                    span,
-                    DiagnosticKind::FieldAccessOnNonNamedTuple {
-                        field,
-                        found: base_ty.clone(),
-                    },
-                ));
-                return Type::Infer;
+            let extern_def = match type_checker.get_extern_type_deep(*name) {
+                DeepLookup::Found(def) => def,
+                DeepLookup::Ambiguous(first, second) => {
+                    errors.push(Diagnostic::new(
+                        span,
+                        DiagnosticKind::AmbiguousType {
+                            name: *name,
+                            first_module: first,
+                            second_module: second,
+                        },
+                    ));
+                    return Type::Infer;
+                }
+                DeepLookup::NotFound => {
+                    errors.push(Diagnostic::new(
+                        span,
+                        DiagnosticKind::FieldAccessOnNonNamedTuple {
+                            field,
+                            found: base_ty.clone(),
+                        },
+                    ));
+                    return Type::Infer;
+                }
             };
 
             if let Some(field_def) = extern_def.fields.get(&field) {
@@ -1593,7 +1684,7 @@ fn check_type_property(ty: &Type, tc: &TypeChecker, prop: TypeProperty) -> Resul
                     }
                 };
             }
-            let Some(enum_def) = tc.ctx.enum_defs.get(name) else {
+            let DeepLookup::Found(enum_def) = tc.get_enum_deep(*name) else {
                 return Err(format!("enum '{name}' is not known"));
             };
             let subst = build_subst(&enum_def.type_params, type_args);
@@ -1618,7 +1709,7 @@ fn check_type_property(ty: &Type, tc: &TypeChecker, prop: TypeProperty) -> Resul
             Ok(())
         }
         Type::Struct { name, type_args } => {
-            let Some(struct_def) = tc.ctx.struct_defs.get(name) else {
+            let DeepLookup::Found(struct_def) = tc.get_struct_deep(*name) else {
                 return Err(format!("struct '{name}' is not known"));
             };
             let subst = build_subst(&struct_def.type_params, type_args);

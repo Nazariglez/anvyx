@@ -7,7 +7,7 @@ use super::{
     error::{Diagnostic, DiagnosticKind},
     expr::type_from_lit,
     infer::{build_subst, subst_type},
-    types::{EnumDef, TypeChecker},
+    types::{DeepLookup, EnumDef, TypeChecker},
 };
 use crate::{
     ast::{FloatSuffix, Ident, Lit, Pattern, PatternNode, Type, VariantKind},
@@ -431,7 +431,7 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
                 .any(|(sub, ty)| is_refutable(&sub.node, ty, type_checker))
         }
         Pattern::EnumUnit { qualifier, .. } => {
-            let Some(enum_def) = type_checker.get_enum(*qualifier) else {
+            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*qualifier) else {
                 return true;
             };
             enum_def.variants.len() > 1
@@ -439,7 +439,7 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
         Pattern::EnumTuple {
             qualifier, fields, ..
         } => {
-            let Some(enum_def) = type_checker.get_enum(*qualifier) else {
+            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*qualifier) else {
                 return true;
             };
             if enum_def.variants.len() > 1 {
@@ -470,7 +470,7 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
         Pattern::EnumStruct {
             qualifier, fields, ..
         } => {
-            let Some(enum_def) = type_checker.get_enum(*qualifier) else {
+            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*qualifier) else {
                 return true;
             };
             if enum_def.variants.len() > 1 {
@@ -499,7 +499,7 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
             let Type::Enum { name, .. } = value_ty else {
                 return true;
             };
-            let Some(enum_def) = type_checker.get_enum(*name) else {
+            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*name) else {
                 return true;
             };
             enum_def.variants.len() > 1
@@ -508,7 +508,7 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
             let Type::Enum { name, type_args } = value_ty else {
                 return true;
             };
-            let Some(enum_def) = type_checker.get_enum(*name) else {
+            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*name) else {
                 return true;
             };
             if enum_def.variants.len() > 1 {
@@ -537,7 +537,7 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
             let Type::Enum { name, type_args } = value_ty else {
                 return true;
             };
-            let Some(enum_def) = type_checker.get_enum(*name) else {
+            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*name) else {
                 return true;
             };
             if enum_def.variants.len() > 1 {
@@ -1137,105 +1137,137 @@ fn check_struct_destructure_pattern(
     errors: &mut Vec<Diagnostic>,
 ) {
     // try native struct first
-    if let Some(struct_def) = type_checker.get_struct(type_name).cloned() {
-        let matches_type = value_ty
-            .as_aggregate()
-            .is_some_and(|agg| agg.name == type_name);
-        if !matches_type {
-            let expected = struct_def.make_type(type_name, vec![]);
+    match type_checker.get_struct_deep(type_name) {
+        DeepLookup::Ambiguous(first, second) => {
             errors.push(Diagnostic::new(
                 pattern.span,
-                DiagnosticKind::MismatchedTypes {
-                    expected,
-                    found: value_ty.clone(),
+                DiagnosticKind::AmbiguousType {
+                    name: type_name,
+                    first_module: first,
+                    second_module: second,
                 },
             ));
             return;
         }
+        DeepLookup::NotFound => {}
+        DeepLookup::Found(def) => {
+            let struct_def = def.clone();
+            let matches_type = value_ty
+                .as_aggregate()
+                .is_some_and(|agg| agg.name == type_name);
+            if !matches_type {
+                let expected = struct_def.make_type(type_name, vec![]);
+                errors.push(Diagnostic::new(
+                    pattern.span,
+                    DiagnosticKind::MismatchedTypes {
+                        expected,
+                        found: value_ty.clone(),
+                    },
+                ));
+                return;
+            }
 
-        let provided: Vec<(Ident, Span)> = fields.iter().map(|(n, _)| (*n, pattern.span)).collect();
-        let matched = validate_field_names(
-            &provided,
-            pattern.span,
-            &struct_def.fields,
-            true,
-            |field| DiagnosticKind::StructDestructureDuplicateField { type_name, field },
-            |field| DiagnosticKind::StructDestructureUnknownField { type_name, field },
-            |_| unreachable!(),
-            None,
-            errors,
-        );
-
-        let subst = value_ty
-            .as_aggregate()
-            .map(|agg| build_subst(&struct_def.type_params, agg.type_args))
-            .unwrap_or_default();
-
-        for ((_, subpat), matched_def) in fields.iter().zip(matched.iter()) {
-            let Some(field_def) = matched_def else {
-                continue;
-            };
-            let resolved_ty = if subst.is_empty() {
-                field_def.ty.clone()
-            } else {
-                subst_type(&field_def.ty, &subst, &HashMap::new())
-            };
-            check_pattern_inner(
-                subpat,
-                &resolved_ty,
-                mutable,
-                in_match,
+            let provided: Vec<(Ident, Span)> =
+                fields.iter().map(|(n, _)| (*n, pattern.span)).collect();
+            let matched = validate_field_names(
+                &provided,
+                pattern.span,
+                &struct_def.fields,
+                true,
+                |field| DiagnosticKind::StructDestructureDuplicateField { type_name, field },
+                |field| DiagnosticKind::StructDestructureUnknownField { type_name, field },
+                |_| unreachable!(),
                 None,
-                type_checker,
                 errors,
             );
+
+            let subst = value_ty
+                .as_aggregate()
+                .map(|agg| build_subst(&struct_def.type_params, agg.type_args))
+                .unwrap_or_default();
+
+            for ((_, subpat), matched_def) in fields.iter().zip(matched.iter()) {
+                let Some(field_def) = matched_def else {
+                    continue;
+                };
+                let resolved_ty = if subst.is_empty() {
+                    field_def.ty.clone()
+                } else {
+                    subst_type(&field_def.ty, &subst, &HashMap::new())
+                };
+                check_pattern_inner(
+                    subpat,
+                    &resolved_ty,
+                    mutable,
+                    in_match,
+                    None,
+                    type_checker,
+                    errors,
+                );
+            }
+            return;
         }
-        return;
     }
 
     // try extern type
-    if let Some(extern_def) = type_checker.get_extern_type(type_name).cloned() {
-        let matches_type = matches!(value_ty, Type::Extern { name } if *name == type_name);
-        if !matches_type {
+    match type_checker.get_extern_type_deep(type_name) {
+        DeepLookup::Ambiguous(first, second) => {
             errors.push(Diagnostic::new(
                 pattern.span,
-                DiagnosticKind::MismatchedTypes {
-                    expected: Type::Extern { name: type_name },
-                    found: value_ty.clone(),
+                DiagnosticKind::AmbiguousType {
+                    name: type_name,
+                    first_module: first,
+                    second_module: second,
                 },
             ));
             return;
         }
+        DeepLookup::NotFound => {}
+        DeepLookup::Found(def) => {
+            let extern_def = def.clone();
+            let matches_type = matches!(value_ty, Type::Extern { name } if *name == type_name);
+            if !matches_type {
+                errors.push(Diagnostic::new(
+                    pattern.span,
+                    DiagnosticKind::MismatchedTypes {
+                        expected: Type::Extern { name: type_name },
+                        found: value_ty.clone(),
+                    },
+                ));
+                return;
+            }
 
-        let expected_fields = extern_def.as_struct_fields();
-        let provided: Vec<(Ident, Span)> = fields.iter().map(|(n, _)| (*n, pattern.span)).collect();
-        let matched = validate_field_names(
-            &provided,
-            pattern.span,
-            &expected_fields,
-            true,
-            |field| DiagnosticKind::StructDestructureDuplicateField { type_name, field },
-            |field| DiagnosticKind::StructDestructureUnknownField { type_name, field },
-            |_| unreachable!(),
-            None,
-            errors,
-        );
-
-        for ((_, subpat), matched_def) in fields.iter().zip(matched.iter()) {
-            let Some(field_def) = matched_def else {
-                continue;
-            };
-            check_pattern_inner(
-                subpat,
-                &field_def.ty,
-                mutable,
-                in_match,
+            let expected_fields = extern_def.as_struct_fields();
+            let provided: Vec<(Ident, Span)> =
+                fields.iter().map(|(n, _)| (*n, pattern.span)).collect();
+            let matched = validate_field_names(
+                &provided,
+                pattern.span,
+                &expected_fields,
+                true,
+                |field| DiagnosticKind::StructDestructureDuplicateField { type_name, field },
+                |field| DiagnosticKind::StructDestructureUnknownField { type_name, field },
+                |_| unreachable!(),
                 None,
-                type_checker,
                 errors,
             );
+
+            for ((_, subpat), matched_def) in fields.iter().zip(matched.iter()) {
+                let Some(field_def) = matched_def else {
+                    continue;
+                };
+                check_pattern_inner(
+                    subpat,
+                    &field_def.ty,
+                    mutable,
+                    in_match,
+                    None,
+                    type_checker,
+                    errors,
+                );
+            }
+            return;
         }
-        return;
     }
 
     errors.push(Diagnostic::new(

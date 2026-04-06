@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+import lib;
+
+fn main() {
+    let p = lib.origin();
+    let m = p.magnitude();
+    let x = p.x;
+}

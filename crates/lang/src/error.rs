@@ -258,7 +258,7 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
             format!("tuple index {index} is out of bounds"),
             format!(
                 "tuple type '{tuple_type}' has {len} elements (indices 0..{})",
-                len - 1
+                len.saturating_sub(1)
             ),
         ),
         DiagnosticKind::TuplePatternArityMismatch { expected, found } => (
@@ -700,6 +700,10 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
         DiagnosticKind::ModuleBindingConflict { name } => (
             format!("module binding '{name}' is already in use"),
             format!("'{name}' is already bound as a module in this scope"),
+        ),
+        DiagnosticKind::AmbiguousType { name, first_module, second_module } => (
+            format!("type '{name}' is ambiguous — found in '{first_module}' and '{second_module}'"),
+            "add an explicit import to disambiguate".to_string(),
         ),
         DiagnosticKind::AmbiguousExtendMethod { ty, method, candidates } => {
             let mods = candidates

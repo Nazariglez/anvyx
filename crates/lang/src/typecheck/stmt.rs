@@ -101,7 +101,7 @@ fn evaluate_module_consts(
 
     for idx in order {
         let decl = decls[idx];
-        process_const_decl(decl, type_checker, errors);
+        eval_and_insert_const(decl, type_checker, errors);
     }
 }
 
@@ -163,14 +163,6 @@ fn eval_and_insert_const(
         },
     );
     true
-}
-
-fn process_const_decl(
-    decl: &ConstDeclNode,
-    type_checker: &mut TypeChecker,
-    errors: &mut Vec<Diagnostic>,
-) {
-    eval_and_insert_const(decl, type_checker, errors);
 }
 
 pub(super) fn check_block_expr(
@@ -680,6 +672,38 @@ fn build_extern_type_def(
     }
 }
 
+fn try_inject_import(
+    source: Ident,
+    bind_as: Ident,
+    span: Span,
+    module_def: &ModuleDef,
+    type_checker: &mut TypeChecker,
+    imported: &mut HashSet<Ident>,
+    seen: &mut HashSet<Ident>,
+    errors: &mut Vec<Diagnostic>,
+) {
+    let existing = if imported.contains(&bind_as) {
+        Some("a previously imported name")
+    } else if seen.contains(&bind_as) {
+        Some("a locally defined type")
+    } else {
+        None
+    };
+    if let Some(existing) = existing {
+        errors.push(Diagnostic::new(
+            span,
+            DiagnosticKind::ImportNameConflict {
+                name: bind_as,
+                existing,
+            },
+        ));
+    } else {
+        inject_module_item(source, bind_as, module_def, type_checker);
+        imported.insert(bind_as);
+        seen.insert(bind_as);
+    }
+}
+
 pub(super) fn collect_scope_types(
     stmts: &[StmtNode],
     type_checker: &mut TypeChecker,
@@ -809,70 +833,47 @@ pub(super) fn collect_scope_types(
                         }
                     }
                     ImportKind::Selective(items) => {
-                        let mut try_import =
-                            |source: Ident,
-                             bind_as: Ident,
-                             imported: &mut HashSet<Ident>,
-                             seen: &mut HashSet<Ident>,
-                             errors: &mut Vec<Diagnostic>| {
-                                let existing = if imported.contains(&bind_as) {
-                                    Some("a previously imported name")
-                                } else if seen.contains(&bind_as) {
-                                    Some("a locally defined type")
-                                } else {
-                                    None
-                                };
-                                if let Some(existing) = existing {
-                                    errors.push(Diagnostic::new(
-                                        stmt.span,
-                                        DiagnosticKind::ImportNameConflict {
-                                            name: bind_as,
-                                            existing,
-                                        },
-                                    ));
-                                } else {
-                                    inject_module_item(source, bind_as, &module_def, type_checker);
-                                    imported.insert(bind_as);
-                                    seen.insert(bind_as);
-                                }
-                            };
                         for item in items {
                             let bind_as = item.alias.unwrap_or(item.name);
-                            try_import(item.name, bind_as, &mut imported, &mut seen, errors);
+                            try_inject_import(
+                                item.name,
+                                bind_as,
+                                stmt.span,
+                                &module_def,
+                                type_checker,
+                                &mut imported,
+                                &mut seen,
+                                errors,
+                            );
                         }
                     }
                     ImportKind::Wildcard => {
-                        let mut try_import =
-                            |name: Ident,
-                             imported: &mut HashSet<Ident>,
-                             seen: &mut HashSet<Ident>,
-                             errors: &mut Vec<Diagnostic>| {
-                                let existing = if imported.contains(&name) {
-                                    Some("a previously imported name")
-                                } else if seen.contains(&name) {
-                                    Some("a locally defined type")
-                                } else {
-                                    None
-                                };
-                                if let Some(existing) = existing {
-                                    errors.push(Diagnostic::new(
-                                        stmt.span,
-                                        DiagnosticKind::ImportNameConflict { name, existing },
-                                    ));
-                                } else {
-                                    inject_module_item(name, name, &module_def, type_checker);
-                                    imported.insert(name);
-                                    seen.insert(name);
-                                }
-                            };
                         let names: Vec<Ident> = module_def.all_public_names().collect();
                         for name in names {
-                            try_import(name, &mut imported, &mut seen, errors);
+                            try_inject_import(
+                                name,
+                                name,
+                                stmt.span,
+                                &module_def,
+                                type_checker,
+                                &mut imported,
+                                &mut seen,
+                                errors,
+                            );
                         }
                         let sub_module_names: Vec<Ident> =
                             module_def.re_exported_modules.keys().copied().collect();
                         for name in sub_module_names {
-                            try_import(name, &mut imported, &mut seen, errors);
+                            try_inject_import(
+                                name,
+                                name,
+                                stmt.span,
+                                &module_def,
+                                type_checker,
+                                &mut imported,
+                                &mut seen,
+                                errors,
+                            );
                         }
                     }
                 }
@@ -974,7 +975,7 @@ pub(super) fn build_module_def_with_reexports(
             }
         }
         let pre = pre_resolve(ty, &local_extern_types);
-        type_checker.resolve_type(&pre)
+        type_checker.resolve_type_with_module_fallback(&pre)
     };
 
     let mut reexported_from: HashMap<Ident, String> = HashMap::new();

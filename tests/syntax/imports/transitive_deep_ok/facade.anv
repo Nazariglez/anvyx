@@ -1,0 +1,8 @@
+// @helper
+
+import lib;
+import shapes { Point };
+
+pub fn get_origin() -> Point {
+    return lib.origin();
+}

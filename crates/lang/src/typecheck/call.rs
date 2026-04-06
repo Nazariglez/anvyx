@@ -15,9 +15,9 @@ use super::{
     },
     postfix::resolve_builtin_or_extend,
     types::{
-        EnumDef, ExternMethodDef, ExternTypeDef, InstantiationContext, MethodContext, MethodDef,
-        MethodSpecKey, ModuleDef, SpecializationKey, SpecializationResult, StructDef, TypeChecker,
-        TypedBodyResult,
+        DeepLookup, EnumDef, ExternMethodDef, ExternTypeDef, InstantiationContext, MethodContext,
+        MethodDef, MethodSpecKey, ModuleDef, SpecializationKey, SpecializationResult, StructDef,
+        TypeChecker, TypedBodyResult,
     },
 };
 use crate::{
@@ -29,15 +29,7 @@ use crate::{
 };
 
 fn paths_alias(a: &[Ident], b: &[Ident]) -> bool {
-    for (x, y) in a.iter().zip(b.iter()) {
-        if x != y {
-            // if path diverges, the fields are distinct
-            return false;
-        }
-    }
-
-    // one is a prefix or identical to the other
-    true
+    a.iter().zip(b).all(|(x, y)| x == y)
 }
 
 pub(super) fn check_var_param_args(
@@ -406,17 +398,12 @@ pub(super) fn check_list_method(
             if node.args.len() != 2 {
                 let expected = 2;
                 let found = node.args.len();
-                if found < expected {
-                    errors.push(Diagnostic::new(
-                        call.span,
-                        DiagnosticKind::TooFewArguments { expected, found },
-                    ));
+                let kind = if found < expected {
+                    DiagnosticKind::TooFewArguments { expected, found }
                 } else {
-                    errors.push(Diagnostic::new(
-                        call.span,
-                        DiagnosticKind::TooManyArguments { expected, found },
-                    ));
-                }
+                    DiagnosticKind::TooManyArguments { expected, found }
+                };
+                errors.push(Diagnostic::new(call.span, kind));
                 return Some(Type::Infer);
             }
             // typecheck the init value first so we can use its concrete type
@@ -1029,11 +1016,10 @@ pub(super) fn check_module_func_call(
         return result;
     }
 
-    let defaults = module_def
+    let defaults: &[Option<ConstValue>] = module_def
         .func_param_defaults
         .get(&func_name)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+        .map_or(&[], Vec::as_slice);
     let required_count = match &func_ty {
         Type::Func { params, .. } => required_param_count(defaults, params.len()),
         _ => 0,
@@ -1106,19 +1092,34 @@ fn try_check_method_call(
     }
 
     let target_ty = check_expr(target, type_checker, errors, None);
-    if let Some(agg) = target_ty.as_aggregate()
-        && let Some(struct_def) = type_checker.get_struct(agg.name).cloned()
-    {
-        return Some(check_instance_method_call(
-            call,
-            agg.name,
-            method_name,
-            agg.type_args,
-            &struct_def,
-            Some(target),
-            type_checker,
-            errors,
-        ));
+    if let Some(agg) = target_ty.as_aggregate() {
+        match type_checker.get_struct_deep(agg.name) {
+            DeepLookup::Found(def) => {
+                let struct_def = def.clone();
+                return Some(check_instance_method_call(
+                    call,
+                    agg.name,
+                    method_name,
+                    agg.type_args,
+                    &struct_def,
+                    Some(target),
+                    type_checker,
+                    errors,
+                ));
+            }
+            DeepLookup::Ambiguous(first, second) => {
+                errors.push(Diagnostic::new(
+                    field_access.span,
+                    DiagnosticKind::AmbiguousType {
+                        name: agg.name,
+                        first_module: first,
+                        second_module: second,
+                    },
+                ));
+                return Some(Type::Infer);
+            }
+            DeepLookup::NotFound => {}
+        }
     }
 
     resolve_builtin_or_extend(

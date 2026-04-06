@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+import lib;
+
+fn main() {
+    let p: Point = lib.origin();
+}

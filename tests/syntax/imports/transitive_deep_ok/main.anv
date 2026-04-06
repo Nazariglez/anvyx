@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+import facade;
+
+fn main() {
+    let p = facade.get_origin();
+    let s = p.sum();
+    let y = p.y;
+}
