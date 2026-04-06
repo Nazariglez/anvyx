@@ -124,7 +124,7 @@ pub fn extract_params(
                     let #param_name = <#ty as anvyx_lang::AnvyxConvert>::from_anvyx(&args[#arg_idx])?;
                 });
                 anvyx_types.push(
-                    quote! { (#param_name_str, <#ty as anvyx_lang::AnvyxConvert>::ANVYX_TYPE) },
+                    quote! { (#param_name_str, <#ty as anvyx_lang::AnvyxConvert>::anvyx_type()) },
                 );
                 param_names.push(param_name);
                 continue;
@@ -149,7 +149,7 @@ pub fn extract_params(
             let #handle_ident = __ehd.id;
         });
 
-        anvyx_types.push(quote! { (#param_name_str, #decl_ident.name) });
+        anvyx_types.push(quote! { (#param_name_str, #decl_ident().name) });
 
         let guard_ident = format_ident!("__guard_{}", i);
         borrow_params.push(BorrowParam {
@@ -175,12 +175,12 @@ pub fn ret_anvyx_type_str(classified: &ClassifiedReturn) -> TokenStream {
     match &classified.wrapper {
         ReturnWrapper::None | ReturnWrapper::Fallible => match &classified.mode {
             ReturnMode::Void => quote! { "void" },
-            ReturnMode::Valued(ty) => quote! { <#ty as anvyx_lang::AnvyxConvert>::ANVYX_TYPE },
+            ReturnMode::Valued(ty) => quote! { <#ty as anvyx_lang::AnvyxConvert>::anvyx_type() },
         },
         ReturnWrapper::AnvyxOption => match &classified.mode {
             ReturnMode::Void => quote! { "void" },
             ReturnMode::Valued(ty) => {
-                quote! { <#ty as anvyx_lang::AnvyxConvert>::ANVYX_OPTION_TYPE }
+                quote! { <#ty as anvyx_lang::AnvyxConvert>::anvyx_option_type() }
             }
         },
     }
@@ -360,7 +360,21 @@ pub fn resolve_self_in_type(ty: &Type, type_ident: &syn::Ident) -> Type {
                     path: type_ident.clone().into(),
                 });
             }
-            ty.clone()
+            // recurse into generic arguments like ExternHandle<Self>, Option<Self>, etc
+            let mut new_path = path.path.clone();
+            for seg in &mut new_path.segments {
+                if let syn::PathArguments::AngleBracketed(args) = &mut seg.arguments {
+                    for arg in &mut args.args {
+                        if let syn::GenericArgument::Type(inner_ty) = arg {
+                            *inner_ty = resolve_self_in_type(inner_ty, type_ident);
+                        }
+                    }
+                }
+            }
+            Type::Path(syn::TypePath {
+                qself: None,
+                path: new_path,
+            })
         }
         Type::Reference(ref_type) => {
             let resolved_elem = resolve_self_in_type(&ref_type.elem, type_ident);

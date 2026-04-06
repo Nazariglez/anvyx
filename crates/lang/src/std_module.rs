@@ -2,6 +2,17 @@ use std::collections::HashMap;
 
 use crate::{ExternDecl, ExternHandler, ExternTypeDecl};
 
+fn format_params(out: &mut String, params: &[(&str, &str)]) {
+    for (i, (pname, pty)) in params.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(pname);
+        out.push_str(": ");
+        out.push_str(pty);
+    }
+}
+
 fn emit_doc(out: &mut String, doc: Option<&str>) {
     if let Some(doc) = doc {
         for line in doc.lines() {
@@ -19,7 +30,7 @@ fn emit_doc(out: &mut String, doc: Option<&str>) {
 pub struct StdModule {
     pub name: &'static str,
     pub anv_source: &'static str,
-    pub exports: &'static [ExternDecl],
+    pub exports: fn() -> Vec<ExternDecl>,
     pub type_exports: fn() -> Vec<ExternTypeDecl>,
     pub handlers: fn() -> HashMap<String, ExternHandler>,
     pub init: Option<fn()>,
@@ -59,7 +70,7 @@ impl StdModule {
                         _ => "self",
                     };
                     out.push_str(receiver_str);
-                    for (pname, pty) in method.params {
+                    for (pname, pty) in &method.params {
                         out.push_str(", ");
                         out.push_str(pname);
                         out.push_str(": ");
@@ -77,14 +88,7 @@ impl StdModule {
                     out.push_str("    fn ");
                     out.push_str(s.name);
                     out.push('(');
-                    for (i, (pname, pty)) in s.params.iter().enumerate() {
-                        if i > 0 {
-                            out.push_str(", ");
-                        }
-                        out.push_str(pname);
-                        out.push_str(": ");
-                        out.push_str(pty);
-                    }
+                    format_params(&mut out, &s.params);
                     out.push(')');
                     if s.ret != "void" {
                         out.push_str(" -> ");
@@ -144,19 +148,13 @@ impl StdModule {
                 out.push_str(";\n");
             }
         }
-        for decl in self.exports {
+        let exports = (self.exports)();
+        for decl in &exports {
             emit_doc(&mut out, decl.doc);
             out.push_str("extern fn ");
             out.push_str(decl.name);
             out.push('(');
-            for (i, (pname, pty)) in decl.params.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                out.push_str(pname);
-                out.push_str(": ");
-                out.push_str(pty);
-            }
+            format_params(&mut out, &decl.params);
             out.push(')');
             if decl.ret != "void" {
                 out.push_str(" -> ");
@@ -164,7 +162,7 @@ impl StdModule {
             }
             out.push_str(";\n");
         }
-        if !self.exports.is_empty() && !self.anv_source.is_empty() {
+        if !exports.is_empty() && !self.anv_source.is_empty() {
             out.push('\n');
         }
         out.push_str(self.anv_source);

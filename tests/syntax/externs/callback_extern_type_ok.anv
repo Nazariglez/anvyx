@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+extern type Counter {
+    value: int;
+    fn current(self) -> int;
+}
+extern fn run_with_counter(cb: fn(Counter) -> int) -> int;
+
+fn main() {
+    let result = run_with_counter(|c| {
+        let v = c.value;
+        c.current()
+    });
+}

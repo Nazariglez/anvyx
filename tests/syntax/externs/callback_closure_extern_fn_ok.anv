@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+extern fn transform(x: int) -> int;
+extern fn apply(value: int, cb: fn(int) -> int) -> int;
+
+fn main() {
+    // one extern function called inside a closure passed to another extern
+    let result = apply(5, |x| transform(x));
+}

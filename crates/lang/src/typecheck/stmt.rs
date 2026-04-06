@@ -287,9 +287,10 @@ fn apply_decl_to_scope(decl: DeclInfo, type_checker: &mut TypeChecker) {
                 VarInfo {
                     ty: func_ty.clone(),
                     mutable: false,
+                    is_function: true,
                 },
             );
-            type_checker.set_var(name, func_ty, false);
+            type_checker.set_func_var(name, func_ty);
             type_checker.func_param_info.insert(name, param_info);
             if let Some(tp) = type_params {
                 type_checker.func_type_params.insert(name, tp);
@@ -311,9 +312,10 @@ fn apply_decl_to_scope(decl: DeclInfo, type_checker: &mut TypeChecker) {
                 VarInfo {
                     ty: func_ty.clone(),
                     mutable: false,
+                    is_function: true,
                 },
             );
-            type_checker.set_var(name, func_ty, false);
+            type_checker.set_func_var(name, func_ty);
             type_checker.func_param_info.insert(name, param_info);
         }
         DeclInfo::ExternType { name, def } => {
@@ -546,7 +548,7 @@ fn inject_module_item(
     type_checker: &mut TypeChecker,
 ) {
     if let Some(ty) = module_def.funcs.get(&name) {
-        type_checker.set_var(bind_as, ty.clone(), false);
+        type_checker.set_func_var(bind_as, ty.clone());
         copy_func_ancillary_to_checker(name, bind_as, module_def, type_checker);
     } else if let Some(struct_def) = module_def.struct_defs.get(&name) {
         type_checker

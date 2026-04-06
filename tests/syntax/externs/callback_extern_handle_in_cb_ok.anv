@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+extern type Counter {
+    value: int;
+    fn doubled(self) -> int;
+}
+extern fn with_counter(initial: int, cb: fn(Counter) -> int) -> int;
+
+fn main() {
+    let result = with_counter(10, |c| c.doubled() + c.value);
+}

@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+extern fn apply(value: int, cb: fn(int) -> void);
+
+// check that externs can call builtins
+fn main() {
+    apply(5, |x| println(x * x));
+    apply(5, |x| assert(x > 0));
+}

@@ -197,14 +197,9 @@ struct MethodResult {
 }
 
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item_for_error = item.clone();
-    match do_expand(attr, item) {
-        Ok(ts) => ts,
-        Err(e) => {
-            let err = e.to_compile_error();
-            quote! { #err #item_for_error }
-        }
-    }
+    let fallback = item.clone();
+    let result = do_expand(attr, item);
+    crate::util::expand_or_error(&fallback, result)
 }
 
 fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
@@ -454,13 +449,15 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
 
         #(#method_handler_fns)*
 
-        pub const #methods_decl_ident: &[anvyx_lang::ExternMethodDecl] = &[
-            #(#method_decls),*
-        ];
+        #[allow(non_snake_case)]
+        pub fn #methods_decl_ident() -> Vec<anvyx_lang::ExternMethodDecl> {
+            vec![#(#method_decls),*]
+        }
 
-        pub const #statics_decl_ident: &[anvyx_lang::ExternStaticMethodDecl] = &[
-            #(#static_decls),*
-        ];
+        #[allow(non_snake_case)]
+        pub fn #statics_decl_ident() -> Vec<anvyx_lang::ExternStaticMethodDecl> {
+            vec![#(#static_decls),*]
+        }
 
         #[allow(non_snake_case)]
         pub fn #companion_fn_ident() -> Vec<(&'static str, anvyx_lang::ExternHandler)> {
@@ -479,9 +476,10 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
 
         pub const #has_init_ident: bool = #found_init;
 
-        pub const #ops_decl_ident: &[anvyx_lang::ExternOpDecl] = &[
-            #(#op_decls),*
-        ];
+        #[allow(non_snake_case)]
+        pub fn #ops_decl_ident() -> Vec<anvyx_lang::ExternOpDecl> {
+            vec![#(#op_decls),*]
+        }
     })
 }
 
@@ -556,7 +554,7 @@ fn process_init(
                 field_decls.push(quote! {
                     anvyx_lang::ExternFieldDecl {
                         name: #param_name_str,
-                        ty: <#ty as anvyx_lang::AnvyxConvert>::ANVYX_TYPE,
+                        ty: <#ty as anvyx_lang::AnvyxConvert>::anvyx_type(),
                         computed: false,
                     }
                 });
@@ -970,7 +968,7 @@ fn process_method(
             anvyx_lang::ExternStaticMethodDecl {
                 name: #method_name_str,
                 doc: #method_doc_token,
-                params: &[#(#param_anvyx_types),*],
+                params: vec![#(#param_anvyx_types),*],
                 ret: #ret_anvyx_str,
             }
         }),
@@ -979,7 +977,7 @@ fn process_method(
                 name: #method_name_str,
                 doc: #method_doc_token,
                 receiver: "self",
-                params: &[#(#param_anvyx_types),*],
+                params: vec![#(#param_anvyx_types),*],
                 ret: #ret_anvyx_str,
             }
         }),
@@ -988,7 +986,7 @@ fn process_method(
                 name: #method_name_str,
                 doc: #method_doc_token,
                 receiver: "var",
-                params: &[#(#param_anvyx_types),*],
+                params: vec![#(#param_anvyx_types),*],
                 ret: #ret_anvyx_str,
             }
         }),

@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+extern fn map_range(from: int, to: int, cb: fn(int) -> int) -> [int];
+
+fn main() {
+    let squares = map_range(1, 5, |x| x * x);
+}

@@ -3,7 +3,7 @@ use internment::Intern;
 use crate::ast::{FuncParam, Ident, Type};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum Builtin {
+pub enum Builtin {
     Println,
     Assert,
     AssertMsg,

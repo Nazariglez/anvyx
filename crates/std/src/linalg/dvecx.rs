@@ -10,6 +10,7 @@ fn fmt_double(v: f64) -> String {
     }
 }
 
+#[derive(Clone)]
 #[export_type]
 pub struct DVec2(pub glam::DVec2);
 
@@ -157,6 +158,7 @@ impl DVec2 {
     }
 }
 
+#[derive(Clone)]
 #[export_type]
 pub struct DVec3(pub glam::DVec3);
 
@@ -319,6 +321,7 @@ impl DVec3 {
     }
 }
 
+#[derive(Clone)]
 #[export_type]
 pub struct DVec4(pub glam::DVec4);
 

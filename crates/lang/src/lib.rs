@@ -27,9 +27,10 @@ pub use metadata::{
 pub use prelude_enums::{OPTION_TYPE_ID, option_none, option_some};
 pub use typecheck::{map_type_structure, walk_type_structure};
 pub use vm::{
-    AnvyxConvert, AnvyxExternType, DisplayDetect, DisplayDetectFallback, EnumData,
-    ExternHandleData, ExternHandler, HandleStore, ManagedRc, MapStorage, RuntimeError, StructData,
-    Value, extern_handle,
+    AnvyxConvert, AnvyxExternType, AnvyxFn, CompiledProgram, DisplayDetect, DisplayDetectFallback,
+    EnumData, ExternHandle, ExternHandleData, ExternHandler, ExternRegistry, HandleStore,
+    ManagedRc, MapStorage, RuntimeError, StructData, VM, Value, VmContext, compile_with_externs,
+    extern_handle, with_callback_ctx,
 };
 
 pub mod cycle_collector {
@@ -351,6 +352,42 @@ pub fn run_program_with_externs(
     )
 }
 
+fn filter_externs_by_hir(
+    externs: std::collections::HashMap<String, ExternHandler>,
+    hir: &hir::Program,
+) -> std::collections::HashMap<String, ExternHandler> {
+    let declared: std::collections::HashSet<String> =
+        hir.externs.iter().map(|e| e.name.to_string()).collect();
+    externs
+        .into_iter()
+        .filter(|(name, _)| declared.contains(name))
+        .collect()
+}
+
+/// Compiles Anvyx code for the VM and returns the program with its extern registry.
+///
+/// Use this when the host wants to run the VM and call closures later.
+pub fn compile_vm_with_externs(
+    program: &str,
+    file_path: &str,
+    core_source: &str,
+    externs: std::collections::HashMap<String, ExternHandler>,
+) -> Result<(CompiledProgram, ExternRegistry), String> {
+    use std::collections::HashMap;
+
+    let hir = generate_hir_with_std(
+        program,
+        file_path,
+        core_source,
+        &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
+    )?;
+
+    let filtered = filter_externs_by_hir(externs, &hir);
+    compile_with_externs(&hir, filtered)
+}
+
 pub fn run_program_with_std(
     program: &str,
     file_path: &str,
@@ -370,12 +407,7 @@ pub fn run_program_with_std(
         &core.modules,
     )?;
 
-    let declared: std::collections::HashSet<String> =
-        hir.externs.iter().map(|e| e.name.to_string()).collect();
-    let filtered = externs
-        .into_iter()
-        .filter(|(name, _)| declared.contains(name))
-        .collect();
+    let filtered = filter_externs_by_hir(externs, &hir);
 
     match backend {
         Backend::Vm => vm::run_with_externs(&hir, filtered),

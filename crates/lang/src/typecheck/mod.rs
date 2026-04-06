@@ -21,6 +21,8 @@ mod visit;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
+
 pub use const_eval::ConstValue;
 use const_eval::evaluate_and_export_consts;
 use constraint::resolve_constraints;
@@ -43,7 +45,7 @@ use crate::{
 fn register_builtins(type_checker: &mut TypeChecker) {
     type_checker.push_scope();
     for builtin in Builtin::all() {
-        type_checker.set_var(builtin.ident(), builtin.func_type(), false);
+        type_checker.set_func_var(builtin.ident(), builtin.func_type());
     }
 }
 
@@ -136,12 +138,7 @@ pub fn check_program_with_modules(
 
     // detect infinite size cycles across all registered types
     {
-        let mut all_struct_defs = type_checker.ctx.struct_defs.clone();
-        let mut all_enum_defs = type_checker.ctx.enum_defs.clone();
-        for module_def in type_checker.resolved_module_defs.values() {
-            all_struct_defs.extend(module_def.struct_defs.clone());
-            all_enum_defs.extend(module_def.enum_defs.clone());
-        }
+        let (all_struct_defs, all_enum_defs) = aggregate_type_defs(&type_checker);
         errors.extend(cyclicity::check_value_type_cycles(
             &all_struct_defs,
             &all_enum_defs,
@@ -234,17 +231,25 @@ pub fn check_program_with_modules(
     }
 
     {
-        let mut all_struct_defs = type_checker.ctx.struct_defs.clone();
-        let mut all_enum_defs = type_checker.ctx.enum_defs.clone();
-        for module_def in type_checker.resolved_module_defs.values() {
-            all_struct_defs.extend(module_def.struct_defs.clone());
-            all_enum_defs.extend(module_def.enum_defs.clone());
-        }
+        let (all_struct_defs, all_enum_defs) = aggregate_type_defs(&type_checker);
         type_checker.cycle_capable_types =
             cyclicity::analyze_cyclicity(&all_struct_defs, &all_enum_defs);
     }
 
     Ok(type_checker.into_result())
+}
+
+type StructDefMap = HashMap<Ident, types::StructDef>;
+type EnumDefMap = HashMap<Ident, types::EnumDef>;
+
+fn aggregate_type_defs(type_checker: &TypeChecker) -> (StructDefMap, EnumDefMap) {
+    let mut all_struct_defs = type_checker.ctx.struct_defs.clone();
+    let mut all_enum_defs = type_checker.ctx.enum_defs.clone();
+    for module_def in type_checker.resolved_module_defs.values() {
+        all_struct_defs.extend(module_def.struct_defs.clone());
+        all_enum_defs.extend(module_def.enum_defs.clone());
+    }
+    (all_struct_defs, all_enum_defs)
 }
 
 fn flush_errors(

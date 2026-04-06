@@ -24,5 +24,5 @@ pub fn core_modules() -> Vec<StdModule> {
 pub fn split_core_modules() -> (Vec<StdModule>, Vec<StdModule>) {
     core_modules()
         .into_iter()
-        .partition(|m| m.exports.is_empty())
+        .partition(|m| (m.exports)().is_empty())
 }

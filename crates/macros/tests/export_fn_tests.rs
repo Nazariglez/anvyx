@@ -3,8 +3,8 @@
 #![allow(dead_code)]
 
 use anvyx_lang::{
-    AnvyxExternType, ExternDecl, ExternHandleData, ExternTypeDeclConst, ManagedRc, OPTION_TYPE_ID,
-    RuntimeError, Value, export_fn, export_type,
+    AnvyxConvert, AnvyxExternType, AnvyxFn, ExternDecl, ExternHandle, ExternHandleData,
+    ExternTypeDeclConst, ManagedRc, OPTION_TYPE_ID, RuntimeError, Value, export_fn, export_type,
 };
 
 fn noop_drop(_id: u64) {}
@@ -195,7 +195,7 @@ fn provider_trailing_comma() {
 
 #[test]
 fn export_fn_generates_decl_const() {
-    let decl: ExternDecl = __ANVYX_DECL_ADD;
+    let decl: ExternDecl = __ANVYX_DECL_ADD();
     assert_eq!(decl.name, "add");
     assert_eq!(decl.params, &[("a", "int"), ("b", "int")]);
     assert_eq!(decl.ret, "int");
@@ -203,7 +203,7 @@ fn export_fn_generates_decl_const() {
 
 #[test]
 fn export_fn_name_override_in_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_MY_FN;
+    let decl: ExternDecl = __ANVYX_DECL_MY_FN();
     assert_eq!(decl.name, "custom_name");
     assert_eq!(decl.params, &[("x", "int")]);
     assert_eq!(decl.ret, "int");
@@ -211,7 +211,7 @@ fn export_fn_name_override_in_decl() {
 
 #[test]
 fn export_fn_string_param_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_GREET;
+    let decl: ExternDecl = __ANVYX_DECL_GREET();
     assert_eq!(decl.name, "greet");
     assert_eq!(decl.params, &[("name", "string")]);
     assert_eq!(decl.ret, "string");
@@ -219,7 +219,7 @@ fn export_fn_string_param_decl() {
 
 #[test]
 fn export_fn_void_return_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_NOOP;
+    let decl: ExternDecl = __ANVYX_DECL_NOOP();
     assert_eq!(decl.name, "noop");
     assert_eq!(decl.params, &[]);
     assert_eq!(decl.ret, "void");
@@ -227,7 +227,7 @@ fn export_fn_void_return_decl() {
 
 #[test]
 fn export_fn_float_param_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_SCALE;
+    let decl: ExternDecl = __ANVYX_DECL_SCALE();
     assert_eq!(decl.name, "scale");
     assert_eq!(decl.params, &[("x", "float"), ("factor", "float")]);
     assert_eq!(decl.ret, "float");
@@ -235,7 +235,7 @@ fn export_fn_float_param_decl() {
 
 #[test]
 fn export_fn_bool_param_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_TOGGLE;
+    let decl: ExternDecl = __ANVYX_DECL_TOGGLE();
     assert_eq!(decl.name, "toggle");
     assert_eq!(decl.params, &[("flag", "bool")]);
     assert_eq!(decl.ret, "bool");
@@ -243,8 +243,8 @@ fn export_fn_bool_param_decl() {
 
 #[test]
 fn provider_generates_anvyx_exports() {
-    assert_eq!(ANVYX_EXPORTS.len(), 3);
-    let names: Vec<&str> = ANVYX_EXPORTS.iter().map(|d| d.name).collect();
+    assert_eq!(anvyx_exports().len(), 3);
+    let names: Vec<&str> = anvyx_exports().iter().map(|d| d.name).collect();
     assert!(names.contains(&"double"));
     assert!(names.contains(&"triple"));
     assert!(names.contains(&"hello"));
@@ -252,33 +252,33 @@ fn provider_generates_anvyx_exports() {
 
 #[test]
 fn provider_exports_name_override() {
-    let triple = ANVYX_EXPORTS.iter().find(|d| d.name == "triple").unwrap();
+    let exports = anvyx_exports();
+    let triple = exports.iter().find(|d| d.name == "triple").unwrap();
     assert_eq!(triple.params, &[("x", "int")]);
     assert_eq!(triple.ret, "int");
 }
 
 #[test]
 fn provider_exports_correct_types() {
-    let double = ANVYX_EXPORTS.iter().find(|d| d.name == "double").unwrap();
+    let exports = anvyx_exports();
+    let double = exports.iter().find(|d| d.name == "double").unwrap();
     assert_eq!(double.params, &[("x", "int")]);
     assert_eq!(double.ret, "int");
 
-    let hello = ANVYX_EXPORTS.iter().find(|d| d.name == "hello").unwrap();
+    let hello = exports.iter().find(|d| d.name == "hello").unwrap();
     assert_eq!(hello.params, &[("name", "string")]);
     assert_eq!(hello.ret, "string");
 }
 
 #[test]
 fn provider_bare_ident_exports() {
-    assert_eq!(flat_mod::ANVYX_EXPORTS.len(), 2);
-    let names: Vec<&str> = flat_mod::ANVYX_EXPORTS.iter().map(|d| d.name).collect();
+    assert_eq!(flat_mod::anvyx_exports().len(), 2);
+    let names: Vec<&str> = flat_mod::anvyx_exports().iter().map(|d| d.name).collect();
     assert!(names.contains(&"inc"));
     assert!(names.contains(&"dec"));
 
-    let inc = flat_mod::ANVYX_EXPORTS
-        .iter()
-        .find(|d| d.name == "inc")
-        .unwrap();
+    let flat_exports = flat_mod::anvyx_exports();
+    let inc = flat_exports.iter().find(|d| d.name == "inc").unwrap();
     assert_eq!(inc.params, &[("x", "int")]);
     assert_eq!(inc.ret, "int");
 }
@@ -302,7 +302,7 @@ fn export_fn_value_passthrough() {
 
 #[test]
 fn export_fn_value_passthrough_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_IDENTITY;
+    let decl: ExternDecl = __ANVYX_DECL_IDENTITY();
     assert_eq!(decl.name, "identity");
     assert_eq!(decl.params, &[("v", "any")]);
     assert_eq!(decl.ret, "any");
@@ -317,7 +317,7 @@ fn make_map() -> Value {
 
 #[test]
 fn export_fn_ret_annotation_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_MAKE_MAP;
+    let decl: ExternDecl = __ANVYX_DECL_MAKE_MAP();
     assert_eq!(decl.name, "make_map");
     assert_eq!(decl.params, &[]);
     assert_eq!(decl.ret, "[K: V]");
@@ -342,7 +342,7 @@ fn list_length(list: Value) -> i64 {
 
 #[test]
 fn export_fn_params_annotation_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_LIST_LENGTH;
+    let decl: ExternDecl = __ANVYX_DECL_LIST_LENGTH();
     assert_eq!(decl.name, "list_length");
     assert_eq!(decl.params, &[("list", "[T]")]);
     assert_eq!(decl.ret, "int");
@@ -369,7 +369,7 @@ fn create_ordered_map() -> Value {
 
 #[test]
 fn export_fn_name_and_ret_combined() {
-    let decl: ExternDecl = __ANVYX_DECL_CREATE_ORDERED_MAP;
+    let decl: ExternDecl = __ANVYX_DECL_CREATE_ORDERED_MAP();
     assert_eq!(decl.name, "ordered");
     assert_eq!(decl.ret, "[K: V]");
 }
@@ -383,7 +383,7 @@ fn mixed_params(x: i64, data: Value) -> bool {
 
 #[test]
 fn export_fn_mixed_value_and_primitive_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_MIXED_PARAMS;
+    let decl: ExternDecl = __ANVYX_DECL_MIXED_PARAMS();
     assert_eq!(decl.params, &[("x", "int"), ("data", "[T]")]);
     assert_eq!(decl.ret, "bool");
 }
@@ -398,6 +398,7 @@ fn export_fn_mixed_value_and_primitive_handler() {
 
 // -- #[export_type] tests --
 
+#[derive(Clone)]
 #[export_type(name = "Sprite")]
 pub struct SpriteData {
     x: f32,
@@ -406,7 +407,7 @@ pub struct SpriteData {
 
 #[test]
 fn export_type_generates_decl_const() {
-    let decl: ExternTypeDeclConst = __ANVYX_TYPE_DECL_SPRITEDATA;
+    let decl: ExternTypeDeclConst = __ANVYX_TYPE_DECL_SPRITEDATA();
     assert_eq!(decl.name, "Sprite");
 }
 
@@ -420,21 +421,23 @@ fn export_type_generates_store() {
     });
 }
 
+#[derive(Clone)]
 #[export_type(name = "Handle")]
 pub struct OpaqueHandle;
 
 #[test]
 fn export_type_unit_struct() {
-    let decl: ExternTypeDeclConst = __ANVYX_TYPE_DECL_OPAQUEHANDLE;
+    let decl: ExternTypeDeclConst = __ANVYX_TYPE_DECL_OPAQUEHANDLE();
     assert_eq!(decl.name, "Handle");
 }
 
+#[derive(Clone)]
 #[export_type(name = "Color")]
 pub struct Color(pub u8, pub u8, pub u8);
 
 #[test]
 fn export_type_tuple_struct() {
-    let decl: ExternTypeDeclConst = __ANVYX_TYPE_DECL_COLOR;
+    let decl: ExternTypeDeclConst = __ANVYX_TYPE_DECL_COLOR();
     assert_eq!(decl.name, "Color");
     __ANVYX_STORE_COLOR.with(|s| {
         let mut store = s.borrow_mut();
@@ -445,6 +448,7 @@ fn export_type_tuple_struct() {
 
 // -- to_string_fn display tests --
 
+#[derive(Clone)]
 #[export_type(name = "FmtVec2")]
 pub struct TestVec2 {
     pub x: f32,
@@ -473,11 +477,27 @@ fn export_type_without_display_to_string() {
     OpaqueHandle::cleanup(id);
 }
 
+#[test]
+fn from_anvyx_does_not_remove_from_store() {
+    use anvyx_lang::AnvyxConvert as _;
+    let value = SpriteData { x: 1.0, y: 2.0 }.into_anvyx();
+
+    let a = SpriteData::from_anvyx(&value).unwrap();
+    assert_eq!(a.x, 1.0);
+    assert_eq!(a.y, 2.0);
+
+    // second call must succeed — value was NOT removed
+    let b = SpriteData::from_anvyx(&value).unwrap();
+    assert_eq!(b.x, 1.0);
+    assert_eq!(b.y, 2.0);
+}
+
 // -- provider! with types: tests --
 
 mod typed_provider {
     use anvyx_lang::{export_fn, export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "Widget")]
     pub struct Widget {
         pub val: i64,
@@ -503,8 +523,8 @@ fn provider_types_populates_type_exports() {
 
 #[test]
 fn provider_types_still_has_fn_exports() {
-    assert_eq!(typed_provider::ANVYX_EXPORTS.len(), 1);
-    assert_eq!(typed_provider::ANVYX_EXPORTS[0].name, "make_val");
+    assert_eq!(typed_provider::anvyx_exports().len(), 1);
+    assert_eq!(typed_provider::anvyx_exports()[0].name, "make_val");
 }
 
 #[test]
@@ -518,6 +538,7 @@ fn provider_types_handlers_work() {
 mod types_only {
     use anvyx_lang::{export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "Node")]
     pub struct Node {
         pub id: i64,
@@ -534,7 +555,7 @@ fn provider_types_only() {
     let types = types_only::anvyx_type_exports();
     assert_eq!(types.len(), 1);
     assert_eq!(types[0].name, "Node");
-    assert!(types_only::ANVYX_EXPORTS.is_empty());
+    assert!(types_only::anvyx_exports().is_empty());
     assert!(types_only::anvyx_externs().is_empty());
 }
 
@@ -542,6 +563,7 @@ mod qualified_type {
     pub mod inner {
         use anvyx_lang::{export_methods, export_type};
 
+        #[derive(Clone)]
         #[export_type(name = "Inner")]
         pub struct InnerType {
             pub data: i64,
@@ -571,6 +593,7 @@ fn provider_module_qualified_type() {
 mod multi_types {
     use anvyx_lang::{export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "Texture")]
     pub struct Tex {
         pub w: i64,
@@ -579,6 +602,7 @@ mod multi_types {
     #[export_methods]
     impl Tex {}
 
+    #[derive(Clone)]
     #[export_type(name = "Shader")]
     pub struct Shd {
         pub id: i64,
@@ -654,7 +678,7 @@ fn export_fn_extern_type_return() {
 
 #[test]
 fn export_fn_extern_type_return_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_CREATE_SPRITE;
+    let decl: ExternDecl = __ANVYX_DECL_CREATE_SPRITE();
     assert_eq!(decl.name, "create_sprite");
     assert_eq!(decl.params, &[("x", "float"), ("y", "float")]);
     assert_eq!(decl.ret, "Sprite");
@@ -680,7 +704,7 @@ fn export_fn_extern_ref_param() {
 
 #[test]
 fn export_fn_extern_ref_param_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_SPRITE_X;
+    let decl: ExternDecl = __ANVYX_DECL_SPRITE_X();
     assert_eq!(decl.name, "sprite_x");
     assert_eq!(decl.params, &[("s", "Sprite")]);
     assert_eq!(decl.ret, "float");
@@ -707,7 +731,7 @@ fn export_fn_extern_mut_ref_param() {
 
 #[test]
 fn export_fn_extern_mut_ref_param_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_SET_SPRITE_X;
+    let decl: ExternDecl = __ANVYX_DECL_SET_SPRITE_X();
     assert_eq!(decl.name, "set_sprite_x");
     assert_eq!(decl.params, &[("s", "Sprite"), ("x", "float")]);
     assert_eq!(decl.ret, "void");
@@ -721,14 +745,16 @@ fn export_fn_extern_owned_param() {
         __ANVYX_STORE_SPRITEDATA.with(|s| s.borrow_mut().insert(SpriteData { x: 1.0, y: 2.0 }));
     let (_, handler) = __anvyx_export_destroy_sprite();
     handler(vec![extern_handle(id)]).unwrap();
+    // from_anvyx now borrows+clones; value is NOT removed from store
     __ANVYX_STORE_SPRITEDATA.with(|s| {
-        assert!(s.borrow().borrow(id).is_err());
+        assert!(s.borrow().borrow(id).is_ok());
+        s.borrow_mut().remove(id).unwrap();
     });
 }
 
 #[test]
 fn export_fn_extern_owned_param_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_DESTROY_SPRITE;
+    let decl: ExternDecl = __ANVYX_DECL_DESTROY_SPRITE();
     assert_eq!(decl.name, "destroy_sprite");
     assert_eq!(decl.params, &[("s", "Sprite")]);
     assert_eq!(decl.ret, "void");
@@ -760,7 +786,7 @@ fn export_fn_mixed_extern_and_primitive() {
 
 #[test]
 fn export_fn_mixed_extern_and_primitive_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_MOVE_SPRITE;
+    let decl: ExternDecl = __ANVYX_DECL_MOVE_SPRITE();
     assert_eq!(decl.name, "move_sprite");
     assert_eq!(
         decl.params,
@@ -788,13 +814,13 @@ fn export_fn_extern_type_full_round_trip() {
     let (_, create) = __anvyx_export_create_sprite();
     let (_, get_x) = __anvyx_export_sprite_x();
     let (_, set_x) = __anvyx_export_set_sprite_x();
-    let (_, destroy) = __anvyx_export_destroy_sprite();
 
     // Create
     let result = create(vec![Value::Float(10.0), Value::Float(20.0)]).unwrap();
     let Value::ExternHandle(id) = result else {
         panic!("expected ExternHandle");
     };
+    let raw_id = id.id;
 
     // Read
     let x = get_x(vec![Value::ExternHandle(id.clone())]).unwrap();
@@ -807,12 +833,11 @@ fn export_fn_extern_type_full_round_trip() {
     let x = get_x(vec![Value::ExternHandle(id.clone())]).unwrap();
     assert_eq!(x, Value::Float(99.0));
 
-    // Destroy
-    destroy(vec![Value::ExternHandle(id.clone())]).unwrap();
-
-    // Verify gone
-    let result = get_x(vec![Value::ExternHandle(id)]);
-    assert!(result.is_err());
+    // Drop last reference — triggers cleanup
+    drop(id);
+    __ANVYX_STORE_SPRITEDATA.with(|s| {
+        assert!(s.borrow().borrow(raw_id).is_err());
+    });
 }
 
 // Step 10: provider integration with extern types
@@ -820,6 +845,7 @@ fn export_fn_extern_type_full_round_trip() {
 mod extern_type_provider {
     use anvyx_lang::{export_fn, export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "Widget")]
     pub struct Widget {
         pub val: i64,
@@ -852,23 +878,21 @@ fn provider_extern_type_decls() {
     assert_eq!(types.len(), 1);
     assert_eq!(types[0].name, "Widget");
 
-    assert_eq!(extern_type_provider::ANVYX_EXPORTS.len(), 3);
+    let ext_exports = extern_type_provider::anvyx_exports();
+    assert_eq!(ext_exports.len(), 3);
 
-    let create = extern_type_provider::ANVYX_EXPORTS
+    let create = ext_exports
         .iter()
         .find(|d| d.name == "create_widget")
         .unwrap();
     assert_eq!(create.params, &[("val", "int")]);
     assert_eq!(create.ret, "Widget");
 
-    let get_val = extern_type_provider::ANVYX_EXPORTS
-        .iter()
-        .find(|d| d.name == "widget_val")
-        .unwrap();
+    let get_val = ext_exports.iter().find(|d| d.name == "widget_val").unwrap();
     assert_eq!(get_val.params, &[("w", "Widget")]);
     assert_eq!(get_val.ret, "int");
 
-    let destroy = extern_type_provider::ANVYX_EXPORTS
+    let destroy = ext_exports
         .iter()
         .find(|d| d.name == "destroy_widget")
         .unwrap();
@@ -890,12 +914,8 @@ fn provider_extern_type_handlers_work() {
     let val = externs["widget_val"](vec![Value::ExternHandle(id.clone())]).unwrap();
     assert_eq!(val, Value::Int(42));
 
-    // Destroy
-    externs["destroy_widget"](vec![Value::ExternHandle(id.clone())]).unwrap();
-
-    // Verify gone
-    let result = externs["widget_val"](vec![Value::ExternHandle(id)]);
-    assert!(result.is_err());
+    // Drop last reference — triggers cleanup
+    drop(id);
 }
 
 // -- same-store multi-borrow tests --
@@ -981,10 +1001,11 @@ fn cleanup_explicit_destroy_then_drop_no_panic() {
     let lingering = handle.clone();
 
     destroy(vec![Value::ExternHandle(handle)]).unwrap();
-    __ANVYX_STORE_SPRITEDATA.with(|s| assert_eq!(s.borrow().len(), 0));
+    // from_anvyx borrows+clones; handle dropped from vec but lingering still alive
+    __ANVYX_STORE_SPRITEDATA.with(|s| assert_eq!(s.borrow().len(), 1));
 
     drop(lingering);
-    // drop_fn fires again -> store.remove returns Err -> silently ignored, no panic
+    // last reference dropped — cleanup fires exactly once, no panic
     __ANVYX_STORE_SPRITEDATA.with(|s| assert_eq!(s.borrow().len(), 0));
 }
 
@@ -992,17 +1013,19 @@ fn cleanup_explicit_destroy_then_drop_no_panic() {
 
 mod method_tests {
     use anvyx_lang::{
-        ExternMethodDecl, ExternStaticMethodDecl, Value, export_methods, export_type,
+        ExternHandle, ExternMethodDecl, ExternStaticMethodDecl, Value, export_methods, export_type,
     };
 
     use super::extern_handle;
 
+    #[derive(Clone)]
     #[export_type(name = "Vec2")]
     pub struct Vec2 {
         pub x: f32,
         pub y: f32,
     }
 
+    #[derive(Clone)]
     #[export_type(name = "Color")]
     pub struct Color {
         pub r: f32,
@@ -1077,6 +1100,12 @@ mod method_tests {
         }
         pub fn from_color_owned(c: Color) -> Vec2 {
             Vec2 { x: c.r, y: c.g }
+        }
+        pub fn to_handle(&self) -> ExternHandle<Self> {
+            ExternHandle::new(Vec2 {
+                x: self.x,
+                y: self.y,
+            })
         }
     }
 
@@ -1222,7 +1251,7 @@ mod method_tests {
 
     #[test]
     fn export_methods_method_metadata() {
-        let methods: &[ExternMethodDecl] = __ANVYX_METHODS_DECL_VEC2;
+        let methods = __ANVYX_METHODS_DECL_VEC2();
         let names: Vec<&str> = methods.iter().map(|m| m.name).collect();
         assert!(names.contains(&"get_x"));
         assert!(names.contains(&"get_y"));
@@ -1250,7 +1279,7 @@ mod method_tests {
 
     #[test]
     fn export_methods_static_metadata() {
-        let statics: &[ExternStaticMethodDecl] = __ANVYX_STATICS_DECL_VEC2;
+        let statics = __ANVYX_STATICS_DECL_VEC2();
         let names: Vec<&str> = statics.iter().map(|s| s.name).collect();
         assert!(names.contains(&"new"));
         assert!(names.contains(&"zero"));
@@ -1409,7 +1438,11 @@ mod method_tests {
         let result = handler(vec![extern_handle(id_v), extern_handle(id_c)]).unwrap();
         // 2.0*0.5 + 3.0*1.0 = 4.0
         assert_eq!(result, Value::Float(4.0));
-        __ANVYX_STORE_COLOR.with(|s| assert!(s.borrow().borrow(id_c).is_err()));
+        // from_anvyx borrows+clones; Color stays in store
+        __ANVYX_STORE_COLOR.with(|s| {
+            assert!(s.borrow().borrow(id_c).is_ok());
+            s.borrow_mut().remove(id_c).unwrap();
+        });
         __ANVYX_STORE_VEC2.with(|s| {
             assert!(s.borrow().borrow(id_v).is_ok());
             s.borrow_mut().remove(id_v).unwrap();
@@ -1470,13 +1503,17 @@ mod method_tests {
             assert_eq!(v.x, 7.0);
             assert_eq!(v.y, 8.0);
         });
-        __ANVYX_STORE_COLOR.with(|s| assert!(s.borrow().borrow(id_c).is_err()));
+        // from_anvyx borrows+clones; Color stays in store
+        __ANVYX_STORE_COLOR.with(|s| {
+            assert!(s.borrow().borrow(id_c).is_ok());
+            s.borrow_mut().remove(id_c).unwrap();
+        });
         __ANVYX_STORE_VEC2.with(|s| s.borrow_mut().remove(new_id.id).unwrap());
     }
 
     #[test]
     fn export_methods_metadata_cross_type() {
-        let methods: &[ExternMethodDecl] = __ANVYX_METHODS_DECL_VEC2;
+        let methods = __ANVYX_METHODS_DECL_VEC2();
 
         let dot = methods.iter().find(|m| m.name == "dot").unwrap();
         assert_eq!(dot.params, &[("other", "Vec2")]);
@@ -1495,11 +1532,19 @@ mod method_tests {
         let wv = methods.iter().find(|m| m.name == "with_value").unwrap();
         assert_eq!(wv.params, &[("v", "any")]);
 
-        let statics: &[ExternStaticMethodDecl] = __ANVYX_STATICS_DECL_VEC2;
+        let statics = __ANVYX_STATICS_DECL_VEC2();
 
         let fc = statics.iter().find(|s| s.name == "from_color").unwrap();
         assert_eq!(fc.params, &[("c", "Color")]);
         assert_eq!(fc.ret, "Vec2");
+    }
+
+    #[test]
+    fn export_methods_extern_handle_self_return() {
+        let methods = __ANVYX_METHODS_DECL_VEC2();
+        let th = methods.iter().find(|m| m.name == "to_handle").unwrap();
+        assert_eq!(th.params, &[]);
+        assert_eq!(th.ret, "Vec2");
     }
 }
 
@@ -1508,6 +1553,7 @@ mod method_tests {
 mod methods_provider {
     use anvyx_lang::{Value, export_fn, export_methods, export_type, exports_to_json};
 
+    #[derive(Clone)]
     #[export_type(name = "Vec2")]
     pub struct Vec2 {
         pub x: f32,
@@ -1583,7 +1629,7 @@ mod methods_provider {
 
     #[test]
     fn provider_metadata_json_includes_methods() {
-        let json = exports_to_json(ANVYX_EXPORTS, &anvyx_type_exports());
+        let json = exports_to_json(&anvyx_exports(), &anvyx_type_exports());
         assert!(json.contains("\"methods\":["));
         assert!(json.contains("\"statics\":["));
         assert!(json.contains("\"receiver\":\"self\""));
@@ -1596,6 +1642,7 @@ mod methods_provider {
 mod field_provider {
     use anvyx_lang::{Value, export_methods, export_type, exports_to_json};
 
+    #[derive(Clone)]
     #[export_type(name = "Pos")]
     pub struct Pos {
         #[field]
@@ -1678,7 +1725,7 @@ mod field_provider {
 
     #[test]
     fn field_metadata_json() {
-        let json = exports_to_json(ANVYX_EXPORTS, &anvyx_type_exports());
+        let json = exports_to_json(&anvyx_exports(), &anvyx_type_exports());
         assert!(json.contains("\"fields\":["));
         assert!(json.contains("\"name\":\"x\""));
         assert!(json.contains("\"ty\":\"float\""));
@@ -1688,6 +1735,7 @@ mod field_provider {
 mod getter_setter_tests {
     use anvyx_lang::{Value, export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "Vec2")]
     pub struct GsVec2(f32, f32);
 
@@ -1781,6 +1829,7 @@ mod getter_setter_tests {
 mod getter_setter_with_field_tests {
     use anvyx_lang::{Value, export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "Sprite")]
     pub struct GsSprite {
         #[field]
@@ -1840,6 +1889,7 @@ mod getter_setter_with_field_tests {
 mod getter_setter_name_override_tests {
     use anvyx_lang::{Value, export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "Pt")]
     pub struct SomePoint {
         #[field]
@@ -1889,6 +1939,7 @@ mod getter_setter_name_override_tests {
 mod init_explicit_tests {
     use anvyx_lang::{Value, export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "Vec2")]
     pub struct InitVec2(f32, f32);
 
@@ -1962,6 +2013,7 @@ mod init_explicit_tests {
 mod init_auto_tests {
     use anvyx_lang::{Value, export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "AutoPos")]
     pub struct AutoPos {
         #[field]
@@ -2015,6 +2067,7 @@ mod init_auto_tests {
 mod init_no_auto_tests {
     use anvyx_lang::{Value, export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "Obj")]
     pub struct NoAutoObj {
         #[field]
@@ -2062,6 +2115,7 @@ mod op_tests {
 
     use super::extern_handle;
 
+    #[derive(Clone)]
     #[export_type(name = "Vec2")]
     pub struct OpVec2 {
         pub x: f32,
@@ -2299,13 +2353,13 @@ mod op_tests {
 
     #[test]
     fn op_metadata_const_has_all_entries() {
-        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
+        let ops = __ANVYX_OPS_DECL_OPVEC2();
         assert_eq!(ops.len(), 6);
     }
 
     #[test]
     fn op_metadata_binary_left_dispatch() {
-        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
+        let ops = __ANVYX_OPS_DECL_OPVEC2();
         let add = ops.iter().find(|o| o.op == "Add").unwrap();
         assert_eq!(add.rhs, Some("Vec2"));
         assert!(add.lhs.is_none());
@@ -2314,7 +2368,7 @@ mod op_tests {
 
     #[test]
     fn op_metadata_binary_right_dispatch() {
-        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
+        let ops = __ANVYX_OPS_DECL_OPVEC2();
         // float * Self
         let rmul = ops
             .iter()
@@ -2327,7 +2381,7 @@ mod op_tests {
 
     #[test]
     fn op_metadata_binary_left_float() {
-        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
+        let ops = __ANVYX_OPS_DECL_OPVEC2();
         // Self * float
         let mul = ops
             .iter()
@@ -2339,7 +2393,7 @@ mod op_tests {
 
     #[test]
     fn op_metadata_unary() {
-        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
+        let ops = __ANVYX_OPS_DECL_OPVEC2();
         let neg = ops.iter().find(|o| o.op == "Neg").unwrap();
         assert!(neg.rhs.is_none());
         assert!(neg.lhs.is_none());
@@ -2348,7 +2402,7 @@ mod op_tests {
 
     #[test]
     fn op_metadata_eq_returns_bool() {
-        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPVEC2;
+        let ops = __ANVYX_OPS_DECL_OPVEC2();
         let eq = ops.iter().find(|o| o.op == "Eq").unwrap();
         assert_eq!(eq.rhs, Some("Vec2"));
         assert!(eq.lhs.is_none());
@@ -2531,28 +2585,28 @@ fn option_string_none() {
 
 #[test]
 fn fallible_int_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_CHECKED_DIV;
+    let decl: ExternDecl = __ANVYX_DECL_CHECKED_DIV();
     assert_eq!(decl.ret, "int");
     assert_eq!(decl.params, &[("a", "int"), ("b", "int")]);
 }
 
 #[test]
 fn fallible_string_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_MUST_UPPER;
+    let decl: ExternDecl = __ANVYX_DECL_MUST_UPPER();
     assert_eq!(decl.ret, "string");
     assert_eq!(decl.params, &[("s", "string")]);
 }
 
 #[test]
 fn fallible_void_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_ASSERT_POSITIVE;
+    let decl: ExternDecl = __ANVYX_DECL_ASSERT_POSITIVE();
     assert_eq!(decl.ret, "void");
     assert_eq!(decl.params, &[("n", "int")]);
 }
 
 #[test]
 fn fallible_value_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_PARSE_LIST;
+    let decl: ExternDecl = __ANVYX_DECL_PARSE_LIST();
     assert_eq!(decl.ret, "[int]");
     assert_eq!(decl.params, &[("s", "string")]);
 }
@@ -2561,14 +2615,14 @@ fn fallible_value_decl() {
 
 #[test]
 fn option_int_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_SAFE_DIV;
+    let decl: ExternDecl = __ANVYX_DECL_SAFE_DIV();
     assert_eq!(decl.ret, "Option<int>");
     assert_eq!(decl.params, &[("a", "int"), ("b", "int")]);
 }
 
 #[test]
 fn option_string_decl() {
-    let decl: ExternDecl = __ANVYX_DECL_CHAR_AT;
+    let decl: ExternDecl = __ANVYX_DECL_CHAR_AT();
     assert_eq!(decl.ret, "Option<string>");
     assert_eq!(decl.params, &[("s", "string"), ("idx", "int")]);
 }
@@ -2591,8 +2645,8 @@ mod fallible_mod {
 
 #[test]
 fn provider_fallible_exports() {
-    assert_eq!(fallible_mod::ANVYX_EXPORTS[0].ret, "int");
-    assert_eq!(fallible_mod::ANVYX_EXPORTS[0].name, "safe_div");
+    assert_eq!(fallible_mod::anvyx_exports()[0].ret, "int");
+    assert_eq!(fallible_mod::anvyx_exports()[0].name, "safe_div");
 }
 
 #[test]
@@ -2617,8 +2671,8 @@ mod option_mod {
 
 #[test]
 fn provider_option_exports() {
-    assert_eq!(option_mod::ANVYX_EXPORTS[0].ret, "Option<int>");
-    assert_eq!(option_mod::ANVYX_EXPORTS[0].name, "maybe_inc");
+    assert_eq!(option_mod::anvyx_exports()[0].ret, "Option<int>");
+    assert_eq!(option_mod::anvyx_exports()[0].name, "maybe_inc");
 }
 
 #[test]
@@ -2649,6 +2703,7 @@ mod getter_extern_type_tests {
 
     use super::extern_handle;
 
+    #[derive(Clone)]
     #[export_type(name = "Inner")]
     pub struct Inner {
         pub val: f32,
@@ -2657,6 +2712,7 @@ mod getter_extern_type_tests {
     #[export_methods]
     impl Inner {}
 
+    #[derive(Clone)]
     #[export_type(name = "Container")]
     pub struct Container {
         pub inner_val: f32,
@@ -2716,16 +2772,17 @@ mod getter_extern_type_tests {
         // Manually insert an Inner to pass to the setter
         let inner_id = __ANVYX_STORE_INNER.with(|s| s.borrow_mut().insert(Inner { val: 9.0 }));
 
-        // Set inner — this consumes the Inner from its store via from_anvyx
+        // Set inner — from_anvyx borrows+clones; original stays in Inner store
         externs["Container::__set_inner"](vec![
             Value::ExternHandle(container_ehd.clone()),
-            extern_handle(inner_id), // noop drop — from_anvyx removes from store
+            extern_handle(inner_id),
         ])
         .unwrap();
 
-        // Verify the Inner was consumed
+        // Original Inner is still in store (not consumed)
         __ANVYX_STORE_INNER.with(|s| {
-            assert!(s.borrow().borrow(inner_id).is_err());
+            assert!(s.borrow().borrow(inner_id).is_ok());
+            s.borrow_mut().remove(inner_id).unwrap();
         });
 
         // Verify the container now reflects the new inner_val
@@ -2807,6 +2864,7 @@ mod init_extern_param_tests {
 
     use super::extern_handle;
 
+    #[derive(Clone)]
     #[export_type(name = "Pos")]
     pub struct Pos {
         pub x: f32,
@@ -2816,6 +2874,7 @@ mod init_extern_param_tests {
     #[export_methods]
     impl Pos {}
 
+    #[derive(Clone)]
     #[export_type(name = "Entity")]
     pub struct Entity {
         pub px: f32,
@@ -2863,17 +2922,18 @@ mod init_extern_param_tests {
             assert_eq!(e.py, 20.0);
             assert_eq!(e.hp, 100.0);
         });
-        // entity auto-cleanup on drop; pos was consumed by from_anvyx
+        // entity auto-cleanup on drop; pos stays in store (borrow+clone semantics)
     }
 
     #[test]
-    fn init_extern_param_consumes_pos() {
+    fn init_extern_param_does_not_consume_pos() {
         let externs = anvyx_externs();
         let pos_id = __ANVYX_STORE_POS.with(|s| s.borrow_mut().insert(Pos { x: 1.0, y: 2.0 }));
         externs["Entity::__init__"](vec![extern_handle(pos_id), Value::Float(50.0)]).unwrap();
-        // Pos was consumed by from_anvyx inside the init handler
+        // from_anvyx borrows+clones; Pos is NOT consumed from store
         __ANVYX_STORE_POS.with(|s| {
-            assert!(s.borrow().borrow(pos_id).is_err());
+            assert!(s.borrow().borrow(pos_id).is_ok());
+            s.borrow_mut().remove(pos_id).unwrap();
         });
         // entity handle auto-cleanup on drop
     }
@@ -2909,6 +2969,7 @@ mod init_extern_param_tests {
 mod init_string_param_tests {
     use anvyx_lang::{ManagedRc, Value, export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "Label")]
     pub struct Label {
         pub text: String,
@@ -2963,6 +3024,7 @@ mod init_string_param_tests {
 mod fallible_init_tests {
     use anvyx_lang::{RuntimeError, Value, export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "Ratio")]
     pub struct Ratio {
         pub num: f32,
@@ -3049,6 +3111,7 @@ mod op_option_return_tests {
 
     use super::extern_handle;
 
+    #[derive(Clone)]
     #[export_type(name = "Num")]
     pub struct Num {
         pub val: f32,
@@ -3121,7 +3184,7 @@ mod op_option_return_tests {
 
     #[test]
     fn op_option_metadata() {
-        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_NUM;
+        let ops = __ANVYX_OPS_DECL_NUM();
         let div = ops.iter().find(|o| o.op == "Div").unwrap();
         assert_eq!(div.ret, "Option<float>");
         assert_eq!(div.rhs, Some("Num"));
@@ -3142,6 +3205,7 @@ mod op_result_return_tests {
 
     use super::extern_handle;
 
+    #[derive(Clone)]
     #[export_type(name = "SafeNum")]
     pub struct SafeNum {
         pub val: f32,
@@ -3205,7 +3269,7 @@ mod op_result_return_tests {
 
     #[test]
     fn op_result_metadata() {
-        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_SAFENUM;
+        let ops = __ANVYX_OPS_DECL_SAFENUM();
         let div = ops.iter().find(|o| o.op == "Div").unwrap();
         // Result wrapper unwraps in metadata — ret is the Ok inner type
         assert_eq!(div.ret, "float");
@@ -3219,6 +3283,7 @@ mod op_result_return_tests {
 mod method_option_extern_return_tests {
     use anvyx_lang::{ExternMethodDecl, OPTION_TYPE_ID, Value, export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "Item")]
     pub struct Item {
         pub val: f32,
@@ -3227,6 +3292,7 @@ mod method_option_extern_return_tests {
     #[export_methods]
     impl Item {}
 
+    #[derive(Clone)]
     #[export_type(name = "Bag")]
     pub struct Bag {
         pub item_val: f32,
@@ -3304,7 +3370,7 @@ mod method_option_extern_return_tests {
 
     #[test]
     fn method_option_extern_metadata() {
-        let methods: &[ExternMethodDecl] = __ANVYX_METHODS_DECL_BAG;
+        let methods = __ANVYX_METHODS_DECL_BAG();
         let take_item = methods.iter().find(|m| m.name == "take_item").unwrap();
         assert_eq!(take_item.ret, "Option<Item>");
         assert_eq!(take_item.receiver, "self");
@@ -3317,6 +3383,7 @@ mod method_option_extern_return_tests {
 mod method_result_extern_return_tests {
     use anvyx_lang::{ExternMethodDecl, RuntimeError, Value, export_methods, export_type};
 
+    #[derive(Clone)]
     #[export_type(name = "Product")]
     pub struct Product {
         pub val: f32,
@@ -3325,6 +3392,7 @@ mod method_result_extern_return_tests {
     #[export_methods]
     impl Product {}
 
+    #[derive(Clone)]
     #[export_type(name = "Factory")]
     pub struct Factory {
         pub rate: f32,
@@ -3406,7 +3474,7 @@ mod method_result_extern_return_tests {
 
     #[test]
     fn method_result_extern_metadata() {
-        let methods: &[ExternMethodDecl] = __ANVYX_METHODS_DECL_FACTORY;
+        let methods = __ANVYX_METHODS_DECL_FACTORY();
         let produce = methods.iter().find(|m| m.name == "produce").unwrap();
         // Result wrapper unwraps in metadata — ret is the Ok inner type
         assert_eq!(produce.ret, "Product");
@@ -3422,6 +3490,7 @@ mod op_option_extern_return_tests {
 
     use super::extern_handle;
 
+    #[derive(Clone)]
     #[export_type(name = "Vec2")]
     pub struct OptVec2 {
         pub x: f32,
@@ -3511,7 +3580,7 @@ mod op_option_extern_return_tests {
 
     #[test]
     fn op_option_extern_metadata() {
-        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_OPTVEC2;
+        let ops = __ANVYX_OPS_DECL_OPTVEC2();
         let div = ops.iter().find(|o| o.op == "Div").unwrap();
         assert_eq!(div.ret, "Option<Vec2>");
         assert_eq!(div.rhs, Some("float"));
@@ -3526,6 +3595,7 @@ mod op_result_extern_return_tests {
 
     use super::extern_handle;
 
+    #[derive(Clone)]
     #[export_type(name = "Frac")]
     pub struct Frac {
         pub num: f32,
@@ -3614,11 +3684,182 @@ mod op_result_extern_return_tests {
 
     #[test]
     fn op_result_extern_metadata() {
-        let ops: &[ExternOpDecl] = __ANVYX_OPS_DECL_FRAC;
+        let ops = __ANVYX_OPS_DECL_FRAC();
         let add = ops.iter().find(|o| o.op == "Add").unwrap();
         // Result wrapper unwraps in metadata — ret is the Ok inner type
         assert_eq!(add.ret, "Frac");
         assert_eq!(add.rhs, Some("Frac"));
         assert!(add.lhs.is_none());
     }
+}
+
+// ── AnvyxFn callback tests ────────────────────────────────────────────────────
+
+#[export_fn]
+fn cb_apply(value: i64, cb: AnvyxFn<(i64,), i64>) -> Result<i64, RuntimeError> {
+    cb.call(value)
+}
+
+#[test]
+fn export_fn_anvyx_fn_decl_auto_derives_type() {
+    let decl: ExternDecl = __ANVYX_DECL_CB_APPLY();
+    assert_eq!(decl.name, "cb_apply");
+    assert_eq!(decl.params, &[("value", "int"), ("cb", "fn(int) -> int")]);
+    assert_eq!(decl.ret, "int");
+}
+
+#[test]
+fn export_fn_anvyx_fn_generates_handler() {
+    let (name, _handler) = __anvyx_export_cb_apply();
+    assert_eq!(name, "cb_apply");
+}
+
+#[export_fn]
+fn cb_void(cb: AnvyxFn<(i64,), ()>) -> Result<(), RuntimeError> {
+    cb.call(0)
+}
+
+#[test]
+fn export_fn_anvyx_fn_void_return_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_CB_VOID();
+    assert_eq!(decl.params, &[("cb", "fn(int) -> void")]);
+    assert_eq!(decl.ret, "void");
+}
+
+#[export_fn]
+fn cb_multi(cb: AnvyxFn<(i64, f32, bool), String>) -> Result<String, RuntimeError> {
+    cb.call(1, 2.0, true)
+}
+
+#[test]
+fn export_fn_anvyx_fn_multi_arg_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_CB_MULTI();
+    assert_eq!(decl.params, &[("cb", "fn(int, float, bool) -> string")]);
+    assert_eq!(decl.ret, "string");
+}
+
+#[export_fn]
+fn cb_zero(cb: AnvyxFn<(), i64>) -> Result<i64, RuntimeError> {
+    cb.call()
+}
+
+#[test]
+fn export_fn_anvyx_fn_zero_arg_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_CB_ZERO();
+    assert_eq!(decl.params, &[("cb", "fn() -> int")]);
+    assert_eq!(decl.ret, "int");
+}
+
+#[export_fn(params(cb = "fn(Point) -> float"))]
+fn cb_override(cb: AnvyxFn<(i64,), f32>) -> Result<f32, RuntimeError> {
+    cb.call(0)
+}
+
+#[test]
+fn export_fn_anvyx_fn_explicit_override_wins() {
+    let decl: ExternDecl = __ANVYX_DECL_CB_OVERRIDE();
+    assert_eq!(decl.params, &[("cb", "fn(Point) -> float")]);
+}
+
+#[export_fn]
+fn cb_mixed(a: i64, cb: AnvyxFn<(i64,), bool>, name: String) -> Result<bool, RuntimeError> {
+    drop(name);
+    cb.call(a)
+}
+
+#[test]
+fn export_fn_anvyx_fn_mixed_params_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_CB_MIXED();
+    assert_eq!(
+        decl.params,
+        &[("a", "int"), ("cb", "fn(int) -> bool"), ("name", "string")]
+    );
+}
+
+#[export_fn]
+fn cb_double(cb: AnvyxFn<(f64,), f64>) -> Result<f64, RuntimeError> {
+    cb.call(1.0)
+}
+
+#[test]
+fn export_fn_anvyx_fn_double_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_CB_DOUBLE();
+    assert_eq!(decl.params, &[("cb", "fn(double) -> double")]);
+}
+
+// ── ExternHandle<T> tests ─────────────────────────────────────────────────────
+
+#[export_fn]
+fn take_handle(h: ExternHandle<Color>) -> i64 {
+    h.with_borrow(|c| c.0 as i64).unwrap()
+}
+
+#[test]
+fn export_fn_extern_handle_param_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_TAKE_HANDLE();
+    assert_eq!(decl.params, &[("h", "Color")]);
+    assert_eq!(decl.ret, "int");
+}
+
+#[export_fn]
+fn make_handle(r: i64, g: i64, b: i64) -> ExternHandle<Color> {
+    ExternHandle::new(Color(r as u8, g as u8, b as u8))
+}
+
+#[test]
+fn export_fn_extern_handle_return_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_MAKE_HANDLE();
+    assert_eq!(decl.ret, "Color");
+}
+
+#[export_fn]
+fn identity_handle(h: ExternHandle<Color>) -> ExternHandle<Color> {
+    h
+}
+
+#[test]
+fn export_fn_extern_handle_roundtrip() {
+    let handle = ExternHandle::new(Color(10, 20, 30));
+    let value = handle.into_anvyx();
+    let (_, handler) = __anvyx_export_identity_handle();
+    let result = handler(vec![value]).unwrap();
+    assert!(matches!(result, Value::ExternHandle(_)));
+}
+
+#[export_fn]
+fn cb_with_handle(cb: AnvyxFn<(ExternHandle<Color>,), ()>) -> Result<(), RuntimeError> {
+    drop(cb);
+    Ok(())
+}
+
+#[test]
+fn export_fn_callback_extern_handle_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_CB_WITH_HANDLE();
+    assert_eq!(decl.params, &[("cb", "fn(Color) -> void")]);
+}
+
+#[export_fn]
+fn cb_returns_handle(
+    cb: AnvyxFn<(i64,), ExternHandle<Color>>,
+) -> Result<ExternHandle<Color>, RuntimeError> {
+    cb.call(0)
+}
+
+#[test]
+fn export_fn_callback_extern_handle_return_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_CB_RETURNS_HANDLE();
+    assert_eq!(decl.params, &[("cb", "fn(int) -> Color")]);
+    assert_eq!(decl.ret, "Color");
+}
+
+#[export_fn(params(cb = "fn(Sprite) -> void"))]
+fn cb_override_handle(cb: AnvyxFn<(ExternHandle<SpriteData>,), ()>) -> Result<(), RuntimeError> {
+    drop(cb);
+    Ok(())
+}
+
+#[test]
+fn export_fn_callback_extern_handle_explicit_override() {
+    let decl: ExternDecl = __ANVYX_DECL_CB_OVERRIDE_HANDLE();
+    assert_eq!(decl.params, &[("cb", "fn(Sprite) -> void")]);
 }

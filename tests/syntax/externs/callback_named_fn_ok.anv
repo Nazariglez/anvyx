@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+extern fn native_apply(value: int, cb: fn(int) -> int) -> int;
+
+fn mul2(x: int) -> int {
+    x * 2
+}
+
+fn main() {
+    let result = native_apply(5, mul2);
+}

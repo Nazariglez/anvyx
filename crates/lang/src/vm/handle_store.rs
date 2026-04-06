@@ -56,6 +56,14 @@ impl<T> HandleStore<T> {
             .ok_or_else(|| RuntimeError::new(format!("invalid extern handle: {id}")))
     }
 
+    pub fn clone_value(&self, id: u64) -> Result<T, RuntimeError>
+    where
+        T: Clone,
+    {
+        let guard = self.borrow(id)?;
+        Ok((*guard).clone())
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -148,6 +156,28 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("already mutably borrowed"));
+    }
+
+    #[test]
+    fn clone_value_without_removing() {
+        let mut store = HandleStore::new();
+        let id = store.insert("hello".to_string());
+
+        let a = store.clone_value(id).unwrap();
+        assert_eq!(a, "hello");
+
+        // second clone succeeds, entry was not removed
+        let b = store.clone_value(id).unwrap();
+        assert_eq!(b, "hello");
+
+        assert_eq!(*store.borrow(id).unwrap(), "hello");
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn clone_value_missing_id() {
+        let store: HandleStore<String> = HandleStore::new();
+        assert!(store.clone_value(999).is_err());
     }
 
     #[test]

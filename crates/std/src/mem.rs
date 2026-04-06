@@ -23,7 +23,7 @@ pub fn module() -> StdModule {
     StdModule {
         name: "mem",
         anv_source: include_str!("./mem.anv"),
-        exports: ANVYX_EXPORTS,
+        exports: anvyx_exports,
         type_exports: anvyx_type_exports,
         handlers: anvyx_externs,
         init: None,

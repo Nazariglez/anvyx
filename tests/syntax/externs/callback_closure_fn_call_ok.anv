@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: success
+
+extern fn apply(value: int, cb: fn(int) -> int) -> int;
+
+fn double_it(x: int) -> int {
+    x * 2
+}
+
+fn main() {
+    // same module function called inside a closure passed to an extern
+    let result = apply(5, |x| double_it(x));
+}

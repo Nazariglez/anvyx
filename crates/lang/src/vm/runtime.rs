@@ -3,6 +3,7 @@ use std::fmt::Write;
 use super::{
     builtins,
     bytecode::{CastKind, Op},
+    callback::{VmWithRegistry, callback_scope},
     compiler::CompiledProgram,
     managed_rc::ManagedRc,
     value::{
@@ -20,6 +21,28 @@ use crate::{
 };
 
 pub type ExternHandler = Box<dyn Fn(Vec<Value>) -> Result<Value, RuntimeError>>;
+
+pub struct ExternRegistry {
+    handlers: Vec<Option<ExternHandler>>,
+}
+
+impl ExternRegistry {
+    pub fn new(count: usize) -> Self {
+        Self {
+            handlers: (0..count).map(|_| None).collect(),
+        }
+    }
+
+    pub fn register(&mut self, index: usize, handler: ExternHandler) {
+        if index < self.handlers.len() {
+            self.handlers[index] = Some(handler);
+        }
+    }
+
+    pub fn get(&self, index: usize) -> Option<&ExternHandler> {
+        self.handlers.get(index).and_then(|slot| slot.as_ref())
+    }
+}
 
 fn as_usize_index(val: &Value) -> Result<usize, RuntimeError> {
     match val {
@@ -106,24 +129,15 @@ pub struct VM<'a> {
     stack: Vec<Value>,
     frames: Vec<CallFrame>,
     pub stdout: String,
-    extern_handlers: Vec<Option<ExternHandler>>,
 }
 
 impl<'a> VM<'a> {
     pub fn new(program: &'a CompiledProgram) -> Self {
-        let extern_count = program.extern_names.len();
         Self {
             program,
             stack: vec![],
             frames: vec![],
             stdout: String::new(),
-            extern_handlers: (0..extern_count).map(|_| None).collect(),
-        }
-    }
-
-    pub fn register_extern(&mut self, index: usize, handler: ExternHandler) {
-        if index < self.extern_handlers.len() {
-            self.extern_handlers[index] = Some(handler);
         }
     }
 
@@ -135,7 +149,7 @@ impl<'a> VM<'a> {
         self.stack.pop().expect("stack underflow")
     }
 
-    pub fn run(&mut self) -> Result<(), RuntimeError> {
+    pub fn run(&mut self, registry: &ExternRegistry) -> Result<(), RuntimeError> {
         // bootstrap the main frame
         let main_idx = self.program.main_idx;
         let main_local_count = self.program.chunks[main_idx].local_count as usize;
@@ -147,10 +161,14 @@ impl<'a> VM<'a> {
         });
         self.stack.resize(main_local_count, Value::Nil);
 
-        self.run_until_depth(0).map(|_| ())
+        self.run_until_depth(registry, 0).map(|_| ())
     }
 
-    fn run_until_depth(&mut self, stop_depth: usize) -> Result<Value, RuntimeError> {
+    fn run_until_depth(
+        &mut self,
+        registry: &ExternRegistry,
+        stop_depth: usize,
+    ) -> Result<Value, RuntimeError> {
         loop {
             // fetch current instruction and advance IP atomically
             let (chunk_idx, ip, stack_base) = {
@@ -488,7 +506,7 @@ impl<'a> VM<'a> {
                     let args: Vec<Value> = self.stack.drain(self.stack.len() - n..).collect();
                     let builtin = Builtin::all()[builtin_idx as usize];
                     let result = if builtin == Builtin::Println {
-                        let s = self.format_value(&args[0])?;
+                        let s = self.format_value(registry, &args[0])?;
                         writeln!(self.stdout, "{s}").unwrap();
                         Value::Nil
                     } else {
@@ -501,17 +519,18 @@ impl<'a> VM<'a> {
                     let n = arg_count as usize;
                     let args: Vec<Value> = self.stack.drain(self.stack.len() - n..).collect();
                     let idx = extern_idx as usize;
-                    let result = if let Some(Some(handler)) = self.extern_handlers.get(idx) {
-                        handler(args)?
-                    } else {
+                    let handler = registry.get(idx).ok_or_else(|| {
                         let name = self
                             .program
                             .extern_names
                             .get(idx)
                             .map_or("<unknown>", String::as_str);
-                        return Err(RuntimeError::new(format!(
-                            "missing extern implementation for '{name}'"
-                        )));
+                        RuntimeError::new(format!("missing extern implementation for '{name}'"))
+                    })?;
+                    let result = {
+                        let mut ctx = VmWithRegistry { vm: self, registry };
+                        let _guard = callback_scope(&mut ctx);
+                        handler(args)?
                     };
                     self.push(result);
                 }
@@ -526,10 +545,8 @@ impl<'a> VM<'a> {
 
                 Op::CallClosure(arg_count) => {
                     let n_args = arg_count as usize;
-
                     let args_start = self.stack.len() - n_args;
                     let args: Vec<Value> = self.stack.drain(args_start..).collect();
-
                     let closure_val = self.pop();
                     let closure = match closure_val {
                         Value::Closure(c) => c,
@@ -540,30 +557,7 @@ impl<'a> VM<'a> {
                             )));
                         }
                     };
-
-                    let callee_idx = closure.fn_id as usize;
-                    let (local_count, params_count) = {
-                        let callee = &self.program.chunks[callee_idx];
-                        (callee.local_count as usize, callee.params_count as usize)
-                    };
-
-                    let new_stack_base = self.stack.len();
-
-                    let captures: Vec<Value> = closure.captures.clone();
-                    drop(closure);
-
-                    self.stack.extend(captures);
-                    self.stack.extend(args);
-
-                    let extra_locals = local_count - params_count;
-                    self.stack
-                        .resize(self.stack.len() + extra_locals, Value::Nil);
-
-                    self.frames.push(CallFrame {
-                        chunk_idx: callee_idx,
-                        ip: 0,
-                        stack_base: new_stack_base,
-                    });
+                    self.setup_closure_frame(&closure, args);
                 }
 
                 Op::Return => {
@@ -992,7 +986,8 @@ impl<'a> VM<'a> {
                                 while j > 0 {
                                     let a = items[j - 1].clone();
                                     let b = items[j].clone();
-                                    let result = self.call_function(comparator_idx, vec![a, b])?;
+                                    let result =
+                                        self.call_function(registry, comparator_idx, vec![a, b])?;
                                     let Value::Bool(is_ordered) = result else {
                                         return Err(RuntimeError::new(
                                             "sort_by comparator must return bool",
@@ -1056,7 +1051,7 @@ impl<'a> VM<'a> {
 
                 Op::ToString => {
                     let val = self.pop();
-                    let s = self.format_value(&val)?;
+                    let s = self.format_value(registry, &val)?;
                     self.push(Value::String(ManagedRc::new(s)));
                 }
 
@@ -1069,7 +1064,7 @@ impl<'a> VM<'a> {
                         };
                     let s = match val {
                         Value::Enum(ref e) if e.type_id == OPTION_TYPE_ID && e.variant == 1 => {
-                            let inner = self.format_value(&e.fields[0])?;
+                            let inner = self.format_value(registry, &e.fields[0])?;
                             format!(".Some({inner})")
                         }
                         Value::Enum(ref e) if e.type_id == OPTION_TYPE_ID => {
@@ -1077,7 +1072,7 @@ impl<'a> VM<'a> {
                         }
                         Value::Nil => format!(".None<{type_name}>"),
                         other => {
-                            let inner = self.format_value(&other)?;
+                            let inner = self.format_value(registry, &other)?;
                             format!(".Some({inner})")
                         }
                     };
@@ -1086,14 +1081,59 @@ impl<'a> VM<'a> {
 
                 Op::Format(spec) => {
                     let val = self.pop();
-                    let s = self.format_value_with_spec(&val, &spec)?;
+                    let s = self.format_value_with_spec(registry, &val, &spec)?;
                     self.push(Value::String(ManagedRc::new(s)));
                 }
             }
         }
     }
 
-    fn call_function(&mut self, chunk_idx: usize, args: Vec<Value>) -> Result<Value, RuntimeError> {
+    fn setup_closure_frame(&mut self, closure: &ClosureData, args: Vec<Value>) {
+        let callee_idx = closure.fn_id as usize;
+        let (local_count, params_count) = {
+            let callee = &self.program.chunks[callee_idx];
+            (callee.local_count as usize, callee.params_count as usize)
+        };
+        let new_stack_base = self.stack.len();
+        self.stack.extend(closure.captures.clone());
+        self.stack.extend(args);
+
+        let extra_locals = local_count - params_count;
+        self.stack
+            .resize(self.stack.len() + extra_locals, Value::Nil);
+        self.frames.push(CallFrame {
+            chunk_idx: callee_idx,
+            ip: 0,
+            stack_base: new_stack_base,
+        });
+    }
+
+    pub fn call_closure(
+        &mut self,
+        registry: &ExternRegistry,
+        closure: &Value,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let closure = match closure {
+            Value::Closure(c) => c.clone(),
+            other => {
+                return Err(RuntimeError::new(format!(
+                    "type error: expected callable, got {}",
+                    type_name(other)
+                )));
+            }
+        };
+        let return_depth = self.frames.len();
+        self.setup_closure_frame(&closure, args);
+        self.run_until_depth(registry, return_depth)
+    }
+
+    fn call_function(
+        &mut self,
+        registry: &ExternRegistry,
+        chunk_idx: usize,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
         let return_depth = self.frames.len();
 
         let stack_base = self.stack.len();
@@ -1111,17 +1151,18 @@ impl<'a> VM<'a> {
         self.stack
             .resize(self.stack.len() + extra_locals, Value::Nil);
 
-        self.run_until_depth(return_depth)
+        self.run_until_depth(registry, return_depth)
     }
 
     fn format_struct_data(
         &mut self,
+        registry: &ExternRegistry,
         s: &StructData,
         value: &Value,
     ) -> Result<String, RuntimeError> {
         let meta = &self.program.aggregate_meta[s.type_id as usize];
         if let Some(func_id) = meta.display_func {
-            let result = self.call_function(func_id.0 as usize, vec![value.clone()])?;
+            let result = self.call_function(registry, func_id.0 as usize, vec![value.clone()])?;
             match result {
                 Value::String(s) => Ok((*s).clone()),
                 _ => Err(RuntimeError::new("to_string must return a string")),
@@ -1135,7 +1176,7 @@ impl<'a> VM<'a> {
                 if i > 0 {
                     out.push_str(", ");
                 }
-                let formatted = self.format_value(val)?;
+                let formatted = self.format_value(registry, val)?;
                 write!(out, "{fname}: {formatted}").unwrap();
             }
             out.push(')');
@@ -1143,29 +1184,37 @@ impl<'a> VM<'a> {
         }
     }
 
-    fn format_sequence(&mut self, elements: &[Value]) -> Result<String, RuntimeError> {
+    fn format_sequence(
+        &mut self,
+        registry: &ExternRegistry,
+        elements: &[Value],
+    ) -> Result<String, RuntimeError> {
         let mut out = String::from("[");
         for (i, v) in elements.iter().enumerate() {
             if i > 0 {
                 out.push_str(", ");
             }
-            let formatted = self.format_value(v)?;
+            let formatted = self.format_value(registry, v)?;
             out.push_str(&formatted);
         }
         out.push(']');
         Ok(out)
     }
 
-    fn format_value(&mut self, value: &Value) -> Result<String, RuntimeError> {
+    fn format_value(
+        &mut self,
+        registry: &ExternRegistry,
+        value: &Value,
+    ) -> Result<String, RuntimeError> {
         match value {
-            Value::Struct(s) | Value::DataRef(s) => self.format_struct_data(s, value),
+            Value::Struct(s) | Value::DataRef(s) => self.format_struct_data(registry, s, value),
             Value::List(l) => {
                 let elems: Vec<Value> = l.iter().cloned().collect();
-                self.format_sequence(&elems)
+                self.format_sequence(registry, &elems)
             }
             Value::Array(a) => {
                 let elems: Vec<Value> = a.iter().cloned().collect();
-                self.format_sequence(&elems)
+                self.format_sequence(registry, &elems)
             }
             Value::Map(m) => {
                 let mut out = String::from("[");
@@ -1178,8 +1227,8 @@ impl<'a> VM<'a> {
                     if i > 0 {
                         out.push_str(", ");
                     }
-                    let fk = self.format_value(k)?;
-                    let fv = self.format_value(v)?;
+                    let fk = self.format_value(registry, k)?;
+                    let fv = self.format_value(registry, v)?;
                     write!(out, "{fk}: {fv}").unwrap();
                 }
                 out.push(']');
@@ -1192,7 +1241,7 @@ impl<'a> VM<'a> {
                     if i > 0 {
                         out.push_str(", ");
                     }
-                    let formatted = self.format_value(v)?;
+                    let formatted = self.format_value(registry, v)?;
                     out.push_str(&formatted);
                 }
                 out.push(')');
@@ -1202,7 +1251,7 @@ impl<'a> VM<'a> {
                 if e.type_id == OPTION_TYPE_ID {
                     return match e.variant {
                         1 => {
-                            let inner = self.format_value(&e.fields[0])?;
+                            let inner = self.format_value(registry, &e.fields[0])?;
                             Ok(format!(".Some({inner})"))
                         }
                         _ => Ok(".None".to_string()),
@@ -1221,14 +1270,14 @@ impl<'a> VM<'a> {
                     VariantShape::Tuple(_) => {
                         let mut vals = vec![];
                         for v in &fields {
-                            vals.push(self.format_value(v)?);
+                            vals.push(self.format_value(registry, v)?);
                         }
                         Ok(format!("{enum_name}.{variant_name}({})", vals.join(", ")))
                     }
                     VariantShape::Struct(field_defs) => {
                         let mut pairs = vec![];
                         for (fmeta, val) in field_defs.iter().zip(fields.iter()) {
-                            let formatted = self.format_value(val)?;
+                            let formatted = self.format_value(registry, val)?;
                             pairs.push(format!("{}: {formatted}", fmeta.name));
                         }
                         Ok(format!("{enum_name}.{variant_name}({})", pairs.join(", ")))
@@ -1242,23 +1291,29 @@ impl<'a> VM<'a> {
 
     fn format_value_with_spec(
         &mut self,
+        registry: &ExternRegistry,
         value: &Value,
         spec: &FormatSpec,
     ) -> Result<String, RuntimeError> {
-        let raw = self.format_raw(value, spec)?;
+        let raw = self.format_raw(registry, value, spec)?;
         let is_numeric = matches!(value, Value::Int(_) | Value::Float(_) | Value::Double(_));
         let is_string = matches!(value, Value::String(_));
         let signed = spec.apply_sign(&raw, is_numeric);
         Ok(spec.apply_padding(&signed, is_string))
     }
 
-    fn format_raw(&mut self, value: &Value, spec: &FormatSpec) -> Result<String, RuntimeError> {
+    fn format_raw(
+        &mut self,
+        registry: &ExternRegistry,
+        value: &Value,
+        spec: &FormatSpec,
+    ) -> Result<String, RuntimeError> {
         match spec.kind {
             FormatKind::Default => match (value, spec.precision) {
                 (Value::Float(v), Some(prec)) => Ok(format!("{:.prec$}", v, prec = prec as usize)),
                 (Value::Double(v), Some(prec)) => Ok(format!("{:.prec$}", v, prec = prec as usize)),
                 (Value::String(s), Some(prec)) => Ok(s.chars().take(prec as usize).collect()),
-                _ => self.format_value(value),
+                _ => self.format_value(registry, value),
             },
             FormatKind::Hex => {
                 let Value::Int(n) = value else {
@@ -1305,6 +1360,10 @@ mod tests {
     use super::*;
     use crate::vm::{bytecode::Chunk, managed_rc::ManagedRc};
 
+    fn empty_registry() -> ExternRegistry {
+        ExternRegistry::new(0)
+    }
+
     fn make_program(chunks: Vec<Chunk>, main_idx: usize) -> CompiledProgram {
         CompiledProgram {
             chunks,
@@ -1336,7 +1395,7 @@ mod tests {
         let chunk = simple_chunk("main", vec![Op::Nil, Op::Return], vec![]);
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
         assert!(vm.stdout.is_empty());
     }
 
@@ -1349,7 +1408,7 @@ mod tests {
         );
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1364,7 +1423,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1379,7 +1438,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1394,7 +1453,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1408,7 +1467,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1428,7 +1487,7 @@ mod tests {
 
         let program = make_program(vec![callee, main], 1);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1453,7 +1512,7 @@ mod tests {
 
         let program = make_program(vec![add_chunk, main_chunk], 1);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1468,7 +1527,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "hello world\n");
     }
 
@@ -1484,7 +1543,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        let result = vm.run();
+        let result = vm.run(&empty_registry());
         assert!(result.is_err());
         assert!(result.unwrap_err().message.contains("zero"));
     }
@@ -1502,7 +1561,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
     }
 
     #[test]
@@ -1521,7 +1580,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
     }
 
     #[test]
@@ -1537,7 +1596,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
     }
 
     #[test]
@@ -1564,7 +1623,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
     }
 
     #[test]
@@ -1576,7 +1635,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
     }
 
     #[test]
@@ -1590,7 +1649,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
     }
 
     #[test]
@@ -1603,7 +1662,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
     }
 
     #[test]
@@ -1618,7 +1677,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
     }
 
     #[test]
@@ -1630,7 +1689,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
     }
 
     #[test]
@@ -1642,7 +1701,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
     }
 
     #[test]
@@ -1656,7 +1715,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
     }
 
     #[test]
@@ -1669,7 +1728,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
     }
 
     #[test]
@@ -1684,7 +1743,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1699,7 +1758,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1718,7 +1777,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1736,7 +1795,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_err());
+        assert!(vm.run(&empty_registry()).is_err());
     }
 
     #[test]
@@ -1769,7 +1828,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1808,7 +1867,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1823,7 +1882,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1834,7 +1893,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1851,7 +1910,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1869,7 +1928,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1888,7 +1947,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1910,7 +1969,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1944,7 +2003,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1970,7 +2029,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -1997,7 +2056,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -2023,7 +2082,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -2045,7 +2104,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -2073,7 +2132,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -2099,7 +2158,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_ok());
+        assert!(vm.run(&empty_registry()).is_ok());
     }
 
     #[test]
@@ -2119,7 +2178,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "<ref@0>\n");
     }
 
@@ -2146,7 +2205,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "<ref@1>\n");
     }
 
@@ -2162,7 +2221,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_err());
+        assert!(vm.run(&empty_registry()).is_err());
     }
 
     #[test]
@@ -2188,7 +2247,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "42\n");
     }
 
@@ -2218,7 +2277,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "99\n");
     }
 
@@ -2252,7 +2311,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "99\n");
     }
 
@@ -2294,7 +2353,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "99\n20\n");
     }
 
@@ -2322,7 +2381,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_err());
+        assert!(vm.run(&empty_registry()).is_err());
     }
 
     #[test]
@@ -2361,7 +2420,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "99\n");
     }
 
@@ -2400,7 +2459,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "99\n");
     }
 
@@ -2437,7 +2496,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "99\n");
     }
 
@@ -2484,7 +2543,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "99\n10\n");
     }
 
@@ -2514,7 +2573,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        assert!(vm.run().is_err());
+        assert!(vm.run(&empty_registry()).is_err());
     }
 
     #[test]
@@ -2547,7 +2606,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "99\n");
     }
 
@@ -2590,7 +2649,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "99\n99\n");
     }
 
@@ -2624,7 +2683,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "1\n");
     }
 
@@ -2650,7 +2709,7 @@ mod tests {
 
         let program = make_program(vec![chunk], 0);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "<pathref@0[1]>\n");
     }
 
@@ -2680,7 +2739,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "99\n");
     }
 
@@ -2712,7 +2771,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "8\n");
     }
 
@@ -2747,7 +2806,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "99\n");
     }
 
@@ -2785,7 +2844,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "42\n");
     }
 
@@ -2823,7 +2882,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "42\n");
     }
 
@@ -2867,7 +2926,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "99\n");
     }
 
@@ -2914,7 +2973,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "99\n20\n");
     }
 
@@ -2946,7 +3005,7 @@ mod tests {
 
         let program = make_program(vec![callee, main_chunk], 1);
         let mut vm = VM::new(&program);
-        vm.run().unwrap();
+        vm.run(&empty_registry()).unwrap();
         assert_eq!(vm.stdout, "42\n");
     }
 }

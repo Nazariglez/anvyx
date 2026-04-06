@@ -323,6 +323,7 @@ impl TypedBodyResult {
 pub(super) struct VarInfo {
     pub ty: Type,
     pub mutable: bool,
+    pub is_function: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -828,7 +829,27 @@ impl TypeChecker {
 
     pub(super) fn set_var(&mut self, name: Ident, ty: Type, mutable: bool) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name, VarInfo { ty, mutable });
+            scope.insert(
+                name,
+                VarInfo {
+                    ty,
+                    mutable,
+                    is_function: false,
+                },
+            );
+        }
+    }
+
+    pub(super) fn set_func_var(&mut self, name: Ident, ty: Type) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(
+                name,
+                VarInfo {
+                    ty,
+                    mutable: false,
+                    is_function: true,
+                },
+            );
         }
     }
 
@@ -872,12 +893,15 @@ impl TypeChecker {
         let Some(&boundary) = self.lambda_boundaries.last() else {
             return;
         };
-        let Some((scope_depth, ty)) = self
-            .get_var_with_scope_depth(name)
-            .map(|(depth, info)| (depth, info.ty.clone()))
-        else {
+        let Some((scope_depth, info)) = self.get_var_with_scope_depth(name) else {
             return;
         };
+        // builtins, user fns, extern fns, and imports are resolved
+        // by name in lowering not through captures.
+        if info.is_function {
+            return;
+        }
+        let ty = info.ty.clone();
         if scope_depth < boundary {
             // We add this capture to every enclosing lambda not just the one that mentions
             // the variable directly. Nested closures need the whole chain to carry the

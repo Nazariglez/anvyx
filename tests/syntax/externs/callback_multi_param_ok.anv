@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+extern fn app_run(update: fn(float) -> void, draw: fn() -> void);
+
+fn my_update(dt: float) {}
+fn my_draw() {}
+
+fn main() {
+    app_run(my_update, my_draw);
+    app_run(|dt| {}, || {});
+}

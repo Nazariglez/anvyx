@@ -10,6 +10,7 @@ fn fmt_float(v: f32) -> String {
     }
 }
 
+#[derive(Clone)]
 #[export_type]
 pub struct Vec2(pub glam::Vec2);
 
@@ -152,6 +153,7 @@ impl Vec2 {
     }
 }
 
+#[derive(Clone)]
 #[export_type]
 pub struct Vec3(pub glam::Vec3);
 
@@ -314,6 +316,7 @@ impl Vec3 {
     }
 }
 
+#[derive(Clone)]
 #[export_type]
 pub struct Vec4(pub glam::Vec4);
 
@@ -471,6 +474,7 @@ impl Vec4 {
     }
 }
 
+#[derive(Clone)]
 #[export_type]
 pub struct Mat4(pub glam::Mat4);
 
@@ -562,6 +566,7 @@ impl Mat4 {
     }
 }
 
+#[derive(Clone)]
 #[export_type]
 pub struct Quat(pub glam::Quat);
 
@@ -659,6 +664,7 @@ impl Quat {
     }
 }
 
+#[derive(Clone)]
 #[export_type]
 pub struct Mat3(pub glam::Mat3);
 

@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+extern fn native_apply(value: int, cb: fn(int) -> int) -> int;
+
+fn main() {
+    let result = native_apply(5, 42);
+}

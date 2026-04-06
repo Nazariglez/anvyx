@@ -2,6 +2,7 @@ use std::fmt;
 
 use anvyx_lang::{export_methods, export_type};
 
+#[derive(Clone)]
 #[export_type]
 pub struct IVec2(pub glam::I64Vec2);
 
@@ -116,6 +117,7 @@ impl IVec2 {
     }
 }
 
+#[derive(Clone)]
 #[export_type]
 pub struct IVec3(pub glam::I64Vec3);
 
@@ -244,6 +246,7 @@ impl IVec3 {
     }
 }
 
+#[derive(Clone)]
 #[export_type]
 pub struct IVec4(pub glam::I64Vec4);
 

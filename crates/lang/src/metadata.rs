@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ExternDecl {
     pub name: &'static str,
-    pub params: &'static [(&'static str, &'static str)],
+    pub params: Vec<(&'static str, &'static str)>,
     pub ret: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doc: Option<&'static str>,
@@ -21,12 +21,12 @@ pub struct ExternTypeDecl {
     pub operators: Vec<ExternOpDecl>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternTypeDeclConst {
     pub name: &'static str,
     pub doc: Option<&'static str>,
     pub has_init: bool,
-    pub fields: &'static [ExternFieldDecl],
+    pub fields: Vec<ExternFieldDecl>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -36,22 +36,22 @@ pub struct ExternFieldDecl {
     pub computed: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ExternMethodDecl {
     pub name: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doc: Option<&'static str>,
     pub receiver: &'static str,
-    pub params: &'static [(&'static str, &'static str)],
+    pub params: Vec<(&'static str, &'static str)>,
     pub ret: &'static str,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ExternStaticMethodDecl {
     pub name: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub doc: Option<&'static str>,
-    pub params: &'static [(&'static str, &'static str)],
+    pub params: Vec<(&'static str, &'static str)>,
     pub ret: &'static str,
 }
 
@@ -333,7 +333,7 @@ mod tests {
     fn single_function_with_params() {
         let decl = ExternDecl {
             name: "add",
-            params: &[("a", "int"), ("b", "int")],
+            params: vec![("a", "int"), ("b", "int")],
             ret: "int",
             doc: None,
         };
@@ -349,13 +349,13 @@ mod tests {
         let decls = [
             ExternDecl {
                 name: "add",
-                params: &[("a", "int"), ("b", "int")],
+                params: vec![("a", "int"), ("b", "int")],
                 ret: "int",
                 doc: None,
             },
             ExternDecl {
                 name: "greet",
-                params: &[("name", "string")],
+                params: vec![("name", "string")],
                 ret: "string",
                 doc: None,
             },
@@ -371,7 +371,7 @@ mod tests {
     fn void_return() {
         let decl = ExternDecl {
             name: "noop",
-            params: &[],
+            params: vec![],
             ret: "void",
             doc: None,
         };
@@ -385,25 +385,25 @@ mod tests {
         let decls = [
             ExternDecl {
                 name: "f_int",
-                params: &[("x", "int")],
+                params: vec![("x", "int")],
                 ret: "int",
                 doc: None,
             },
             ExternDecl {
                 name: "f_float",
-                params: &[("x", "float")],
+                params: vec![("x", "float")],
                 ret: "float",
                 doc: None,
             },
             ExternDecl {
                 name: "f_bool",
-                params: &[("x", "bool")],
+                params: vec![("x", "bool")],
                 ret: "bool",
                 doc: None,
             },
             ExternDecl {
                 name: "f_string",
-                params: &[("x", "string")],
+                params: vec![("x", "string")],
                 ret: "string",
                 doc: None,
             },
@@ -419,7 +419,7 @@ mod tests {
     fn no_params() {
         let decl = ExternDecl {
             name: "get_val",
-            params: &[],
+            params: vec![],
             ret: "int",
             doc: None,
         };
@@ -454,13 +454,13 @@ mod tests {
         let decls = [
             ExternDecl {
                 name: "add",
-                params: &[("a", "int"), ("b", "int")],
+                params: vec![("a", "int"), ("b", "int")],
                 ret: "int",
                 doc: None,
             },
             ExternDecl {
                 name: "greet",
-                params: &[("name", "string")],
+                params: vec![("name", "string")],
                 ret: "string",
                 doc: None,
             },
@@ -646,7 +646,7 @@ mod tests {
         }];
         let func_decls = [ExternDecl {
             name: "create",
-            params: &[],
+            params: vec![],
             ret: "Sprite",
             doc: None,
         }];
@@ -725,7 +725,7 @@ mod tests {
         }];
         let func_decls = [ExternDecl {
             name: "create",
-            params: &[("x", "int")],
+            params: vec![("x", "int")],
             ret: "int",
             doc: None,
         }];
@@ -764,13 +764,13 @@ mod tests {
                 name: "move_by",
                 doc: None,
                 receiver: "var",
-                params: &[("dx", "float"), ("dy", "float")],
+                params: vec![("dx", "float"), ("dy", "float")],
                 ret: "void",
             }],
             statics: vec![ExternStaticMethodDecl {
                 name: "new",
                 doc: None,
-                params: &[("x", "float"), ("y", "float")],
+                params: vec![("x", "float"), ("y", "float")],
                 ret: "Point",
             }],
             operators: vec![],

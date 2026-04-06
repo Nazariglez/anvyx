@@ -15,6 +15,9 @@ repository = "https://github.com/Nazariglez/anvyx"
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 
+# i like using matchs for options 
+single_match_else = "allow"
+
 # allow cast to u16/u32 for VM instruction operands
 cast_possible_truncation = "allow"
 cast_sign_loss = "allow"

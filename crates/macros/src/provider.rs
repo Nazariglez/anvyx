@@ -109,38 +109,44 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
         let init_fields_fn = qualify(&prefix, &crate::naming::init_fields_fn_ident(type_name));
 
         type_decl_refs.push(quote! {
-            anvyx_lang::ExternTypeDecl {
-                name: #type_decl.name,
-                doc: #type_decl.doc,
-                has_init: #type_decl.has_init || #has_init,
-                fields: {
-                    let init_fields = #init_fields_fn();
-                    if !init_fields.is_empty() {
-                        let init_names: ::std::collections::HashSet<&str> =
-                            init_fields.iter().map(|fd| fd.name).collect();
-                        let mut f = init_fields;
-                        for fd in #type_decl.fields.iter() {
-                            if !init_names.contains(fd.name) {
-                                f.push(anvyx_lang::ExternFieldDecl {
-                                    name: fd.name, ty: fd.ty, computed: true
-                                });
+            {
+                let __td = #type_decl();
+                let __methods = #methods_decl();
+                let __statics = #statics_decl();
+                let __ops = #ops_decl();
+                anvyx_lang::ExternTypeDecl {
+                    name: __td.name,
+                    doc: __td.doc,
+                    has_init: __td.has_init || #has_init,
+                    fields: {
+                        let init_fields = #init_fields_fn();
+                        if !init_fields.is_empty() {
+                            let init_names: ::std::collections::HashSet<&str> =
+                                init_fields.iter().map(|fd| fd.name).collect();
+                            let mut f = init_fields;
+                            for fd in __td.fields.iter() {
+                                if !init_names.contains(fd.name) {
+                                    f.push(anvyx_lang::ExternFieldDecl {
+                                        name: fd.name, ty: fd.ty, computed: true
+                                    });
+                                }
                             }
-                        }
-                        for fd in #getter_fields_fn().into_iter() {
-                            if !init_names.contains(fd.name) {
-                                f.push(fd);
+                            for fd in #getter_fields_fn().into_iter() {
+                                if !init_names.contains(fd.name) {
+                                    f.push(fd);
+                                }
                             }
+                            f
+                        } else {
+                            let mut f = __td.fields;
+                            f.extend(#getter_fields_fn());
+                            f
                         }
-                        f
-                    } else {
-                        let mut f = #type_decl.fields.to_vec();
-                        f.extend(#getter_fields_fn());
-                        f
-                    }
-                },
-                methods: #methods_decl.to_vec(),
-                statics: #statics_decl.to_vec(),
-                operators: #ops_decl.to_vec(),
+                    },
+                    methods: __methods,
+                    statics: __statics,
+                    operators: __ops,
+                }
             }
         });
 
@@ -158,7 +164,9 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
     }
 
     Ok(quote! {
-        pub const ANVYX_EXPORTS: &[anvyx_lang::ExternDecl] = &[#(#decl_refs),*];
+        pub fn anvyx_exports() -> Vec<anvyx_lang::ExternDecl> {
+            vec![#(#decl_refs()),*]
+        }
 
         pub fn anvyx_type_exports() -> Vec<anvyx_lang::ExternTypeDecl> {
             vec![#(#type_decl_refs),*]

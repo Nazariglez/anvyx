@@ -33,14 +33,9 @@ impl Parse for ExportTypeArgs {
 }
 
 pub fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item_for_error = item.clone();
-    match do_expand(attr, item) {
-        Ok(ts) => ts,
-        Err(e) => {
-            let err = e.to_compile_error();
-            quote! { #err #item_for_error }
-        }
-    }
+    let fallback = item.clone();
+    let result = do_expand(attr, item);
+    crate::util::expand_or_error(&fallback, result)
 }
 
 fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
@@ -87,7 +82,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
         .iter()
         .map(|(ident, ty)| {
             let name_str = ident.to_string();
-            quote! { anvyx_lang::ExternFieldDecl { name: #name_str, ty: <#ty as anvyx_lang::AnvyxConvert>::ANVYX_TYPE, computed: false } }
+            quote! { anvyx_lang::ExternFieldDecl { name: #name_str, ty: <#ty as anvyx_lang::AnvyxConvert>::anvyx_type(), computed: false } }
         })
         .collect();
 
@@ -200,13 +195,15 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
     Ok(quote! {
         #cleaned_struct
 
-        pub const #decl_ident: anvyx_lang::ExternTypeDeclConst =
+        #[allow(non_snake_case)]
+        pub fn #decl_ident() -> anvyx_lang::ExternTypeDeclConst {
             anvyx_lang::ExternTypeDeclConst {
                 name: #anvyx_name,
                 doc: #type_doc_token,
                 has_init: #auto_init,
-                fields: &[#(#field_decls),*],
-            };
+                fields: vec![#(#field_decls),*],
+            }
+        }
 
         ::std::thread_local! {
             static #store_ident: ::std::cell::RefCell<anvyx_lang::HandleStore<#struct_ident>>
@@ -243,8 +240,8 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
         }
 
         impl anvyx_lang::AnvyxConvert for #struct_ident {
-            const ANVYX_TYPE: &'static str = #anvyx_name;
-            const ANVYX_OPTION_TYPE: &'static str = #option_name;
+            fn anvyx_type() -> &'static str { #anvyx_name }
+            fn anvyx_option_type() -> &'static str { #option_name }
 
             fn into_anvyx(self) -> anvyx_lang::Value {
                 anvyx_lang::extern_handle(self)
@@ -257,7 +254,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
                     ));
                 };
                 let id = ehd.id;
-                <#struct_ident as anvyx_lang::AnvyxExternType>::with_store(|s| s.borrow_mut().remove(id))
+                <#struct_ident as anvyx_lang::AnvyxExternType>::with_store(|s| s.borrow().clone_value(id))
             }
         }
 

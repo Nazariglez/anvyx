@@ -1,5 +1,6 @@
 use anvyx_lang::{export_fn, export_methods, export_type};
 
+#[derive(Clone)]
 #[export_type]
 pub struct Color {
     #[field]

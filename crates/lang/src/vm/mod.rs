@@ -1,5 +1,6 @@
 mod builtins;
 mod bytecode;
+pub mod callback;
 mod compiler;
 pub(crate) mod cycle_collector;
 pub mod extern_type;
@@ -10,10 +11,12 @@ mod value;
 
 use std::{collections::HashMap, fmt::Write};
 
-pub use extern_type::{AnvyxConvert, AnvyxExternType, extern_handle};
+pub use callback::{AnvyxFn, VmContext, with_callback_ctx};
+pub use compiler::CompiledProgram;
+pub use extern_type::{AnvyxConvert, AnvyxExternType, ExternHandle, extern_handle};
 pub use handle_store::HandleStore;
 pub use managed_rc::ManagedRc;
-pub use runtime::ExternHandler;
+pub use runtime::{ExternHandler, ExternRegistry, VM};
 pub use value::{
     DisplayDetect, DisplayDetectFallback, EnumData, ExternHandleData, MapStorage, RuntimeError,
     StructData, Value,
@@ -21,17 +24,17 @@ pub use value::{
 
 use crate::hir;
 
-pub fn run_with_externs(
+pub fn compile_with_externs(
     hir_prog: &hir::Program,
     externs: HashMap<String, ExternHandler>,
-) -> Result<String, String> {
+) -> Result<(CompiledProgram, ExternRegistry), String> {
     let compiled = compiler::compile(hir_prog).map_err(|e| format!("Compile error: {e}"))?;
-    let mut vm = runtime::VM::new(&compiled);
 
+    let mut registry = ExternRegistry::new(compiled.extern_names.len());
     for (name, handler) in externs {
         let idx = compiled.extern_names.iter().position(|n| n == &name);
         match idx {
-            Some(i) => vm.register_extern(i, handler),
+            Some(i) => registry.register(i, handler),
             None => {
                 return Err(format!(
                     "Registered extern '{name}' was not declared in the program"
@@ -40,7 +43,18 @@ pub fn run_with_externs(
         }
     }
 
-    vm.run().map_err(|e| format!("Runtime error: {e}"))?;
+    Ok((compiled, registry))
+}
+
+pub fn run_with_externs(
+    hir_prog: &hir::Program,
+    externs: HashMap<String, ExternHandler>,
+) -> Result<String, String> {
+    let (compiled, registry) = compile_with_externs(hir_prog, externs)?;
+
+    let mut vm = VM::new(&compiled);
+    vm.run(&registry)
+        .map_err(|e| format!("Runtime error: {e}"))?;
 
     // we need to take the stdout before dropping the VM because the VM drops the stack
     let stdout = std::mem::take(&mut vm.stdout);
@@ -87,6 +101,38 @@ mod tests {
         }))
     }
 
+    // extern type fixture for callback and handle integration tests
+    struct Counter {
+        value: i64,
+    }
+
+    thread_local! {
+        static COUNTER_STORE: std::cell::RefCell<super::handle_store::HandleStore<Counter>> =
+            std::cell::RefCell::new(super::handle_store::HandleStore::new());
+    }
+
+    impl super::extern_type::AnvyxExternType for Counter {
+        const TYPE_NAME: &'static str = "Counter";
+        fn with_store<R>(
+            f: impl FnOnce(&std::cell::RefCell<super::handle_store::HandleStore<Self>>) -> R,
+        ) -> R {
+            COUNTER_STORE.with(f)
+        }
+        fn cleanup(id: u64) {
+            Self::with_store(|s| {
+                let _ = s.borrow_mut().remove(id);
+            });
+        }
+        fn to_display(id: u64) -> String {
+            Self::with_store(|s| {
+                s.borrow()
+                    .borrow(id)
+                    .map(|c| format!("Counter({})", c.value))
+                    .unwrap_or_else(|_| "<invalid>".to_string())
+            })
+        }
+    }
+
     fn vm_ok(source: &str) -> String {
         TestCtx::vm_ok(source)
     }
@@ -103,6 +149,47 @@ mod tests {
     fn vm_err_with_externs(source: &str, externs: HashMap<String, ExternHandler>) -> String {
         let hir = crate::test_helpers::generate_hir(source, "<test>").expect("generate_hir failed");
         run_with_externs(&hir, externs).expect_err("expected vm error")
+    }
+
+    fn native_apply_externs() -> HashMap<String, ExternHandler> {
+        use super::callback::with_callback_ctx;
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "native_apply".to_string(),
+            Box::new(|args| {
+                let Value::Int(value) = args[0] else {
+                    panic!("expected int");
+                };
+                let closure = args[1].clone();
+                with_callback_ctx(|ctx| ctx.call_closure(&closure, vec![Value::Int(value)]))
+            }),
+        );
+        externs
+    }
+
+    fn compile_with_store_callback(
+        src: &str,
+        extern_name: &str,
+    ) -> (
+        super::compiler::CompiledProgram,
+        super::ExternRegistry,
+        std::sync::Arc<std::sync::Mutex<Option<Value>>>,
+    ) {
+        use std::sync::{Arc, Mutex};
+        let stored: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
+        let stored_clone = stored.clone();
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            extern_name.to_string(),
+            Box::new(move |args| {
+                *stored_clone.lock().unwrap() = Some(args[0].clone());
+                Ok(Value::Nil)
+            }),
+        );
+        let hir = crate::test_helpers::generate_hir(src, "<test>").expect("generate_hir failed");
+        let (compiled, registry) =
+            super::compile_with_externs(&hir, externs).expect("compile failed");
+        (compiled, registry, stored)
     }
 
     #[test]
@@ -1144,5 +1231,718 @@ fn main() {
 }"#;
         let out = vm_ok_with_externs(src, externs);
         assert_eq!(out, "[Item, Item]\n");
+    }
+
+    #[test]
+    fn extern_callback_named_fn() {
+        let externs = native_apply_externs();
+        let src = r#"
+            extern fn native_apply(value: int, cb: fn(int) -> int) -> int;
+            fn mul2(x: int) -> int {
+                return x * 2;
+            }
+            fn main() {
+                let result = native_apply(5, mul2);
+                assert(result == 10);
+                println("ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+    }
+
+    #[test]
+    fn extern_callback_closure_with_capture() {
+        let externs = native_apply_externs();
+        let src = r#"
+            extern fn native_apply(value: int, cb: fn(int) -> int) -> int;
+            fn main() {
+                let offset = 100;
+                let result = native_apply(5, |x| x + offset);
+                assert(result == 105);
+                println("ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "ok\n");
+    }
+
+    #[test]
+    fn extern_callback_closure_with_builtin() {
+        let externs = native_apply_externs();
+        let src = r#"
+            extern fn native_apply(value: int, cb: fn(int) -> int) -> int;
+            fn main() {
+                let result = native_apply(5, |x| {
+                    println(x);
+                    x * 2
+                });
+                assert(result == 10);
+                println("builtin ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "5\nbuiltin ok\n");
+    }
+
+    #[test]
+    fn host_driven_callback() {
+        let src = r#"
+            extern fn store_callback(cb: fn(int) -> int);
+            fn main() {
+                store_callback(|x| x * 3);
+            }
+        "#;
+        let (compiled, registry, stored) = compile_with_store_callback(src, "store_callback");
+        let mut vm = super::runtime::VM::new(&compiled);
+        vm.run(&registry).expect("vm run failed");
+        let closure_val = stored.lock().unwrap().clone().expect("closure not stored");
+        let result = vm
+            .call_closure(&registry, &closure_val, vec![Value::Int(7)])
+            .expect("callback failed");
+        assert_eq!(result, Value::Int(21));
+    }
+
+    #[test]
+    fn anvyx_fn_typed_callback() {
+        use super::{callback::AnvyxFn, extern_type::AnvyxConvert};
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "native_apply".to_string(),
+            Box::new(|args| {
+                let value = <i64 as AnvyxConvert>::from_anvyx(&args[0])?;
+                let cb = <AnvyxFn<(i64,), i64> as AnvyxConvert>::from_anvyx(&args[1])?;
+                let result = cb.call(value)?;
+                Ok(result.into_anvyx())
+            }),
+        );
+        let src = r#"
+            extern fn native_apply(value: int, cb: fn(int) -> int) -> int;
+            fn main() {
+                let result = native_apply(5, |x| x * 2);
+                assert(result == 10);
+                println("typed ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "typed ok\n");
+    }
+
+    #[test]
+    fn anvyx_fn_void_callback() {
+        // Note: closures passed to non-inline extern functions cannot call builtin functions
+        // (println, assert, etc.) — those names end up in the capture list because register_builtins
+        // pushes them at scope 0 (below any lambda boundary). The empty-block body avoids this.
+        use super::{callback::AnvyxFn, extern_type::AnvyxConvert};
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "native_each".to_string(),
+            Box::new(|args| {
+                let cb = <AnvyxFn<(i64,), ()> as AnvyxConvert>::from_anvyx(&args[0])?;
+                for i in 1..=3_i64 {
+                    cb.call(i)?;
+                }
+                Ok(Value::Nil)
+            }),
+        );
+        let src = r#"
+            extern fn native_each(cb: fn(int) -> void);
+            fn main() {
+                native_each(|x| { });
+                println("void ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "void ok\n");
+    }
+
+    #[test]
+    fn anvyx_fn_multi_arg_callback() {
+        use super::{callback::AnvyxFn, extern_type::AnvyxConvert};
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "native_fold".to_string(),
+            Box::new(|args| {
+                let init = <i64 as AnvyxConvert>::from_anvyx(&args[0])?;
+                let cb = <AnvyxFn<(i64, i64), i64> as AnvyxConvert>::from_anvyx(&args[1])?;
+                let mut acc = init;
+                for i in 1..=3_i64 {
+                    acc = cb.call(acc, i)?;
+                }
+                Ok(acc.into_anvyx())
+            }),
+        );
+        let src = r#"
+            extern fn native_fold(init: int, cb: fn(int, int) -> int) -> int;
+            fn main() {
+                let result = native_fold(0, |acc, x| acc + x);
+                assert(result == 6);
+                println("fold ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "fold ok\n");
+    }
+
+    #[test]
+    fn anvyx_fn_named_fn_callback() {
+        use super::{callback::AnvyxFn, extern_type::AnvyxConvert};
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "native_apply".to_string(),
+            Box::new(|args| {
+                let value = <i64 as AnvyxConvert>::from_anvyx(&args[0])?;
+                let cb = <AnvyxFn<(i64,), i64> as AnvyxConvert>::from_anvyx(&args[1])?;
+                let result = cb.call(value)?;
+                Ok(result.into_anvyx())
+            }),
+        );
+        let src = r#"
+            extern fn native_apply(value: int, cb: fn(int) -> int) -> int;
+            fn mul3(x: int) -> int {
+                x * 3
+            }
+            fn main() {
+                let result = native_apply(4, mul3);
+                assert(result == 12);
+                println("named ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "named ok\n");
+    }
+
+    #[test]
+    fn anvyx_fn_error_propagation() {
+        use super::{callback::AnvyxFn, extern_type::AnvyxConvert};
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "native_apply".to_string(),
+            Box::new(|args| {
+                let value = <i64 as AnvyxConvert>::from_anvyx(&args[0])?;
+                let cb = <AnvyxFn<(i64,), i64> as AnvyxConvert>::from_anvyx(&args[1])?;
+                let result = cb.call(value)?;
+                Ok(result.into_anvyx())
+            }),
+        );
+        let src = r#"
+            extern fn native_apply(value: int, cb: fn(int) -> int) -> int;
+            fn fail_fn(x: int) -> int {
+                assert(false);
+                x
+            }
+            fn main() {
+                native_apply(1, fail_fn);
+            }
+        "#;
+        let err = vm_err_with_externs(src, externs);
+        assert!(err.contains("assertion failed"), "got: {err}");
+    }
+
+    #[test]
+    fn anvyx_fn_multiple_callback_params() {
+        use super::{callback::AnvyxFn, extern_type::AnvyxConvert};
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "apply_both".to_string(),
+            Box::new(|args| {
+                let value = <i64 as AnvyxConvert>::from_anvyx(&args[0])?;
+                let cb_a = <AnvyxFn<(i64,), i64> as AnvyxConvert>::from_anvyx(&args[1])?;
+                let cb_b = <AnvyxFn<(i64,), i64> as AnvyxConvert>::from_anvyx(&args[2])?;
+                let a = cb_a.call(value)?;
+                let b = cb_b.call(value)?;
+                Ok((a + b).into_anvyx())
+            }),
+        );
+        let src = r#"
+            extern fn apply_both(value: int, f: fn(int) -> int, g: fn(int) -> int) -> int;
+            fn mul2(x: int) -> int { x * 2 }
+            fn mul3(x: int) -> int { x * 3 }
+            fn main() {
+                let result = apply_both(5, mul2, mul3);
+                assert(result == 25);
+                println("both ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "both ok\n");
+    }
+
+    #[test]
+    fn anvyx_fn_zero_arg_callback() {
+        use super::{callback::AnvyxFn, extern_type::AnvyxConvert};
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "native_get".to_string(),
+            Box::new(|args| {
+                let cb = <AnvyxFn<(), i64> as AnvyxConvert>::from_anvyx(&args[0])?;
+                let result = cb.call()?;
+                Ok(result.into_anvyx())
+            }),
+        );
+        let src = r#"
+            extern fn native_get(cb: fn() -> int) -> int;
+            fn answer() -> int { 42 }
+            fn main() {
+                let result = native_get(answer);
+                assert(result == 42);
+                println("zero arg ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "zero arg ok\n");
+    }
+
+    #[test]
+    fn anvyx_fn_callback_called_multiple_times() {
+        use super::{callback::AnvyxFn, extern_type::AnvyxConvert};
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "native_sum_squares".to_string(),
+            Box::new(|args| {
+                let cb = <AnvyxFn<(i64,), i64> as AnvyxConvert>::from_anvyx(&args[0])?;
+                let mut total = 0_i64;
+                for i in 1..=4_i64 {
+                    total += cb.call(i)?;
+                }
+                Ok(total.into_anvyx())
+            }),
+        );
+        // sum of squares 1..=4: 1+4+9+16=30
+        let src = r#"
+            extern fn native_sum_squares(cb: fn(int) -> int) -> int;
+            fn main() {
+                let total = native_sum_squares(|x| x * x);
+                assert(total == 30);
+                println("multi call ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "multi call ok\n");
+    }
+
+    #[test]
+    fn anvyx_fn_nested_callback() {
+        // Tests that AnvyxFn callbacks can be nested at the host level:
+        // native_compose(f, g)(x) == f(g(x))
+        // f = |x| x * 3, g = |x| x + 1, x = 4 => g(4)=5, f(5)=15
+        use super::{callback::AnvyxFn, extern_type::AnvyxConvert};
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "native_compose".to_string(),
+            Box::new(|args| {
+                let value = <i64 as AnvyxConvert>::from_anvyx(&args[0])?;
+                let f = <AnvyxFn<(i64,), i64> as AnvyxConvert>::from_anvyx(&args[1])?;
+                let g = <AnvyxFn<(i64,), i64> as AnvyxConvert>::from_anvyx(&args[2])?;
+                let mid = g.call(value)?;
+                let result = f.call(mid)?;
+                Ok(result.into_anvyx())
+            }),
+        );
+        let src = r#"
+            extern fn native_compose(value: int, f: fn(int) -> int, g: fn(int) -> int) -> int;
+            fn main() {
+                let result = native_compose(4, |x| x * 3, |x| x + 1);
+                assert(result == 15);
+                println("nested ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "nested ok\n");
+    }
+
+    #[test]
+    fn anvyx_fn_bool_returning_callback() {
+        use super::{callback::AnvyxFn, extern_type::AnvyxConvert};
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "native_count_if".to_string(),
+            Box::new(|args| {
+                let cb = <AnvyxFn<(i64,), bool> as AnvyxConvert>::from_anvyx(&args[0])?;
+                let mut count = 0_i64;
+                for i in 1..=10_i64 {
+                    if cb.call(i)? {
+                        count += 1;
+                    }
+                }
+                Ok(count.into_anvyx())
+            }),
+        );
+        let src = r#"
+            extern fn native_count_if(cb: fn(int) -> bool) -> int;
+            fn main() {
+                let evens = native_count_if(|x| x % 2 == 0);
+                assert(evens == 5);
+                println("bool cb ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "bool cb ok\n");
+    }
+
+    #[test]
+    fn anvyx_fn_closure_with_capture_typed() {
+        use super::{callback::AnvyxFn, extern_type::AnvyxConvert};
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "native_apply".to_string(),
+            Box::new(|args| {
+                let value = <i64 as AnvyxConvert>::from_anvyx(&args[0])?;
+                let cb = <AnvyxFn<(i64,), i64> as AnvyxConvert>::from_anvyx(&args[1])?;
+                let result = cb.call(value)?;
+                Ok(result.into_anvyx())
+            }),
+        );
+        let src = r#"
+            extern fn native_apply(value: int, cb: fn(int) -> int) -> int;
+            fn main() {
+                let offset = 100;
+                let result = native_apply(5, |x| x + offset);
+                assert(result == 105);
+                println("capture typed ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "capture typed ok\n");
+    }
+
+    #[test]
+    fn anvyx_fn_callback_with_extern_handle() {
+        // Proves ExternHandle<T> flows through AnvyxFn: Rust creates the handle,
+        // passes it to the closure, and the closure reads a field via the getter.
+        use super::{
+            callback::AnvyxFn,
+            extern_type::{AnvyxConvert, ExternHandle},
+        };
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+
+        externs.insert(
+            "run_with_counter".to_string(),
+            Box::new(|args| {
+                let cb =
+                    <AnvyxFn<(ExternHandle<Counter>,), i64> as AnvyxConvert>::from_anvyx(&args[0])?;
+                let handle = ExternHandle::new(Counter { value: 99 });
+                let result = cb.call(handle)?;
+                Ok(result.into_anvyx())
+            }),
+        );
+
+        externs.insert(
+            "Counter::__get_value".to_string(),
+            Box::new(|args| {
+                let handle = <ExternHandle<Counter> as AnvyxConvert>::from_anvyx(&args[0])?;
+                let v = handle.with_borrow(|c| c.value)?;
+                Ok(v.into_anvyx())
+            }),
+        );
+
+        let src = r#"
+            extern type Counter {
+                value: int;
+            }
+            extern fn run_with_counter(cb: fn(Counter) -> int) -> int;
+            fn main() {
+                let result = run_with_counter(|c| c.value);
+                assert(result == 99);
+                println("handle callback ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "handle callback ok\n");
+    }
+
+    #[test]
+    fn anvyx_fn_callback_with_extern_handle_method() {
+        // Proves ExternHandle<T> flows through AnvyxFn: Rust creates the handle,
+        // passes it to the closure, and the closure calls an immutable method on it.
+        use super::{
+            callback::AnvyxFn,
+            extern_type::{AnvyxConvert, ExternHandle},
+        };
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+
+        externs.insert(
+            "run_with_counter".to_string(),
+            Box::new(|args| {
+                let cb =
+                    <AnvyxFn<(ExternHandle<Counter>,), i64> as AnvyxConvert>::from_anvyx(&args[0])?;
+                let handle = ExternHandle::new(Counter { value: 42 });
+                let result = cb.call(handle)?;
+                Ok(result.into_anvyx())
+            }),
+        );
+
+        externs.insert(
+            "Counter::current".to_string(),
+            Box::new(|args| {
+                let handle = <ExternHandle<Counter> as AnvyxConvert>::from_anvyx(&args[0])?;
+                let v = handle.with_borrow(|c| c.value)?;
+                Ok(v.into_anvyx())
+            }),
+        );
+
+        let src = r#"
+            extern type Counter {
+                fn current(self) -> int;
+            }
+            extern fn run_with_counter(cb: fn(Counter) -> int) -> int;
+            fn main() {
+                let result = run_with_counter(|c| c.current());
+                assert(result == 42);
+                println("handle method ok");
+            }
+        "#;
+        let out = vm_ok_with_externs(src, externs);
+        assert_eq!(out, "handle method ok\n");
+    }
+
+    #[test]
+    fn host_driven_multiple_calls() {
+        let src = r#"
+            extern fn store_callback(cb: fn(int) -> int);
+            fn main() {
+                store_callback(|x| x * x);
+            }
+        "#;
+        let (compiled, registry, stored) = compile_with_store_callback(src, "store_callback");
+        let mut vm = super::runtime::VM::new(&compiled);
+        vm.run(&registry).expect("vm run failed");
+        let closure_val = stored.lock().unwrap().clone().expect("closure not stored");
+        for i in 1..=5_i64 {
+            let result = vm
+                .call_closure(&registry, &closure_val, vec![Value::Int(i)])
+                .expect("callback failed");
+            assert_eq!(result, Value::Int(i * i));
+        }
+    }
+
+    #[test]
+    fn host_driven_multiple_closures() {
+        use std::sync::{Arc, Mutex};
+
+        let stored_update: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
+        let stored_draw: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
+        let update_clone = stored_update.clone();
+        let draw_clone = stored_draw.clone();
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "register_update".to_string(),
+            Box::new(move |args| {
+                *update_clone.lock().unwrap() = Some(args[0].clone());
+                Ok(Value::Nil)
+            }),
+        );
+        externs.insert(
+            "register_draw".to_string(),
+            Box::new(move |args| {
+                *draw_clone.lock().unwrap() = Some(args[0].clone());
+                Ok(Value::Nil)
+            }),
+        );
+
+        let src = r#"
+            extern fn register_update(cb: fn(int) -> int);
+            extern fn register_draw(cb: fn() -> int);
+            fn main() {
+                register_update(|dt| dt * 2);
+                register_draw(|| 42);
+            }
+        "#;
+
+        let hir = crate::test_helpers::generate_hir(src, "<test>").expect("generate_hir failed");
+        let (compiled, registry) =
+            super::compile_with_externs(&hir, externs).expect("compile failed");
+
+        let mut vm = super::runtime::VM::new(&compiled);
+        vm.run(&registry).expect("vm run failed");
+
+        let update_val = stored_update
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("update not stored");
+        let draw_val = stored_draw
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("draw not stored");
+
+        let result = vm
+            .call_closure(&registry, &update_val, vec![Value::Int(10)])
+            .expect("update callback failed");
+        assert_eq!(result, Value::Int(20));
+
+        let result = vm
+            .call_closure(&registry, &draw_val, vec![])
+            .expect("draw callback failed");
+        assert_eq!(result, Value::Int(42));
+    }
+
+    #[test]
+    fn host_driven_named_fn() {
+        let src = r#"
+            extern fn store_callback(cb: fn(int) -> int);
+            fn triple(x: int) -> int { x * 3 }
+            fn main() {
+                store_callback(triple);
+            }
+        "#;
+        let (compiled, registry, stored) = compile_with_store_callback(src, "store_callback");
+        let mut vm = super::runtime::VM::new(&compiled);
+        vm.run(&registry).expect("vm run failed");
+        let closure_val = stored.lock().unwrap().clone().expect("closure not stored");
+        let result = vm
+            .call_closure(&registry, &closure_val, vec![Value::Int(5)])
+            .expect("callback failed");
+        assert_eq!(result, Value::Int(15));
+    }
+
+    #[test]
+    fn host_driven_callback_with_stdout() {
+        let src = r#"
+            extern fn store_callback(cb: fn(int) -> int);
+            fn process(x: int) -> int {
+                println(x);
+                x + 1
+            }
+            fn main() {
+                store_callback(process);
+            }
+        "#;
+        let (compiled, registry, stored) = compile_with_store_callback(src, "store_callback");
+        let mut vm = super::runtime::VM::new(&compiled);
+        vm.run(&registry).expect("vm run failed");
+        let closure_val = stored.lock().unwrap().clone().expect("closure not stored");
+
+        let result = vm
+            .call_closure(&registry, &closure_val, vec![Value::Int(10)])
+            .expect("callback failed");
+        assert_eq!(result, Value::Int(11));
+        assert_eq!(vm.stdout, "10\n");
+
+        let result = vm
+            .call_closure(&registry, &closure_val, vec![Value::Int(20)])
+            .expect("callback failed");
+        assert_eq!(result, Value::Int(21));
+        assert_eq!(vm.stdout, "10\n20\n");
+    }
+
+    #[test]
+    fn host_driven_callback_error() {
+        let src = r#"
+            extern fn store_callback(cb: fn(int) -> int);
+            fn guarded(x: int) -> int {
+                assert(x > 0);
+                x
+            }
+            fn main() {
+                store_callback(guarded);
+            }
+        "#;
+        let (compiled, registry, stored) = compile_with_store_callback(src, "store_callback");
+        let mut vm = super::runtime::VM::new(&compiled);
+        vm.run(&registry).expect("vm run failed");
+        let closure_val = stored.lock().unwrap().clone().expect("closure not stored");
+
+        let result = vm
+            .call_closure(&registry, &closure_val, vec![Value::Int(5)])
+            .expect("callback should succeed");
+        assert_eq!(result, Value::Int(5));
+
+        let err = vm
+            .call_closure(&registry, &closure_val, vec![Value::Int(-1)])
+            .expect_err("callback should fail");
+        assert!(err.to_string().contains("assertion failed"), "got: {err}");
+    }
+
+    #[test]
+    fn host_driven_closure_with_capture() {
+        let src = r#"
+            extern fn store_callback(cb: fn(int) -> int);
+            fn main() {
+                let factor = 7;
+                store_callback(|x| x * factor);
+            }
+        "#;
+        let (compiled, registry, stored) = compile_with_store_callback(src, "store_callback");
+        let mut vm = super::runtime::VM::new(&compiled);
+        vm.run(&registry).expect("vm run failed");
+        let closure_val = stored.lock().unwrap().clone().expect("closure not stored");
+        let result = vm
+            .call_closure(&registry, &closure_val, vec![Value::Int(3)])
+            .expect("callback failed");
+        assert_eq!(result, Value::Int(21));
+    }
+
+    #[test]
+    fn host_driven_simulate_game_loop() {
+        use std::sync::{Arc, Mutex};
+
+        let stored_update: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
+        let stored_draw: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
+        let update_clone = stored_update.clone();
+        let draw_clone = stored_draw.clone();
+
+        let mut externs: HashMap<String, ExternHandler> = HashMap::new();
+        externs.insert(
+            "app_run".to_string(),
+            Box::new(move |args| {
+                *update_clone.lock().unwrap() = Some(args[0].clone());
+                *draw_clone.lock().unwrap() = Some(args[1].clone());
+                Ok(Value::Nil)
+            }),
+        );
+
+        let src = r#"
+            extern fn app_run(update: fn(int) -> int, draw: fn() -> int);
+            fn main() {
+                app_run(|dt| dt + 1, || 99);
+            }
+        "#;
+
+        let hir = crate::test_helpers::generate_hir(src, "<test>").expect("generate_hir failed");
+        let (compiled, registry) =
+            super::compile_with_externs(&hir, externs).expect("compile failed");
+
+        let mut vm = super::runtime::VM::new(&compiled);
+        vm.run(&registry).expect("vm run failed");
+
+        let update_val = stored_update
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("update not stored");
+        let draw_val = stored_draw
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("draw not stored");
+
+        for frame in 0..3_i64 {
+            let dt = frame + 1;
+            let update_result = vm
+                .call_closure(&registry, &update_val, vec![Value::Int(dt)])
+                .expect("update failed");
+            assert_eq!(update_result, Value::Int(dt + 1));
+
+            let draw_result = vm
+                .call_closure(&registry, &draw_val, vec![])
+                .expect("draw failed");
+            assert_eq!(draw_result, Value::Int(99));
+        }
     }
 }

@@ -6,7 +6,7 @@ pub fn module() -> StdModule {
     StdModule {
         name: "math",
         anv_source: include_str!("./math.anv"),
-        exports: &[],
+        exports: || vec![],
         type_exports: || vec![],
         handlers: || HashMap::new(),
         init: None,

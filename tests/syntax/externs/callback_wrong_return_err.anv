@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+extern fn native_apply(value: int, cb: fn(int) -> int) -> int;
+
+fn to_str(x: int) -> string { "hello" }
+
+fn main() {
+    let result = native_apply(5, to_str);
+}

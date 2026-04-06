@@ -131,7 +131,7 @@ pub fn extract_metadata(project_root: &Path) -> Result<(), String> {
         let code = status.code().unwrap_or(1);
         Err(format!(
             "Metadata extraction failed (exit code {code}). \
-            Check that extern provider crates compile correctly and export ANVYX_EXPORTS/anvyx_type_exports()."
+            Check that extern provider crates compile correctly and export anvyx_exports()/anvyx_type_exports()."
         ))
     }
 }
@@ -200,7 +200,7 @@ fn generate_metadata_lines(sorted_names: &[&String]) -> String {
         let _ = write!(
             lines,
             "        {{\n\
-             \x20           let json = anvyx_lang::exports_to_json({name}::ANVYX_EXPORTS, &{name}::anvyx_type_exports());\n\
+             \x20           let json = anvyx_lang::exports_to_json(&{name}::anvyx_exports(), &{name}::anvyx_type_exports());\n\
              \x20           fs::write(format!(\"{{output_dir}}/{name}.json\"), json)\n\
              \x20               .unwrap_or_else(|e| {{ eprintln!(\"Failed to write metadata for '{name}': {{e}}\"); std::process::exit(1); }});\n\
              \x20       }}\n"
@@ -760,7 +760,7 @@ mod tests {
     fn main_rs_metadata_mode_present() {
         let output = generate_main_rs(&manifest_one_extern());
         assert!(output.contains("--metadata"));
-        assert!(output.contains("engine::ANVYX_EXPORTS"));
+        assert!(output.contains("engine::anvyx_exports()"));
         assert!(output.contains("engine::anvyx_type_exports()"));
         assert!(output.contains("anvyx_lang::exports_to_json"));
         assert!(output.contains("engine.json"));
@@ -771,9 +771,9 @@ mod tests {
     fn main_rs_metadata_mode_multiple_externs() {
         let output = generate_main_rs(&manifest_two_externs());
         assert!(output.contains("--metadata"));
-        assert!(output.contains("engine::ANVYX_EXPORTS"));
+        assert!(output.contains("engine::anvyx_exports()"));
         assert!(output.contains("engine::anvyx_type_exports()"));
-        assert!(output.contains("audio::ANVYX_EXPORTS"));
+        assert!(output.contains("audio::anvyx_exports()"));
         assert!(output.contains("audio::anvyx_type_exports()"));
         assert!(output.contains("engine.json"));
         assert!(output.contains("audio.json"));
@@ -784,7 +784,7 @@ mod tests {
         // With no externs, the --metadata block is still present but writes nothing
         let output = generate_main_rs(&manifest_no_externs());
         assert!(output.contains("--metadata"));
-        assert!(!output.contains("ANVYX_EXPORTS"));
+        assert!(!output.contains("anvyx_exports"));
         assert!(!output.contains("anvyx_type_exports"));
         assert!(output.contains("anvyx_std::std_modules()"));
         assert!(output.contains("run_program_with_std"));
@@ -826,7 +826,7 @@ mod tests {
         let main_content = fs::read_to_string(runner_dir.join("src/main.rs")).unwrap();
 
         assert!(main_content.contains("--metadata"));
-        assert!(main_content.contains("engine::ANVYX_EXPORTS"));
+        assert!(main_content.contains("engine::anvyx_exports()"));
         assert!(main_content.contains("engine.json"));
         assert!(main_content.contains("anvyx_std::std_modules()"));
         assert!(main_content.contains("run_program_with_std"));

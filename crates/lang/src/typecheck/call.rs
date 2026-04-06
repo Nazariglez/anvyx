@@ -1990,7 +1990,11 @@ pub(super) fn check_instantiated_body(
     if let Some(env) = ictx.module_env {
         type_checker.push_scope();
         for (name, info) in &env.func_bindings {
-            type_checker.set_var(*name, info.ty.clone(), info.mutable);
+            if info.is_function {
+                type_checker.set_func_var(*name, info.ty.clone());
+            } else {
+                type_checker.set_var(*name, info.ty.clone(), info.mutable);
+            }
         }
     }
 

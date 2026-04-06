@@ -26,7 +26,7 @@ fn main() {
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
 %EXTERN_EXTENDS%
 %RUNTIME_INIT%
-    match anvyx_lang::run_program_with_std(&source, &file_path, backend, externs, &extern_metadata, &std_sources, &core) {
+    match anvyx_lang::run_program_with_std(&source, &file_path, backend, externs, &extern_metadata, &std_sources, &core, &anvyx_lang::RustBackendConfig::default()) {
         Ok(output) => print!("{output}"),
         Err(e) => { eprintln!("{e}"); std::process::exit(1); }
     }

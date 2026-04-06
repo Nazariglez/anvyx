@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+struct Point2D { x: float, y: float }
+extern fn transform_point(point: Point2D, cb: fn(Point2D) -> float) -> float;
+
+fn main() {
+    let p = Point2D { x: 3.0, y: 4.0 };
+    let dist_sq = transform_point(p, |pt| pt.x * pt.x + pt.y * pt.y);
+}
