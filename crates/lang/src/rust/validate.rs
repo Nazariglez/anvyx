@@ -7,12 +7,41 @@ use crate::{
     ir_meta::{AggregateKind, VariantMeta, VariantShape},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Feature {
+    FmtF32,
+    FmtF64,
+    UsesMap,
+    UsesCollections,
+}
+
 #[derive(Debug, Default)]
 pub struct HelperFlags {
-    pub fmt_f32: bool,
-    pub fmt_f64: bool,
     pub stringify_aggregates: BTreeSet<u32>,
     pub stringify_enums: BTreeSet<u32>,
+    features: BTreeSet<Feature>,
+}
+
+impl HelperFlags {
+    pub fn fmt_f32(&self) -> bool {
+        self.features.contains(&Feature::FmtF32)
+    }
+
+    pub fn fmt_f64(&self) -> bool {
+        self.features.contains(&Feature::FmtF64)
+    }
+
+    pub fn uses_map(&self) -> bool {
+        self.features.contains(&Feature::UsesMap)
+    }
+
+    pub fn uses_collections(&self) -> bool {
+        self.features.contains(&Feature::UsesCollections)
+    }
+
+    fn enable(&mut self, feature: Feature) {
+        self.features.insert(feature);
+    }
 }
 
 pub struct RustPlan {
@@ -313,8 +342,8 @@ fn collect_stringify_needs(
     used_enums: &mut BTreeSet<u32>,
 ) {
     match ty {
-        Type::Float => helper_flags.fmt_f32 = true,
-        Type::Double => helper_flags.fmt_f64 = true,
+        Type::Float => helper_flags.enable(Feature::FmtF32),
+        Type::Double => helper_flags.enable(Feature::FmtF64),
         Type::Enum { .. } if ty.is_option() => {
             if let Some(inner) = ty.option_inner() {
                 collect_stringify_needs(program, inner, helper_flags, used_aggregates, used_enums);
@@ -421,10 +450,12 @@ fn validate_func(ctx: &mut ValidationCtx, func: &hir::Func) {
     for local in &func.locals[..func.params_len as usize] {
         validate_type(&local.ty, &fn_name, ctx.errors);
         track_type_usage(ctx.program, &local.ty, ctx.used_aggregates, ctx.used_enums);
+        track_collection_flags(&local.ty, ctx.helper_flags);
     }
 
     validate_type(&func.ret, &fn_name, ctx.errors);
     track_type_usage(ctx.program, &func.ret, ctx.used_aggregates, ctx.used_enums);
+    track_collection_flags(&func.ret, ctx.helper_flags);
 
     validate_block(ctx, func, &func.body, &fn_name);
 }
@@ -470,10 +501,15 @@ fn validate_stmt(ctx: &mut ValidationCtx, func: &hir::Func, stmt: &hir::Stmt, fn
             validate_expr(ctx, func, cond, fn_name);
             validate_block(ctx, func, body, fn_name);
         }
-        StmtKind::SetIndex { .. } => {
-            ctx.errors.push(format!(
-                "Rust backend: unsupported index assignment in function `{fn_name}`"
-            ));
+        StmtKind::SetIndex {
+            object,
+            index,
+            value,
+        } => {
+            let obj_ty = &func.locals[object.0 as usize].ty;
+            track_collection_flags(obj_ty, ctx.helper_flags);
+            validate_expr(ctx, func, index, fn_name);
+            validate_expr(ctx, func, value, fn_name);
         }
         StmtKind::Match {
             scrutinee_init,
@@ -631,60 +667,55 @@ fn validate_expr(ctx: &mut ValidationCtx, func: &hir::Func, expr: &hir::Expr, fn
                 "Rust backend: unsupported dataref literal in function `{fn_name}`"
             ));
         }
-        ExprKind::ArrayLiteral { .. } => {
-            ctx.errors.push(format!(
-                "Rust backend: unsupported array literal in function `{fn_name}`"
-            ));
+        ExprKind::ArrayLiteral { elements } | ExprKind::ListLiteral { elements } => {
+            track_collection_flags(&expr.ty, ctx.helper_flags);
+            for e in elements {
+                validate_expr(ctx, func, e, fn_name);
+            }
         }
-        ExprKind::ListLiteral { .. } => {
-            ctx.errors.push(format!(
-                "Rust backend: unsupported list literal in function `{fn_name}`"
-            ));
+        ExprKind::ArrayFill { value, .. } | ExprKind::ListFill { value, .. } => {
+            track_collection_flags(&expr.ty, ctx.helper_flags);
+            validate_expr(ctx, func, value, fn_name);
         }
-        ExprKind::ArrayFill { .. } => {
-            ctx.errors.push(format!(
-                "Rust backend: unsupported array fill in function `{fn_name}`"
-            ));
+        ExprKind::MapLiteral { entries } => {
+            track_collection_flags(&expr.ty, ctx.helper_flags);
+            for (k, v) in entries {
+                validate_expr(ctx, func, k, fn_name);
+                validate_expr(ctx, func, v, fn_name);
+            }
         }
-        ExprKind::ListFill { .. } => {
-            ctx.errors.push(format!(
-                "Rust backend: unsupported list fill in function `{fn_name}`"
-            ));
+        ExprKind::IndexGet { target, index } => {
+            track_collection_flags(&target.ty, ctx.helper_flags);
+            validate_expr(ctx, func, target, fn_name);
+            validate_expr(ctx, func, index, fn_name);
         }
-        ExprKind::MapLiteral { .. } => {
-            ctx.errors.push(format!(
-                "Rust backend: unsupported map literal in function `{fn_name}`"
-            ));
+        ExprKind::Slice {
+            target, start, end, ..
+        } => {
+            track_collection_flags(&target.ty, ctx.helper_flags);
+            validate_expr(ctx, func, target, fn_name);
+            validate_expr(ctx, func, start, fn_name);
+            validate_expr(ctx, func, end, fn_name);
         }
-        ExprKind::IndexGet { .. } => {
-            ctx.errors.push(format!(
-                "Rust backend: unsupported index access in function `{fn_name}`"
-            ));
+        ExprKind::CollectionLen { collection } => {
+            track_collection_flags(&collection.ty, ctx.helper_flags);
+            validate_expr(ctx, func, collection, fn_name);
         }
-        ExprKind::Slice { .. } => {
-            ctx.errors.push(format!(
-                "Rust backend: unsupported slice in function `{fn_name}`"
-            ));
+        ExprKind::MapLen { map } => {
+            track_collection_flags(&map.ty, ctx.helper_flags);
+            validate_expr(ctx, func, map, fn_name);
         }
-        ExprKind::CollectionLen { .. } => {
-            ctx.errors.push(format!(
-                "Rust backend: unsupported collection len in function `{fn_name}`"
-            ));
+        ExprKind::MapEntryAt { map, index } => {
+            track_collection_flags(&map.ty, ctx.helper_flags);
+            validate_expr(ctx, func, map, fn_name);
+            validate_expr(ctx, func, index, fn_name);
         }
-        ExprKind::MapLen { .. } => {
-            ctx.errors.push(format!(
-                "Rust backend: unsupported map len in function `{fn_name}`"
-            ));
-        }
-        ExprKind::MapEntryAt { .. } => {
-            ctx.errors.push(format!(
-                "Rust backend: unsupported map entry access in function `{fn_name}`"
-            ));
-        }
-        ExprKind::CollectionMut { .. } => {
-            ctx.errors.push(format!(
-                "Rust backend: unsupported collection mutation in function `{fn_name}`"
-            ));
+        ExprKind::CollectionMut { object, args, .. } => {
+            let obj_ty = &func.locals[object.0 as usize].ty;
+            track_collection_flags(obj_ty, ctx.helper_flags);
+            for arg in args {
+                validate_expr(ctx, func, arg, fn_name);
+            }
         }
         ExprKind::SortBy { .. } => {
             ctx.errors.push(format!(
@@ -724,15 +755,14 @@ fn validate_type(ty: &Type, fn_name: &str, errors: &mut Vec<String>) {
                 "Rust backend: unsupported type `{name}` in function `{fn_name}`"
             ));
         }
-        Type::List { .. }
-        | Type::Array { .. }
-        | Type::Map { .. }
-        | Type::ArrayView { .. }
-        | Type::Func { .. }
-        | Type::NamedTuple(_)
-        | Type::Var(_)
-        | Type::Infer
-        | Type::Any => {
+        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+            validate_type(elem, fn_name, errors);
+        }
+        Type::Map { key, value } => {
+            validate_type(key, fn_name, errors);
+            validate_type(value, fn_name, errors);
+        }
+        Type::Func { .. } | Type::NamedTuple(_) | Type::Var(_) | Type::Infer | Type::Any => {
             errors.push(format!(
                 "Rust backend: unsupported type `{ty}` in function `{fn_name}`"
             ));
@@ -766,6 +796,36 @@ fn track_type_usage(
         Type::Tuple(elems) => {
             for e in elems {
                 track_type_usage(program, e, used_aggregates, used_enums);
+            }
+        }
+        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+            track_type_usage(program, elem, used_aggregates, used_enums);
+        }
+        Type::Map { key, value } => {
+            track_type_usage(program, key, used_aggregates, used_enums);
+            track_type_usage(program, value, used_aggregates, used_enums);
+        }
+        _ => {}
+    }
+}
+
+fn track_collection_flags(ty: &Type, flags: &mut HelperFlags) {
+    match ty {
+        Type::List { .. } | Type::Array { .. } | Type::ArrayView { .. } => {
+            flags.enable(Feature::UsesCollections);
+        }
+        Type::Map { .. } => {
+            flags.enable(Feature::UsesCollections);
+            flags.enable(Feature::UsesMap);
+        }
+        Type::Tuple(elems) => {
+            for e in elems {
+                track_collection_flags(e, flags);
+            }
+        }
+        Type::Enum { type_args, .. } | Type::Struct { type_args, .. } => {
+            for arg in type_args {
+                track_collection_flags(arg, flags);
             }
         }
         _ => {}

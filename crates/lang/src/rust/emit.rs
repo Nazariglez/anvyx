@@ -7,7 +7,7 @@ use crate::{
     ast::{BinaryOp, FormatAlign, FormatKind, FormatSign, FormatSpec, Type, UnaryOp},
     backend_names,
     builtin::Builtin,
-    hir::{self, ExprKind, LocalId, Ownership, StmtKind},
+    hir::{self, CollectionMethod, ExprKind, LocalId, Ownership, StmtKind},
     ir_meta::{AggregateMeta, EnumMeta, VariantMeta, VariantShape},
     prelude_enums::OPTION_TYPE_ID,
 };
@@ -58,11 +58,34 @@ pub fn emit(program: &hir::Program, plan: &super::validate::RustPlan) -> Result<
         writeln!(out, "    }}").unwrap();
     };
 
-    if plan.helper_flags.fmt_f32 {
+    if plan.helper_flags.fmt_f32() {
         float_temp("f32");
     }
-    if plan.helper_flags.fmt_f64 {
+    if plan.helper_flags.fmt_f64() {
         float_temp("f64");
+    }
+
+    if plan.helper_flags.uses_map() {
+        writeln!(out, "    use std::collections::HashMap;").unwrap();
+    }
+
+    if plan.helper_flags.uses_collections() {
+        out.push_str(concat!(
+            "    fn __check_index(len: usize, idx: i64) -> usize {\n",
+            "        if idx < 0 || idx as usize >= len {\n",
+            "            panic!(\"index {idx} out of bounds for length {len}\");\n",
+            "        }\n",
+            "        idx as usize\n",
+            "    }\n",
+            "    fn __check_slice(len: usize, start: i64, end: i64) -> std::ops::Range<usize> {\n",
+            "        let s = if start < 0 { 0 } else { start as usize };\n",
+            "        let e = if end < 0 { 0 } else { end as usize };\n",
+            "        if s > e || e > len {\n",
+            "            panic!(\"slice {s}..{e} out of bounds for length {len}\");\n",
+            "        }\n",
+            "        s..e\n",
+            "    }\n",
+        ));
     }
 
     for &type_id in &plan.helper_flags.stringify_aggregates {
@@ -300,6 +323,29 @@ fn emit_stmt(
             }
             Ok(())
         }
+        StmtKind::SetIndex {
+            object,
+            index,
+            value,
+        } => {
+            let obj_ty = &func.locals[object.0 as usize].ty;
+            let obj_name = local_name(func, *object);
+            write_indent(out, indent);
+            if obj_ty.is_map() {
+                write!(out, "{obj_name}.insert(").unwrap();
+                emit_expr(out, program, func, index)?;
+                write!(out, ", ").unwrap();
+                emit_expr(out, program, func, value)?;
+                writeln!(out, ");").unwrap();
+            } else {
+                write!(out, "{{ let __idx = __check_index({obj_name}.len(), ").unwrap();
+                emit_expr(out, program, func, index)?;
+                write!(out, "); {obj_name}[__idx] = ").unwrap();
+                emit_expr(out, program, func, value)?;
+                writeln!(out, "; }}").unwrap();
+            }
+            Ok(())
+        }
         StmtKind::Match {
             scrutinee_init,
             scrutinee,
@@ -358,9 +404,6 @@ fn emit_stmt(
             writeln!(out, "}}").unwrap();
             Ok(())
         }
-        other => Err(format!(
-            "Rust backend: unsupported statement kind: {other:?}"
-        )),
     }
 }
 
@@ -541,6 +584,120 @@ pub(super) fn emit_expr(
                 write!(out, "format!(\"{fmt}\", ").unwrap();
                 emit_expr(out, program, func, inner)?;
                 write!(out, ")").unwrap();
+            }
+        }
+        ExprKind::ArrayLiteral { elements } | ExprKind::ListLiteral { elements } => {
+            write!(out, "vec![").unwrap();
+            for (i, elem) in elements.iter().enumerate() {
+                if i > 0 {
+                    write!(out, ", ").unwrap();
+                }
+                emit_expr(out, program, func, elem)?;
+            }
+            write!(out, "]").unwrap();
+        }
+        ExprKind::ArrayFill { value, len } | ExprKind::ListFill { value, len } => {
+            write!(out, "vec![").unwrap();
+            emit_expr(out, program, func, value)?;
+            write!(out, "; {len}]").unwrap();
+        }
+        ExprKind::MapLiteral { entries } => {
+            if entries.is_empty() {
+                write!(out, "HashMap::new()").unwrap();
+            } else {
+                write!(out, "{{ let mut __m = HashMap::new(); ").unwrap();
+                for (k, v) in entries {
+                    write!(out, "__m.insert(").unwrap();
+                    emit_expr(out, program, func, k)?;
+                    write!(out, ", ").unwrap();
+                    emit_expr(out, program, func, v)?;
+                    write!(out, "); ").unwrap();
+                }
+                write!(out, "__m }}").unwrap();
+            }
+        }
+        ExprKind::IndexGet { target, index } => {
+            if target.ty.is_map() {
+                emit_target_no_clone(out, program, func, target)?;
+                write!(out, ".get(&").unwrap();
+                emit_expr(out, program, func, index)?;
+                write!(out, ").cloned()").unwrap();
+            } else {
+                emit_target_no_clone(out, program, func, target)?;
+                write!(out, "[__check_index(").unwrap();
+                emit_target_no_clone(out, program, func, target)?;
+                write!(out, ".len(), ").unwrap();
+                emit_expr(out, program, func, index)?;
+                write!(out, ")]").unwrap();
+                if !is_copy_type(&expr.ty) {
+                    write!(out, ".clone()").unwrap();
+                }
+            }
+        }
+        ExprKind::Slice {
+            target,
+            start,
+            end,
+            inclusive,
+        } => {
+            emit_target_no_clone(out, program, func, target)?;
+            write!(out, "[__check_slice(").unwrap();
+            emit_target_no_clone(out, program, func, target)?;
+            write!(out, ".len(), ").unwrap();
+            emit_expr(out, program, func, start)?;
+            write!(out, ", ").unwrap();
+            if *inclusive {
+                write!(out, "(").unwrap();
+                emit_expr(out, program, func, end)?;
+                write!(out, ") + 1").unwrap();
+            } else {
+                emit_expr(out, program, func, end)?;
+            }
+            write!(out, ")].to_vec()").unwrap();
+        }
+        ExprKind::CollectionLen { collection } | ExprKind::MapLen { map: collection } => {
+            write!(out, "(").unwrap();
+            emit_target_no_clone(out, program, func, collection)?;
+            write!(out, ".len() as i64)").unwrap();
+        }
+        ExprKind::MapEntryAt { map, index } => {
+            write!(out, "{{ let __e = ").unwrap();
+            emit_target_no_clone(out, program, func, map)?;
+            write!(out, ".iter().nth(").unwrap();
+            emit_expr(out, program, func, index)?;
+            write!(
+                out,
+                " as usize).unwrap(); (__e.0.clone(), __e.1.clone()) }}"
+            )
+            .unwrap();
+        }
+        ExprKind::CollectionMut {
+            object,
+            method,
+            args,
+        } => {
+            let obj_name = local_name(func, *object);
+            match method {
+                CollectionMethod::ListPush => {
+                    write!(out, "{obj_name}.push(").unwrap();
+                    emit_expr(out, program, func, &args[0])?;
+                    write!(out, ")").unwrap();
+                }
+                CollectionMethod::ListPop => {
+                    write!(out, "{obj_name}.pop()").unwrap();
+                }
+                CollectionMethod::MapInsert => {
+                    write!(out, "{obj_name}.insert(").unwrap();
+                    emit_expr(out, program, func, &args[0])?;
+                    write!(out, ", ").unwrap();
+                    emit_expr(out, program, func, &args[1])?;
+                    write!(out, ")").unwrap();
+                }
+                CollectionMethod::MapRemove => {
+                    write!(out, "{obj_name}.remove(&").unwrap();
+                    emit_expr(out, program, func, &args[0])?;
+                    write!(out, ")").unwrap();
+                }
             }
         }
         other => {
@@ -1118,6 +1275,15 @@ pub(super) fn emit_type(ty: &Type) -> Result<String, String> {
             let parts: Vec<String> = types.iter().map(emit_type).collect::<Result<_, _>>()?;
             Ok(format!("({})", parts.join(", ")))
         }
+        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+            let inner = emit_type(elem)?;
+            Ok(format!("Vec<{inner}>"))
+        }
+        Type::Map { key, value } => {
+            let k = emit_type(key)?;
+            let v = emit_type(value)?;
+            Ok(format!("HashMap<{k}, {v}>"))
+        }
         other => Err(format!("Rust backend: unsupported type: {other:?}")),
     }
 }
@@ -1156,6 +1322,21 @@ fn local_name(func: &hir::Func, id: LocalId) -> String {
         Some(name) if name.to_string() == "self" => "self_".to_string(),
         Some(name) => name.to_string(),
         None => format!("__tmp{}", id.0),
+    }
+}
+
+/// Emit without "clone" when the caller needs the original local container
+fn emit_target_no_clone(
+    out: &mut String,
+    program: &hir::Program,
+    func: &hir::Func,
+    expr: &hir::Expr,
+) -> Result<(), String> {
+    if let ExprKind::Local(id) = &expr.kind {
+        write!(out, "{}", local_name(func, *id)).unwrap();
+        Ok(())
+    } else {
+        emit_expr(out, program, func, expr)
     }
 }
 
