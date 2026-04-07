@@ -14,6 +14,7 @@ use super::{
     },
 };
 use crate::{
+    Profile,
     ast::{FormatKind, FormatSpec},
     builtin::Builtin,
     ir_meta::VariantShape,
@@ -129,6 +130,7 @@ pub struct VM<'a> {
     stack: Vec<Value>,
     frames: Vec<CallFrame>,
     pub stdout: String,
+    pub profile: Profile,
 }
 
 impl<'a> VM<'a> {
@@ -138,6 +140,7 @@ impl<'a> VM<'a> {
             stack: vec![],
             frames: vec![],
             stdout: String::new(),
+            profile: program.profile,
         }
     }
 
@@ -1358,7 +1361,10 @@ impl<'a> VM<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vm::{bytecode::Chunk, managed_rc::ManagedRc};
+    use crate::{
+        Profile,
+        vm::{bytecode::Chunk, managed_rc::ManagedRc},
+    };
 
     fn empty_registry() -> ExternRegistry {
         ExternRegistry::new(0)
@@ -1372,6 +1378,7 @@ mod tests {
             aggregate_meta: vec![],
             enum_meta: vec![],
             aggregate_vtables: vec![],
+            profile: Profile::default(),
         }
     }
 

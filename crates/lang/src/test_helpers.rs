@@ -1,7 +1,7 @@
 use internment::Intern;
 
 use crate::{
-    ast,
+    Profile, ast,
     ast::{BinaryOp, Ident, Type},
     hir::{Block, Expr, Func, FuncId, Local, LocalId, Program, Stmt, StmtKind},
     lower,
@@ -48,13 +48,14 @@ impl TestCtx {
     #[track_caller]
     pub(crate) fn vm_ok(source: &str) -> String {
         let hir = generate_hir(source, "<test>").expect("generate_hir failed");
-        vm::run_with_externs(&hir, HashMap::new()).expect("vm run failed")
+        vm::run_with_externs(&hir, HashMap::new(), Profile::default()).expect("vm run failed")
     }
 
     #[track_caller]
     pub(crate) fn vm_err(source: &str) -> String {
         let hir = generate_hir(source, "<test>").expect("generate_hir failed");
-        vm::run_with_externs(&hir, HashMap::new()).expect_err("expected vm error")
+        vm::run_with_externs(&hir, HashMap::new(), Profile::default())
+            .expect_err("expected vm error")
     }
 
     fn pipeline(source: &str) -> (ast::Program, typecheck::TypecheckResult) {

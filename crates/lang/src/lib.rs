@@ -385,7 +385,7 @@ pub fn compile_vm_with_externs(
     )?;
 
     let filtered = filter_externs_by_hir(externs, &hir);
-    compile_with_externs(&hir, filtered)
+    compile_with_externs(&hir, filtered, Profile::default())
 }
 
 pub fn run_program_with_std(
@@ -410,7 +410,7 @@ pub fn run_program_with_std(
     let filtered = filter_externs_by_hir(externs, &hir);
 
     match backend {
-        Backend::Vm => vm::run_with_externs(&hir, filtered),
+        Backend::Vm => vm::run_with_externs(&hir, filtered, rust_config.profile),
         Backend::Rust => rust::run(&hir, rust_config),
     }
 }

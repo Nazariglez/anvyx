@@ -20,6 +20,9 @@ fn main() {
     let file_path = &args[1];
     let backend = args.get(2).map(|s| s.as_str()).unwrap_or("vm");
     let metadata_dir = args.get(3).map(|s| s.as_str()).unwrap_or("build/metadata");
+    let release = args.iter().any(|a| a == "--release");
+    let profile = if release { anvyx_lang::Profile::Release } else { anvyx_lang::Profile::Debug };
+    let rust_config = anvyx_lang::RustBackendConfig { profile };
 
     let mut extern_metadata: HashMap<String, String> = HashMap::new();
 %METADATA_READ%
@@ -32,7 +35,7 @@ fn main() {
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
 %EXTERN_EXTENDS%
 %RUNTIME_INIT%
-    match anvyx_lang::run_program_with_std(&source, file_path, backend, externs, &extern_metadata, &std_sources, &core, &anvyx_lang::RustBackendConfig::default()) {
+    match anvyx_lang::run_program_with_std(&source, file_path, backend, externs, &extern_metadata, &std_sources, &core, &rust_config) {
         Ok(output) => print!("{output}"),
         Err(e) => { eprintln!("{e}"); std::process::exit(1); }
     }

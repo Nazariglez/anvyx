@@ -7,6 +7,7 @@ use super::{
     value::Value,
 };
 use crate::{
+    Profile,
     ast::{BinaryOp, Type, UnaryOp},
     builtin::Builtin,
     hir,
@@ -52,6 +53,7 @@ pub struct CompiledProgram {
     pub aggregate_meta: Vec<AggregateMeta>,
     pub enum_meta: Vec<EnumMeta>,
     pub aggregate_vtables: Vec<Option<&'static anvyx_runtime::CycleVtable>>,
+    pub profile: Profile,
 }
 
 struct LoopState {
@@ -178,7 +180,7 @@ fn build_aggregate_vtables(
         .collect()
 }
 
-pub fn compile(hir: &hir::Program) -> Result<CompiledProgram, CompileError> {
+pub fn compile(hir: &hir::Program, profile: Profile) -> Result<CompiledProgram, CompileError> {
     let mut chunks = vec![];
 
     for func in &hir.funcs {
@@ -200,6 +202,7 @@ pub fn compile(hir: &hir::Program) -> Result<CompiledProgram, CompileError> {
         aggregate_meta: hir.aggregate_meta.clone(),
         enum_meta: hir.enum_meta.clone(),
         aggregate_vtables: build_aggregate_vtables(&hir.aggregate_meta),
+        profile,
     })
 }
 
@@ -855,6 +858,7 @@ fn compile_expr(fc: &mut FuncCompiler<'_>, expr: &hir::Expr) -> Result<(), Compi
 mod tests {
     use super::*;
     use crate::{
+        Profile,
         ast::Type,
         hir::{Block, Expr, ExprKind, Func, FuncId, Local, LocalId, Program, StmtKind},
         test_helpers::{
@@ -866,7 +870,7 @@ mod tests {
 
     #[test]
     fn empty_main_emits_nil_return() {
-        let compiled = compile(&prog(main_func(vec![]))).unwrap();
+        let compiled = compile(&prog(main_func(vec![])), Profile::default()).unwrap();
         assert_eq!(compiled.main_idx, 0);
         let chunk = &compiled.chunks[0];
         assert_eq!(chunk.code, vec![Op::Nil, Op::Return]);
@@ -894,7 +898,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         assert_eq!(
             chunk.code,
@@ -921,7 +925,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         // return comes first from the explicit stmt, nil+return follows (unreachable)
         assert!(matches!(
@@ -937,7 +941,7 @@ mod tests {
             stmt(StmtKind::Expr(bool_expr(true))),
             stmt(StmtKind::Expr(bool_expr(false))),
         ]);
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         assert_eq!(chunk.code[0], Op::True);
         assert_eq!(chunk.code[2], Op::False);
@@ -951,7 +955,7 @@ mod tests {
             then_block: Block { stmts: vec![] },
             else_block: None,
         })]);
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         // 0: True, 1: JumpIfFalse(?), 2: Nil, 3: Return
         assert_eq!(chunk.code[0], Op::True);
@@ -969,7 +973,7 @@ mod tests {
             then_block: Block { stmts: vec![] },
             else_block: Some(Block { stmts: vec![] }),
         })]);
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         // 0: True, 1: JumpIfFalse(1), 2: Jump(0), 3: Nil, 4: Return
         assert_eq!(chunk.code[0], Op::True);
@@ -984,7 +988,7 @@ mod tests {
             cond: bool_expr(false),
             body: Block { stmts: vec![] },
         })]);
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         // 0: False, 1: JumpIfFalse(1), 2: Jump(-3), 3: Nil, 4: Return
         assert_eq!(chunk.code[0], Op::False);
@@ -1004,7 +1008,7 @@ mod tests {
                 stmts: vec![stmt(StmtKind::Break)],
             },
         })]);
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         // 0: True, 1: JumpIfFalse(?), 2: Jump(?) [break], 3: Jump(-4) [back], 4: Nil, 5: Return
         assert_eq!(chunk.code[0], Op::True);
@@ -1040,7 +1044,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         assert_eq!(chunk.code[0], Op::Constant(0));
         assert_eq!(chunk.code[1], Op::SetLocal(0));
@@ -1085,7 +1089,7 @@ mod tests {
             aggregate_meta: vec![],
             enum_meta: vec![],
         };
-        let compiled = compile(&program).unwrap();
+        let compiled = compile(&program, Profile::default()).unwrap();
         assert_eq!(compiled.main_idx, 1);
         let main_chunk = &compiled.chunks[1];
         assert_eq!(main_chunk.code[0], Op::Call(0, 0));
@@ -1101,7 +1105,7 @@ mod tests {
             enum_meta: vec![],
         };
         assert!(matches!(
-            compile(&program),
+            compile(&program, Profile::default()),
             Err(CompileError::NoMainFunction)
         ));
     }
@@ -1121,7 +1125,7 @@ mod tests {
                 )],
             },
         )))]);
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         // Constant(0) [String "hi"], CallBuiltin(0, 1), Pop, Nil, Return
         assert_eq!(chunk.code[0], Op::Constant(0));
@@ -1143,14 +1147,17 @@ mod tests {
                 },
             ),
         })]);
-        let compiled = compile(&prog(Func {
-            locals: vec![Local {
-                name: None,
-                ty: Type::Int,
-                is_ref: false,
-            }],
-            ..func
-        }))
+        let compiled = compile(
+            &prog(Func {
+                locals: vec![Local {
+                    name: None,
+                    ty: Type::Int,
+                    is_ref: false,
+                }],
+                ..func
+            }),
+            Profile::default(),
+        )
         .unwrap();
         let chunk = &compiled.chunks[0];
         // Constant(0)[10], Constant(1)[20], ConstructStruct(5, 2), SetLocal(0), Nil, Return
@@ -1173,14 +1180,17 @@ mod tests {
                 },
             ),
         })]);
-        let compiled = compile(&prog(Func {
-            locals: vec![Local {
-                name: None,
-                ty: Type::Int,
-                is_ref: false,
-            }],
-            ..func
-        }))
+        let compiled = compile(
+            &prog(Func {
+                locals: vec![Local {
+                    name: None,
+                    ty: Type::Int,
+                    is_ref: false,
+                }],
+                ..func
+            }),
+            Profile::default(),
+        )
         .unwrap();
         let chunk = &compiled.chunks[0];
         assert_eq!(chunk.code[3], Op::ConstructTuple(3));
@@ -1197,7 +1207,7 @@ mod tests {
                 index: 2,
             },
         )))]);
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         // Constant(0), GetField(2), Pop, Nil, Return
         assert_eq!(chunk.code[1], Op::GetField(2));
@@ -1211,7 +1221,7 @@ mod tests {
             dummy_span(),
             EK::UnwrapOptional(Box::new(int_expr(42))),
         )))]);
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         assert!(
             chunk.code.iter().any(|op| *op == Op::UnwrapOptional),
@@ -1241,7 +1251,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         // GetLocal(0), Constant(0)[42], SetField(1), SetLocal(0), Nil, Return
         assert_eq!(chunk.code[0], Op::GetLocal(0));
@@ -1264,14 +1274,17 @@ mod tests {
                 },
             ),
         })]);
-        let compiled = compile(&prog(Func {
-            locals: vec![Local {
-                name: None,
-                ty: Type::Int,
-                is_ref: false,
-            }],
-            ..func
-        }))
+        let compiled = compile(
+            &prog(Func {
+                locals: vec![Local {
+                    name: None,
+                    ty: Type::Int,
+                    is_ref: false,
+                }],
+                ..func
+            }),
+            Profile::default(),
+        )
         .unwrap();
         let chunk = &compiled.chunks[0];
         // ConstructEnum(3, 1, 0), SetLocal(0), Nil, Return
@@ -1294,14 +1307,17 @@ mod tests {
                 },
             ),
         })]);
-        let compiled = compile(&prog(Func {
-            locals: vec![Local {
-                name: None,
-                ty: Type::Int,
-                is_ref: false,
-            }],
-            ..func
-        }))
+        let compiled = compile(
+            &prog(Func {
+                locals: vec![Local {
+                    name: None,
+                    ty: Type::Int,
+                    is_ref: false,
+                }],
+                ..func
+            }),
+            Profile::default(),
+        )
         .unwrap();
         let chunk = &compiled.chunks[0];
         // Constant(0)[42], ConstructEnum(2, 0, 1), SetLocal(0), Nil, Return
@@ -1342,21 +1358,24 @@ mod tests {
                 }),
             }),
         ]);
-        let compiled = compile(&prog(Func {
-            locals: vec![
-                Local {
-                    name: None,
-                    ty: Type::Int,
-                    is_ref: false,
-                },
-                Local {
-                    name: None,
-                    ty: Type::Int,
-                    is_ref: false,
-                },
-            ],
-            ..func
-        }))
+        let compiled = compile(
+            &prog(Func {
+                locals: vec![
+                    Local {
+                        name: None,
+                        ty: Type::Int,
+                        is_ref: false,
+                    },
+                    Local {
+                        name: None,
+                        ty: Type::Int,
+                        is_ref: false,
+                    },
+                ],
+                ..func
+            }),
+            Profile::default(),
+        )
         .unwrap();
         let chunk = &compiled.chunks[0];
         // After SetLocal(0) for scrutinee_init:
@@ -1393,7 +1412,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         assert_eq!(
             &chunk.code[..4],
@@ -1432,7 +1451,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         assert_eq!(
             &chunk.code[..4],
@@ -1472,7 +1491,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         // each compile_expr call adds a new constant slot, so indices are 0, 1, 2
         assert_eq!(
@@ -1515,7 +1534,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         let has_get_local = chunk.code.iter().any(|op| *op == Op::CloneLocal(0));
         let has_index_get = chunk.code.iter().any(|op| *op == Op::IndexGet);
@@ -1544,7 +1563,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         let has_get_local = chunk.code.iter().any(|op| *op == Op::GetLocal(0));
         let has_index_set = chunk.code.iter().any(|op| *op == Op::IndexSet);
@@ -1580,7 +1599,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         assert_eq!(
             &chunk.code[..4],
@@ -1617,7 +1636,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         assert_eq!(&chunk.code[..2], &[Op::ConstructMap(0), Op::SetLocal(0)]);
     }
@@ -1648,7 +1667,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         assert_eq!(chunk.code[0], Op::MoveLocal(0));
     }
@@ -1673,7 +1692,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         assert_eq!(chunk.code[0], Op::GetLocal(0));
     }
@@ -1698,7 +1717,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         assert_eq!(chunk.code[0], Op::CloneLocal(0));
     }
@@ -1723,7 +1742,7 @@ mod tests {
             },
             span: dummy_span(),
         };
-        let compiled = compile(&prog(func)).unwrap();
+        let compiled = compile(&prog(func), Profile::default()).unwrap();
         let chunk = &compiled.chunks[0];
         assert_eq!(chunk.code[0], Op::MoveLocal(0));
         assert_eq!(chunk.code[1], Op::Return);

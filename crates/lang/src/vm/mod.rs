@@ -22,13 +22,15 @@ pub use value::{
     StructData, Value,
 };
 
-use crate::hir;
+use crate::{Profile, hir};
 
 pub fn compile_with_externs(
     hir_prog: &hir::Program,
     externs: HashMap<String, ExternHandler>,
+    profile: Profile,
 ) -> Result<(CompiledProgram, ExternRegistry), String> {
-    let compiled = compiler::compile(hir_prog).map_err(|e| format!("Compile error: {e}"))?;
+    let compiled =
+        compiler::compile(hir_prog, profile).map_err(|e| format!("Compile error: {e}"))?;
 
     let mut registry = ExternRegistry::new(compiled.extern_names.len());
     for (name, handler) in externs {
@@ -49,8 +51,9 @@ pub fn compile_with_externs(
 pub fn run_with_externs(
     hir_prog: &hir::Program,
     externs: HashMap<String, ExternHandler>,
+    profile: Profile,
 ) -> Result<String, String> {
-    let (compiled, registry) = compile_with_externs(hir_prog, externs)?;
+    let (compiled, registry) = compile_with_externs(hir_prog, externs, profile)?;
 
     let mut vm = VM::new(&compiled);
     vm.run(&registry)
@@ -88,7 +91,7 @@ mod tests {
     use super::{
         ExternHandler, Value, managed_rc::ManagedRc, run_with_externs, value::ExternHandleData,
     };
-    use crate::test_helpers::TestCtx;
+    use crate::{Profile, test_helpers::TestCtx};
 
     fn noop_drop(_id: u64) {}
 
@@ -143,12 +146,12 @@ mod tests {
 
     fn vm_ok_with_externs(source: &str, externs: HashMap<String, ExternHandler>) -> String {
         let hir = crate::test_helpers::generate_hir(source, "<test>").expect("generate_hir failed");
-        run_with_externs(&hir, externs).expect("vm run failed")
+        run_with_externs(&hir, externs, Profile::default()).expect("vm run failed")
     }
 
     fn vm_err_with_externs(source: &str, externs: HashMap<String, ExternHandler>) -> String {
         let hir = crate::test_helpers::generate_hir(source, "<test>").expect("generate_hir failed");
-        run_with_externs(&hir, externs).expect_err("expected vm error")
+        run_with_externs(&hir, externs, Profile::default()).expect_err("expected vm error")
     }
 
     fn native_apply_externs() -> HashMap<String, ExternHandler> {
@@ -188,7 +191,7 @@ mod tests {
         );
         let hir = crate::test_helpers::generate_hir(src, "<test>").expect("generate_hir failed");
         let (compiled, registry) =
-            super::compile_with_externs(&hir, externs).expect("compile failed");
+            super::compile_with_externs(&hir, externs, Profile::default()).expect("compile failed");
         (compiled, registry, stored)
     }
 
@@ -1765,7 +1768,7 @@ fn main() {
 
         let hir = crate::test_helpers::generate_hir(src, "<test>").expect("generate_hir failed");
         let (compiled, registry) =
-            super::compile_with_externs(&hir, externs).expect("compile failed");
+            super::compile_with_externs(&hir, externs, Profile::default()).expect("compile failed");
 
         let mut vm = super::runtime::VM::new(&compiled);
         vm.run(&registry).expect("vm run failed");
@@ -1916,7 +1919,7 @@ fn main() {
 
         let hir = crate::test_helpers::generate_hir(src, "<test>").expect("generate_hir failed");
         let (compiled, registry) =
-            super::compile_with_externs(&hir, externs).expect("compile failed");
+            super::compile_with_externs(&hir, externs, Profile::default()).expect("compile failed");
 
         let mut vm = super::runtime::VM::new(&compiled);
         vm.run(&registry).expect("vm run failed");

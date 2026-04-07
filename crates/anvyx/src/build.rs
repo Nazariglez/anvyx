@@ -59,15 +59,25 @@ pub fn generate_runner_crate(project_root: &Path, manifest: &Manifest) -> Result
 pub fn generate_build_runner_crate(
     project_root: &Path,
     manifest: &Manifest,
+    release: bool,
 ) -> Result<PathBuf, String> {
-    generate_crate(project_root, manifest, &generate_build_main_rs(manifest))
+    generate_crate(
+        project_root,
+        manifest,
+        &generate_build_main_rs(manifest, release),
+    )
 }
 
 pub fn runner_binary_path(project_root: &Path) -> PathBuf {
     project_root.join("build/runner/target/release/anvyx-runner")
 }
 
-pub fn execute_runner(project_root: &Path, entry_path: &Path, backend: &str) -> Result<(), String> {
+pub fn execute_runner(
+    project_root: &Path,
+    entry_path: &Path,
+    backend: &str,
+    release: bool,
+) -> Result<(), String> {
     let binary = runner_binary_path(project_root);
     if !binary.exists() {
         return Err(format!("Runner binary not found at {}", binary.display()));
@@ -75,10 +85,12 @@ pub fn execute_runner(project_root: &Path, entry_path: &Path, backend: &str) -> 
 
     let metadata_dir = project_root.join("build/metadata");
 
-    let status = process::Command::new(&binary)
-        .arg(entry_path)
-        .arg(backend)
-        .arg(&metadata_dir)
+    let mut cmd = process::Command::new(&binary);
+    cmd.arg(entry_path).arg(backend).arg(&metadata_dir);
+    if release {
+        cmd.arg("--release");
+    }
+    let status = cmd
         .status()
         .map_err(|e| format!("Failed to execute runner binary: {e}"))?;
 
@@ -224,7 +236,12 @@ fn generate_metadata_read_lines(sorted_names: &[&String]) -> String {
     lines
 }
 
-fn generate_build_main_rs(manifest: &Manifest) -> String {
+fn generate_build_main_rs(manifest: &Manifest, release: bool) -> String {
+    let profile_expr = if release {
+        "anvyx_lang::Profile::Release"
+    } else {
+        "anvyx_lang::Profile::Debug"
+    };
     let entries = sorted_extern_names(manifest);
     BUILD_TEMPLATE
         .replace("%ENTRY_POINT%", &manifest.project.entry)
@@ -238,6 +255,7 @@ fn generate_build_main_rs(manifest: &Manifest) -> String {
             &generate_build_metadata_inserts(&entries),
         )
         .replace("%EXTERN_EXTENDS%", &generate_extern_extends(&entries))
+        .replace("%PROFILE%", profile_expr)
 }
 
 fn generate_build_metadata_consts(sorted_names: &[&String]) -> String {
@@ -650,7 +668,7 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
-        let result = execute_runner(&tmp, Path::new("src/main.anv"), "vm");
+        let result = execute_runner(&tmp, Path::new("src/main.anv"), "vm", false);
 
         assert!(result.is_err());
         let msg = result.unwrap_err();
@@ -836,7 +854,7 @@ mod tests {
 
     #[test]
     fn build_main_rs_no_externs() {
-        let output = generate_build_main_rs(&manifest_no_externs());
+        let output = generate_build_main_rs(&manifest_no_externs(), false);
 
         assert!(output.contains("ENTRY_POINT"));
         assert!(output.contains("\"src/main.anv\""));
@@ -852,7 +870,7 @@ mod tests {
 
     #[test]
     fn build_main_rs_one_extern() {
-        let output = generate_build_main_rs(&manifest_one_extern());
+        let output = generate_build_main_rs(&manifest_one_extern(), false);
 
         assert!(output.contains("ENTRY_POINT"));
         assert!(output.contains("\"src/main.anv\""));
@@ -873,7 +891,7 @@ mod tests {
 
     #[test]
     fn build_main_rs_two_externs() {
-        let output = generate_build_main_rs(&manifest_two_externs());
+        let output = generate_build_main_rs(&manifest_two_externs(), false);
 
         assert!(output.contains("META_AUDIO"));
         assert!(output.contains("META_ENGINE"));
@@ -901,14 +919,14 @@ mod tests {
             },
             externs: HashMap::new(),
         };
-        let output = generate_build_main_rs(&manifest);
+        let output = generate_build_main_rs(&manifest, false);
 
         assert!(output.contains("const ENTRY_POINT: &str = \"game/start.anv\";"));
     }
 
     #[test]
     fn build_main_rs_hardcoded_vm_backend() {
-        let output = generate_build_main_rs(&manifest_one_extern());
+        let output = generate_build_main_rs(&manifest_one_extern(), false);
 
         assert!(output.contains("Backend::from_str(\"vm\")"));
         assert!(!output.contains("args.get(2)"));
@@ -916,7 +934,7 @@ mod tests {
 
     #[test]
     fn build_main_rs_no_cli_args() {
-        let output = generate_build_main_rs(&manifest_one_extern());
+        let output = generate_build_main_rs(&manifest_one_extern(), false);
 
         assert!(!output.contains("env::args()"));
         assert!(!output.contains("args[1]"));
@@ -926,12 +944,34 @@ mod tests {
     }
 
     #[test]
+    fn build_main_rs_debug_profile() {
+        let output = generate_build_main_rs(&manifest_no_externs(), false);
+        assert!(output.contains("Profile::Debug"));
+        assert!(!output.contains("Profile::Release"));
+    }
+
+    #[test]
+    fn build_main_rs_release_profile() {
+        let output = generate_build_main_rs(&manifest_no_externs(), true);
+        assert!(output.contains("Profile::Release"));
+        assert!(!output.contains("Profile::Debug"));
+    }
+
+    #[test]
+    fn runner_main_rs_parses_release_flag() {
+        let output = generate_main_rs(&manifest_one_extern());
+        assert!(output.contains("\"--release\""));
+        assert!(output.contains("RustBackendConfig"));
+        assert!(!output.contains("RustBackendConfig::default()"));
+    }
+
+    #[test]
     fn generate_build_runner_crate_creates_files() {
         let tmp = std::env::temp_dir().join(format!("anvyx-build-crate-{}", process::id()));
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(tmp.join("my_externs/engine")).unwrap();
 
-        let runner_dir = generate_build_runner_crate(&tmp, &manifest_one_extern()).unwrap();
+        let runner_dir = generate_build_runner_crate(&tmp, &manifest_one_extern(), false).unwrap();
 
         assert!(runner_dir.join("Cargo.toml").exists());
         assert!(runner_dir.join("src/main.rs").exists());
@@ -957,7 +997,7 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
-        let runner_dir = generate_build_runner_crate(&tmp, &manifest_no_externs()).unwrap();
+        let runner_dir = generate_build_runner_crate(&tmp, &manifest_no_externs(), false).unwrap();
 
         assert!(runner_dir.join("Cargo.toml").exists());
         assert!(runner_dir.join("src/main.rs").exists());
@@ -1279,7 +1319,7 @@ mod tests {
         )
         .unwrap();
 
-        let runner_dir = generate_build_runner_crate(&tmp, &manifest_no_externs()).unwrap();
+        let runner_dir = generate_build_runner_crate(&tmp, &manifest_no_externs(), false).unwrap();
 
         assert!(runner_dir.join("Cargo.toml").exists());
         assert!(runner_dir.join("src/main.rs").exists());
@@ -1322,7 +1362,8 @@ mod tests {
         assert!(!dev_main.contains("ENTRY_POINT"));
         assert!(!dev_main.contains("include_str!"));
 
-        let build_runner_dir = generate_build_runner_crate(&tmp, &manifest_one_extern()).unwrap();
+        let build_runner_dir =
+            generate_build_runner_crate(&tmp, &manifest_one_extern(), false).unwrap();
         let build_main = fs::read_to_string(build_runner_dir.join("src/main.rs")).unwrap();
         assert!(build_main.contains("ENTRY_POINT"));
         assert!(build_main.contains("include_str!"));

@@ -38,7 +38,10 @@ enum Command {
     #[command(about = "Create a new Anvyx project")]
     Init { name: Option<String> },
     #[command(about = "Build an Anvyx project for distribution")]
-    Build,
+    Build {
+        #[arg(long)]
+        release: bool,
+    },
 }
 
 fn main() {
@@ -66,7 +69,7 @@ fn run(cli: Cli) -> Result<(), String> {
 
                 progress::status("Checking", &format!("{}...", path.display()));
                 progress::status("Running", &format!("{}...", path.display()));
-                build::execute_runner(&ctx.cwd, &path, &backend)?;
+                build::execute_runner(&ctx.cwd, &path, &backend, release)?;
             } else {
                 progress::status("Checking", &format!("{}...", path.display()));
                 progress::status("Running", &format!("{}...", path.display()));
@@ -96,7 +99,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::Init { name } => {
             init::cmd(name.as_deref())?;
         }
-        Command::Build => {
+        Command::Build { release } => {
             let manifest =
                 manifest::parse_manifest()?.ok_or("anvyx build requires an anvyx.toml manifest")?;
             let cwd = std::env::current_dir()
@@ -107,7 +110,7 @@ fn run(cli: Cli) -> Result<(), String> {
                 prepare_externs(&manifest)?;
             }
 
-            let runner_dir = build::generate_build_runner_crate(&cwd, &manifest)?;
+            let runner_dir = build::generate_build_runner_crate(&cwd, &manifest, release)?;
 
             let spinner = progress::start_spinner("Bundling", "distribution...");
             build::build_runner(&runner_dir)?;
