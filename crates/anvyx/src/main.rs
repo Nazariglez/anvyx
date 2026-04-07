@@ -1,5 +1,6 @@
 mod build;
 mod check;
+mod clean;
 mod init;
 mod manifest;
 mod progress;
@@ -42,6 +43,8 @@ enum Command {
         #[arg(long)]
         release: bool,
     },
+    #[command(about = "Remove build cache")]
+    Clean,
 }
 
 fn main() {
@@ -98,6 +101,9 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Command::Init { name } => {
             init::cmd(name.as_deref())?;
+        }
+        Command::Clean => {
+            clean::cmd()?;
         }
         Command::Build { release } => {
             let manifest =

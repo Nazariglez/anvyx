@@ -17,3 +17,6 @@ console = "0.15"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = "3"

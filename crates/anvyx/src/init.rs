@@ -42,6 +42,76 @@ pub fn cmd(name: Option<&str>) -> Result<(), String> {
     fs::write(src_dir.join("main.anv"), MAIN_ANV)
         .map_err(|e| format!("Failed to write src/main.anv: {e}"))?;
 
+    ensure_gitignore(&target_dir)?;
+
     crate::progress::status("Created", &format!("project '{project_name}'"));
     Ok(())
+}
+
+fn ensure_gitignore(dir: &Path) -> Result<(), String> {
+    let path = dir.join(".gitignore");
+    if path.exists() {
+        let content =
+            fs::read_to_string(&path).map_err(|e| format!("Failed to read .gitignore: {e}"))?;
+        let already_listed = content.lines().any(|line| line.trim() == ".anvyx");
+        if already_listed {
+            return Ok(());
+        }
+        let separator = if content.ends_with('\n') { "" } else { "\n" };
+        fs::write(&path, format!("{content}{separator}.anvyx\n"))
+            .map_err(|e| format!("Failed to update .gitignore: {e}"))?;
+    } else {
+        fs::write(&path, ".anvyx\n").map_err(|e| format!("Failed to create .gitignore: {e}"))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gitignore_created_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        ensure_gitignore(dir.path()).unwrap();
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert_eq!(content, ".anvyx\n");
+    }
+
+    #[test]
+    fn gitignore_appended_when_missing_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".gitignore"), "/target\n").unwrap();
+        ensure_gitignore(dir.path()).unwrap();
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert_eq!(content, "/target\n.anvyx\n");
+    }
+
+    #[test]
+    fn gitignore_unchanged_when_already_listed() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = "/target\n.anvyx\n";
+        fs::write(dir.path().join(".gitignore"), original).unwrap();
+        ensure_gitignore(dir.path()).unwrap();
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert_eq!(content, original);
+    }
+
+    #[test]
+    fn gitignore_adds_separator_when_no_trailing_newline() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".gitignore"), "/target").unwrap();
+        ensure_gitignore(dir.path()).unwrap();
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert_eq!(content, "/target\n.anvyx\n");
+    }
+
+    #[test]
+    fn gitignore_ignores_substring_match() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".gitignore"), "foo.anvyx\n").unwrap();
+        ensure_gitignore(dir.path()).unwrap();
+        let content = fs::read_to_string(dir.path().join(".gitignore")).unwrap();
+        assert_eq!(content, "foo.anvyx\n.anvyx\n");
+    }
 }
