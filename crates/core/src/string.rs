@@ -1,72 +1,72 @@
 use anvyx_lang::{ManagedRc, StdModule, Value, export_fn, provider};
 
 #[export_fn]
-pub fn str_len(s: String) -> i64 {
+pub fn str_len(s: &str) -> i64 {
     s.chars().count() as i64
 }
 
 #[export_fn]
-pub fn str_contains(s: String, sub: String) -> bool {
-    s.contains(sub.as_str())
+pub fn str_contains(s: &str, sub: &str) -> bool {
+    s.contains(sub)
 }
 
 #[export_fn]
-pub fn str_starts_with(s: String, prefix: String) -> bool {
-    s.starts_with(prefix.as_str())
+pub fn str_starts_with(s: &str, prefix: &str) -> bool {
+    s.starts_with(prefix)
 }
 
 #[export_fn]
-pub fn str_ends_with(s: String, suffix: String) -> bool {
-    s.ends_with(suffix.as_str())
+pub fn str_ends_with(s: &str, suffix: &str) -> bool {
+    s.ends_with(suffix)
 }
 
 #[export_fn]
-pub fn str_find(s: String, sub: String) -> i64 {
-    s.find(sub.as_str())
+pub fn str_find(s: &str, sub: &str) -> i64 {
+    s.find(sub)
         .map_or(-1, |byte_pos| s[..byte_pos].chars().count() as i64)
 }
 
 #[export_fn]
-pub fn str_to_upper(s: String) -> String {
+pub fn str_to_upper(s: &str) -> String {
     s.to_uppercase()
 }
 
 #[export_fn]
-pub fn str_to_lower(s: String) -> String {
+pub fn str_to_lower(s: &str) -> String {
     s.to_lowercase()
 }
 
 #[export_fn]
-pub fn str_trim(s: String) -> String {
+pub fn str_trim(s: &str) -> String {
     s.trim().to_string()
 }
 
 #[export_fn]
-pub fn str_trim_start(s: String) -> String {
+pub fn str_trim_start(s: &str) -> String {
     s.trim_start().to_string()
 }
 
 #[export_fn]
-pub fn str_trim_end(s: String) -> String {
+pub fn str_trim_end(s: &str) -> String {
     s.trim_end().to_string()
 }
 
 #[export_fn]
-pub fn str_replace(s: String, from: String, to: String) -> String {
-    s.replace(from.as_str(), to.as_str())
+pub fn str_replace(s: &str, from: &str, to: &str) -> String {
+    s.replace(from, to)
 }
 
 #[export_fn(ret = "[string]")]
-pub fn str_split(s: String, sep: String) -> Value {
+pub fn str_split(s: &str, sep: &str) -> Value {
     let parts: Vec<Value> = s
-        .split(sep.as_str())
+        .split(sep)
         .map(|part| Value::String(ManagedRc::new(part.to_string())))
         .collect();
     Value::List(ManagedRc::new(parts))
 }
 
 #[export_fn]
-pub fn str_substring(s: String, start: i64, len: i64) -> Option<String> {
+pub fn str_substring(s: &str, start: i64, len: i64) -> Option<String> {
     if start < 0 || len < 0 {
         return None;
     }
@@ -80,7 +80,7 @@ pub fn str_substring(s: String, start: i64, len: i64) -> Option<String> {
 }
 
 #[export_fn]
-pub fn str_char_at(s: String, index: i64) -> Option<String> {
+pub fn str_char_at(s: &str, index: i64) -> Option<String> {
     if index < 0 {
         return None;
     }

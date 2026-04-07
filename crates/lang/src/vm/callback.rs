@@ -40,6 +40,8 @@ impl Drop for CallbackScopeGuard {
 pub(crate) fn callback_scope(ctx: &mut dyn VmContext) -> CallbackScopeGuard {
     // SAFETY: transmute only erases the lifetime on a fat pointer (data + vtable unchanged)
     // CallbackScopeGuard::drop pops this pointer before the referent goes out of scope
+    // clippy suggests "as" cast, but that cannot erase the borrow lifetime on a trait object pointer
+    #[allow(clippy::transmute_ptr_to_ptr)]
     let ptr: *mut (dyn VmContext + 'static) =
         unsafe { std::mem::transmute::<*mut dyn VmContext, *mut (dyn VmContext + 'static)>(ctx) };
     CALLBACK_CTX.with(|c| c.borrow_mut().push(ptr));

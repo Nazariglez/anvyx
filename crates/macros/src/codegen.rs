@@ -129,6 +129,20 @@ pub fn extract_params(
                 param_names.push(param_name);
                 continue;
             }
+            ParamMode::StrRef => {
+                extractions.push(quote! {
+                    let anvyx_lang::Value::String(ref #param_name) = args[#arg_idx] else {
+                        return Err(anvyx_lang::RuntimeError::new(format!(
+                            "expected string for parameter '{}' in {}",
+                            #param_name_str, #handler_label
+                        )));
+                    };
+                    let #param_name: &str = #param_name;
+                });
+                anvyx_types.push(quote! { (#param_name_str, "string") });
+                param_names.push(param_name);
+                continue;
+            }
             ParamMode::ExternRef(info) => (info, false),
             ParamMode::ExternMutRef(info) => (info, true),
         };

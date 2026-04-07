@@ -924,14 +924,27 @@ fn check_enum_preamble<'a>(
         return None;
     }
 
-    let Some(enum_def) = type_checker.get_enum(qualifier) else {
-        errors.push(Diagnostic::new(
-            pattern.span,
-            DiagnosticKind::UnknownEnum { name: qualifier },
-        ));
-        return None;
+    let enum_def = match type_checker.get_enum_deep(qualifier) {
+        DeepLookup::Found(def) => def.clone(),
+        DeepLookup::NotFound => {
+            errors.push(Diagnostic::new(
+                pattern.span,
+                DiagnosticKind::UnknownEnum { name: qualifier },
+            ));
+            return None;
+        }
+        DeepLookup::Ambiguous(first, second) => {
+            errors.push(Diagnostic::new(
+                pattern.span,
+                DiagnosticKind::AmbiguousType {
+                    name: qualifier,
+                    first_module: first,
+                    second_module: second,
+                },
+            ));
+            return None;
+        }
     };
-    let enum_def = enum_def.clone();
 
     if enum_def.variants.iter().all(|v| v.name != variant_name) {
         errors.push(Diagnostic::new(

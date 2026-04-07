@@ -770,6 +770,7 @@ pub struct LambdaParam {
     pub name: Ident,
     pub ty: Option<Type>,
     pub mutable: bool,
+    pub cast_accept: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

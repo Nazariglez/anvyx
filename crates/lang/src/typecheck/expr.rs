@@ -413,6 +413,13 @@ fn check_lambda(
         .lambda_captures
         .insert(expr_node.node.id, capture_list);
 
+    let cast_accepts: Vec<bool> = lambda.params.iter().map(|p| p.cast_accept).collect();
+    if cast_accepts.iter().any(|&f| f) {
+        type_checker
+            .lambda_cast_accepts
+            .insert(expr_node.node.id, cast_accepts);
+    }
+
     Type::Func {
         params: param_types
             .into_iter()

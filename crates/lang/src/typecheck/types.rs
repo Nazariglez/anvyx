@@ -305,6 +305,7 @@ pub(super) struct InstantiationContext<'a> {
     pub(super) params: Vec<(Ident, Type, bool)>,
     pub(super) ret_ty: Type,
     pub(super) method_ctx: Option<MethodContext>,
+    pub(super) type_subst: Vec<(Ident, Type)>,
 }
 
 #[derive(Debug)]
@@ -426,6 +427,9 @@ pub(super) struct TypeChecker {
     /// Const params currently in scope for resolve_type (push/pop around generic decl processing)
     pub(super) current_const_params: Vec<ConstParam>,
 
+    /// Type variable substitutions currently in scope for resolve_type (push/pop around generic body checking)
+    pub(super) current_type_subst: Vec<(Ident, Type)>,
+
     /// Identify inference slots uniquely across multiple generic calls
     pub(super) next_infer_call_id: usize,
 
@@ -447,6 +451,9 @@ pub(super) struct TypeChecker {
 
     /// Stores cast_accept flags per param position, for functions with `as Type` params
     pub(super) func_cast_accept: HashMap<Ident, Vec<bool>>,
+
+    /// Stores cast_accept flags for lambda expressions that have `as` params, keyed by ExprId
+    pub(super) lambda_cast_accepts: HashMap<ExprId, Vec<bool>>,
 
     /// Records where the lowering pass must wrap an argument with a cast-from call
     pub(super) cast_call_insertions: HashMap<(ExprId, usize), (Ident, Type)>,
@@ -541,6 +548,7 @@ pub struct TypecheckResult {
     pub(super) cast_call_insertions: HashMap<(ExprId, usize), (Ident, Type)>,
     pub(super) func_param_defaults: HashMap<Ident, Vec<Option<ConstValue>>>,
     pub(super) module_defs: HashMap<Ident, ModuleDef>,
+    pub(super) resolved_module_defs: HashMap<Vec<String>, ModuleDef>,
     pub(super) warnings: Vec<Diagnostic>,
     pub(super) generic_func_templates: HashMap<Ident, FuncNode>,
     pub(super) generic_extend_templates: HashMap<(Ident, Ident), Vec<GenericExtendTemplate>>,
@@ -576,6 +584,7 @@ impl TypeChecker {
             cast_call_insertions: self.cast_call_insertions,
             func_param_defaults: self.func_param_defaults,
             module_defs: self.ctx.module_defs,
+            resolved_module_defs: self.resolved_module_defs,
             warnings: self.warnings,
             generic_func_templates: self.generic_func_templates,
             generic_extend_templates: self.ctx.generic_extend_templates,
@@ -604,6 +613,11 @@ impl TypeChecker {
     pub(super) fn pop_const_params(&mut self, count: usize) {
         self.current_const_params
             .truncate(self.current_const_params.len() - count);
+    }
+
+    pub(super) fn pop_type_subst(&mut self, count: usize) {
+        self.current_type_subst
+            .truncate(self.current_type_subst.len() - count);
     }
 
     pub(super) fn current_method(&self) -> Option<&MethodContext> {
@@ -774,6 +788,21 @@ impl TypeChecker {
                 key: self.resolve_type(key).boxed(),
                 value: self.resolve_type(value).boxed(),
             },
+            Type::UnresolvedName(name)
+                if self
+                    .current_type_subst
+                    .iter()
+                    .rev()
+                    .any(|(n, _)| *n == *name) =>
+            {
+                let (_, concrete) = self
+                    .current_type_subst
+                    .iter()
+                    .rev()
+                    .find(|(n, _)| *n == *name)
+                    .unwrap();
+                self.resolve_type(&concrete.clone())
+            }
             _ => ty.clone(),
         }
     }
@@ -1219,26 +1248,48 @@ impl TypecheckResult {
             .map_or(&[], Vec::as_slice)
     }
 
+    fn find_in_module_defs<T>(&self, accessor: impl Fn(&ModuleDef) -> Option<&T>) -> Option<&T> {
+        for module_def in self.resolved_module_defs.values() {
+            if let Some(def) = accessor(module_def) {
+                return Some(def);
+            }
+        }
+        None
+    }
+
     pub fn get_struct(&self, name: Ident) -> Option<&StructDef> {
-        self.struct_defs.get(&name)
+        self.struct_defs
+            .get(&name)
+            .or_else(|| self.find_in_module_defs(|m| m.struct_defs.get(&name)))
+    }
+
+    pub(super) fn get_enum(&self, name: Ident) -> Option<&EnumDef> {
+        self.enum_defs
+            .get(&name)
+            .or_else(|| self.find_in_module_defs(|m| m.enum_defs.get(&name)))
     }
 
     pub fn get_extern_type(&self, name: Ident) -> Option<&ExternTypeDef> {
-        self.extern_type_defs.get(&name)
+        self.extern_type_defs
+            .get(&name)
+            .or_else(|| self.find_in_module_defs(|m| m.extern_types.get(&name)))
     }
 
     pub fn extern_type_field_order(&self, name: Ident) -> Option<&[Ident]> {
-        self.extern_type_defs
-            .get(&name)
+        self.get_extern_type(name)
             .map(|def| def.field_order.as_slice())
     }
 
-    pub fn struct_names(&self) -> impl Iterator<Item = Ident> + '_ {
-        self.struct_defs.keys().copied()
+    pub fn struct_names(&self) -> Vec<Ident> {
+        let mut names: HashSet<Ident> = self.struct_defs.keys().copied().collect();
+        for module_def in self.resolved_module_defs.values() {
+            names.extend(module_def.struct_defs.keys().copied());
+        }
+        names.into_iter().collect()
     }
 
     pub fn aggregate_kind(&self, name: Ident) -> Option<AggregateKind> {
-        self.struct_defs.get(&name).map(|d| d.kind)
+        self.get_struct(name).map(|d| d.kind)
     }
 
     pub fn is_cycle_capable(&self, name: Ident) -> bool {
@@ -1246,22 +1297,19 @@ impl TypecheckResult {
     }
 
     pub fn struct_field_names(&self, name: Ident) -> Option<Vec<Ident>> {
-        self.struct_defs
-            .get(&name)
+        self.get_struct(name)
             .map(|def| def.fields.iter().map(|f| f.name).collect())
     }
 
     pub fn struct_field_index(&self, struct_name: Ident, field_name: Ident) -> Option<usize> {
-        self.struct_defs
-            .get(&struct_name)?
+        self.get_struct(struct_name)?
             .fields
             .iter()
             .position(|f| f.name == field_name)
     }
 
     pub fn struct_field_type(&self, struct_name: Ident, field_name: Ident) -> Option<Type> {
-        self.struct_defs
-            .get(&struct_name)?
+        self.get_struct(struct_name)?
             .fields
             .iter()
             .find(|f| f.name == field_name)
@@ -1273,15 +1321,14 @@ impl TypecheckResult {
         struct_name: Ident,
         field_name: Ident,
     ) -> Option<&FieldDefault> {
-        self.struct_defs
-            .get(&struct_name)?
+        self.get_struct(struct_name)?
             .field_defaults
             .get(&field_name)
     }
 
     pub fn struct_to_string_body(&self, name: Ident) -> Option<(&BlockNode, &Type)> {
         use internment::Intern;
-        let def = self.struct_defs.get(&name)?;
+        let def = self.get_struct(name)?;
         if !def.type_params.is_empty() {
             return None;
         }
@@ -1302,12 +1349,16 @@ impl TypecheckResult {
         Some((&method.body, &method.ret))
     }
 
-    pub fn enum_names(&self) -> impl Iterator<Item = Ident> + '_ {
-        self.enum_defs.keys().copied()
+    pub fn enum_names(&self) -> Vec<Ident> {
+        let mut names: HashSet<Ident> = self.enum_defs.keys().copied().collect();
+        for module_def in self.resolved_module_defs.values() {
+            names.extend(module_def.enum_defs.keys().copied());
+        }
+        names.into_iter().collect()
     }
 
     pub fn enum_variant_index(&self, enum_name: Ident, variant_name: Ident) -> Option<u16> {
-        let def = self.enum_defs.get(&enum_name)?;
+        let def = self.get_enum(enum_name)?;
         let idx = def.variants.iter().position(|v| v.name == variant_name)?;
         Some(idx as u16)
     }
@@ -1317,7 +1368,7 @@ impl TypecheckResult {
         enum_name: Ident,
         variant_name: Ident,
     ) -> Option<Vec<Ident>> {
-        let def = self.enum_defs.get(&enum_name)?;
+        let def = self.get_enum(enum_name)?;
         let variant = def.variants.iter().find(|v| v.name == variant_name)?;
         match &variant.kind {
             VariantKind::Struct(fields) => Some(fields.iter().map(|f| f.name).collect()),
@@ -1331,7 +1382,7 @@ impl TypecheckResult {
         variant_name: Ident,
         type_args: &[Type],
     ) -> Option<Vec<Type>> {
-        let def = self.enum_defs.get(&enum_name)?;
+        let def = self.get_enum(enum_name)?;
         let variant = def.variants.iter().find(|v| v.name == variant_name)?;
         let subst = build_subst(&def.type_params, type_args);
         match &variant.kind {
@@ -1352,8 +1403,7 @@ impl TypecheckResult {
     }
 
     pub fn enum_variant_kinds(&self, name: Ident) -> Option<Vec<(Ident, &VariantKind)>> {
-        self.enum_defs
-            .get(&name)
+        self.get_enum(name)
             .map(|def| def.variants.iter().map(|v| (v.name, &v.kind)).collect())
     }
 
@@ -1595,6 +1645,50 @@ pub(super) fn type_field_on_base(
                 DiagnosticKind::ExternUnknownField {
                     type_name: *name,
                     field,
+                },
+            ));
+            Type::Infer
+        }
+        Type::UnresolvedName(name) => {
+            // it could be an ambiguois/transitive type, so we do deep lookup before falling through
+            if let DeepLookup::Ambiguous(first, second) = type_checker.get_struct_deep(*name) {
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::AmbiguousType {
+                        name: *name,
+                        first_module: first,
+                        second_module: second,
+                    },
+                ));
+                return Type::Infer;
+            }
+            if let DeepLookup::Ambiguous(first, second) = type_checker.get_enum_deep(*name) {
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::AmbiguousType {
+                        name: *name,
+                        first_module: first,
+                        second_module: second,
+                    },
+                ));
+                return Type::Infer;
+            }
+            if let DeepLookup::Ambiguous(first, second) = type_checker.get_extern_type_deep(*name) {
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::AmbiguousType {
+                        name: *name,
+                        first_module: first,
+                        second_module: second,
+                    },
+                ));
+                return Type::Infer;
+            }
+            errors.push(Diagnostic::new(
+                span,
+                DiagnosticKind::FieldAccessOnNonNamedTuple {
+                    field,
+                    found: base_ty.clone(),
                 },
             ));
             Type::Infer

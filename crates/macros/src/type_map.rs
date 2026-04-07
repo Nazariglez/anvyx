@@ -9,6 +9,7 @@ pub struct ExternTypeInfo {
 
 pub enum ParamMode {
     Owned(TokenStream),
+    StrRef,
     ExternRef(ExternTypeInfo),
     ExternMutRef(ExternTypeInfo),
 }
@@ -42,6 +43,9 @@ pub fn classify_param(ty: &Type) -> Option<ParamMode> {
             && path.qself.is_none()
             && let Some(ident) = path.path.get_ident()
         {
+            if ident == "str" && ref_type.mutability.is_none() {
+                return Some(ParamMode::StrRef);
+            }
             let info = extern_type_info(ident);
             return Some(if ref_type.mutability.is_some() {
                 ParamMode::ExternMutRef(info)

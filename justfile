@@ -21,7 +21,7 @@ install:
 miri:
     MIRIFLAGS="-Zmiri-strict-provenance" cargo +nightly miri test -p anvyx-lang --all-targets
 
-rust-coverage floor="941":
+rust-coverage floor="951":
     python3 ./scripts/rust_coverage.py --floor {{floor}}
 
 clean-rust-cache:

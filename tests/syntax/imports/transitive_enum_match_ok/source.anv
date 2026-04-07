@@ -1,0 +1,5 @@
+// @helper
+
+import types { Status };
+
+pub fn get_status() -> Status { Status.Active }

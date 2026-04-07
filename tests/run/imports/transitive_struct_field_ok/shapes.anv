@@ -1,0 +1,10 @@
+// @helper
+
+pub struct Point {
+    x: float,
+    y: float,
+
+    fn magnitude(self) -> float {
+        self.x + self.y
+    }
+}

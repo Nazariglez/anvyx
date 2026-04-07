@@ -1,6 +1,5 @@
 // @mode: check
-// @expect: error
-// @contains: expected
+// @expect: success
 
 struct Vec2 { x: float, y: float }
 
@@ -10,4 +9,5 @@ extend Vec2 {
 
 fn main() {
     let f = |x: as Vec2| x;
+    let _v = f(1.0);
 }

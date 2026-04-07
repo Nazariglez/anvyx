@@ -559,7 +559,7 @@ fn process_init(
                     }
                 });
             }
-            ParamMode::ExternRef(_) | ParamMode::ExternMutRef(_) => {
+            ParamMode::StrRef | ParamMode::ExternRef(_) | ParamMode::ExternMutRef(_) => {
                 return Err(syn::Error::new_spanned(
                     &pat_type.ty,
                     "#[init] does not support reference parameters; pass by value instead",

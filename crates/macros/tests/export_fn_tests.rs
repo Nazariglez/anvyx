@@ -58,6 +58,56 @@ fn export_fn_string_params() {
 }
 
 #[export_fn]
+fn greet_ref(name: &str) -> String {
+    format!("hi {name}")
+}
+
+#[test]
+fn export_fn_str_ref_param() {
+    let (name, handler) = __anvyx_export_greet_ref();
+    assert_eq!(name, "greet_ref");
+    let result = handler(vec![Value::String(ManagedRc::new("world".to_string()))]).unwrap();
+    assert_eq!(
+        result,
+        Value::String(ManagedRc::new("hi world".to_string()))
+    );
+}
+
+#[export_fn]
+fn concat_ref(a: &str, b: &str) -> String {
+    format!("{a}{b}")
+}
+
+#[test]
+fn export_fn_multiple_str_ref_params() {
+    let (_, handler) = __anvyx_export_concat_ref();
+    let result = handler(vec![
+        Value::String(ManagedRc::new("hello ".to_string())),
+        Value::String(ManagedRc::new("world".to_string())),
+    ])
+    .unwrap();
+    assert_eq!(
+        result,
+        Value::String(ManagedRc::new("hello world".to_string()))
+    );
+}
+
+#[test]
+fn export_fn_str_ref_wrong_type() {
+    let (_, handler) = __anvyx_export_greet_ref();
+    let result = handler(vec![Value::Int(42)]);
+    assert!(result.is_err());
+}
+
+#[test]
+fn export_fn_str_ref_param_decl() {
+    let decl: ExternDecl = __ANVYX_DECL_GREET_REF();
+    assert_eq!(decl.name, "greet_ref");
+    assert_eq!(decl.params, &[("name", "string")]);
+    assert_eq!(decl.ret, "string");
+}
+
+#[export_fn]
 fn noop() {}
 
 #[test]
@@ -1012,9 +1062,7 @@ fn cleanup_explicit_destroy_then_drop_no_panic() {
 // -- #[export_methods] tests --
 
 mod method_tests {
-    use anvyx_lang::{
-        ExternHandle, ExternMethodDecl, ExternStaticMethodDecl, Value, export_methods, export_type,
-    };
+    use anvyx_lang::{ExternHandle, Value, export_methods, export_type};
 
     use super::extern_handle;
 
@@ -2111,7 +2159,7 @@ mod init_no_auto_tests {
 // -- #[op(...)] annotation tests --
 
 mod op_tests {
-    use anvyx_lang::{ExternOpDecl, Value, export_methods, export_type};
+    use anvyx_lang::{Value, export_methods, export_type};
 
     use super::extern_handle;
 
@@ -3107,7 +3155,7 @@ mod fallible_init_tests {
 // -- #[op] returning Option<f32> --
 
 mod op_option_return_tests {
-    use anvyx_lang::{ExternOpDecl, OPTION_TYPE_ID, Value, export_methods, export_type};
+    use anvyx_lang::{OPTION_TYPE_ID, Value, export_methods, export_type};
 
     use super::extern_handle;
 
@@ -3201,7 +3249,7 @@ mod op_option_return_tests {
 // -- #[op] returning Result<f32, RuntimeError> --
 
 mod op_result_return_tests {
-    use anvyx_lang::{ExternOpDecl, RuntimeError, Value, export_methods, export_type};
+    use anvyx_lang::{RuntimeError, Value, export_methods, export_type};
 
     use super::extern_handle;
 
@@ -3281,7 +3329,7 @@ mod op_result_return_tests {
 // -- Method returning Option<ExternType> --
 
 mod method_option_extern_return_tests {
-    use anvyx_lang::{ExternMethodDecl, OPTION_TYPE_ID, Value, export_methods, export_type};
+    use anvyx_lang::{OPTION_TYPE_ID, Value, export_methods, export_type};
 
     #[derive(Clone)]
     #[export_type(name = "Item")]
@@ -3381,7 +3429,7 @@ mod method_option_extern_return_tests {
 // -- Method returning Result<ExternType, RuntimeError> --
 
 mod method_result_extern_return_tests {
-    use anvyx_lang::{ExternMethodDecl, RuntimeError, Value, export_methods, export_type};
+    use anvyx_lang::{RuntimeError, Value, export_methods, export_type};
 
     #[derive(Clone)]
     #[export_type(name = "Product")]
@@ -3486,7 +3534,7 @@ mod method_result_extern_return_tests {
 // -- #[op] returning Option<ExternType> --
 
 mod op_option_extern_return_tests {
-    use anvyx_lang::{ExternOpDecl, OPTION_TYPE_ID, Value, export_methods, export_type};
+    use anvyx_lang::{OPTION_TYPE_ID, Value, export_methods, export_type};
 
     use super::extern_handle;
 
@@ -3591,7 +3639,7 @@ mod op_option_extern_return_tests {
 // -- #[op] returning Result<ExternType, RuntimeError> --
 
 mod op_result_extern_return_tests {
-    use anvyx_lang::{ExternOpDecl, RuntimeError, Value, export_methods, export_type};
+    use anvyx_lang::{RuntimeError, Value, export_methods, export_type};
 
     use super::extern_handle;
 

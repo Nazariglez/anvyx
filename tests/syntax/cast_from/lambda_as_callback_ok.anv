@@ -1,0 +1,18 @@
+// @mode: check
+// @expect: success
+
+struct Vec2 { x: float, y: float }
+
+extend Vec2 {
+    cast from(v: float) { Vec2 { x: v, y: v } }
+}
+
+fn apply(cb: fn(Vec2) -> string, v: Vec2) -> string {
+    cb(v)
+}
+
+fn main() {
+    let transform = |v: as Vec2| -> string { f"({v.x}, {v.y})" };
+    let result = apply(transform, Vec2 { x: 1.0, y: 2.0 });
+    println(result);
+}

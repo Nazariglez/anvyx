@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use internment::Intern;
 
 use super::{
+    annotations::{AnnotationTarget, normalize_annotations},
     call::{check_instantiated_body, *},
     error::{Diagnostic, DiagnosticKind},
     expr::check_expr,
@@ -400,6 +401,14 @@ fn try_specialize_extend(
             .join(", ")
     );
 
+    // check deprecation at call site and discard normalization error because it was already reported at declaration
+    let annotations = normalize_annotations(
+        &template.method.node.annotations,
+        AnnotationTarget::ExtendMethod,
+        &mut vec![],
+    );
+    annotations.check_deprecation(span, "method", method_name, errors);
+
     let subst = build_subst(&template.type_params, type_args);
     let const_subst = build_const_subst(&template.const_params, const_args);
     let method = &template.method.node;
@@ -467,11 +476,19 @@ fn try_specialize_extend(
                 .cloned()
         };
 
+        let type_subst: Vec<(Ident, Type)> = template
+            .type_params
+            .iter()
+            .zip(type_args.iter())
+            .map(|(p, ty)| (p.name, ty.clone()))
+            .collect();
+
         let ictx = InstantiationContext {
             module_env: owned_module_env.as_ref(),
             params: body_params,
             ret_ty: specialized_ret.clone(),
             method_ctx: None,
+            type_subst,
         };
         let mut body_errors = vec![];
         let spec_result =
@@ -1370,6 +1387,36 @@ fn handle_method_call_if_applicable(
         return Some(outcome);
     }
 
+    // check if the type is an unresolved name that may be an ambiguous transitive type
+    if let Type::UnresolvedName(name) = detection_ty {
+        let span = field_node.span;
+        let emit_ambiguous = |errors: &mut Vec<Diagnostic>, first: String, second: String| {
+            errors.push(Diagnostic::new(
+                span,
+                DiagnosticKind::AmbiguousType {
+                    name: *name,
+                    first_module: first,
+                    second_module: second,
+                },
+            ));
+        };
+        if let DeepLookup::Ambiguous(first, second) = type_checker.get_struct_deep(*name) {
+            emit_ambiguous(errors, first, second);
+            mark_remaining_ops_infer(chain, index, type_checker);
+            return Some(MethodCallOutcome::Abort);
+        }
+        if let DeepLookup::Ambiguous(first, second) = type_checker.get_enum_deep(*name) {
+            emit_ambiguous(errors, first, second);
+            mark_remaining_ops_infer(chain, index, type_checker);
+            return Some(MethodCallOutcome::Abort);
+        }
+        if let DeepLookup::Ambiguous(first, second) = type_checker.get_extern_type_deep(*name) {
+            emit_ambiguous(errors, first, second);
+            mark_remaining_ops_infer(chain, index, type_checker);
+            return Some(MethodCallOutcome::Abort);
+        }
+    }
+
     // built-in list/map and extend methods on primitives/enums
     match try_builtin_or_extend_method(
         detection_ty,
@@ -1900,18 +1947,18 @@ fn apply_postfix_op(
                 } else if let Type::Func { params, .. } = base_ty {
                     check_closure_var_params(params, call_node, type_checker, errors);
                 }
-                if let Some(cast_accepts) = type_checker.func_cast_accept.get(name).cloned() {
-                    if let Type::Func { params, .. } = base_ty {
-                        let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
-                        resolve_cast_accept_errors(
-                            call_node.node.func.node.id,
-                            &cast_accepts,
-                            &param_tys,
-                            &call_node.node.args,
-                            type_checker,
-                            errors,
-                        );
-                    }
+                if let Some(cast_accepts) = type_checker.func_cast_accept.get(name).cloned()
+                    && let Type::Func { params, .. } = base_ty
+                {
+                    let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
+                    resolve_cast_accept_errors(
+                        call_node.node.func.node.id,
+                        &cast_accepts,
+                        &param_tys,
+                        &call_node.node.args,
+                        type_checker,
+                        errors,
+                    );
                 }
                 return result;
             }

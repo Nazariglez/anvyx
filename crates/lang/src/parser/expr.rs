@@ -510,10 +510,29 @@ fn lambda_expr<'src>(
     .or_not()
     .map(|opt| opt.is_some());
 
+    let as_kw = select! {
+        (Token::Keyword(Keyword::As), _) => (),
+    }
+    .or_not()
+    .map(|opt| opt.is_some());
+
     let lambda_param = var_kw
         .then(identifier())
-        .then(colon.ignore_then(type_ident()).or_not())
-        .map(|((mutable, name), ty)| ast::LambdaParam { name, ty, mutable });
+        .then(
+            colon
+                .ignore_then(as_kw.then(type_ident()))
+                .or_not()
+                .map(|opt| match opt {
+                    Some((cast_accept, ty)) => (Some(ty), cast_accept),
+                    None => (None, false),
+                }),
+        )
+        .map(|((mutable, name), (ty, cast_accept))| ast::LambdaParam {
+            name,
+            ty,
+            mutable,
+            cast_accept,
+        });
 
     // |param, param: Type| or ||
     let with_params = pipe

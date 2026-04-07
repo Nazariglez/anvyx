@@ -456,6 +456,15 @@ pub(super) fn check_list_method(
             check_predicate_combinator(call, elem, &ret, type_checker, errors)
         }
         "count" => check_predicate_combinator(call, elem, &Type::Int, type_checker, errors),
+        "len" => check_call_signature(
+            call.span,
+            &[],
+            0,
+            &Type::Int,
+            &node.args,
+            type_checker,
+            errors,
+        ),
         "sort_by" => {
             check_receiver_mutability(target, label, method_name, type_checker, errors);
             let func_param = Type::Func {
@@ -829,8 +838,7 @@ fn check_cast_accept_arg(
 
     let arg_ty = type_checker
         .get_type(arg_expr.node.id)
-        .map(|(_, ty)| ty.clone())
-        .unwrap_or(Type::Infer);
+        .map_or(Type::Infer, |(_, ty)| ty.clone());
 
     // if types already match or arg is unresolved constrain normally
     if is_assignable(&arg_ty, param_ty) || contains_infer(&arg_ty) {
@@ -2216,6 +2224,11 @@ pub(super) fn check_instantiated_body(
         type_checker.push_method_context(method_ctx.clone());
     }
 
+    let type_subst_count = ictx.type_subst.len();
+    type_checker
+        .current_type_subst
+        .extend_from_slice(&ictx.type_subst);
+
     check_body_common(
         &ictx.params,
         body,
@@ -2224,6 +2237,8 @@ pub(super) fn check_instantiated_body(
         type_checker,
         body_errors,
     );
+
+    type_checker.pop_type_subst(type_subst_count);
 
     if ictx.method_ctx.is_some() {
         type_checker.pop_method_context();
@@ -2342,11 +2357,18 @@ fn instantiate_and_check_fn(
         .get(&func_name)
         .and_then(|path| type_checker.module_check_contexts.get(path).cloned());
 
+    let type_subst: Vec<(Ident, Type)> = type_params
+        .iter()
+        .zip(type_args.iter())
+        .map(|(p, ty)| (p.name, ty.clone()))
+        .collect();
+
     let ictx = InstantiationContext {
         module_env: owned_module_env.as_ref(),
         params,
         ret_ty,
         method_ctx: None,
+        type_subst,
     };
     let mut body_errors = vec![];
     let result =
@@ -2451,6 +2473,12 @@ fn instantiate_method_body(
         ));
     }
 
+    let type_subst: Vec<(Ident, Type)> = all_type_params
+        .iter()
+        .zip(all_type_args.iter())
+        .map(|(p, ty)| (p.name, ty.clone()))
+        .collect();
+
     let ictx = InstantiationContext {
         module_env: None,
         params,
@@ -2459,6 +2487,7 @@ fn instantiate_method_body(
             struct_name: *struct_name,
             receiver: method.receiver,
         }),
+        type_subst,
     };
     let mut body_errors = vec![];
     let result = check_instantiated_body(

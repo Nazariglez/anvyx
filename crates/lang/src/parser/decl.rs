@@ -1205,6 +1205,11 @@ fn cast_from_decl<'src>(
 pub(super) fn extend_declaration<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::ExtendDeclNode> {
+    enum ExtendMember {
+        Method(ast::ExtendMethodNode),
+        CastFrom(ast::CastFromNode),
+    }
+
     let extend_head = choice((
         // extend<T, ...> type_expr, explicit type params followed by any type expression
         required_generic_params()
@@ -1230,11 +1235,6 @@ pub(super) fn extend_declaration<'src>(
         // any other type expression, no type params possible (primitives, lists, options, etc.)
         type_ident().map(|ty| (ty, GenericParams::default())),
     ));
-
-    enum ExtendMember {
-        Method(ast::ExtendMethodNode),
-        CastFrom(ast::CastFromNode),
-    }
 
     visibility()
         .then_ignore(select! {

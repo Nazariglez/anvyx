@@ -2838,6 +2838,17 @@ fn try_lower_method_call(
             return lower_sort_by(c, elem, span, ctx, fc);
         }
 
+        if method_str == "len" {
+            let target = lower_expr(&field.node.target, ctx, fc, out)?;
+            return Ok(Some(hir::Expr::new(
+                ty.clone(),
+                span,
+                hir::ExprKind::CollectionLen {
+                    collection: Box::new(target),
+                },
+            )));
+        }
+
         let single_lambda = matches!(
             method_str,
             "map" | "filter" | "for_each" | "any" | "all" | "find" | "find_index" | "count"

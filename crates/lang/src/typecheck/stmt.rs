@@ -1943,6 +1943,16 @@ pub(super) fn check_binding(
         .map(|annot_ty| type_checker.resolve_type(annot_ty));
     check_expr(&node.value, type_checker, errors, expected.as_ref());
 
+    // preserve lambda "as" param auto-casts when the lambda is bound to a named variable
+    if matches!(node.value.node.kind, ExprKind::Lambda(_)) {
+        let lambda_id = node.value.node.id;
+        if let Some(cast_accepts) = type_checker.lambda_cast_accepts.get(&lambda_id).cloned()
+            && let crate::ast::Pattern::Ident(name) = node.pattern.node
+        {
+            type_checker.func_cast_accept.insert(name, cast_accepts);
+        }
+    }
+
     if is_if_without_else(&node.value) {
         errors.push(
             Diagnostic::new(node.value.span, DiagnosticKind::IfMissingElse).with_help(

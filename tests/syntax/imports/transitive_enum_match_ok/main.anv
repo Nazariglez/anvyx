@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+import source { get_status };
+
+fn main() {
+    let s = get_status();
+    let label = match s {
+        Status.Active => "on",
+        Status.Inactive => "off",
+    };
+}

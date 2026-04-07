@@ -1,0 +1,6 @@
+// @helper
+
+pub enum Status {
+    Active,
+    Inactive,
+}

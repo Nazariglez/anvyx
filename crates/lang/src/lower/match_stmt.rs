@@ -201,11 +201,11 @@ fn lower_match_enum(
                     .unwrap_or_default();
 
                 let mut bindings = vec![];
+                let mut guard_parts = vec![];
                 for (field_idx, subpat) in subpatterns.iter().enumerate() {
+                    let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
                     match &subpat.node {
                         Pattern::Ident(binding_name) => {
-                            let field_ty =
-                                field_types.get(field_idx).cloned().unwrap_or(Type::Void);
                             let local = register_named_local(fc, *binding_name, field_ty);
                             bindings.push(hir::MatchBinding {
                                 field_index: field_idx as u16,
@@ -214,8 +214,6 @@ fn lower_match_enum(
                             });
                         }
                         Pattern::VarIdent(binding_name) => {
-                            let field_ty =
-                                field_types.get(field_idx).cloned().unwrap_or(Type::Void);
                             let local = register_named_local(fc, *binding_name, field_ty);
                             bindings.push(hir::MatchBinding {
                                 field_index: field_idx as u16,
@@ -223,14 +221,41 @@ fn lower_match_enum(
                                 mutable: true,
                             });
                         }
+                        Pattern::Lit(lit) => {
+                            guard_parts.push(build_field_lit_guard(
+                                field_idx as u16,
+                                &field_ty,
+                                scrutinee_local,
+                                scrutinee_ty,
+                                lit,
+                                span,
+                            )?);
+                        }
+                        Pattern::Range {
+                            start,
+                            end,
+                            inclusive,
+                        } => {
+                            guard_parts.push(build_field_range_guard(
+                                field_idx as u16,
+                                &field_ty,
+                                scrutinee_local,
+                                scrutinee_ty,
+                                start.as_ref(),
+                                end.as_ref(),
+                                *inclusive,
+                                span,
+                            )?);
+                        }
                         _ => {}
                     }
                 }
+                let guard = combine_guards(guard_parts, span);
                 let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
                 arms.push(hir::MatchArm {
                     variant: variant_idx,
                     bindings,
-                    guard: None,
+                    guard,
                     body,
                 });
             }
@@ -258,15 +283,15 @@ fn lower_match_enum(
                     .unwrap_or_default();
 
                 let mut bindings = vec![];
+                let mut guard_parts = vec![];
                 for (pat_field_name, subpat) in field_patterns {
+                    let field_idx = field_names
+                        .iter()
+                        .position(|n| n == pat_field_name)
+                        .unwrap_or(0);
+                    let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
                     match &subpat.node {
                         Pattern::Ident(binding_name) => {
-                            let field_idx = field_names
-                                .iter()
-                                .position(|n| n == pat_field_name)
-                                .unwrap_or(0);
-                            let field_ty =
-                                field_types.get(field_idx).cloned().unwrap_or(Type::Void);
                             let local = register_named_local(fc, *binding_name, field_ty);
                             bindings.push(hir::MatchBinding {
                                 field_index: field_idx as u16,
@@ -275,12 +300,6 @@ fn lower_match_enum(
                             });
                         }
                         Pattern::VarIdent(binding_name) => {
-                            let field_idx = field_names
-                                .iter()
-                                .position(|n| n == pat_field_name)
-                                .unwrap_or(0);
-                            let field_ty =
-                                field_types.get(field_idx).cloned().unwrap_or(Type::Void);
                             let local = register_named_local(fc, *binding_name, field_ty);
                             bindings.push(hir::MatchBinding {
                                 field_index: field_idx as u16,
@@ -288,14 +307,41 @@ fn lower_match_enum(
                                 mutable: true,
                             });
                         }
+                        Pattern::Lit(lit) => {
+                            guard_parts.push(build_field_lit_guard(
+                                field_idx as u16,
+                                &field_ty,
+                                scrutinee_local,
+                                scrutinee_ty,
+                                lit,
+                                span,
+                            )?);
+                        }
+                        Pattern::Range {
+                            start,
+                            end,
+                            inclusive,
+                        } => {
+                            guard_parts.push(build_field_range_guard(
+                                field_idx as u16,
+                                &field_ty,
+                                scrutinee_local,
+                                scrutinee_ty,
+                                start.as_ref(),
+                                end.as_ref(),
+                                *inclusive,
+                                span,
+                            )?);
+                        }
                         _ => {}
                     }
                 }
+                let guard = combine_guards(guard_parts, span);
                 let body = lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
                 arms.push(hir::MatchArm {
                     variant: variant_idx,
                     bindings,
-                    guard: None,
+                    guard,
                     body,
                 });
             }
@@ -418,13 +464,12 @@ fn lower_match_enum(
                                 .enum_variant_field_types(enum_name, *variant, type_args)
                                 .unwrap_or_default();
                             let mut bindings = vec![];
+                            let mut guard_parts = vec![];
                             for (field_idx, subpat) in subpatterns.iter().enumerate() {
+                                let field_ty =
+                                    field_types.get(field_idx).cloned().unwrap_or(Type::Void);
                                 match &subpat.node {
                                     Pattern::Ident(binding_name) => {
-                                        let field_ty = field_types
-                                            .get(field_idx)
-                                            .cloned()
-                                            .unwrap_or(Type::Void);
                                         let local =
                                             register_named_local(fc, *binding_name, field_ty);
                                         bindings.push(hir::MatchBinding {
@@ -434,10 +479,6 @@ fn lower_match_enum(
                                         });
                                     }
                                     Pattern::VarIdent(binding_name) => {
-                                        let field_ty = field_types
-                                            .get(field_idx)
-                                            .cloned()
-                                            .unwrap_or(Type::Void);
                                         let local =
                                             register_named_local(fc, *binding_name, field_ty);
                                         bindings.push(hir::MatchBinding {
@@ -446,15 +487,42 @@ fn lower_match_enum(
                                             mutable: true,
                                         });
                                     }
+                                    Pattern::Lit(lit) => {
+                                        guard_parts.push(build_field_lit_guard(
+                                            field_idx as u16,
+                                            &field_ty,
+                                            scrutinee_local,
+                                            scrutinee_ty,
+                                            lit,
+                                            span,
+                                        )?);
+                                    }
+                                    Pattern::Range {
+                                        start,
+                                        end,
+                                        inclusive,
+                                    } => {
+                                        guard_parts.push(build_field_range_guard(
+                                            field_idx as u16,
+                                            &field_ty,
+                                            scrutinee_local,
+                                            scrutinee_ty,
+                                            start.as_ref(),
+                                            end.as_ref(),
+                                            *inclusive,
+                                            span,
+                                        )?);
+                                    }
                                     _ => {}
                                 }
                             }
+                            let guard = combine_guards(guard_parts, span);
                             let body =
                                 lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
                             arms.push(hir::MatchArm {
                                 variant: variant_idx,
                                 bindings,
-                                guard: None,
+                                guard,
                                 body,
                             });
                         }
@@ -481,17 +549,16 @@ fn lower_match_enum(
                                 .enum_variant_field_types(enum_name, *variant, type_args)
                                 .unwrap_or_default();
                             let mut bindings = vec![];
+                            let mut guard_parts = vec![];
                             for (pat_field_name, subpat) in field_patterns {
+                                let field_idx = field_names
+                                    .iter()
+                                    .position(|n| n == pat_field_name)
+                                    .unwrap_or(0);
+                                let field_ty =
+                                    field_types.get(field_idx).cloned().unwrap_or(Type::Void);
                                 match &subpat.node {
                                     Pattern::Ident(binding_name) => {
-                                        let field_idx = field_names
-                                            .iter()
-                                            .position(|n| n == pat_field_name)
-                                            .unwrap_or(0);
-                                        let field_ty = field_types
-                                            .get(field_idx)
-                                            .cloned()
-                                            .unwrap_or(Type::Void);
                                         let local =
                                             register_named_local(fc, *binding_name, field_ty);
                                         bindings.push(hir::MatchBinding {
@@ -501,14 +568,6 @@ fn lower_match_enum(
                                         });
                                     }
                                     Pattern::VarIdent(binding_name) => {
-                                        let field_idx = field_names
-                                            .iter()
-                                            .position(|n| n == pat_field_name)
-                                            .unwrap_or(0);
-                                        let field_ty = field_types
-                                            .get(field_idx)
-                                            .cloned()
-                                            .unwrap_or(Type::Void);
                                         let local =
                                             register_named_local(fc, *binding_name, field_ty);
                                         bindings.push(hir::MatchBinding {
@@ -517,15 +576,42 @@ fn lower_match_enum(
                                             mutable: true,
                                         });
                                     }
+                                    Pattern::Lit(lit) => {
+                                        guard_parts.push(build_field_lit_guard(
+                                            field_idx as u16,
+                                            &field_ty,
+                                            scrutinee_local,
+                                            scrutinee_ty,
+                                            lit,
+                                            span,
+                                        )?);
+                                    }
+                                    Pattern::Range {
+                                        start,
+                                        end,
+                                        inclusive,
+                                    } => {
+                                        guard_parts.push(build_field_range_guard(
+                                            field_idx as u16,
+                                            &field_ty,
+                                            scrutinee_local,
+                                            scrutinee_ty,
+                                            start.as_ref(),
+                                            end.as_ref(),
+                                            *inclusive,
+                                            span,
+                                        )?);
+                                    }
                                     _ => {}
                                 }
                             }
+                            let guard = combine_guards(guard_parts, span);
                             let body =
                                 lower_arm_body(&arm.node.body, ctx, fc, is_func_body, ret_ty)?;
                             arms.push(hir::MatchArm {
                                 variant: variant_idx,
                                 bindings,
-                                guard: None,
+                                guard,
                                 body,
                             });
                         }
@@ -609,26 +695,14 @@ fn lower_match_enum(
                                     });
                                 }
                                 Pattern::Lit(lit) => {
-                                    let field_expr = hir::Expr::new(
-                                        field_ty.clone(),
+                                    let guard = build_field_lit_guard(
+                                        0,
+                                        &field_ty,
+                                        scrutinee_local,
+                                        scrutinee_ty,
+                                        lit,
                                         span,
-                                        hir::ExprKind::FieldGet {
-                                            object: Box::new(hir::Expr::local(
-                                                scrutinee_ty.clone(),
-                                                span,
-                                                scrutinee_local,
-                                            )),
-                                            index: 0,
-                                        },
-                                    );
-                                    let rhs = build_rhs_from_lit(lit, span)?;
-                                    let guard = hir::Expr::binary(
-                                        Type::Bool,
-                                        span,
-                                        BinaryOp::Eq,
-                                        field_expr,
-                                        rhs,
-                                    );
+                                    )?;
                                     let body = lower_arm_body(
                                         &arm.node.body,
                                         ctx,
@@ -648,62 +722,16 @@ fn lower_match_enum(
                                     end,
                                     inclusive,
                                 } => {
-                                    let field_expr = hir::Expr::new(
-                                        field_ty.clone(),
+                                    let guard = build_field_range_guard(
+                                        0,
+                                        &field_ty,
+                                        scrutinee_local,
+                                        scrutinee_ty,
+                                        start.as_ref(),
+                                        end.as_ref(),
+                                        *inclusive,
                                         span,
-                                        hir::ExprKind::FieldGet {
-                                            object: Box::new(hir::Expr::local(
-                                                scrutinee_ty.clone(),
-                                                span,
-                                                scrutinee_local,
-                                            )),
-                                            index: 0,
-                                        },
-                                    );
-                                    let ge = if let Some(s) = start {
-                                        let rhs = build_rhs_from_lit(s, span)?;
-                                        Some(hir::Expr::binary(
-                                            Type::Bool,
-                                            span,
-                                            BinaryOp::GreaterThanEq,
-                                            field_expr.clone(),
-                                            rhs,
-                                        ))
-                                    } else {
-                                        None
-                                    };
-                                    let lt = if let Some(e) = end {
-                                        let rhs = build_rhs_from_lit(e, span)?;
-                                        let op = if *inclusive {
-                                            BinaryOp::LessThanEq
-                                        } else {
-                                            BinaryOp::LessThan
-                                        };
-                                        Some(hir::Expr::binary(
-                                            Type::Bool,
-                                            span,
-                                            op,
-                                            field_expr.clone(),
-                                            rhs,
-                                        ))
-                                    } else {
-                                        None
-                                    };
-                                    let guard = match (ge, lt) {
-                                        (Some(ge), Some(lt)) => hir::Expr::binary(
-                                            Type::Bool,
-                                            span,
-                                            BinaryOp::And,
-                                            ge,
-                                            lt,
-                                        ),
-                                        (Some(only), None) | (None, Some(only)) => only,
-                                        (None, None) => {
-                                            unreachable!(
-                                                "range pattern must have at least one bound"
-                                            )
-                                        }
-                                    };
+                                    )?;
                                     let body = lower_arm_body(
                                         &arm.node.body,
                                         ctx,
@@ -1157,6 +1185,100 @@ fn build_range_cond(
     })
 }
 
+fn build_field_lit_guard(
+    field_idx: u16,
+    field_ty: &Type,
+    scrutinee_local: hir::LocalId,
+    scrutinee_ty: &Type,
+    lit: &Lit,
+    span: Span,
+) -> Result<hir::Expr, LowerError> {
+    let field_expr = hir::Expr::new(
+        field_ty.clone(),
+        span,
+        hir::ExprKind::FieldGet {
+            object: Box::new(hir::Expr::local(
+                scrutinee_ty.clone(),
+                span,
+                scrutinee_local,
+            )),
+            index: field_idx,
+        },
+    );
+    let rhs = build_rhs_from_lit(lit, span)?;
+    Ok(hir::Expr::binary(
+        Type::Bool,
+        span,
+        BinaryOp::Eq,
+        field_expr,
+        rhs,
+    ))
+}
+
+fn build_field_range_guard(
+    field_idx: u16,
+    field_ty: &Type,
+    scrutinee_local: hir::LocalId,
+    scrutinee_ty: &Type,
+    start: Option<&Lit>,
+    end: Option<&Lit>,
+    inclusive: bool,
+    span: Span,
+) -> Result<hir::Expr, LowerError> {
+    let field_expr = hir::Expr::new(
+        field_ty.clone(),
+        span,
+        hir::ExprKind::FieldGet {
+            object: Box::new(hir::Expr::local(
+                scrutinee_ty.clone(),
+                span,
+                scrutinee_local,
+            )),
+            index: field_idx,
+        },
+    );
+    let ge = if let Some(s) = start {
+        let rhs = build_rhs_from_lit(s, span)?;
+        Some(hir::Expr::binary(
+            Type::Bool,
+            span,
+            BinaryOp::GreaterThanEq,
+            field_expr.clone(),
+            rhs,
+        ))
+    } else {
+        None
+    };
+    let lt = if let Some(e) = end {
+        let rhs = build_rhs_from_lit(e, span)?;
+        let op = if inclusive {
+            BinaryOp::LessThanEq
+        } else {
+            BinaryOp::LessThan
+        };
+        Some(hir::Expr::binary(
+            Type::Bool,
+            span,
+            op,
+            field_expr.clone(),
+            rhs,
+        ))
+    } else {
+        None
+    };
+    Ok(match (ge, lt) {
+        (Some(ge), Some(lt)) => hir::Expr::binary(Type::Bool, span, BinaryOp::And, ge, lt),
+        (Some(only), None) | (None, Some(only)) => only,
+        (None, None) => unreachable!("range pattern must have at least one bound"),
+    })
+}
+
+fn combine_guards(guards: Vec<hir::Expr>, span: Span) -> Option<hir::Expr> {
+    guards
+        .into_iter()
+        .reduce(|acc, g| hir::Expr::binary(Type::Bool, span, BinaryOp::And, acc, g))
+}
+
 fn build_rhs_from_const_value(cv: &ConstValue, span: Span) -> hir::Expr {
     match cv {
         ConstValue::Int(n) => hir::Expr::int_lit(span, *n),
@@ -1420,6 +1542,7 @@ pub(super) fn lower_if_let(
                     .enum_variant_field_types(enum_name, *variant, type_args)
                     .unwrap_or_default();
                 let mut bindings = vec![];
+                let mut guard_parts = vec![];
                 for (field_idx, subpat) in subpatterns.iter().enumerate() {
                     let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
                     match &subpat.node {
@@ -1439,15 +1562,42 @@ pub(super) fn lower_if_let(
                                 mutable: true,
                             });
                         }
+                        Pattern::Lit(lit) => {
+                            guard_parts.push(build_field_lit_guard(
+                                field_idx as u16,
+                                &field_ty,
+                                scrutinee_local,
+                                &scrutinee_ty,
+                                lit,
+                                span,
+                            )?);
+                        }
+                        Pattern::Range {
+                            start,
+                            end,
+                            inclusive,
+                        } => {
+                            guard_parts.push(build_field_range_guard(
+                                field_idx as u16,
+                                &field_ty,
+                                scrutinee_local,
+                                &scrutinee_ty,
+                                start.as_ref(),
+                                end.as_ref(),
+                                *inclusive,
+                                span,
+                            )?);
+                        }
                         _ => {}
                     }
                 }
+                let guard = combine_guards(guard_parts, span);
                 let body =
                     lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
                 hir::MatchArm {
                     variant: variant_idx,
                     bindings,
-                    guard: None,
+                    guard,
                     body,
                 }
             }
@@ -1474,6 +1624,7 @@ pub(super) fn lower_if_let(
                     .enum_variant_field_types(enum_name, *variant, type_args)
                     .unwrap_or_default();
                 let mut bindings = vec![];
+                let mut guard_parts = vec![];
                 for (pat_field_name, subpat) in field_patterns {
                     let field_idx = field_names
                         .iter()
@@ -1497,15 +1648,42 @@ pub(super) fn lower_if_let(
                                 mutable: true,
                             });
                         }
+                        Pattern::Lit(lit) => {
+                            guard_parts.push(build_field_lit_guard(
+                                field_idx as u16,
+                                &field_ty,
+                                scrutinee_local,
+                                &scrutinee_ty,
+                                lit,
+                                span,
+                            )?);
+                        }
+                        Pattern::Range {
+                            start,
+                            end,
+                            inclusive,
+                        } => {
+                            guard_parts.push(build_field_range_guard(
+                                field_idx as u16,
+                                &field_ty,
+                                scrutinee_local,
+                                &scrutinee_ty,
+                                start.as_ref(),
+                                end.as_ref(),
+                                *inclusive,
+                                span,
+                            )?);
+                        }
                         _ => {}
                     }
                 }
+                let guard = combine_guards(guard_parts, span);
                 let body =
                     lower_block(&if_let_node.node.then_block, ctx, fc, is_func_body, ret_ty)?;
                 hir::MatchArm {
                     variant: variant_idx,
                     bindings,
-                    guard: None,
+                    guard,
                     body,
                 }
             }
@@ -1744,6 +1922,7 @@ pub(super) fn lower_let_else(
                     .enum_variant_field_types(enum_name, *variant, type_args)
                     .unwrap_or_default();
                 let mut bindings = vec![];
+                let mut guard_parts = vec![];
                 for (field_idx, subpat) in subpatterns.iter().enumerate() {
                     let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
                     match &subpat.node {
@@ -1763,13 +1942,40 @@ pub(super) fn lower_let_else(
                                 mutable: true,
                             });
                         }
+                        Pattern::Lit(lit) => {
+                            guard_parts.push(build_field_lit_guard(
+                                field_idx as u16,
+                                &field_ty,
+                                scrutinee_local,
+                                &scrutinee_ty,
+                                lit,
+                                span,
+                            )?);
+                        }
+                        Pattern::Range {
+                            start,
+                            end,
+                            inclusive,
+                        } => {
+                            guard_parts.push(build_field_range_guard(
+                                field_idx as u16,
+                                &field_ty,
+                                scrutinee_local,
+                                &scrutinee_ty,
+                                start.as_ref(),
+                                end.as_ref(),
+                                *inclusive,
+                                span,
+                            )?);
+                        }
                         _ => {}
                     }
                 }
+                let guard = combine_guards(guard_parts, span);
                 hir::MatchArm {
                     variant: variant_idx,
                     bindings,
-                    guard: None,
+                    guard,
                     body: hir::Block { stmts: vec![] },
                 }
             }
@@ -1796,6 +2002,7 @@ pub(super) fn lower_let_else(
                     .enum_variant_field_types(enum_name, *variant, type_args)
                     .unwrap_or_default();
                 let mut bindings = vec![];
+                let mut guard_parts = vec![];
                 for (pat_field_name, subpat) in field_patterns {
                     let field_idx = field_names
                         .iter()
@@ -1819,13 +2026,40 @@ pub(super) fn lower_let_else(
                                 mutable: true,
                             });
                         }
+                        Pattern::Lit(lit) => {
+                            guard_parts.push(build_field_lit_guard(
+                                field_idx as u16,
+                                &field_ty,
+                                scrutinee_local,
+                                &scrutinee_ty,
+                                lit,
+                                span,
+                            )?);
+                        }
+                        Pattern::Range {
+                            start,
+                            end,
+                            inclusive,
+                        } => {
+                            guard_parts.push(build_field_range_guard(
+                                field_idx as u16,
+                                &field_ty,
+                                scrutinee_local,
+                                &scrutinee_ty,
+                                start.as_ref(),
+                                end.as_ref(),
+                                *inclusive,
+                                span,
+                            )?);
+                        }
                         _ => {}
                     }
                 }
+                let guard = combine_guards(guard_parts, span);
                 hir::MatchArm {
                     variant: variant_idx,
                     bindings,
-                    guard: None,
+                    guard,
                     body: hir::Block { stmts: vec![] },
                 }
             }
@@ -2130,6 +2364,7 @@ fn lower_while_let_enum(
                 .enum_variant_field_types(enum_name, *variant, &type_args)
                 .unwrap_or_default();
             let mut bindings = vec![];
+            let mut guard_parts = vec![];
             for (field_idx, subpat) in subpatterns.iter().enumerate() {
                 let field_ty = field_types.get(field_idx).cloned().unwrap_or(Type::Void);
                 match &subpat.node {
@@ -2149,16 +2384,43 @@ fn lower_while_let_enum(
                             mutable: true,
                         });
                     }
+                    Pattern::Lit(lit) => {
+                        guard_parts.push(build_field_lit_guard(
+                            field_idx as u16,
+                            &field_ty,
+                            scrutinee_local,
+                            &scrutinee_ty,
+                            lit,
+                            span,
+                        )?);
+                    }
+                    Pattern::Range {
+                        start,
+                        end,
+                        inclusive,
+                    } => {
+                        guard_parts.push(build_field_range_guard(
+                            field_idx as u16,
+                            &field_ty,
+                            scrutinee_local,
+                            &scrutinee_ty,
+                            start.as_ref(),
+                            end.as_ref(),
+                            *inclusive,
+                            span,
+                        )?);
+                    }
                     _ => {}
                 }
             }
+            let guard = combine_guards(guard_parts, span);
             let old = fc.enter_loop_defer();
             let body = lower_block(&while_let_node.node.body, ctx, fc, false, &Type::Void)?;
             fc.leave_loop_defer(old);
             hir::MatchArm {
                 variant: variant_idx,
                 bindings,
-                guard: None,
+                guard,
                 body,
             }
         }
@@ -2185,6 +2447,7 @@ fn lower_while_let_enum(
                 .enum_variant_field_types(enum_name, *variant, &type_args)
                 .unwrap_or_default();
             let mut bindings = vec![];
+            let mut guard_parts = vec![];
             for (pat_field_name, subpat) in field_patterns {
                 let field_idx = field_names
                     .iter()
@@ -2208,16 +2471,43 @@ fn lower_while_let_enum(
                             mutable: true,
                         });
                     }
+                    Pattern::Lit(lit) => {
+                        guard_parts.push(build_field_lit_guard(
+                            field_idx as u16,
+                            &field_ty,
+                            scrutinee_local,
+                            &scrutinee_ty,
+                            lit,
+                            span,
+                        )?);
+                    }
+                    Pattern::Range {
+                        start,
+                        end,
+                        inclusive,
+                    } => {
+                        guard_parts.push(build_field_range_guard(
+                            field_idx as u16,
+                            &field_ty,
+                            scrutinee_local,
+                            &scrutinee_ty,
+                            start.as_ref(),
+                            end.as_ref(),
+                            *inclusive,
+                            span,
+                        )?);
+                    }
                     _ => {}
                 }
             }
+            let guard = combine_guards(guard_parts, span);
             let old = fc.enter_loop_defer();
             let body = lower_block(&while_let_node.node.body, ctx, fc, false, &Type::Void)?;
             fc.leave_loop_defer(old);
             hir::MatchArm {
                 variant: variant_idx,
                 bindings,
-                guard: None,
+                guard,
                 body,
             }
         }
