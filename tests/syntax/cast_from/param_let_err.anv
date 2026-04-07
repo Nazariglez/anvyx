@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: expected
+
+fn main() {
+    let x: as int = 1;
+}

@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: error
+// @contains: Mismatched types
+
+struct Vec2 { x: float, y: float }
+
+extend Vec2 {
+    cast from(v: float) { Vec2 { x: v, y: v } }
+}
+
+fn move_by(offset: as Vec2) -> Vec2 { offset }
+
+fn main() {
+    move_by("hello");
+}

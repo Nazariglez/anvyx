@@ -89,23 +89,33 @@ pub(super) fn param<'src>(
         None => ast::Mutability::Immutable,
     });
 
+    let as_kw = select! {
+        (Token::Keyword(Keyword::As), _) => (),
+    }
+    .or_not()
+    .map(|opt| opt.is_some());
+
     var_kw
         .then(identifier())
         .then_ignore(select! {
             (Token::Colon, _) => (),
         })
+        .then(as_kw)
         .then(param_type_ident())
         .then(
             select! { (Token::Op(Op::Assign), _) => () }
                 .ignore_then(expression(stmt))
                 .or_not(),
         )
-        .map(|(((mutability, name), ty), default)| ast::Param {
-            mutability,
-            name,
-            ty,
-            default,
-        })
+        .map(
+            |((((mutability, name), cast_accept), ty), default)| ast::Param {
+                mutability,
+                name,
+                ty,
+                default,
+                cast_accept,
+            },
+        )
         .labelled("parameter")
         .as_context()
         .boxed()

@@ -30,6 +30,7 @@ pub type StructLiteralNode = Spanned<StructLiteral>;
 pub type EnumDeclNode = Spanned<EnumDecl>;
 pub type ExtendDeclNode = Spanned<ExtendDecl>;
 pub type ExtendMethodNode = Spanned<ExtendMethod>;
+pub type CastFromNode = Spanned<CastFrom>;
 pub type RangeNode = Spanned<Range>;
 pub type ArrayLiteralNode = Spanned<ArrayLiteral>;
 pub type ArrayFillNode = Spanned<ArrayFill>;
@@ -761,6 +762,7 @@ pub struct Param {
     pub name: Ident,
     pub ty: Type,
     pub default: Option<ExprNode>,
+    pub cast_accept: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1216,12 +1218,20 @@ pub struct EnumDecl {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct CastFrom {
+    pub param: Param,
+    pub ret: Option<Type>,
+    pub body: BlockNode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExtendDecl {
     pub visibility: Visibility,
     pub ty: Type,
     pub type_params: Vec<TypeParam>,
     pub const_params: Vec<ConstParam>,
     pub methods: Vec<ExtendMethodNode>,
+    pub cast_froms: Vec<CastFromNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

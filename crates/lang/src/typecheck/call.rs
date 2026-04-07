@@ -19,6 +19,7 @@ use super::{
         MethodDef, MethodSpecKey, ModuleDef, SpecializationKey, SpecializationResult, StructDef,
         TypeChecker, TypedBodyResult,
     },
+    unify::{contains_infer, is_assignable},
 };
 use crate::{
     ast::{
@@ -782,7 +783,18 @@ pub(super) fn check_call(
             _ => 0,
         }
     };
-    let result = check_call_with_type(call, func_ty, required_count, type_checker, errors);
+    let cast_accepts: Vec<bool> = func_name
+        .and_then(|n| type_checker.func_cast_accept.get(&n))
+        .cloned()
+        .unwrap_or_default();
+    let result = check_call_with_type(
+        call,
+        func_ty,
+        required_count,
+        &cast_accepts,
+        type_checker,
+        errors,
+    );
 
     if let Some(name) = func_name
         && let Some(param_info) = type_checker.func_param_info.get(&name).cloned()
@@ -803,6 +815,166 @@ fn check_and_constrain_arg(
     let arg_ref = TypeRef::Expr(arg_expr.node.id);
     let param_ref = TypeRef::concrete(param_ty);
     type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
+}
+
+fn check_cast_accept_arg(
+    call_func_expr_id: crate::ast::ExprId,
+    param_idx: usize,
+    arg_expr: &ExprNode,
+    param_ty: &Type,
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) {
+    check_expr(arg_expr, type_checker, errors, Some(param_ty));
+
+    let arg_ty = type_checker
+        .get_type(arg_expr.node.id)
+        .map(|(_, ty)| ty.clone())
+        .unwrap_or(Type::Infer);
+
+    // if types already match or arg is unresolved constrain normally
+    if is_assignable(&arg_ty, param_ty) || contains_infer(&arg_ty) {
+        let arg_ref = TypeRef::Expr(arg_expr.node.id);
+        let param_ref = TypeRef::concrete(param_ty);
+        type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
+        return;
+    }
+
+    // if types differ look for a cast_from entry
+    let resolved_param_ty = type_checker.resolve_type(param_ty);
+    if let Some(entry) = type_checker
+        .ctx
+        .cast_defs
+        .get(&(arg_ty.clone(), resolved_param_ty.clone()))
+    {
+        type_checker.cast_call_insertions.insert(
+            (call_func_expr_id, param_idx),
+            (entry.internal_name, resolved_param_ty),
+        );
+    } else {
+        let available: Vec<String> = type_checker
+            .ctx
+            .cast_defs
+            .iter()
+            .filter(|((_, target), _)| *target == resolved_param_ty)
+            .map(|((source, _), _)| format!("{source}"))
+            .collect();
+        let mut diag = Diagnostic::new(
+            arg_expr.span,
+            DiagnosticKind::MismatchedTypes {
+                expected: param_ty.clone(),
+                found: arg_ty,
+            },
+        );
+        if !available.is_empty() {
+            diag = diag.with_help(format!(
+                "available conversions to '{}': {}",
+                resolved_param_ty,
+                available.join(", ")
+            ));
+        }
+        errors.push(diag);
+    }
+}
+
+pub(super) fn check_call_signature_with_cast(
+    call_span: Span,
+    call_func_expr_id: crate::ast::ExprId,
+    param_types: &[Type],
+    cast_accepts: &[bool],
+    required_count: usize,
+    ret_type: &Type,
+    args: &[ExprNode],
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) -> Type {
+    let total_count = param_types.len();
+
+    if args.len() < required_count {
+        errors.push(Diagnostic::new(
+            call_span,
+            DiagnosticKind::TooFewArguments {
+                expected: required_count,
+                found: args.len(),
+            },
+        ));
+        return Type::Infer;
+    }
+    if args.len() > total_count {
+        errors.push(Diagnostic::new(
+            call_span,
+            DiagnosticKind::TooManyArguments {
+                expected: total_count,
+                found: args.len(),
+            },
+        ));
+        return Type::Infer;
+    }
+
+    for (idx, (arg_expr, param_ty)) in args.iter().zip(param_types.iter()).enumerate() {
+        if cast_accepts.get(idx).copied().unwrap_or(false) {
+            check_cast_accept_arg(
+                call_func_expr_id,
+                idx,
+                arg_expr,
+                param_ty,
+                type_checker,
+                errors,
+            );
+        } else {
+            check_expr(arg_expr, type_checker, errors, Some(param_ty));
+            let arg_ref = TypeRef::Expr(arg_expr.node.id);
+            let param_ref = TypeRef::concrete(param_ty);
+            type_checker.constrain_assignable(arg_expr.span, arg_ref, param_ref, errors);
+        }
+    }
+
+    ret_type.clone()
+}
+
+pub(super) fn resolve_cast_accept_errors(
+    call_func_expr_id: crate::ast::ExprId,
+    cast_accepts: &[bool],
+    param_types: &[Type],
+    args: &[ExprNode],
+    type_checker: &mut TypeChecker,
+    errors: &mut Vec<Diagnostic>,
+) {
+    for (idx, ((arg_expr, param_ty), &is_cast)) in args
+        .iter()
+        .zip(param_types.iter())
+        .zip(cast_accepts.iter())
+        .enumerate()
+    {
+        if !is_cast {
+            continue;
+        }
+        let arg_ty = match type_checker.get_type(arg_expr.node.id) {
+            Some((_, ty)) => ty.clone(),
+            None => continue,
+        };
+        let resolved_param_ty = type_checker.resolve_type(param_ty);
+        if is_assignable(&arg_ty, &resolved_param_ty) {
+            continue;
+        }
+
+        if let Some(entry) = type_checker
+            .ctx
+            .cast_defs
+            .get(&(arg_ty.clone(), resolved_param_ty.clone()))
+        {
+            type_checker.cast_call_insertions.insert(
+                (call_func_expr_id, idx),
+                (entry.internal_name, resolved_param_ty.clone()),
+            );
+            // remove the MismatchedTypes error that constrain_assignable added for this arg
+            errors.retain(|e| {
+                !(e.span == arg_expr.span
+                    && matches!(&e.kind, DiagnosticKind::MismatchedTypes { expected, found }
+                        if expected == &resolved_param_ty && found == &arg_ty))
+            });
+        }
+    }
 }
 
 pub(super) fn required_param_count(defaults: &[Option<ConstValue>], total: usize) -> usize {
@@ -859,6 +1031,7 @@ fn check_call_with_type(
     call: &CallNode,
     func_ty: Type,
     required_count: usize,
+    cast_accepts: &[bool],
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
@@ -866,15 +1039,29 @@ fn check_call_with_type(
 
     if let Type::Func { params, ret } = &func_ty {
         let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
-        check_call_signature(
-            call.span,
-            &param_tys,
-            required_count,
-            ret,
-            &node.args,
-            type_checker,
-            errors,
-        )
+        if cast_accepts.is_empty() {
+            check_call_signature(
+                call.span,
+                &param_tys,
+                required_count,
+                ret,
+                &node.args,
+                type_checker,
+                errors,
+            )
+        } else {
+            check_call_signature_with_cast(
+                call.span,
+                node.func.node.id,
+                &param_tys,
+                cast_accepts,
+                required_count,
+                ret,
+                &node.args,
+                type_checker,
+                errors,
+            )
+        }
     } else {
         errors.push(Diagnostic::new(
             call.span,
@@ -1024,7 +1211,19 @@ pub(super) fn check_module_func_call(
         Type::Func { params, .. } => required_param_count(defaults, params.len()),
         _ => 0,
     };
-    let result = check_call_with_type(call, func_ty, required_count, type_checker, errors);
+    let cast_accepts = module_def
+        .func_cast_accept
+        .get(&func_name)
+        .cloned()
+        .unwrap_or_default();
+    let result = check_call_with_type(
+        call,
+        func_ty,
+        required_count,
+        &cast_accepts,
+        type_checker,
+        errors,
+    );
 
     if let Some(param_info) = module_def.func_param_info.get(&func_name).cloned() {
         check_var_param_args(param_info, &call.node.args, type_checker, errors);
@@ -1670,15 +1869,30 @@ pub(super) fn check_instance_method_call(
     let ret_type = subst_type(&method.ret, &subst, &HashMap::new());
     let required = required_param_count(&method.param_defaults, param_types.len());
 
-    let result = check_call_signature(
-        call.span,
-        &param_types,
-        required,
-        &ret_type,
-        &node.args,
-        type_checker,
-        errors,
-    );
+    let cast_accepts: Vec<bool> = method.params.iter().map(|p| p.cast_accept).collect();
+    let result = if cast_accepts.iter().any(|f| *f) {
+        check_call_signature_with_cast(
+            call.span,
+            call.node.func.node.id,
+            &param_types,
+            &cast_accepts,
+            required,
+            &ret_type,
+            &node.args,
+            type_checker,
+            errors,
+        )
+    } else {
+        check_call_signature(
+            call.span,
+            &param_types,
+            required,
+            &ret_type,
+            &node.args,
+            type_checker,
+            errors,
+        )
+    };
 
     check_var_param_args(
         method.params.iter().map(|p| (p.name, p.mutability)),

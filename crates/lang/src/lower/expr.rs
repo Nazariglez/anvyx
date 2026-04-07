@@ -24,6 +24,39 @@ fn lower_args(
         .collect()
 }
 
+fn apply_cast_insertions(
+    args: &mut [hir::Expr],
+    call_func_id: ExprId,
+    span: Span,
+    ctx: &LowerCtx,
+) -> Result<(), LowerError> {
+    for (idx, arg) in args.iter_mut().enumerate() {
+        if let Some((internal_name, target_ty)) =
+            ctx.shared.tcx.cast_call_insertion(call_func_id, idx)
+        {
+            let &func_id = ctx
+                .shared
+                .funcs
+                .get(internal_name)
+                .ok_or(LowerError::UnknownFunc {
+                    name: *internal_name,
+                    span,
+                })?;
+            let source_arg = std::mem::replace(arg, hir::Expr::int_lit(span, 0));
+            *arg = hir::Expr::new(
+                target_ty.clone(),
+                span,
+                hir::ExprKind::Call {
+                    func: func_id,
+                    args: vec![source_arg],
+                    ref_mask: vec![false],
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Reuse the expression if it is already a local or field chain; otherwise spill it
 /// to a temp so PushRef has a named place to borrow from
 fn ensure_ref_target(
@@ -412,7 +445,23 @@ pub(super) fn lower_expr(
             if inner.ty == ty {
                 return Ok(inner);
             }
-            hir::ExprKind::Cast(Box::new(inner))
+            if let Some(internal_name) = ctx.shared.tcx.user_cast_target(ast_expr.node.id) {
+                let &func_id =
+                    ctx.shared
+                        .funcs
+                        .get(&internal_name)
+                        .ok_or(LowerError::UnknownFunc {
+                            name: internal_name,
+                            span,
+                        })?;
+                hir::ExprKind::Call {
+                    func: func_id,
+                    args: vec![inner],
+                    ref_mask: vec![false],
+                }
+            } else {
+                hir::ExprKind::Cast(Box::new(inner))
+            }
         }
 
         ast::ExprKind::If(if_node) => {
@@ -1601,7 +1650,9 @@ fn lower_extend_call(
                 ast::ExprKind::Ident(name) if ctx.shared.tcx.is_module_name(*name)
             );
             if is_qualified {
-                lower_args(&c.node.args, ctx, fc, out)?
+                let mut user_args = lower_args(&c.node.args, ctx, fc, out)?;
+                apply_cast_insertions(&mut user_args, c.node.func.node.id, span, ctx)?;
+                user_args
             } else {
                 let stored_mask = ctx.shared.tcx.extend_call_ref_mask(c.node.func.node.id);
                 let is_var_self = stored_mask.first() == Some(&true);
@@ -1611,12 +1662,18 @@ fn lower_extend_call(
                 } else {
                     receiver
                 };
+                let mut user_args = lower_args(&c.node.args, ctx, fc, out)?;
+                apply_cast_insertions(&mut user_args, c.node.func.node.id, span, ctx)?;
                 let mut args = vec![receiver];
-                args.extend(lower_args(&c.node.args, ctx, fc, out)?);
+                args.extend(user_args);
                 args
             }
         }
-        _ => lower_args(&c.node.args, ctx, fc, out)?,
+        _ => {
+            let mut user_args = lower_args(&c.node.args, ctx, fc, out)?;
+            apply_cast_insertions(&mut user_args, c.node.func.node.id, span, ctx)?;
+            user_args
+        }
     };
 
     let stored_mask = ctx.shared.tcx.extend_call_ref_mask(c.node.func.node.id);
@@ -2826,8 +2883,10 @@ fn try_lower_method_call(
             } else {
                 receiver
             };
+            let mut user_args = lower_args(&c.node.args, ctx, fc, out)?;
+            apply_cast_insertions(&mut user_args, c.node.func.node.id, span, ctx)?;
             let mut args = vec![receiver];
-            args.extend(lower_args(&c.node.args, ctx, fc, out)?);
+            args.extend(user_args);
             let defaults = ctx.shared.tcx.method_param_defaults(agg.name, method_name);
             for val in defaults.iter().skip(c.node.args.len()).flatten() {
                 args.push(const_value_to_hir_expr(val, span));
@@ -2936,6 +2995,7 @@ fn lower_direct_call(
         _ => return Err(LowerError::NonDirectCall { span }),
     };
     let mut args = lower_args(&c.node.args, ctx, fc, out)?;
+    apply_cast_insertions(&mut args, c.node.func.node.id, span, ctx)?;
 
     let inject_defaults = |args: &mut Vec<hir::Expr>, defaults: &[Option<ConstValue>]| {
         for val in defaults.iter().skip(c.node.args.len()).flatten() {

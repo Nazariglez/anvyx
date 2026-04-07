@@ -96,6 +96,14 @@ pub fn encode_extend_name(module: &str, target_ty: &Type, method: Ident) -> Iden
     )))
 }
 
+pub fn encode_cast_name(module: &str, target_ty: &Type, source_ty: &Type) -> Ident {
+    let target_enc = encode_type(target_ty);
+    let source_enc = encode_type(source_ty);
+    Ident(Intern::new(format!(
+        "__cast::{module}::{target_enc}::from_{source_enc}"
+    )))
+}
+
 pub fn encode_extend_specialization_name(key: &ExtendSpecKey, source_module: &[String]) -> Ident {
     let module_part = if source_module.is_empty() {
         String::new()
@@ -285,6 +293,16 @@ mod tests {
             mangle_for_rust("__extend::mod::Opt_i64::unwrap"),
             "__extend__mod__Opt_i64__unwrap"
         );
+    }
+
+    #[test]
+    fn cast_name_encoding() {
+        let target = Type::Struct {
+            name: ident("Vec2"),
+            type_args: vec![],
+        };
+        let name = encode_cast_name("main", &target, &Type::Float);
+        assert_eq!(name.to_string(), "__cast::main::Vec2::from_f32");
     }
 
     #[test]

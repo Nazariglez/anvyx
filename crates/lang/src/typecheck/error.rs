@@ -477,6 +477,17 @@ pub enum DiagnosticKind {
     ExtendUnusedTypeParam {
         param_name: Ident,
     },
+    DuplicateCastFrom {
+        source_ty: Type,
+        target_ty: Type,
+    },
+    CastFromReturnTypeMismatch {
+        expected: Type,
+        found: Type,
+    },
+    CastFromSelfConversion {
+        ty: Type,
+    },
 
     CannotInferLambdaParam {
         name: Ident,

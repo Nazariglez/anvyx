@@ -201,6 +201,13 @@ impl ExternTypeDef {
 }
 
 #[derive(Debug, Clone)]
+pub struct CastEntry {
+    pub internal_name: Ident,
+    pub source_type: Type,
+    pub target_type: Type,
+}
+
+#[derive(Debug, Clone)]
 pub(super) struct ExtendMethodDef {
     pub params: Vec<Param>, // full param list including self
     pub ret: Type,
@@ -331,6 +338,7 @@ pub(super) struct ModuleDef {
     pub source_path: Vec<String>,
     pub funcs: HashMap<Ident, Type>,
     pub func_param_info: HashMap<Ident, Vec<(Ident, Mutability)>>,
+    pub func_cast_accept: HashMap<Ident, Vec<bool>>,
     pub struct_defs: HashMap<Ident, StructDef>,
     pub enum_defs: HashMap<Ident, EnumDef>,
     pub extern_types: HashMap<Ident, ExternTypeDef>,
@@ -355,6 +363,9 @@ pub(super) struct ModuleDef {
 
     /// evaluated parameter defaults for exported functions, parallel to params (None = required)
     pub func_param_defaults: HashMap<Ident, Vec<Option<ConstValue>>>,
+
+    /// cast_from entries exported by this module
+    pub cast_entries: Vec<CastEntry>,
 }
 
 impl ModuleDef {
@@ -379,6 +390,7 @@ pub struct ModuleCheckContext {
     pub(super) module_defs: HashMap<Ident, ModuleDef>,
     pub(super) extend_defs: HashMap<(Type, Ident), Vec<ExtendEntry>>,
     pub(super) generic_extend_templates: HashMap<(Ident, Ident), Vec<GenericExtendTemplate>>,
+    pub(super) cast_defs: HashMap<(Type, Type), CastEntry>,
     pub(super) module_path: Option<Vec<String>>,
 
     /// Function bindings saved for specialization, including private sibling functions
@@ -433,6 +445,12 @@ pub(super) struct TypeChecker {
     /// Stores param info for free functions
     pub(super) func_param_info: HashMap<Ident, Vec<(Ident, Mutability)>>,
 
+    /// Stores cast_accept flags per param position, for functions with `as Type` params
+    pub(super) func_cast_accept: HashMap<Ident, Vec<bool>>,
+
+    /// Records where the lowering pass must wrap an argument with a cast-from call
+    pub(super) cast_call_insertions: HashMap<(ExprId, usize), (Ident, Type)>,
+
     /// Stores evaluated parameter defaults for free functions, parallel to params (None = required)
     pub(super) func_param_defaults: HashMap<Ident, Vec<Option<ConstValue>>>,
 
@@ -471,6 +489,9 @@ pub(super) struct TypeChecker {
 
     /// Maps call expression ExprId to resolved extend method internal_name (for lowering)
     pub(super) extend_call_targets: HashMap<ExprId, Ident>,
+
+    /// Maps cast expression ExprId to the conversion function's internal_name (for lowering)
+    pub(super) user_cast_targets: HashMap<ExprId, Ident>,
 
     /// Per-call-site ref mask for extend methods (which params are var)
     pub(super) extend_call_ref_masks: HashMap<ExprId, Vec<bool>>,
@@ -515,7 +536,9 @@ pub struct TypecheckResult {
     pub(super) lambda_captures: HashMap<ExprId, Vec<(Ident, Type)>>,
     pub(super) extend_call_targets: HashMap<ExprId, Ident>,
     pub(super) extend_call_ref_masks: HashMap<ExprId, Vec<bool>>,
+    pub(super) user_cast_targets: HashMap<ExprId, Ident>,
     pub(super) func_param_info: HashMap<Ident, Vec<(Ident, Mutability)>>,
+    pub(super) cast_call_insertions: HashMap<(ExprId, usize), (Ident, Type)>,
     pub(super) func_param_defaults: HashMap<Ident, Vec<Option<ConstValue>>>,
     pub(super) module_defs: HashMap<Ident, ModuleDef>,
     pub(super) warnings: Vec<Diagnostic>,
@@ -548,7 +571,9 @@ impl TypeChecker {
             lambda_captures: self.lambda_captures,
             extend_call_targets: self.extend_call_targets,
             extend_call_ref_masks: self.extend_call_ref_masks,
+            user_cast_targets: self.user_cast_targets,
             func_param_info: self.func_param_info,
+            cast_call_insertions: self.cast_call_insertions,
             func_param_defaults: self.func_param_defaults,
             module_defs: self.ctx.module_defs,
             warnings: self.warnings,
@@ -1359,6 +1384,18 @@ impl TypecheckResult {
         self.extend_call_targets.get(&id).copied()
     }
 
+    pub fn user_cast_target(&self, id: ExprId) -> Option<Ident> {
+        self.user_cast_targets.get(&id).copied()
+    }
+
+    pub fn cast_call_insertion(
+        &self,
+        call_func_id: ExprId,
+        param_idx: usize,
+    ) -> Option<&(Ident, Type)> {
+        self.cast_call_insertions.get(&(call_func_id, param_idx))
+    }
+
     pub fn extend_call_ref_mask(&self, id: ExprId) -> &[bool] {
         self.extend_call_ref_masks
             .get(&id)
@@ -1837,4 +1874,8 @@ pub(super) fn validate_map_key_type(
 
 pub(super) fn build_param_info(params: &[Param]) -> Vec<(Ident, Mutability)> {
     params.iter().map(|p| (p.name, p.mutability)).collect()
+}
+
+pub(super) fn build_cast_accept(params: &[Param]) -> Vec<bool> {
+    params.iter().map(|p| p.cast_accept).collect()
 }

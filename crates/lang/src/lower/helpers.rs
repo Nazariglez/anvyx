@@ -322,6 +322,18 @@ pub(super) fn register_extend_declarations<'a>(
             *next_func_id += 1;
             ctx.funcs.insert(internal_name, id);
         }
+
+        for cast_from in &node.node.cast_froms {
+            let source_ty = &cast_from.node.param.ty;
+            let internal_name =
+                backend_names::encode_cast_name(&module_str, &resolved_ty, source_ty);
+            if skip_existing && ctx.funcs.contains_key(&internal_name) {
+                continue;
+            }
+            let id = hir::FuncId(*next_func_id);
+            *next_func_id += 1;
+            ctx.funcs.insert(internal_name, id);
+        }
     }
 }
 

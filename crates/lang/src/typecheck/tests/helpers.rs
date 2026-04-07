@@ -363,6 +363,7 @@ pub(super) fn generic_fn_decl(
             name: dummy_ident(n),
             ty: t,
             default: None,
+            cast_accept: false,
         })
         .collect();
     let (stmts, tail) = split_body(body);
@@ -382,6 +383,7 @@ pub(super) fn func_decl(
             name: dummy_ident(n),
             ty: t,
             default: None,
+            cast_accept: false,
         })
         .collect();
     let (stmts, tail) = if body.is_empty() && !ret.is_void() {
@@ -493,6 +495,7 @@ pub(super) fn generic_method(
             ty,
             mutability: Mutability::Immutable,
             default: None,
+            cast_accept: false,
         })
         .collect();
     let (stmts, tail) = split_body(body);
@@ -593,6 +596,7 @@ pub(super) fn fn_decl_var_params(
                 Mutability::Immutable
             },
             default: None,
+            cast_accept: false,
         })
         .collect();
     let (stmts, tail) = split_body(body);

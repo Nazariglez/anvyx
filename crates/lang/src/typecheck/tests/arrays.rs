@@ -818,6 +818,7 @@ fn test_view_indexing_ok() {
                 name: ident("xs"),
                 ty: view_param,
                 default: None,
+                cast_accept: false,
             }],
             ret: Type::Int,
             body: BlockNode {

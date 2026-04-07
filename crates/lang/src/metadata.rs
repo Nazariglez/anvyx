@@ -315,6 +315,7 @@ fn params_to_ast(params: &[(String, String)]) -> Result<Vec<crate::ast::Param>, 
                 name: Ident(Intern::new(pname.clone())),
                 ty: anvyx_type_from_str(pty)?,
                 default: None,
+                cast_accept: false,
             })
         })
         .collect()

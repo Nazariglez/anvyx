@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: return type mismatch
+
+struct Vec2 { x: float, y: float }
+
+extend Vec2 {
+    cast from(v: float) -> int { 0 }
+}
+
+fn main() {}

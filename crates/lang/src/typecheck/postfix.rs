@@ -574,15 +574,33 @@ fn check_extend_call_impl(
         .extend_call_targets
         .insert(call_node.node.func.node.id, def.internal_name);
     type_checker.store_extend_ref_mask(call_node.node.func.node.id, &def.params);
-    let result = check_call_signature(
-        call_node.span,
-        &param_types,
-        param_types.len(),
-        &def.ret,
-        &call_node.node.args,
-        type_checker,
-        errors,
-    );
+    let cast_accepts: Vec<bool> = def.params[param_start..]
+        .iter()
+        .map(|p| p.cast_accept)
+        .collect();
+    let result = if cast_accepts.iter().any(|f| *f) {
+        check_call_signature_with_cast(
+            call_node.span,
+            call_node.node.func.node.id,
+            &param_types,
+            &cast_accepts,
+            param_types.len(),
+            &def.ret,
+            &call_node.node.args,
+            type_checker,
+            errors,
+        )
+    } else {
+        check_call_signature(
+            call_node.span,
+            &param_types,
+            param_types.len(),
+            &def.ret,
+            &call_node.node.args,
+            type_checker,
+            errors,
+        )
+    };
     if skip_receiver {
         check_extend_var_params(
             &def.params,
@@ -1881,6 +1899,19 @@ fn apply_postfix_op(
                     check_var_param_args(param_info, &call_node.node.args, type_checker, errors);
                 } else if let Type::Func { params, .. } = base_ty {
                     check_closure_var_params(params, call_node, type_checker, errors);
+                }
+                if let Some(cast_accepts) = type_checker.func_cast_accept.get(name).cloned() {
+                    if let Type::Func { params, .. } = base_ty {
+                        let param_tys: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
+                        resolve_cast_accept_errors(
+                            call_node.node.func.node.id,
+                            &cast_accepts,
+                            &param_tys,
+                            &call_node.node.args,
+                            type_checker,
+                            errors,
+                        );
+                    }
                 }
                 return result;
             }

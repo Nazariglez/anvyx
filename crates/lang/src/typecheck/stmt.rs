@@ -20,10 +20,10 @@ use super::{
     infer::type_from_fn,
     pattern::{check_pattern, is_refutable},
     types::{
-        EnumDef, ExtendEntry, ExtendMethodDef, ExternFieldDef, ExternMethodDef, ExternOpDef,
-        ExternTypeDef, ExternUnaryOpDef, GenericExtendTemplate, ModuleDef, ModuleExtendEntry,
-        ModuleGenericExtendEntry, StructDef, TypeChecker, VarInfo, build_param_info,
-        unwrap_opt_typ, validate_map_key_type,
+        CastEntry, EnumDef, ExtendEntry, ExtendMethodDef, ExternFieldDef, ExternMethodDef,
+        ExternOpDef, ExternTypeDef, ExternUnaryOpDef, GenericExtendTemplate, ModuleDef,
+        ModuleExtendEntry, ModuleGenericExtendEntry, StructDef, TypeChecker, VarInfo,
+        build_cast_accept, build_param_info, unwrap_opt_typ, validate_map_key_type,
     },
     unify::contains_infer,
     visit::type_any,
@@ -193,6 +193,7 @@ pub(super) fn check_block_expr(
 struct FuncRegistration {
     func_ty: Type,
     param_info: Vec<(Ident, Mutability)>,
+    cast_accept: Vec<bool>,
     type_params: Option<Vec<TypeParam>>,
     const_params: Option<Vec<ConstParam>>,
     template: Option<FuncNode>,
@@ -276,6 +277,7 @@ fn apply_decl_to_scope(decl: DeclInfo, type_checker: &mut TypeChecker) {
                 FuncRegistration {
                     func_ty,
                     param_info,
+                    cast_accept,
                     type_params,
                     const_params,
                     template,
@@ -292,6 +294,9 @@ fn apply_decl_to_scope(decl: DeclInfo, type_checker: &mut TypeChecker) {
             );
             type_checker.set_func_var(name, func_ty);
             type_checker.func_param_info.insert(name, param_info);
+            if cast_accept.iter().any(|f| *f) {
+                type_checker.func_cast_accept.insert(name, cast_accept);
+            }
             if let Some(tp) = type_params {
                 type_checker.func_type_params.insert(name, tp);
             }
@@ -340,6 +345,7 @@ fn apply_decl_to_summary(decl: DeclInfo, module_def: &mut ModuleDef) -> Option<I
                 FuncRegistration {
                     func_ty,
                     param_info,
+                    cast_accept,
                     type_params,
                     const_params,
                     template,
@@ -352,6 +358,9 @@ fn apply_decl_to_summary(decl: DeclInfo, module_def: &mut ModuleDef) -> Option<I
             }
             module_def.funcs.insert(name, func_ty);
             module_def.func_param_info.insert(name, param_info);
+            if cast_accept.iter().any(|f| *f) {
+                module_def.func_cast_accept.insert(name, cast_accept);
+            }
             if let Some(tp) = type_params {
                 module_def.func_type_params.insert(name, tp);
             }
@@ -416,6 +425,7 @@ fn build_func_registration(
 ) -> FuncRegistration {
     let func_ty = resolve(&type_from_fn(func));
     let param_info = build_param_info(&func.params);
+    let cast_accept = build_cast_accept(&func.params);
     let is_generic = !func.type_params.is_empty() || !func.const_params.is_empty();
     let type_params = is_generic.then(|| func.type_params.clone());
     let const_params = is_generic.then(|| func.const_params.clone());
@@ -423,6 +433,7 @@ fn build_func_registration(
     FuncRegistration {
         func_ty,
         param_info,
+        cast_accept,
         type_params,
         const_params,
         template,
@@ -487,6 +498,9 @@ fn copy_func_ancillary_to_module(
     if let Some(defaults) = source.func_param_defaults.get(&name) {
         target.func_param_defaults.insert(bind_as, defaults.clone());
     }
+    if let Some(ca) = source.func_cast_accept.get(&name) {
+        target.func_cast_accept.insert(bind_as, ca.clone());
+    }
 }
 
 fn copy_func_ancillary_to_checker(
@@ -518,6 +532,9 @@ fn copy_func_ancillary_to_checker(
         type_checker
             .func_param_defaults
             .insert(bind_as, defaults.clone());
+    }
+    if let Some(ca) = source.func_cast_accept.get(&name) {
+        type_checker.func_cast_accept.insert(bind_as, ca.clone());
     }
 }
 
@@ -615,6 +632,7 @@ fn build_extern_type_def(
                                 name: p.name,
                                 ty: resolve(&p.ty),
                                 default: p.default.clone(),
+                                cast_accept: p.cast_accept,
                             })
                             .collect(),
                         ret: resolve(ret),
@@ -635,6 +653,7 @@ fn build_extern_type_def(
                                 name: p.name,
                                 ty: resolve(&p.ty),
                                 default: p.default.clone(),
+                                cast_accept: p.cast_accept,
                             })
                             .collect(),
                         ret: resolve(ret),
@@ -809,6 +828,14 @@ pub(super) fn collect_scope_types(
                         });
                     }
                 }
+                for entry in &module_def.cast_entries {
+                    let key = (entry.source_type.clone(), entry.target_type.clone());
+                    type_checker
+                        .ctx
+                        .cast_defs
+                        .entry(key)
+                        .or_insert_with(|| entry.clone());
+                }
 
                 match &import.kind {
                     ImportKind::Module => {
@@ -937,6 +964,27 @@ pub(super) fn collect_scope_types(
                             binding: Ident(Intern::new(String::new())),
                             def,
                         });
+                }
+
+                for cast_from in &decl.cast_froms {
+                    let source_ty = type_checker.resolve_type(&cast_from.node.param.ty);
+                    let module_str = type_checker
+                        .ctx
+                        .module_path
+                        .as_ref()
+                        .map(|p| p.join("::"))
+                        .unwrap_or_default();
+                    let internal_name =
+                        backend_names::encode_cast_name(&module_str, &resolved_ty, &source_ty);
+                    let entry = CastEntry {
+                        internal_name,
+                        source_type: source_ty.clone(),
+                        target_type: resolved_ty.clone(),
+                    };
+                    type_checker
+                        .ctx
+                        .cast_defs
+                        .insert((source_ty, resolved_ty.clone()), entry);
                 }
             }
             _ => {}
@@ -1165,6 +1213,16 @@ pub(super) fn build_module_def_with_reexports(
                         ty: resolved_ty.clone(),
                         name: method.node.name,
                         def,
+                    });
+                }
+                for cast_from in &decl.cast_froms {
+                    let source_ty = resolve(&cast_from.node.param.ty);
+                    let internal_name =
+                        backend_names::encode_cast_name(&module_str, &resolved_ty, &source_ty);
+                    module_def.cast_entries.push(CastEntry {
+                        internal_name,
+                        source_type: source_ty,
+                        target_type: resolved_ty.clone(),
                     });
                 }
             }
@@ -1565,6 +1623,67 @@ fn check_extend_decl(
             &method.node.body,
             &ret_ty,
             method.span,
+            type_checker,
+            errors,
+        );
+    }
+
+    for cast_from in &decl.cast_froms {
+        let cf = &cast_from.node;
+        let source_ty = type_checker.resolve_type(&cf.param.ty);
+
+        // check self conversion because is pointless
+        if source_ty == resolved_ty {
+            errors.push(Diagnostic::new(
+                cast_from.span,
+                DiagnosticKind::CastFromSelfConversion {
+                    ty: resolved_ty.clone(),
+                },
+            ));
+            continue;
+        }
+
+        // if return type does not match the extend target type raise an error
+        if let Some(ret_ty) = &cf.ret {
+            let resolved_ret = type_checker.resolve_type(ret_ty);
+            if resolved_ret != resolved_ty {
+                errors.push(Diagnostic::new(
+                    cast_from.span,
+                    DiagnosticKind::CastFromReturnTypeMismatch {
+                        expected: resolved_ty.clone(),
+                        found: resolved_ret,
+                    },
+                ));
+                continue;
+            }
+        }
+
+        // if there is a duplicate cast_from with the same source type raise an error
+        let earlier = decl
+            .cast_froms
+            .iter()
+            .take_while(|c| !std::ptr::eq(*c, cast_from))
+            .find(|c| type_checker.resolve_type(&c.node.param.ty) == source_ty);
+        if let Some(first) = earlier {
+            errors.push(
+                Diagnostic::new(
+                    cast_from.span,
+                    DiagnosticKind::DuplicateCastFrom {
+                        source_ty: source_ty.clone(),
+                        target_ty: resolved_ty.clone(),
+                    },
+                )
+                .with_secondary(first.span, "first defined here"),
+            );
+        }
+
+        let is_var = matches!(cf.param.mutability, Mutability::Mutable);
+        let params = vec![(cf.param.name, source_ty, is_var)];
+        check_body_common(
+            &params,
+            &cf.body,
+            &resolved_ty,
+            cast_from.span,
             type_checker,
             errors,
         );

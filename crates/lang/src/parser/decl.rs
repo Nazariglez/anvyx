@@ -339,6 +339,7 @@ fn resolve_extern_members(
                             Some(self_type),
                         ),
                         default: p.default.clone(),
+                        cast_accept: p.cast_accept,
                     })
                     .collect(),
                 ret: resolve_type_params_with_self(
@@ -368,6 +369,7 @@ fn resolve_extern_members(
                             Some(self_type),
                         ),
                         default: p.default.clone(),
+                        cast_accept: p.cast_accept,
                     })
                     .collect(),
                 ret: resolve_type_params_with_self(
@@ -605,6 +607,7 @@ pub(super) fn function<'src>(
                         name: p.name,
                         ty,
                         default: p.default,
+                        cast_accept: p.cast_accept,
                     }
                 })
                 .collect();
@@ -698,6 +701,7 @@ fn struct_method<'src>(
                             name: p.name,
                             ty,
                             default: p.default,
+                            cast_accept: p.cast_accept,
                         }
                     })
                     .collect();
@@ -892,6 +896,7 @@ fn aggregate_declaration<'src>(
                                 Some(&self_type),
                             ),
                             default: p.default.clone(),
+                            cast_accept: p.cast_accept,
                         })
                         .collect();
 
@@ -1119,6 +1124,7 @@ fn extend_method<'src>(
                     name: ast::Ident(internment::Intern::new("self".to_string())),
                     ty: ast::Type::Infer,
                     default: None,
+                    cast_accept: false,
                 });
                 let all_params: Vec<ast::Param> = self_param.into_iter().chain(params).collect();
                 let ret_ty = ret.unwrap_or(ast::Type::Void);
@@ -1136,6 +1142,62 @@ fn extend_method<'src>(
             },
         )
         .labelled("extend method")
+        .as_context()
+        .boxed()
+}
+
+fn cast_from_decl<'src>(
+    stmt: impl AnvParser<'src, ast::StmtNode>,
+) -> BoxedParser<'src, ast::CastFromNode> {
+    let tail_expr = expression(stmt.clone());
+    let cast_kw = select! { (Token::Ident(id), _) if id.0.as_ref() == "cast" => () };
+    let from_kw = select! { (Token::Ident(id), _) if id.0.as_ref() == "from" => () };
+
+    cast_kw
+        .ignore_then(from_kw)
+        .ignore_then(params(stmt.clone()))
+        .then(return_type())
+        .then(block_stmt(stmt, tail_expr))
+        .validate(|((param_list, ret), body), extra, emitter| {
+            let s = extra.span();
+            if param_list.len() != 1 {
+                emitter.emit(Rich::custom(s, "cast from requires exactly one parameter"));
+            }
+            let param = param_list.into_iter().next().unwrap_or_else(|| ast::Param {
+                mutability: ast::Mutability::Immutable,
+                name: ast::Ident(internment::Intern::new("_".to_string())),
+                ty: ast::Type::Infer,
+                default: None,
+                cast_accept: false,
+            });
+            if param.ty == ast::Type::Infer {
+                emitter.emit(Rich::custom(
+                    s,
+                    "cast from parameter must have an explicit type annotation",
+                ));
+            }
+            if param.default.is_some() {
+                emitter.emit(Rich::custom(
+                    s,
+                    "cast from parameter cannot have a default value",
+                ));
+            }
+            if param.cast_accept {
+                emitter.emit(Rich::custom(
+                    s,
+                    "cast from parameter cannot use the `as` modifier",
+                ));
+            }
+            Spanned::new(
+                ast::CastFrom {
+                    param,
+                    ret,
+                    body: Spanned::new(body.node, Span::new(s.start, s.end)),
+                },
+                Span::new(s.start, s.end),
+            )
+        })
+        .labelled("cast from declaration")
         .as_context()
         .boxed()
 }
@@ -1169,6 +1231,11 @@ pub(super) fn extend_declaration<'src>(
         type_ident().map(|ty| (ty, GenericParams::default())),
     ));
 
+    enum ExtendMember {
+        Method(ast::ExtendMethodNode),
+        CastFrom(ast::CastFromNode),
+    }
+
     visibility()
         .then_ignore(select! {
             (Token::Keyword(Keyword::Extend), _) => (),
@@ -1176,15 +1243,30 @@ pub(super) fn extend_declaration<'src>(
         .then(extend_head)
         .then(
             select! { (Token::Open(Delimiter::Brace), _) => () }
-                .ignore_then(extend_method(stmt).repeated().collect::<Vec<_>>())
+                .ignore_then(
+                    choice((
+                        cast_from_decl(stmt.clone()).map(ExtendMember::CastFrom),
+                        extend_method(stmt).map(ExtendMember::Method),
+                    ))
+                    .repeated()
+                    .collect::<Vec<_>>(),
+                )
                 .then_ignore(select! { (Token::Close(Delimiter::Brace), _) => () }),
         )
-        .map_with(|((vis, (ty, gp)), methods), e| {
+        .map_with(|((vis, (ty, gp)), members), e| {
             let s = e.span();
             let GenericParams {
                 type_params,
                 const_params,
             } = gp;
+            let mut methods = vec![];
+            let mut cast_froms = vec![];
+            for m in members {
+                match m {
+                    ExtendMember::Method(method) => methods.push(method),
+                    ExtendMember::CastFrom(cf) => cast_froms.push(cf),
+                }
+            }
             Spanned::new(
                 ast::ExtendDecl {
                     visibility: vis,
@@ -1192,6 +1274,7 @@ pub(super) fn extend_declaration<'src>(
                     type_params,
                     const_params,
                     methods,
+                    cast_froms,
                 },
                 Span::new(s.start, s.end),
             )

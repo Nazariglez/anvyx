@@ -754,6 +754,18 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
             format!("unused type parameter '{param_name}' in extend declaration"),
             "every declared type parameter must appear in the target type".to_string(),
         ),
+        DiagnosticKind::DuplicateCastFrom { source_ty, target_ty } => (
+            format!("duplicate cast from '{source_ty}' to '{target_ty}'"),
+            format!("a 'cast from({source_ty})' is already defined for '{target_ty}' in this module"),
+        ),
+        DiagnosticKind::CastFromReturnTypeMismatch { expected, found } => (
+            format!("cast from return type mismatch: expected '{expected}', found '{found}'"),
+            format!("the return type must match the extend target type '{expected}'"),
+        ),
+        DiagnosticKind::CastFromSelfConversion { ty } => (
+            format!("pointless cast from '{ty}' to itself"),
+            "converting a type to itself has no effect; 'expr as T' is already a no-op when types match".to_string(),
+        ),
         DiagnosticKind::RequiredParamAfterOptional { func, param } => (
             format!("required parameter '{param}' cannot follow a parameter with a default value"),
             format!("in function '{func}': reorder so all required parameters come first"),

@@ -17,9 +17,9 @@ use super::{
 };
 use crate::{
     ast::{
-        CastNode, ExprKind, ExprNode, FloatSuffix, FormatKind, FormatSign, FormatSpec, FuncParam,
-        Ident, InferredEnumArgs, InferredEnumNode, LambdaNode, Lit, StringPart, StructField, Type,
-        TypeVarId, VariantKind,
+        CastNode, ExprId, ExprKind, ExprNode, FloatSuffix, FormatKind, FormatSign, FormatSpec,
+        FuncParam, Ident, InferredEnumArgs, InferredEnumNode, LambdaNode, Lit, StringPart,
+        StructField, Type, TypeVarId, VariantKind,
     },
     span::Span,
 };
@@ -84,7 +84,7 @@ pub(super) fn check_expr(
         ExprKind::MapLiteral(lit_node) => check_map_literal(lit_node, type_checker, errors),
         ExprKind::Match(match_node) => check_match(match_node, type_checker, errors),
         ExprKind::StringInterp(parts) => check_string_interp(parts, type_checker, errors),
-        ExprKind::Cast(cast_node) => check_cast(cast_node, type_checker, errors),
+        ExprKind::Cast(cast_node) => check_cast(cast_node, expr.id, type_checker, errors),
         ExprKind::Lambda(lambda_node) => {
             check_lambda(lambda_node, expr_node, type_checker, errors, expected)
         }
@@ -144,30 +144,46 @@ fn resolve_float_type(suffix: Option<FloatSuffix>, expected: Option<&Type>) -> T
 
 fn check_cast(
     cast_node: &CastNode,
+    expr_id: ExprId,
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
     let from_ty = check_expr(&cast_node.node.expr, type_checker, errors, None);
-    let to_ty = &cast_node.node.target;
+    let to_ty = type_checker.resolve_type(&cast_node.node.target);
 
-    let valid = match (&from_ty, to_ty) {
+    let is_primitive_cast = matches!(
+        (&from_ty, &to_ty),
         (Type::Int, Type::Float | Type::Double)
-        | (Type::Float, Type::Int | Type::Double)
-        | (Type::Double, Type::Int | Type::Float) => true,
-        _ => from_ty == *to_ty,
-    };
+            | (Type::Float, Type::Int | Type::Double)
+            | (Type::Double, Type::Int | Type::Float)
+    );
+    let is_same_type = from_ty == to_ty;
 
-    if !valid {
-        errors.push(Diagnostic::new(
-            cast_node.span,
-            DiagnosticKind::InvalidCast {
-                from: from_ty,
-                to: to_ty.clone(),
-            },
-        ));
+    if !is_primitive_cast && !is_same_type {
+        if let Some(entry) = type_checker
+            .ctx
+            .cast_defs
+            .get(&(from_ty.clone(), to_ty.clone()))
+        {
+            type_checker
+                .user_cast_targets
+                .insert(expr_id, entry.internal_name);
+        } else {
+            let help = format!("define 'cast from(v: {from_ty})' in an 'extend {to_ty}' block");
+            errors.push(
+                Diagnostic::new(
+                    cast_node.span,
+                    DiagnosticKind::InvalidCast {
+                        from: from_ty,
+                        to: to_ty.clone(),
+                    },
+                )
+                .with_help(help),
+            );
+        }
     }
 
-    to_ty.clone()
+    to_ty
 }
 
 fn check_string_interp(

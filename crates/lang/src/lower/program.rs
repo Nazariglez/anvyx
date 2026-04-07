@@ -647,6 +647,35 @@ fn lower_extend_method(
     })
 }
 
+fn lower_cast_from(
+    cast_from: &ast::CastFromNode,
+    target_ty: &Type,
+    id: hir::FuncId,
+    name: Ident,
+    ctx: &LowerCtx,
+) -> Result<hir::Func, LowerError> {
+    let mut fc = FuncLower::new();
+    let cf = &cast_from.node;
+    register_param_local(
+        &mut fc,
+        cf.param.name,
+        cf.param.ty.clone(),
+        cf.param.mutability,
+    );
+    let params_len = fc.locals.len() as u32;
+    let ret = target_ty.clone();
+    let body = lower_block(&cf.body, ctx, &mut fc, true, &ret)?;
+    Ok(hir::Func {
+        id,
+        name,
+        locals: fc.locals,
+        params_len,
+        ret,
+        body,
+        span: cast_from.span,
+    })
+}
+
 fn collect_struct_methods_from<'a>(
     stmts: impl Iterator<Item = &'a ast::StmtNode>,
     shared: &mut SharedCtx,
@@ -717,6 +746,23 @@ fn lower_extend_methods_from<'a>(
                 .expect("extend method registered in collect_declarations");
             funcs.push(lower_extend_method(
                 method,
+                &resolved_ty,
+                id,
+                internal_name,
+                ctx,
+            )?);
+        }
+
+        for cast_from in &node.node.cast_froms {
+            let source_ty = &cast_from.node.param.ty;
+            let internal_name =
+                backend_names::encode_cast_name(module_prefix, &resolved_ty, source_ty);
+            let &id = shared
+                .funcs
+                .get(&internal_name)
+                .expect("cast from registered in register_extend_declarations");
+            funcs.push(lower_cast_from(
+                cast_from,
                 &resolved_ty,
                 id,
                 internal_name,

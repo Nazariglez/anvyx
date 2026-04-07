@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @contains: pointless cast from
+
+struct Vec2 { x: float, y: float }
+
+extend Vec2 {
+    cast from(v: Vec2) { v }
+}
+
+fn main() {}
