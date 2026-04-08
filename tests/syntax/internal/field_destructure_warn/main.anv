@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+// @warn-contains: accessing internal field 'cache' of type 'Item'
+
+import lib { Item };
+
+fn main() {
+    let i = Item { name: "test", cache: "" };
+    let Item { name, cache } = i;
+    let _ = name;
+    let _ = cache;
+}

@@ -1,0 +1,14 @@
+// @mode: check
+// @expect: error
+// @contains: can only be applied to
+
+struct Foo { value: int }
+
+pub extend Foo {
+    @internal
+    fn bar(var self) {
+        self.value = 0;
+    }
+}
+
+fn main() {}

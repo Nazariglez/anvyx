@@ -7,8 +7,9 @@ mod progress;
 mod run;
 mod std_support;
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
+use anvyx_lang::{LintConfig, LintLevel};
 use clap::{Parser, Subcommand};
 
 use crate::manifest::Manifest;
@@ -33,9 +34,15 @@ enum Command {
         backend: String,
         #[arg(long)]
         release: bool,
+        #[arg(long, value_name = "KEY=VALUE")]
+        lint: Vec<String>,
     },
     #[command(about = "Check an Anvyx file")]
-    Check { file: Option<PathBuf> },
+    Check {
+        file: Option<PathBuf>,
+        #[arg(long, value_name = "KEY=VALUE")]
+        lint: Vec<String>,
+    },
     #[command(about = "Create a new Anvyx project")]
     Init { name: Option<String> },
     #[command(about = "Build an Anvyx project for distribution")]
@@ -61,9 +68,11 @@ fn run(cli: Cli) -> Result<(), String> {
             file,
             backend,
             release,
+            lint,
         } => {
             let manifest = manifest::parse_manifest()?;
             let path = resolve_entry(file, manifest.as_ref())?;
+            let lint_config = resolve_lint_config(manifest.as_ref(), &lint)?;
 
             let has_externs = manifest.as_ref().is_some_and(Manifest::has_externs);
             if has_externs {
@@ -72,16 +81,17 @@ fn run(cli: Cli) -> Result<(), String> {
 
                 progress::status("Checking", &format!("{}...", path.display()));
                 progress::status("Running", &format!("{}...", path.display()));
-                build::execute_runner(&ctx.cwd, &path, &backend, release)?;
+                build::execute_runner(&ctx.cwd, &path, &backend, release, lint_config)?;
             } else {
                 progress::status("Checking", &format!("{}...", path.display()));
                 progress::status("Running", &format!("{}...", path.display()));
-                run::cmd(&path, &backend, release)?;
+                run::cmd(&path, &backend, release, lint_config)?;
             }
         }
-        Command::Check { file } => {
+        Command::Check { file, lint } => {
             let manifest = manifest::parse_manifest()?;
             let path = resolve_entry(file, manifest.as_ref())?;
+            let lint_config = resolve_lint_config(manifest.as_ref(), &lint)?;
 
             let has_externs = manifest.as_ref().is_some_and(Manifest::has_externs);
             let extern_meta = if has_externs {
@@ -93,7 +103,7 @@ fn run(cli: Cli) -> Result<(), String> {
             };
 
             progress::status("Checking", &format!("{}...", path.display()));
-            check::cmd(&path, &extern_meta)?;
+            check::cmd(&path, &extern_meta, lint_config)?;
             progress::status(
                 "Finished",
                 &format!("{} checked successfully", path.display()),
@@ -165,4 +175,28 @@ fn prepare_externs(manifest: &Manifest) -> Result<ExternContext, String> {
 
     let metadata = build::read_metadata(&cwd, manifest)?;
     Ok(ExternContext { cwd, metadata })
+}
+
+fn resolve_lint_config(
+    manifest: Option<&Manifest>,
+    lint_overrides: &[String],
+) -> Result<LintConfig, String> {
+    let mut config = manifest.map(|m| m.lint).unwrap_or_default();
+    for pair in lint_overrides {
+        let (key, value) = pair.split_once('=').ok_or_else(|| {
+            format!(
+                "invalid --lint format: '{pair}'. Expected key=value (e.g. --lint internal_access=error)"
+            )
+        })?;
+        let level = LintLevel::from_str(value)?;
+        match key.trim() {
+            "internal_access" => config.internal_access = level,
+            other => {
+                return Err(format!(
+                    "unknown lint: '{other}'. Available: internal_access"
+                ));
+            }
+        }
+    }
+    Ok(config)
 }

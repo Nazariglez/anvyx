@@ -25,7 +25,7 @@ pub use metadata::{
     exports_to_json, parse_provider_json,
 };
 pub use prelude_enums::{OPTION_TYPE_ID, option_none, option_some};
-pub use typecheck::{map_type_structure, walk_type_structure};
+pub use typecheck::{LintConfig, LintLevel, map_type_structure, walk_type_structure};
 pub use vm::{
     AnvyxConvert, AnvyxExternType, AnvyxFn, CompiledProgram, DisplayDetect, DisplayDetectFallback,
     EnumData, ExternHandle, ExternHandleData, ExternHandler, ExternRegistry, HandleStore,
@@ -91,6 +91,7 @@ fn analyze_with_extern_meta(
     extern_metadata: &std::collections::HashMap<String, String>,
     std_modules: &std::collections::HashMap<String, StdModuleSource>,
     core_modules: &std::collections::HashMap<String, StdModuleSource>,
+    lint: LintConfig,
 ) -> AnalyzeResult {
     use std::collections::HashSet;
 
@@ -190,6 +191,7 @@ fn analyze_with_extern_meta(
         &module_list,
         &scc_groups,
         &auto_use_modules,
+        lint,
     ) {
         Ok(tcx) => {
             if !tcx.warnings().is_empty() {
@@ -215,12 +217,14 @@ pub fn generate_ast(
     program: &str,
     file_path: &str,
     core_source: &str,
+    lint: LintConfig,
 ) -> Result<ast::Program, String> {
     generate_ast_with_externs(
         program,
         file_path,
         core_source,
         &std::collections::HashMap::new(),
+        lint,
     )
 }
 
@@ -229,6 +233,7 @@ pub fn generate_ast_with_externs(
     file_path: &str,
     core_source: &str,
     extern_metadata: &std::collections::HashMap<String, String>,
+    lint: LintConfig,
 ) -> Result<ast::Program, String> {
     generate_ast_with_std(
         program,
@@ -237,6 +242,7 @@ pub fn generate_ast_with_externs(
         extern_metadata,
         &std::collections::HashMap::new(),
         &std::collections::HashMap::new(),
+        lint,
     )
 }
 
@@ -247,6 +253,7 @@ pub fn generate_ast_with_std(
     extern_metadata: &std::collections::HashMap<String, String>,
     std_modules: &std::collections::HashMap<String, StdModuleSource>,
     core_modules: &std::collections::HashMap<String, StdModuleSource>,
+    lint: LintConfig,
 ) -> Result<ast::Program, String> {
     let (ast, _, _, _) = analyze_with_extern_meta(
         program,
@@ -255,6 +262,7 @@ pub fn generate_ast_with_std(
         extern_metadata,
         std_modules,
         core_modules,
+        lint,
     )?;
     Ok(ast)
 }
@@ -266,6 +274,7 @@ pub(crate) fn generate_hir_with_std(
     extern_metadata: &std::collections::HashMap<String, String>,
     std_modules: &std::collections::HashMap<String, StdModuleSource>,
     core_modules: &std::collections::HashMap<String, StdModuleSource>,
+    lint: LintConfig,
 ) -> Result<hir::Program, String> {
     let (ast, tcx, _, module_list) = analyze_with_extern_meta(
         program,
@@ -274,6 +283,7 @@ pub(crate) fn generate_hir_with_std(
         extern_metadata,
         std_modules,
         core_modules,
+        lint,
     )?;
     lower::lower_program(&ast, &tcx, &module_list).map_err(|e| format!("Lowering error: {e}"))
 }
@@ -315,6 +325,7 @@ pub fn run_program(
     core_source: &str,
     backend: Backend,
     rust_config: &RustBackendConfig,
+    lint: LintConfig,
 ) -> Result<String, String> {
     run_program_with_externs(
         program,
@@ -324,6 +335,7 @@ pub fn run_program(
         std::collections::HashMap::new(),
         &std::collections::HashMap::new(),
         rust_config,
+        lint,
     )
 }
 
@@ -335,6 +347,7 @@ pub fn run_program_with_externs(
     externs: std::collections::HashMap<String, ExternHandler>,
     extern_metadata: &std::collections::HashMap<String, String>,
     rust_config: &RustBackendConfig,
+    lint: LintConfig,
 ) -> Result<String, String> {
     let core = CoreSource {
         prelude: core_source.to_string(),
@@ -349,6 +362,7 @@ pub fn run_program_with_externs(
         &std::collections::HashMap::new(),
         &core,
         rust_config,
+        lint,
     )
 }
 
@@ -372,6 +386,7 @@ pub fn compile_vm_with_externs(
     file_path: &str,
     core_source: &str,
     externs: std::collections::HashMap<String, ExternHandler>,
+    lint: LintConfig,
 ) -> Result<(CompiledProgram, ExternRegistry), String> {
     use std::collections::HashMap;
 
@@ -382,6 +397,7 @@ pub fn compile_vm_with_externs(
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        lint,
     )?;
 
     let filtered = filter_externs_by_hir(externs, &hir);
@@ -397,6 +413,7 @@ pub fn run_program_with_std(
     std_modules: &std::collections::HashMap<String, StdModuleSource>,
     core: &CoreSource,
     rust_config: &RustBackendConfig,
+    lint: LintConfig,
 ) -> Result<String, String> {
     let hir = generate_hir_with_std(
         program,
@@ -405,6 +422,7 @@ pub fn run_program_with_std(
         extern_metadata,
         std_modules,
         &core.modules,
+        lint,
     )?;
 
     let filtered = filter_externs_by_hir(externs, &hir);
@@ -442,6 +460,7 @@ mod extern_import_tests {
             &sample_metadata(),
             &HashMap::new(),
             &HashMap::new(),
+            LintConfig::default(),
         );
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
@@ -454,6 +473,7 @@ mod extern_import_tests {
             &sample_metadata(),
             &HashMap::new(),
             &HashMap::new(),
+            LintConfig::default(),
         );
         assert!(result.is_err());
     }
@@ -503,6 +523,7 @@ mod extern_import_tests {
             &sample_metadata(),
             &HashMap::new(),
             &HashMap::new(),
+            LintConfig::default(),
         );
         assert!(hir.is_ok(), "unexpected error: {:?}", hir.err());
         let program = hir.unwrap();
@@ -518,6 +539,7 @@ mod extern_import_tests {
             &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
+            LintConfig::default(),
         );
         assert!(result.is_ok());
     }
@@ -548,6 +570,7 @@ mod std_import_tests {
             &HashMap::new(),
             &math_std_modules(),
             &HashMap::new(),
+            LintConfig::default(),
         );
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
@@ -560,6 +583,7 @@ mod std_import_tests {
             &HashMap::new(),
             &math_std_modules(),
             &HashMap::new(),
+            LintConfig::default(),
         );
         assert!(result.is_err());
     }

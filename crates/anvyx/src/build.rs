@@ -5,6 +5,8 @@ use std::{
     process,
 };
 
+use anvyx_lang::LintConfig;
+
 use crate::manifest::Manifest;
 
 const ANVYX_CRATE_DIR: &str = env!("CARGO_MANIFEST_DIR");
@@ -77,6 +79,7 @@ pub fn execute_runner(
     entry_path: &Path,
     backend: &str,
     release: bool,
+    lint_config: LintConfig,
 ) -> Result<(), String> {
     let binary = runner_binary_path(project_root);
     if !binary.exists() {
@@ -89,6 +92,10 @@ pub fn execute_runner(
     cmd.arg(entry_path).arg(backend).arg(&metadata_dir);
     if release {
         cmd.arg("--release");
+    }
+    if lint_config.internal_access != anvyx_lang::LintLevel::Warn {
+        cmd.arg("--lint")
+            .arg(format!("internal_access={}", lint_config.internal_access));
     }
     let status = cmd
         .status()
@@ -438,6 +445,8 @@ fn resolve_relative_path(project_root: &Path, rel_to_root: &str) -> String {
 mod tests {
     use std::collections::HashMap;
 
+    use anvyx_lang::LintConfig;
+
     use super::*;
     use crate::manifest::{ExternEntry, Manifest, Project};
 
@@ -448,6 +457,7 @@ mod tests {
                 entry: "src/main.anv".into(),
             },
             externs: HashMap::new(),
+            lint: anvyx_lang::LintConfig::default(),
         }
     }
 
@@ -465,6 +475,7 @@ mod tests {
                 entry: "src/main.anv".into(),
             },
             externs,
+            lint: anvyx_lang::LintConfig::default(),
         }
     }
 
@@ -488,6 +499,7 @@ mod tests {
                 entry: "src/main.anv".into(),
             },
             externs,
+            lint: anvyx_lang::LintConfig::default(),
         }
     }
 
@@ -629,6 +641,7 @@ mod tests {
                 entry: "src/main.anv".into(),
             },
             externs,
+            lint: anvyx_lang::LintConfig::default(),
         };
 
         let result = generate_runner_crate(&tmp, &manifest);
@@ -668,7 +681,13 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
 
-        let result = execute_runner(&tmp, Path::new("src/main.anv"), "vm", false);
+        let result = execute_runner(
+            &tmp,
+            Path::new("src/main.anv"),
+            "vm",
+            false,
+            LintConfig::default(),
+        );
 
         assert!(result.is_err());
         let msg = result.unwrap_err();
@@ -918,6 +937,7 @@ mod tests {
                 entry: "game/start.anv".into(),
             },
             externs: HashMap::new(),
+            lint: anvyx_lang::LintConfig::default(),
         };
         let output = generate_build_main_rs(&manifest, false);
 
@@ -1024,6 +1044,7 @@ mod tests {
                 entry: "src/main.anv".into(),
             },
             externs: HashMap::new(),
+            lint: anvyx_lang::LintConfig::default(),
         };
         assert_eq!(
             resolve_project_name(&manifest, Path::new("/any/path")),
@@ -1039,6 +1060,7 @@ mod tests {
                 entry: "src/main.anv".into(),
             },
             externs: HashMap::new(),
+            lint: anvyx_lang::LintConfig::default(),
         };
         assert_eq!(
             resolve_project_name(&manifest, Path::new("/home/user/cool_project")),
@@ -1054,6 +1076,7 @@ mod tests {
                 entry: "src/main.anv".into(),
             },
             externs: HashMap::new(),
+            lint: anvyx_lang::LintConfig::default(),
         };
         assert_eq!(
             resolve_project_name(&manifest, Path::new("/any/path")),
@@ -1069,6 +1092,7 @@ mod tests {
                 entry: "src/main.anv".into(),
             },
             externs: HashMap::new(),
+            lint: anvyx_lang::LintConfig::default(),
         };
         assert_eq!(
             resolve_project_name(&manifest, Path::new("/")),
@@ -1251,6 +1275,7 @@ mod tests {
                 entry: "src/main.anv".into(),
             },
             externs,
+            lint: LintConfig::default(),
         };
 
         bundle_sources(&tmp, &dist, &manifest).unwrap();

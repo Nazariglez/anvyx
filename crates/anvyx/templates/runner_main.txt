@@ -24,6 +24,22 @@ fn main() {
     let profile = if release { anvyx_lang::Profile::Release } else { anvyx_lang::Profile::Debug };
     let rust_config = anvyx_lang::RustBackendConfig { profile };
 
+    let mut lint_config = anvyx_lang::LintConfig::default();
+    let mut i = 4;
+    while i < args.len() {
+        if args[i] == "--lint" {
+            if let Some(pair) = args.get(i + 1) {
+                if let Some((key, value)) = pair.split_once('=') {
+                    match key.trim() {
+                        "internal_access" => lint_config.internal_access = anvyx_lang::LintLevel::from_str(value.trim()).unwrap_or_default(),
+                        _ => {}
+                    }
+                }
+                i += 2;
+            } else { i += 1; }
+        } else { i += 1; }
+    }
+
     let mut extern_metadata: HashMap<String, String> = HashMap::new();
 %METADATA_READ%
     let source = fs::read_to_string(file_path)
@@ -35,7 +51,7 @@ fn main() {
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
 %EXTERN_EXTENDS%
 %RUNTIME_INIT%
-    match anvyx_lang::run_program_with_std(&source, file_path, backend, externs, &extern_metadata, &std_sources, &core, &rust_config) {
+    match anvyx_lang::run_program_with_std(&source, file_path, backend, externs, &extern_metadata, &std_sources, &core, &rust_config, lint_config) {
         Ok(output) => print!("{output}"),
         Err(e) => { eprintln!("{e}"); std::process::exit(1); }
     }

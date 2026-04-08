@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+// @warn-contains: use the getter instead
+
+import lib { Item };
+
+fn main() {
+    let i = Item { name: "test", cache: "" };
+    let _ = i.cache;
+}

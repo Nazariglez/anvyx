@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+// @warn-contains: accessing internal field 'cache' of type 'Item'
+
+import lib { Item };
+
+fn main() {
+    var i = Item { name: "test", cache: "" };
+    i.cache = "override";
+}

@@ -1,0 +1,10 @@
+// @helper
+
+pub struct Item {
+    value: int,
+
+    @internal
+    fn create() -> Self {
+        Item { value: 0 }
+    }
+}

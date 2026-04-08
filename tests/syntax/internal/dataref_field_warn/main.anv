@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+// @warn-contains: accessing internal field 'scratch' of type 'Buffer'
+
+import lib { Buffer };
+
+fn main() {
+    let b = Buffer { data: "hello", scratch: "" };
+    println(b.scratch);
+}

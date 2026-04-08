@@ -3,7 +3,9 @@ use std::cell::Cell;
 pub(super) use crate::test_helpers::{dummy_ident, dummy_span};
 use crate::{
     ast::*,
-    typecheck::{check_program_with_modules, error::Diagnostic, types::TypecheckResult},
+    typecheck::{
+        LintConfig, check_program_with_modules, error::Diagnostic, types::TypecheckResult,
+    },
 };
 
 thread_local! {
@@ -620,7 +622,7 @@ fn with_prelude(prog: Program) -> Program {
 
 #[track_caller]
 pub(super) fn run_ok(prog: Program) -> TypecheckResult {
-    match check_program_with_modules(&with_prelude(prog), &[], &[], &[]) {
+    match check_program_with_modules(&with_prelude(prog), &[], &[], &[], LintConfig::default()) {
         Ok(tcx) => tcx,
         Err(errors) => {
             panic!("Expected Ok, got errors: {:?}", errors);
@@ -630,7 +632,7 @@ pub(super) fn run_ok(prog: Program) -> TypecheckResult {
 
 #[track_caller]
 pub(super) fn run_err(prog: Program) -> Vec<Diagnostic> {
-    match check_program_with_modules(&with_prelude(prog), &[], &[], &[]) {
+    match check_program_with_modules(&with_prelude(prog), &[], &[], &[], LintConfig::default()) {
         Ok(_) => panic!("Expected Err, got Ok"),
         Err(errors) => errors,
     }
@@ -642,7 +644,7 @@ pub(super) fn check_src(src: &str) -> Result<TypecheckResult, Vec<Diagnostic>> {
     let prog = Program {
         stmts: user_ast.stmts,
     };
-    check_program_with_modules(&with_prelude(prog), &[], &[], &[])
+    check_program_with_modules(&with_prelude(prog), &[], &[], &[], LintConfig::default())
 }
 
 // ---- assertion helpers ----

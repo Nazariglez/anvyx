@@ -9,6 +9,7 @@ mod decl;
 mod error;
 mod expr;
 mod infer;
+mod lint;
 mod ops;
 mod pattern;
 mod postfix;
@@ -29,6 +30,7 @@ use constraint::resolve_constraints;
 pub use error::{Diagnostic, DiagnosticKind, Severity};
 pub use infer::{build_const_subst, resolve_type_param_names, subst_type};
 use internment::Intern;
+pub use lint::{LintConfig, LintLevel};
 use stmt::{build_module_def_with_reexports, check_block_stmts};
 use types::{ExtendEntry, GenericExtendTemplate, TypeChecker};
 pub use types::{
@@ -54,8 +56,12 @@ pub fn check_program_with_modules(
     module_list: &[(Vec<String>, Vec<StmtNode>)],
     scc_groups: &[Vec<usize>],
     auto_use_modules: &[Vec<String>],
+    lint: LintConfig,
 ) -> Result<TypecheckResult, Vec<Diagnostic>> {
-    let mut type_checker = TypeChecker::default();
+    let mut type_checker = TypeChecker {
+        lint,
+        ..Default::default()
+    };
     let mut errors = vec![];
 
     register_builtins(&mut type_checker);
@@ -193,6 +199,25 @@ pub fn check_program_with_modules(
         type_checker
             .module_check_contexts
             .insert(path.clone(), type_checker.ctx.clone());
+
+        // copy checked annotations back so imports see the complete versions
+        if let Some(module_def) = type_checker.resolved_module_defs.get_mut(path) {
+            for (name, export_def) in &mut module_def.struct_defs {
+                let Some(checked_def) = type_checker.ctx.struct_defs.get(name) else {
+                    continue;
+                };
+                export_def.annotations = checked_def.annotations.clone();
+                export_def.field_annotations = checked_def.field_annotations.clone();
+                for (method_name, checked_method) in &checked_def.methods {
+                    if let Some(export_method) = export_def.methods.get_mut(method_name) {
+                        export_method.annotations = checked_method.annotations.clone();
+                        export_method
+                            .param_defaults
+                            .clone_from(&checked_method.param_defaults);
+                    }
+                }
+            }
+        }
     }
 
     flush_errors(&mut errors, &mut type_checker)?;

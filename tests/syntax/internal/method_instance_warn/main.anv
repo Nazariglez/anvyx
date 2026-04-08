@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+// @warn-contains: accessing internal method 'reset' of type 'Item'
+
+import lib { Item };
+
+fn main() {
+    var i = Item { value: 5 };
+    i.reset();
+}

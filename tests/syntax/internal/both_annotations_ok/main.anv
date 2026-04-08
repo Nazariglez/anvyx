@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: success
+// @warn-contains: deprecated
+// @warn-contains: internal
+
+import lib { Widget };
+
+fn main() {
+    let w = Widget { name: "btn", tag: "div" };
+    println(w.tag);
+}

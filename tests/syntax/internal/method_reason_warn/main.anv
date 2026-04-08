@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: success
+// @warn-contains: use Item.create() instead
+
+import lib { Item };
+
+fn main() {
+    let _ = Item.from_raw(42);
+}

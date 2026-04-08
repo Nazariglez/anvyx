@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: success
+// @warn-contains: accessing internal method 'create' of type 'Item'
+
+import lib { Item };
+
+fn main() {
+    let _ = Item.create();
+}

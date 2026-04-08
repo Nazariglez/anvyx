@@ -116,6 +116,7 @@ pub(super) fn type_references_generic(ty: &Type, type_params: &[TypeParam]) -> b
 
 #[derive(Debug, Clone)]
 pub struct StructDef {
+    pub(super) defining_module: Option<Vec<String>>,
     pub kind: AggregateKind,
     pub span: Span,
     pub type_params: Vec<TypeParam>,
@@ -130,6 +131,7 @@ impl StructDef {
     pub(super) fn from_ast(decl: &StructDecl, span: Span) -> Self {
         let methods = decl.methods.iter().map(MethodDef::from_ast).collect();
         Self {
+            defining_module: None,
             kind: decl.kind,
             span,
             type_params: decl.type_params.clone(),
@@ -522,6 +524,8 @@ pub(super) struct TypeChecker {
     /// Populated during typechecking; reported after success
     pub(super) warnings: Vec<Diagnostic>,
 
+    pub(super) lint: super::lint::LintConfig,
+
     /// Normalized annotations for free functions, keyed by function name
     pub(super) func_annotations: HashMap<Ident, AppliedAnnotations>,
 }
@@ -667,6 +671,33 @@ impl TypeChecker {
             return DeepLookup::Found(def);
         }
         self.find_in_modules(|m| m.struct_defs.get(&name))
+    }
+
+    pub(super) fn is_cross_module(&self, defining_module: Option<&[String]>) -> bool {
+        self.ctx.module_path.as_deref() != defining_module
+    }
+
+    pub(super) fn check_member_access(
+        &self,
+        ann: &AppliedAnnotations,
+        span: Span,
+        kind: &'static str,
+        name: Ident,
+        type_name: Ident,
+        defining_module: Option<&[String]>,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        ann.check_deprecation(span, kind, name, errors);
+        let cross_module = self.is_cross_module(defining_module);
+        ann.check_internal(
+            span,
+            kind,
+            name,
+            type_name,
+            cross_module,
+            self.lint.internal_access,
+            errors,
+        );
     }
 
     pub(super) fn get_enum_deep(&self, name: Ident) -> DeepLookup<'_, EnumDef> {
@@ -1576,7 +1607,15 @@ pub(super) fn type_field_on_base(
         for struct_field in &struct_def.fields {
             if struct_field.name == field {
                 if let Some(ann) = struct_def.field_annotations.get(&field) {
-                    ann.check_deprecation(span, "field", field, errors);
+                    type_checker.check_member_access(
+                        ann,
+                        span,
+                        "field",
+                        field,
+                        agg.name,
+                        struct_def.defining_module.as_deref(),
+                        errors,
+                    );
                 }
                 let field_ty = subst_type(&struct_field.ty, &subst, &HashMap::new());
                 return type_checker.resolve_type(&field_ty);

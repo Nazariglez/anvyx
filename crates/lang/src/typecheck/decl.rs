@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::LazyLock,
+};
 
 use internment::Intern;
 
@@ -20,6 +23,9 @@ use crate::{
     },
     span::Span,
 };
+
+static TO_STRING_IDENT: LazyLock<Ident> =
+    LazyLock::new(|| Ident(Intern::new("to_string".to_string())));
 
 pub(super) fn validate_block_return(
     ret_ty: &Type,
@@ -565,6 +571,13 @@ pub(super) fn check_struct(
         if let Some(method_def) = struct_def.methods.get_mut(&method.name) {
             method_def.annotations =
                 normalize_annotations(&method.annotations, AnnotationTarget::InlineMethod, errors);
+
+            if method.name == *TO_STRING_IDENT && method_def.annotations.has_internal() {
+                errors.push(Diagnostic::new(
+                    method.body.span,
+                    DiagnosticKind::InternalOnToString,
+                ));
+            }
         }
 
         let has_defaults = method.params.iter().any(|p| p.default.is_some());
@@ -586,8 +599,7 @@ pub(super) fn check_struct(
         .struct_defs
         .insert(struct_name, struct_def.clone());
 
-    let to_string_ident = Ident(Intern::new("to_string".to_string()));
-    if let Some(method_def) = struct_def.methods.get(&to_string_ident) {
+    if let Some(method_def) = struct_def.methods.get(&*TO_STRING_IDENT) {
         validate_to_string_signature(kind, struct_name, method_def, struct_node.span, errors);
     }
 

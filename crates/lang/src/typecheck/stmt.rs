@@ -326,7 +326,9 @@ fn apply_decl_to_scope(decl: DeclInfo, type_checker: &mut TypeChecker) {
         DeclInfo::ExternType { name, def } => {
             type_checker.ctx.extern_type_defs.insert(name, def);
         }
-        DeclInfo::Aggregate { name, def, .. } => {
+        DeclInfo::Aggregate { name, mut def, .. } => {
+            def.defining_module
+                .clone_from(&type_checker.ctx.module_path);
             type_checker.ctx.struct_defs.insert(name, def);
         }
         DeclInfo::Enum { name, def, .. } => {
@@ -336,7 +338,11 @@ fn apply_decl_to_scope(decl: DeclInfo, type_checker: &mut TypeChecker) {
     }
 }
 
-fn apply_decl_to_summary(decl: DeclInfo, module_def: &mut ModuleDef) -> Option<Ident> {
+fn apply_decl_to_summary(
+    decl: DeclInfo,
+    module_def: &mut ModuleDef,
+    defining_module: &[String],
+) -> Option<Ident> {
     match decl {
         DeclInfo::Func {
             name,
@@ -390,12 +396,13 @@ fn apply_decl_to_summary(decl: DeclInfo, module_def: &mut ModuleDef) -> Option<I
         DeclInfo::Aggregate {
             name,
             visibility,
-            def,
+            mut def,
         } => {
             module_def.all_names.insert(name);
             if visibility != Visibility::Public {
                 return None;
             }
+            def.defining_module = Some(defining_module.to_vec());
             module_def.struct_defs.insert(name, def);
             Some(name)
         }
@@ -1032,7 +1039,7 @@ pub(super) fn build_module_def_with_reexports(
 
     for stmt in stmts {
         if let Some(decl) = extract_decl(stmt, &resolve) {
-            if let Some(name) = apply_decl_to_summary(decl, &mut module_def) {
+            if let Some(name) = apply_decl_to_summary(decl, &mut module_def, module_path) {
                 reexported_from.insert(name, "<local>".to_string());
             }
             continue;

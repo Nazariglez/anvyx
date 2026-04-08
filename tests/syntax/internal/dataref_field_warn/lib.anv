@@ -1,0 +1,6 @@
+// @helper
+
+pub dataref Buffer {
+    data: string,
+    @internal scratch: string,
+}

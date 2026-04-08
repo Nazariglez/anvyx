@@ -1,0 +1,14 @@
+// @mode: check
+// @expect: error
+// @contains: cannot be applied to `to_string`
+
+struct Foo {
+    value: int,
+
+    @internal
+    fn to_string(self) -> string {
+        "foo"
+    }
+}
+
+fn main() {}

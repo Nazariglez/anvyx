@@ -206,7 +206,15 @@ pub(super) fn check_struct_lit(
         let expected = field_type_map.get(name).copied();
         check_expr(field_expr, type_checker, errors, expected);
         if let Some(ann) = struct_def.field_annotations.get(name) {
-            ann.check_deprecation(field_expr.span, "field", *name, errors);
+            type_checker.check_member_access(
+                ann,
+                field_expr.span,
+                "field",
+                *name,
+                struct_name,
+                struct_def.defining_module.as_deref(),
+                errors,
+            );
         }
     }
 

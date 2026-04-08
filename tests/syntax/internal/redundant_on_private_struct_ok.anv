@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+struct Helper {
+    name: string,
+    @internal detail: string,
+}
+
+fn main() {
+    let h = Helper { name: "a", detail: "b" };
+    println(h.detail);
+}

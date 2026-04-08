@@ -51,7 +51,14 @@ pub fn run_test_file(
     };
 
     let start_time = Instant::now();
-    let outcome = spawn_test_process(cmd, file, timeout, directives.mode, effective_backend)?;
+    let outcome = spawn_test_process(
+        cmd,
+        file,
+        timeout,
+        directives.mode,
+        effective_backend,
+        &directives.lint,
+    )?;
     let elapsed = start_time.elapsed();
 
     let res = match (outcome, directives.expect, directives.mode) {
@@ -271,6 +278,7 @@ fn spawn_test_process(
     timeout: Duration,
     mode: Mode,
     backend: Option<&str>,
+    lint_overrides: &[String],
 ) -> Result<ProcessOutcome, String> {
     let subcommand = match mode {
         Mode::Check => "check",
@@ -282,6 +290,10 @@ fn spawn_test_process(
 
     if let Some(b) = backend {
         command.args(["--backend", b]);
+    }
+
+    for lint_arg in lint_overrides {
+        command.args(["--lint", lint_arg]);
     }
 
     let mut child = command

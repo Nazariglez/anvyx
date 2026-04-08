@@ -847,6 +847,18 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
             let label = reason.as_deref().unwrap_or("deprecated").to_string();
             (title, label)
         }
+        DiagnosticKind::InternalAccess { kind, name, type_name, reason, .. } => {
+            let title = format!("accessing internal {kind} '{name}' of type '{type_name}'");
+            let label = reason
+                .as_deref()
+                .unwrap_or("marked @internal and may change without notice")
+                .to_string();
+            (title, label)
+        }
+        DiagnosticKind::InternalOnToString => (
+            "`@internal` cannot be applied to `to_string` methods".to_string(),
+            "`to_string` is implicitly public for printing and formatting".to_string(),
+        ),
         DiagnosticKind::ReturnInDefer => (
             "return inside defer".to_string(),
             "'return' is not allowed inside a defer body".to_string(),

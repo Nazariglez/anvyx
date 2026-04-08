@@ -1,0 +1,10 @@
+// @helper
+
+pub struct Item {
+    value: int,
+
+    @internal("use Item.create() instead")
+    fn from_raw(v: int) -> Self {
+        Item { value: v }
+    }
+}

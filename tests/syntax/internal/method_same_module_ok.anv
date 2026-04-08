@@ -1,0 +1,21 @@
+// @mode: check
+// @expect: success
+
+struct Counter {
+    value: int,
+
+    @internal("do not call directly")
+    fn reset(var self) {
+        self.value = 0;
+    }
+
+    fn increment(var self) {
+        self.value = self.value + 1;
+    }
+}
+
+fn main() {
+    var c = Counter { value: 0 };
+    c.reset();
+    c.increment();
+}

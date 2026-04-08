@@ -1,11 +1,10 @@
 use internment::Intern;
 
 use crate::{
-    Profile, ast,
-    ast::{BinaryOp, Ident, Type},
+    LintConfig, Profile,
+    ast::{self, BinaryOp, Ident, Type},
     hir::{Block, Expr, Func, FuncId, Local, LocalId, Program, Stmt, StmtKind},
-    lower,
-    lower::LowerError,
+    lower::{self, LowerError},
     span::Span,
     typecheck, vm,
 };
@@ -27,6 +26,7 @@ pub(crate) fn generate_hir(source: &str, file_path: &str) -> Result<Program, Str
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        LintConfig::default(),
     )
 }
 
@@ -70,8 +70,9 @@ impl TestCtx {
         stmts.extend(user_ast.stmts);
         let combined = ast::Program { stmts };
 
-        let tcx = typecheck::check_program_with_modules(&combined, &[], &[], &[])
-            .expect("source must typecheck");
+        let tcx =
+            typecheck::check_program_with_modules(&combined, &[], &[], &[], LintConfig::default())
+                .expect("source must typecheck");
         (combined, tcx)
     }
 }

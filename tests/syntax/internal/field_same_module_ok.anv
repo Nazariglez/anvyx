@@ -1,0 +1,15 @@
+// @mode: check
+// @expect: success
+
+struct Connection {
+    host: string,
+    @internal buffer: string,
+    @internal("subject to change") retry_count: int,
+}
+
+fn main() {
+    var c = Connection { host: "a", buffer: "", retry_count: 0 };
+    let _ = c.host;
+    let _ = c.buffer;
+    c.buffer = "x";
+}

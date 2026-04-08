@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: error
+// @lint: internal_access=error
+// @contains: accessing internal field
+
+import lib { Item };
+
+fn main() {
+    let i = Item { name: "test", cache: "" };
+    println(i.cache);
+}

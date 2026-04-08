@@ -4,7 +4,10 @@ use std::{
     sync::LazyLock,
 };
 
-use super::error::{Diagnostic, DiagnosticKind};
+use super::{
+    error::{Diagnostic, DiagnosticKind},
+    lint::LintLevel,
+};
 use crate::{
     ast::{AnnotationArgs, AnnotationNode, Ident, Lit},
     span::Span,
@@ -47,6 +50,7 @@ impl fmt::Display for AnnotationTarget {
 pub(super) enum KnownAnnotationKind {
     Test,
     Deprecated,
+    Internal,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -65,6 +69,7 @@ pub(super) struct AnnotationSpec {
 pub(super) enum AppliedAnnotation {
     Test,
     Deprecated { reason: Option<String> },
+    Internal { reason: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,9 +91,15 @@ impl AppliedAnnotations {
                 AppliedAnnotation::Deprecated { reason } => {
                     Some(DeprecationInfo::Deprecated(reason.as_deref()))
                 }
-                AppliedAnnotation::Test => None,
+                AppliedAnnotation::Test | AppliedAnnotation::Internal { .. } => None,
             })
             .unwrap_or(DeprecationInfo::NotDeprecated)
+    }
+
+    pub(super) fn has_internal(&self) -> bool {
+        self.items
+            .iter()
+            .any(|a| matches!(a, AppliedAnnotation::Internal { .. }))
     }
 
     pub(super) fn check_deprecation(
@@ -105,6 +116,37 @@ impl AppliedAnnotations {
                     kind,
                     name,
                     reason: reason.map(str::to_string),
+                },
+            ));
+        }
+    }
+
+    pub(super) fn check_internal(
+        &self,
+        span: Span,
+        kind: &'static str,
+        name: Ident,
+        type_name: Ident,
+        cross_module: bool,
+        lint_level: LintLevel,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if !cross_module || lint_level == LintLevel::Allow {
+            return;
+        }
+        let reason = self.items.iter().find_map(|a| match a {
+            AppliedAnnotation::Internal { reason } => Some(reason.as_deref()),
+            _ => None,
+        });
+        if let Some(reason) = reason {
+            errors.push(Diagnostic::new(
+                span,
+                DiagnosticKind::InternalAccess {
+                    kind,
+                    name,
+                    type_name,
+                    reason: reason.map(str::to_string),
+                    level: lint_level,
                 },
             ));
         }
@@ -138,6 +180,14 @@ static KNOWN_ANNOTATIONS: LazyLock<HashMap<&'static str, AnnotationSpec>> = Lazy
                 AnnotationTarget::InlineMethod,
                 AnnotationTarget::ExtendMethod,
             ],
+            args: AnnotationArgSchema::OptionalPositionalString,
+        },
+    );
+    map.insert(
+        "internal",
+        AnnotationSpec {
+            kind: KnownAnnotationKind::Internal,
+            targets: &[AnnotationTarget::Field, AnnotationTarget::InlineMethod],
             args: AnnotationArgSchema::OptionalPositionalString,
         },
     );
@@ -209,15 +259,14 @@ pub(super) fn normalize_annotations(
             continue;
         }
 
+        let reason = match &annotation.node.args {
+            AnnotationArgs::Positional(Lit::String(s)) => Some(s.clone()),
+            _ => None,
+        };
         let applied = match def.kind {
             KnownAnnotationKind::Test => AppliedAnnotation::Test,
-            KnownAnnotationKind::Deprecated => {
-                let reason = match &annotation.node.args {
-                    AnnotationArgs::Positional(Lit::String(s)) => Some(s.clone()),
-                    _ => None,
-                };
-                AppliedAnnotation::Deprecated { reason }
-            }
+            KnownAnnotationKind::Deprecated => AppliedAnnotation::Deprecated { reason },
+            KnownAnnotationKind::Internal => AppliedAnnotation::Internal { reason },
         };
         items.push(applied);
     }

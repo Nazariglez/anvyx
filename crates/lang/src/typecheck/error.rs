@@ -1,3 +1,4 @@
+use super::lint::LintLevel;
 use crate::{
     ast::{Ident, Type},
     span::Span,
@@ -533,6 +534,14 @@ pub enum DiagnosticKind {
         name: Ident,
         reason: Option<String>,
     },
+    InternalAccess {
+        kind: &'static str,
+        name: Ident,
+        type_name: Ident,
+        reason: Option<String>,
+        level: LintLevel,
+    },
+    InternalOnToString,
     ReturnInDefer,
     BreakInDefer,
     ContinueInDefer,
@@ -552,6 +561,13 @@ impl DiagnosticKind {
     pub fn severity(&self) -> Severity {
         match self {
             Self::DeprecatedUsage { .. } => Severity::Warning,
+            Self::InternalAccess { level, .. } => match level {
+                LintLevel::Error => Severity::Error,
+                LintLevel::Warn => Severity::Warning,
+                LintLevel::Allow => {
+                    unreachable!("Allow-level internal access should not produce a diagnostic")
+                }
+            },
             _ => Severity::Error,
         }
     }

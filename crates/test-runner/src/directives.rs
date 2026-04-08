@@ -9,6 +9,7 @@ pub struct Directives {
     pub warn_contains: Vec<String>,
     pub skip: Option<String>,
     pub helper: bool,
+    pub lint: Vec<String>,
 }
 
 impl Directives {
@@ -72,6 +73,9 @@ impl Directives {
             }
             if let Some(ln) = trimmed.strip_prefix("// @mode:") {
                 directives.mode = Mode::from_str(ln.trim());
+            }
+            if let Some(ln) = trimmed.strip_prefix("// @lint:") {
+                directives.lint.push(ln.trim().to_string());
             }
         }
 

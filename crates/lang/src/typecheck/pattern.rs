@@ -1199,10 +1199,23 @@ fn check_struct_destructure_pattern(
                 .map(|agg| build_subst(&struct_def.type_params, agg.type_args))
                 .unwrap_or_default();
 
-            for ((_, subpat), matched_def) in fields.iter().zip(matched.iter()) {
+            for ((field_name, subpat), matched_def) in fields.iter().zip(matched.iter()) {
                 let Some(field_def) = matched_def else {
                     continue;
                 };
+
+                if let Some(ann) = struct_def.field_annotations.get(field_name) {
+                    type_checker.check_member_access(
+                        ann,
+                        pattern.span,
+                        "field",
+                        *field_name,
+                        type_name,
+                        struct_def.defining_module.as_deref(),
+                        errors,
+                    );
+                }
+
                 let resolved_ty = if subst.is_empty() {
                     field_def.ty.clone()
                 } else {

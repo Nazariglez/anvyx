@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+// @warn-contains: accessing internal method 'raw_value' of type 'Counter'
+
+import lib { Counter };
+
+fn main() {
+    let c = Counter { value: 5 };
+    println(c.raw_value());
+}

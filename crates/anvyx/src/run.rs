@@ -1,10 +1,12 @@
 use std::{collections::HashMap, fs, path::Path};
 
-use anvyx_lang::{Backend, CoreSource, Profile, RustBackendConfig, run_program_with_std};
+use anvyx_lang::{
+    Backend, CoreSource, LintConfig, Profile, RustBackendConfig, run_program_with_std,
+};
 
 use crate::std_support::{collect_core, collect_std};
 
-pub fn cmd(file: &Path, backend: &str, release: bool) -> Result<(), String> {
+pub fn cmd(file: &Path, backend: &str, release: bool, lint: LintConfig) -> Result<(), String> {
     let backend = backend.parse::<Backend>()?;
     let profile = if release {
         Profile::Release
@@ -31,6 +33,7 @@ pub fn cmd(file: &Path, backend: &str, release: bool) -> Result<(), String> {
         &std_sources,
         &core,
         &rust_config,
+        lint,
     )?;
     print!("{output}");
     Ok(())

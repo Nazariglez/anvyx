@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fs, path::Path};
 
+use anvyx_lang::LintConfig;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -7,6 +8,8 @@ pub struct Manifest {
     pub project: Project,
     #[serde(default)]
     pub externs: HashMap<String, ExternEntry>,
+    #[serde(default)]
+    pub lint: LintConfig,
 }
 
 impl Manifest {
@@ -137,5 +140,53 @@ mod tests {
         .unwrap();
 
         assert!(without_name.project.name.is_none());
+    }
+
+    #[test]
+    fn parse_manifest_lint_error() {
+        use anvyx_lang::LintLevel;
+        let manifest = parse(
+            r#"
+            [project]
+            entry = "src/main.anv"
+
+            [lint]
+            internal_access = "error"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(manifest.lint.internal_access, LintLevel::Error);
+    }
+
+    #[test]
+    fn parse_manifest_lint_allow() {
+        use anvyx_lang::LintLevel;
+        let manifest = parse(
+            r#"
+            [project]
+            entry = "src/main.anv"
+
+            [lint]
+            internal_access = "allow"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(manifest.lint.internal_access, LintLevel::Allow);
+    }
+
+    #[test]
+    fn parse_manifest_lint_default() {
+        use anvyx_lang::LintLevel;
+        let manifest = parse(
+            r#"
+            [project]
+            entry = "src/main.anv"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(manifest.lint.internal_access, LintLevel::Warn);
     }
 }

@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+struct Config {
+    host: string,
+    @internal("implementation detail") port: int,
+}
+
+fn main() {
+    let c = Config { host: "localhost", port: 8080 };
+    println(c.port);
+}

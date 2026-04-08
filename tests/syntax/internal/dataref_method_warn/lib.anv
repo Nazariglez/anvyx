@@ -1,0 +1,8 @@
+// @helper
+
+pub dataref Counter {
+    value: int,
+
+    @internal
+    fn raw_value(self) -> int { self.value }
+}
