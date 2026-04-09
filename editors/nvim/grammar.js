@@ -17,13 +17,19 @@ module.exports = grammar({
   word: $ => $.identifier,
 
   conflicts: $ => [
-    [$._expression, $.struct_literal],
     [$._expression, $._pattern],
-    [$._type, $.type_identifier],
-    [$.generic_type, $._expression],
-    [$.enum_pattern, $.struct_pattern],
-    [$._type, $._expression],
-    [$.tuple_expression, $.tuple_pattern],
+    [$._expression, $.literal_pattern],
+    [$._expression, $.lambda_expression],
+    [$._pattern],
+    [$.defer_statement, $._expression],
+    [$.optional_type, $.function_type],
+    [$._extern_member],
+    [$._extern_member, $.type_identifier],
+    [$.field_initializer, $.struct_pattern],
+    [$.field_initializer, $.enum_pattern],
+    [$.field_initializer, $.inferred_enum_pattern],
+    [$.argument_list, $.inferred_enum_pattern],
+    [$.range_pattern, $.rest_pattern],
   ],
 
   rules: {
@@ -125,8 +131,10 @@ module.exports = grammar({
       $.block,
     ),
 
-    type_parameters: $ => seq('<', commaSep1($.type_parameter), '>'),
-    type_parameter: $ => seq($.identifier, optional(seq(':', choice('int', $._type)))),
+    type_parameters: $ => seq('<', commaSep1($.generic_parameter), '>'),
+    generic_parameter: $ => choice($.type_parameter, $.const_parameter),
+    type_parameter: $ => $.identifier,
+    const_parameter: $ => seq($.identifier, ':', 'int'),
 
     parameter_list: $ => seq('(', commaSep($.parameter), ')'),
     parameter: $ => seq(
@@ -151,6 +159,8 @@ module.exports = grammar({
     ),
     struct_body: $ => seq('{', commaSep($.struct_field), '}'),
     struct_field: $ => seq(
+      repeat($.doc_comment),
+      repeat($.annotation),
       optional($.visibility_modifier),
       field('name', $.identifier),
       ':',
@@ -170,6 +180,8 @@ module.exports = grammar({
     ),
     enum_body: $ => seq('{', commaSep($.enum_variant), '}'),
     enum_variant: $ => seq(
+      repeat($.doc_comment),
+      repeat($.annotation),
       field('name', $.identifier),
       optional(choice(
         seq('(', commaSep($._type), ')'),
@@ -278,9 +290,8 @@ module.exports = grammar({
     ),
     match_arm: $ => seq(
       $._pattern,
-      repeat(seq('|', $._pattern)),
       '=>',
-      choice($.block, seq($._expression, optional(','))),
+      $._expression,
     ),
 
     return_statement: $ => seq('return', optional($._expression), ';'),
@@ -408,12 +419,10 @@ module.exports = grammar({
       ),
     ),
 
-    inferred_enum_expression: $ => prec(17, seq(
-      '.', $.identifier,
-      optional(choice(
-        $.argument_list,
-        seq('{', commaSep($.field_initializer), '}'),
-      )),
+    inferred_enum_expression: $ => prec.left(17, choice(
+      seq('.', $.identifier),
+      seq('.', $.identifier, $.argument_list),
+      seq('.', $.identifier, '{', commaSep($.field_initializer), '}'),
     )),
 
     block: $ => seq(

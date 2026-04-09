@@ -2,7 +2,11 @@
   "name": "tree-sitter-anvyx",
   "version": "0.0.1",
   "description": "Tree-sitter grammar for the Anvyx programming language",
-  "keywords": ["tree-sitter", "parser", "anvyx"],
+  "keywords": [
+    "tree-sitter",
+    "parser",
+    "anvyx"
+  ],
   "devDependencies": {
     "tree-sitter-cli": "^0.24.0"
   },
@@ -10,12 +14,5 @@
     "build": "tree-sitter generate",
     "test": "tree-sitter test",
     "parse": "tree-sitter parse"
-  },
-  "tree-sitter": [
-    {
-      "scope": "source.anvyx",
-      "file-types": ["anv"],
-      "highlights": "queries/highlights.scm"
-    }
-  ]
+  }
 }

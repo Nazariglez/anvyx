@@ -70,9 +70,9 @@ Then install the parser inside Neovim:
 Next, make the highlight queries available:
 
 ```bash
-mkdir -p ~/.local/share/nvim/queries/anvyx
+mkdir -p ~/.config/nvim/after/queries/anvyx
 ln -sf /path/to/this/repo/editors/nvim/queries/highlights.scm \
-  ~/.local/share/nvim/queries/anvyx/highlights.scm
+  ~/.config/nvim/after/queries/anvyx/highlights.scm
 ```
 
 Make sure Tree-sitter highlighting is enabled in your Neovim config:
