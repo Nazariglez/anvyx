@@ -1,0 +1,236 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Anvyx",
+  "scopeName": "source.anvyx",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#annotations" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#function-definition" },
+    { "include": "#type-definition" },
+    { "include": "#constants" },
+    { "include": "#self" },
+    { "include": "#keywords" },
+    { "include": "#function-call" },
+    { "include": "#method-call" },
+    { "include": "#type-identifier" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.documentation.anvyx",
+          "match": "///.*$"
+        },
+        {
+          "name": "comment.line.double-slash.anvyx",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "annotations": {
+      "patterns": [
+        {
+          "match": "(@)([a-zA-Z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "1": { "name": "punctuation.definition.annotation.anvyx" },
+            "2": { "name": "entity.name.function.decorator.anvyx" }
+          }
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.interpolated.anvyx",
+          "begin": "f\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.string.begin.anvyx" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.string.end.anvyx" }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.anvyx",
+              "match": "\\\\[ntr\\\\\"{}]"
+            },
+            {
+              "name": "meta.interpolation.anvyx",
+              "begin": "\\{",
+              "end": "\\}",
+              "beginCaptures": {
+                "0": { "name": "punctuation.section.interpolation.begin.anvyx" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.section.interpolation.end.anvyx" }
+              },
+              "patterns": [
+                { "include": "#interpolation-body" }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.double.anvyx",
+          "begin": "\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.string.begin.anvyx" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.string.end.anvyx" }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.anvyx",
+              "match": "\\\\[ntr\\\\\"]"
+            }
+          ]
+        }
+      ]
+    },
+    "interpolation-body": {
+      "patterns": [
+        { "include": "#strings" },
+        { "include": "#numbers" },
+        { "include": "#function-call" },
+        { "include": "#method-call" },
+        { "include": "#constants" },
+        { "include": "#self" },
+        { "include": "#type-identifier" },
+        { "include": "#keywords" },
+        { "include": "#operators" },
+        { "include": "#punctuation" }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.anvyx",
+          "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[fd]?\\b"
+        },
+        {
+          "name": "constant.numeric.float.anvyx",
+          "match": "\\b[0-9][0-9_]*[eE][+-]?[0-9][0-9_]*[fd]?\\b"
+        },
+        {
+          "name": "constant.numeric.float.anvyx",
+          "match": "\\b[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[fd]\\b"
+        },
+        {
+          "name": "constant.numeric.integer.hexadecimal.anvyx",
+          "match": "\\b0[xX][0-9a-fA-F][0-9a-fA-F_]*\\b"
+        },
+        {
+          "name": "constant.numeric.integer.binary.anvyx",
+          "match": "\\b0[bB][01][01_]*\\b"
+        },
+        {
+          "name": "constant.numeric.integer.octal.anvyx",
+          "match": "\\b0[oO][0-7][0-7_]*\\b"
+        },
+        {
+          "name": "constant.numeric.integer.anvyx",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "function-definition": {
+      "match": "\\b(fn)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=[(<])",
+      "captures": {
+        "1": { "name": "keyword.declaration.function.anvyx" },
+        "2": { "name": "entity.name.function.anvyx" }
+      }
+    },
+    "type-definition": {
+      "match": "\\b(struct|enum|dataref)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.declaration.anvyx" },
+        "2": { "name": "entity.name.type.anvyx" }
+      }
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.anvyx",
+          "match": "\\b(true|false|nil)\\b"
+        }
+      ]
+    },
+    "self": {
+      "patterns": [
+        {
+          "name": "variable.language.self.anvyx",
+          "match": "\\bself\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.anvyx",
+          "match": "\\b(if|else|while|for|in|break|continue|match|return|defer)\\b"
+        },
+        {
+          "name": "keyword.declaration.anvyx",
+          "match": "\\b(fn|let|var|const|pub|struct|enum|type|import|extern|extend|dataref)\\b"
+        },
+        {
+          "name": "keyword.operator.anvyx",
+          "match": "\\bas\\b"
+        },
+        {
+          "name": "storage.type.anvyx",
+          "match": "\\b(int|float|double|bool|string|void|any)\\b"
+        }
+      ]
+    },
+    "function-call": {
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "entity.name.function.anvyx" }
+      }
+    },
+    "method-call": {
+      "match": "\\.([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "entity.name.function.method.anvyx" }
+      }
+    },
+    "type-identifier": {
+      "match": "\\b([A-Z][a-zA-Z0-9_]*)\\b",
+      "captures": {
+        "1": { "name": "entity.name.type.anvyx" }
+      }
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.anvyx",
+          "match": "<<=|>>=|<<|>>|\\.\\.[=]?|->|=>|==|!=|<=|>=|&&|\\|\\||\\?\\?|\\+=|-=|\\*=|/=|\\^=|&=|\\|=|[+\\-*/%<>=!\\^~&|]"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.bracket.anvyx",
+          "match": "[(){}\\[\\]]"
+        },
+        {
+          "name": "punctuation.delimiter.anvyx",
+          "match": "[;:,.]"
+        },
+        {
+          "name": "punctuation.accessor.anvyx",
+          "match": "\\?"
+        }
+      ]
+    }
+  }
+}

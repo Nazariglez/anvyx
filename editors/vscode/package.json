@@ -1,0 +1,27 @@
+{
+  "name": "anvyx",
+  "displayName": "Anvyx",
+  "description": "Syntax highlighting for the Anvyx programming language",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "anvyx",
+        "aliases": ["Anvyx", "anvyx"],
+        "extensions": [".anv"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "anvyx",
+        "scopeName": "source.anvyx",
+        "path": "./syntaxes/anvyx.tmLanguage.json"
+      }
+    ]
+  }
+}

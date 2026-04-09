@@ -32,3 +32,7 @@ scan-tests threshold="75":
 
 fmt:
     cargo +nightly fmt
+
+# keep editor grammars in sync with lexer keywords
+check-editor-keywords:
+    bash editors/scripts/check_keywords.sh
