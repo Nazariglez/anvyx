@@ -1,5 +1,6 @@
 mod helpers;
 
+mod doc_comments;
 mod expr;
 mod imports;
 mod stmt;

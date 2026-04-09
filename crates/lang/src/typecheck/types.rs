@@ -196,6 +196,7 @@ impl ExternTypeDef {
                     name: *name,
                     ty: def.ty.clone(),
                     default: None,
+                    doc: None,
                 }
             })
             .collect()

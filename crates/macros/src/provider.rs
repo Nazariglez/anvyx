@@ -127,7 +127,7 @@ fn do_expand(input: TokenStream) -> syn::Result<TokenStream> {
                             for fd in __td.fields.iter() {
                                 if !init_names.contains(fd.name) {
                                     f.push(anvyx_lang::ExternFieldDecl {
-                                        name: fd.name, ty: fd.ty, computed: true
+                                        name: fd.name, ty: fd.ty, computed: true, doc: None
                                     });
                                 }
                             }

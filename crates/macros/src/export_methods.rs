@@ -393,7 +393,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
 
         let anvyx_type_tokens = crate::codegen::ret_anvyx_type_str(&g.classified);
         getter_field_decls.push(quote! {
-            anvyx_lang::ExternFieldDecl { name: #field_name, ty: #anvyx_type_tokens, computed: true }
+            anvyx_lang::ExternFieldDecl { name: #field_name, ty: #anvyx_type_tokens, computed: true, doc: None }
         });
     }
     for s in &setters {
@@ -556,6 +556,7 @@ fn process_init(
                         name: #param_name_str,
                         ty: <#ty as anvyx_lang::AnvyxConvert>::anvyx_type(),
                         computed: false,
+                        doc: None,
                     }
                 });
             }

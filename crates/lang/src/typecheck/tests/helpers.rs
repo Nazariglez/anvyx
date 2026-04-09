@@ -503,6 +503,7 @@ pub(super) fn generic_method(
     let (stmts, tail) = split_body(body);
     Method {
         annotations: vec![],
+        doc: None,
         name: dummy_ident(name),
         visibility: Visibility::Private,
         type_params,
@@ -534,6 +535,7 @@ pub(super) fn generic_struct_decl(
             name: dummy_ident(n),
             ty,
             default: None,
+            doc: None,
         })
         .collect();
     StmtNode {
@@ -562,6 +564,7 @@ pub(super) fn enum_decl(name: &str, variants: Vec<(&str, VariantKind)>) -> StmtN
             annotations: vec![],
             name: dummy_ident(n),
             kind,
+            doc: None,
         })
         .collect();
     StmtNode {

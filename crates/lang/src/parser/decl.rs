@@ -307,7 +307,13 @@ fn resolve_extern_members(
     members
         .into_iter()
         .map(|member| match member {
-            ast::ExternTypeMember::Field { name, ty, computed } => ast::ExternTypeMember::Field {
+            ast::ExternTypeMember::Field {
+                doc,
+                name,
+                ty,
+                computed,
+            } => ast::ExternTypeMember::Field {
+                doc,
                 name,
                 ty: resolve_type_params_with_self(
                     &ty,
@@ -523,10 +529,12 @@ fn extern_type_op_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> {
 }
 
 fn extern_type_field_member<'src>() -> BoxedParser<'src, ast::ExternTypeMember> {
-    identifier()
+    doc_comment_block()
+        .then(identifier())
         .then_ignore(select! { (Token::Colon, _) => () })
         .then(type_ident())
-        .map(|(name, ty)| ast::ExternTypeMember::Field {
+        .map(|((doc, name), ty)| ast::ExternTypeMember::Field {
+            doc,
             name,
             ty,
             computed: false,
@@ -640,7 +648,8 @@ pub(super) fn function<'src>(
 fn struct_field<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::StructField> {
-    annotations()
+    doc_comment_block()
+        .then(annotations())
         .then(identifier())
         .then_ignore(select! {
             (Token::Colon, _) => (),
@@ -651,12 +660,15 @@ fn struct_field<'src>(
                 .ignore_then(expression(stmt))
                 .or_not(),
         )
-        .map(|(((annotations, name), ty), default)| ast::StructField {
-            annotations,
-            name,
-            ty,
-            default,
-        })
+        .map(
+            |((((doc, annotations), name), ty), default)| ast::StructField {
+                annotations,
+                name,
+                ty,
+                default,
+                doc,
+            },
+        )
         .labelled("struct field")
         .as_context()
         .boxed()
@@ -667,6 +679,7 @@ fn struct_method<'src>(
 ) -> BoxedParser<'src, ast::Method> {
     let tail_expr = expression(stmt.clone());
     annotations()
+        .then(doc_comment_block())
         .then_ignore(select! {
             (Token::Keyword(Keyword::Fn), _) => (),
         })
@@ -676,7 +689,7 @@ fn struct_method<'src>(
         .then(return_type())
         .then(block_stmt(stmt, tail_expr))
         .map_with(
-            |(((((annots, name), gp), (receiver, _, params)), ret), body), e| {
+            |((((((annots, doc), name), gp), (receiver, _, params)), ret), body), e| {
                 let s = e.span();
                 let GenericParams {
                     type_params: method_type_params,
@@ -713,6 +726,7 @@ fn struct_method<'src>(
 
                 ast::Method {
                     annotations: annots,
+                    doc,
                     name,
                     visibility: ast::Visibility::Private,
                     type_params: method_type_params,
@@ -867,6 +881,7 @@ fn aggregate_declaration<'src>(
                         name: f.name,
                         ty,
                         default: f.default,
+                        doc: f.doc,
                     }
                 })
                 .collect();
@@ -909,6 +924,7 @@ fn aggregate_declaration<'src>(
 
                     ast::Method {
                         annotations: m.annotations,
+                        doc: m.doc,
                         name: m.name,
                         visibility: m.visibility,
                         type_params: m.type_params,
@@ -987,17 +1003,19 @@ fn enum_variant_struct_payload<'src>(
 fn enum_variant<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
 ) -> BoxedParser<'src, ast::EnumVariant> {
-    annotations()
+    doc_comment_block()
+        .then(annotations())
         .then(identifier())
         .then(choice((
             enum_variant_tuple_payload(),
             enum_variant_struct_payload(stmt),
             empty().to(ast::VariantKind::Unit),
         )))
-        .map(|((annotations, name), kind)| ast::EnumVariant {
+        .map(|(((doc, annotations), name), kind)| ast::EnumVariant {
             annotations,
             name,
             kind,
+            doc,
         })
         .labelled("enum variant")
         .as_context()
@@ -1059,6 +1077,7 @@ pub(super) fn enum_declaration<'src>(
                                         &const_param_map,
                                     ),
                                     default: None,
+                                    doc: f.doc.clone(),
                                 })
                                 .collect();
                             ast::VariantKind::Struct(resolved)
@@ -1068,6 +1087,7 @@ pub(super) fn enum_declaration<'src>(
                         annotations: v.annotations,
                         name: v.name,
                         kind: resolved_kind,
+                        doc: v.doc,
                     }
                 })
                 .collect();

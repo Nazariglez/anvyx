@@ -615,7 +615,12 @@ fn build_extern_type_def(
 
     for member in members {
         match member {
-            ExternTypeMember::Field { name, ty, computed } => {
+            ExternTypeMember::Field {
+                name,
+                ty,
+                computed,
+                doc: _,
+            } => {
                 if !computed {
                     field_order.push(*name);
                 }

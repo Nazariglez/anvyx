@@ -34,6 +34,8 @@ pub struct ExternFieldDecl {
     pub name: &'static str,
     pub ty: &'static str,
     pub computed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doc: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -111,6 +113,8 @@ pub struct ExternFieldMeta {
     pub ty: String,
     #[serde(default)]
     pub computed: bool,
+    #[serde(default)]
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,6 +203,7 @@ pub(crate) fn metadata_to_extern_stmts(
 
         for field in &ty.fields {
             members.push(ExternTypeMember::Field {
+                doc: field.doc.clone(),
                 name: Ident(Intern::new(field.name.clone())),
                 ty: anvyx_type_from_str(&field.ty)?,
                 computed: field.computed,
@@ -754,11 +759,13 @@ mod tests {
                     name: "x",
                     ty: "float",
                     computed: false,
+                    doc: None,
                 },
                 ExternFieldDecl {
                     name: "y",
                     ty: "float",
                     computed: false,
+                    doc: None,
                 },
             ],
             methods: vec![ExternMethodDecl {
@@ -843,11 +850,13 @@ mod tests {
                         name: "x".to_string(),
                         ty: "float".to_string(),
                         computed: false,
+                        doc: None,
                     },
                     ExternFieldMeta {
                         name: "y".to_string(),
                         ty: "float".to_string(),
                         computed: false,
+                        doc: None,
                     },
                 ],
                 methods: vec![ExternMethodMeta {

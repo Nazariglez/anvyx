@@ -54,6 +54,7 @@ impl StdModule {
                     out.push_str("    init;\n");
                 }
                 for field in &ty.fields {
+                    emit_doc(&mut out, field.doc);
                     out.push_str("    ");
                     out.push_str(field.name);
                     out.push_str(": ");
@@ -175,5 +176,210 @@ pub fn init_std_modules(modules: &[StdModule]) {
         if let Some(init) = module.init {
             init();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::{
+        ExternDecl, ExternFieldDecl, ExternMethodDecl, ExternStaticMethodDecl, ExternTypeDecl, ast,
+        lexer, parser,
+    };
+
+    fn parse_program(src: &str) -> ast::Program {
+        let tokens = lexer::tokenize(src).unwrap_or_else(|e| panic!("tokenize failed: {e:?}"));
+        parser::parse_ast(&tokens).unwrap_or_else(|e| panic!("parse failed: {e:?}"))
+    }
+
+    #[test]
+    fn doc_round_trip_extern_type() {
+        let module = super::StdModule {
+            name: "test",
+            anv_source: "",
+            exports: || {
+                vec![ExternDecl {
+                    name: "free_fn",
+                    params: vec![],
+                    ret: "void",
+                    doc: Some("A free function."),
+                }]
+            },
+            type_exports: || {
+                vec![ExternTypeDecl {
+                    name: "Widget",
+                    doc: Some("A widget type.\n\nHas multiple uses."),
+                    has_init: false,
+                    fields: vec![ExternFieldDecl {
+                        name: "size",
+                        ty: "int",
+                        computed: false,
+                        doc: Some("The widget size."),
+                    }],
+                    methods: vec![ExternMethodDecl {
+                        name: "resize",
+                        doc: Some("Resizes the widget."),
+                        receiver: "var",
+                        params: vec![("new_size", "int")],
+                        ret: "void",
+                    }],
+                    statics: vec![ExternStaticMethodDecl {
+                        name: "create",
+                        doc: Some("Creates a new widget."),
+                        params: vec![],
+                        ret: "Widget",
+                    }],
+                    operators: vec![],
+                }]
+            },
+            handlers: || HashMap::new(),
+            init: None,
+        };
+
+        let source = module.full_anv_source();
+        let prog = parse_program(&source);
+
+        //statements: extern type + extern fn
+        assert_eq!(prog.stmts.len(), 2);
+
+        // Extern type
+        let ast::Stmt::ExternType(ty) = &prog.stmts[0].node else {
+            panic!("expected ExternType, got {:?}", prog.stmts[0].node);
+        };
+        assert_eq!(
+            ty.node.doc.as_deref(),
+            Some("A widget type.\n\nHas multiple uses.")
+        );
+        assert_eq!(ty.node.name.0.as_ref(), "Widget");
+
+        // Field
+        let ast::ExternTypeMember::Field { doc, name, .. } = &ty.node.members[0] else {
+            panic!("expected Field");
+        };
+        assert_eq!(doc.as_deref(), Some("The widget size."));
+        assert_eq!(name.0.as_ref(), "size");
+
+        // Method
+        let ast::ExternTypeMember::Method { doc, name, .. } = &ty.node.members[1] else {
+            panic!("expected Method");
+        };
+        assert_eq!(doc.as_deref(), Some("Resizes the widget."));
+        assert_eq!(name.0.as_ref(), "resize");
+
+        // Static method
+        let ast::ExternTypeMember::StaticMethod { doc, name, .. } = &ty.node.members[2] else {
+            panic!("expected StaticMethod");
+        };
+        assert_eq!(doc.as_deref(), Some("Creates a new widget."));
+        assert_eq!(name.0.as_ref(), "create");
+
+        // Free function
+        let ast::Stmt::ExternFunc(fn_decl) = &prog.stmts[1].node else {
+            panic!("expected ExternFunc, got {:?}", prog.stmts[1].node);
+        };
+        assert_eq!(fn_decl.node.doc.as_deref(), Some("A free function."));
+        assert_eq!(fn_decl.node.name.0.as_ref(), "free_fn");
+    }
+
+    #[test]
+    fn doc_round_trip_absent() {
+        let module = super::StdModule {
+            name: "test",
+            anv_source: "",
+            exports: || vec![],
+            type_exports: || {
+                vec![ExternTypeDecl {
+                    name: "Plain",
+                    doc: None,
+                    has_init: false,
+                    fields: vec![ExternFieldDecl {
+                        name: "x",
+                        ty: "int",
+                        computed: false,
+                        doc: None,
+                    }],
+                    methods: vec![],
+                    statics: vec![],
+                    operators: vec![],
+                }]
+            },
+            handlers: || HashMap::new(),
+            init: None,
+        };
+
+        let source = module.full_anv_source();
+        let prog = parse_program(&source);
+
+        let ast::Stmt::ExternType(ty) = &prog.stmts[0].node else {
+            panic!("expected ExternType");
+        };
+        assert_eq!(ty.node.doc, None);
+        let ast::ExternTypeMember::Field { doc, .. } = &ty.node.members[0] else {
+            panic!("expected Field");
+        };
+        assert_eq!(*doc, None);
+    }
+
+    #[test]
+    fn doc_emit_snapshot() {
+        let module = super::StdModule {
+            name: "test",
+            anv_source: "",
+            exports: || {
+                vec![ExternDecl {
+                    name: "greet",
+                    params: vec![("name", "string")],
+                    ret: "void",
+                    doc: Some("Says hello."),
+                }]
+            },
+            type_exports: || {
+                vec![ExternTypeDecl {
+                    name: "Vec2",
+                    doc: Some("A 2D vector."),
+                    has_init: false,
+                    fields: vec![
+                        ExternFieldDecl {
+                            name: "x",
+                            ty: "float",
+                            computed: false,
+                            doc: Some("X component."),
+                        },
+                        ExternFieldDecl {
+                            name: "y",
+                            ty: "float",
+                            computed: false,
+                            doc: None,
+                        },
+                    ],
+                    methods: vec![ExternMethodDecl {
+                        name: "length",
+                        doc: Some("Returns the magnitude."),
+                        receiver: "self",
+                        params: vec![],
+                        ret: "float",
+                    }],
+                    statics: vec![],
+                    operators: vec![],
+                }]
+            },
+            handlers: || HashMap::new(),
+            init: None,
+        };
+
+        let expected = "\
+/// A 2D vector.
+extern type Vec2 {
+/// X component.
+    x: float;
+    y: float;
+/// Returns the magnitude.
+    fn length(self) -> float;
+}
+/// Says hello.
+extern fn greet(name: string);
+";
+        assert_eq!(module.full_anv_source(), expected);
     }
 }

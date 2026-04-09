@@ -82,7 +82,7 @@ fn do_expand(attr: TokenStream, item: TokenStream) -> Result<TokenStream> {
         .iter()
         .map(|(ident, ty)| {
             let name_str = ident.to_string();
-            quote! { anvyx_lang::ExternFieldDecl { name: #name_str, ty: <#ty as anvyx_lang::AnvyxConvert>::anvyx_type(), computed: false } }
+            quote! { anvyx_lang::ExternFieldDecl { name: #name_str, ty: <#ty as anvyx_lang::AnvyxConvert>::anvyx_type(), computed: false, doc: None } }
         })
         .collect();
 

@@ -1,0 +1,26 @@
+// @mode: check
+// @expect: success
+
+/// A point in 2D space.
+pub struct Point {
+    /// The x coordinate.
+    x: int,
+    /// The y coordinate.
+    y: int,
+    /// The z coordinate.
+    z: int,
+
+    /// Returns true if the point is at the origin.
+    fn is_origin(self) -> bool {
+        self.x == 0 && self.y == 0 && self.z == 0
+    }
+
+    /// Adds the given values to each coordinate.
+    fn add(var self, dx: int, dy: int, dz: int) {
+        self.x = self.x + dx;
+        self.y = self.y + dy;
+        self.z = self.z + dz;
+    }
+}
+
+fn main() {}

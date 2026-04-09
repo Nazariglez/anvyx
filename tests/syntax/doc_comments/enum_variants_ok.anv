@@ -1,0 +1,30 @@
+// @mode: check
+// @expect: success
+
+/// Represents optional values.
+pub enum Maybe {
+    /// No value.
+    None,
+    /// Some value of type T.
+    Some(T),
+}
+
+/// A result type that can be either success or error.
+pub enum Outcome {
+    /// The operation succeeded.
+    Ok(T),
+    /// The operation failed with an error message.
+    Err(String),
+}
+
+/// A shape that can be rendered.
+pub enum Shape {
+    /// A circle with a radius.
+    Circle { radius: float },
+    /// A rectangle with width and height.
+    Rectangle { width: float, height: float },
+    /// A point at specific coordinates.
+    Point { x: float, y: float },
+}
+
+fn main() {}

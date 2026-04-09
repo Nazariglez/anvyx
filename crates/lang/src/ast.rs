@@ -706,6 +706,7 @@ pub struct ExternType {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExternTypeMember {
     Field {
+        doc: Option<String>,
         name: Ident,
         ty: Type,
         computed: bool,
@@ -1151,6 +1152,7 @@ pub struct StructField {
     pub name: Ident,
     pub ty: Type,
     pub default: Option<ExprNode>,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1175,6 +1177,7 @@ pub enum MethodReceiver {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Method {
     pub annotations: Vec<AnnotationNode>,
+    pub doc: Option<String>,
     pub name: Ident,
     pub visibility: Visibility,
     pub type_params: Vec<TypeParam>,
@@ -1205,6 +1208,7 @@ pub struct EnumVariant {
     pub annotations: Vec<AnnotationNode>,
     pub name: Ident,
     pub kind: VariantKind,
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

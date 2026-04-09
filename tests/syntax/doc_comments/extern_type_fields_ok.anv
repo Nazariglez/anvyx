@@ -1,0 +1,34 @@
+// @mode: check
+// @expect: success
+
+/// A 2D vector type.
+extern type Vec2 {
+    /// The x component.
+    x: float;
+    /// The y component.
+    y: float;
+
+    /// Creates a new vector.
+    fn new(x: float, y: float) -> Self;
+    /// Adds another vector to this one.
+    fn add(self, other: Vec2) -> Self;
+    /// Returns the length of the vector.
+    fn length(self) -> float;
+}
+
+/// A sprite that can be rendered.
+extern type Sprite {
+    /// The sprite's position.
+    position: Vec2;
+    /// The sprite's scale factor.
+    scale: float;
+
+    /// Creates a new sprite at the origin.
+    fn new() -> Self;
+    /// Sets the sprite's position.
+    fn set_position(var self, pos: Vec2);
+    /// Renders the sprite to the screen.
+    fn render(self) -> void;
+}
+
+fn main() {}
