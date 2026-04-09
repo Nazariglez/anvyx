@@ -1,6 +1,7 @@
 mod build;
 mod check;
 mod clean;
+mod fmt;
 mod init;
 mod manifest;
 mod progress;
@@ -52,6 +53,14 @@ enum Command {
     },
     #[command(about = "Remove build cache")]
     Clean,
+    #[command(about = "Format Anvyx source files")]
+    Fmt {
+        path: Option<PathBuf>,
+        #[arg(long)]
+        check: bool,
+        #[arg(long)]
+        stdin: bool,
+    },
 }
 
 fn main() {
@@ -114,6 +123,9 @@ fn run(cli: Cli) -> Result<(), String> {
         }
         Command::Clean => {
             clean::cmd()?;
+        }
+        Command::Fmt { path, check, stdin } => {
+            fmt::cmd(path, check, stdin)?;
         }
         Command::Build { release } => {
             let manifest =

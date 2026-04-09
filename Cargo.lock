@@ -72,6 +72,7 @@ name = "anvyx"
 version = "0.1.0"
 dependencies = [
  "anvyx-core",
+ "anvyx-fmt",
  "anvyx-lang",
  "anvyx-std",
  "clap",
@@ -81,6 +82,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml",
+ "walkdir",
 ]
 
 [[package]]
@@ -89,6 +91,14 @@ version = "0.1.0"
 dependencies = [
  "anvyx-lang",
  "anvyx-macros",
+]
+
+[[package]]
+name = "anvyx-fmt"
+version = "0.1.0"
+dependencies = [
+ "anvyx-lang",
+ "chumsky",
 ]
 
 [[package]]

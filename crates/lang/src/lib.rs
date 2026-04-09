@@ -1,13 +1,13 @@
-mod ast;
+pub mod ast;
 mod builtin;
 mod error;
 mod hir;
-mod lexer;
+pub mod lexer;
 mod lower;
-mod parser;
+pub mod parser;
 mod resolve;
 mod rust;
-mod span;
+pub mod span;
 mod std_module;
 mod typecheck;
 mod vm;

@@ -975,10 +975,6 @@ fn postfix_expr<'src>(
                 args,
                 safe,
             } => {
-                let start = target.span.start;
-                let end = args.last().map_or(target.span.end, |a| a.span.end);
-                let call_span = Span::new(start, end);
-
                 let call_node = Spanned::new(
                     ast::Call {
                         func: Box::new(target),
@@ -986,12 +982,12 @@ fn postfix_expr<'src>(
                         type_args,
                         safe,
                     },
-                    call_span,
+                    span,
                 );
 
                 let expr_id = new_expr_id();
                 let expr = ast::Expr::new(ast::ExprKind::Call(call_node), expr_id);
-                Spanned::new(expr, call_span)
+                Spanned::new(expr, span)
             }
             PostfixOp::TupleIndices(indices) => {
                 let mut current = target;

@@ -1,0 +1,11 @@
+[package]
+name = "anvyx-fmt"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anvyx-lang = { path = "../lang" }
+chumsky = "0.11.2"
+
+[lints]
+workspace = true
