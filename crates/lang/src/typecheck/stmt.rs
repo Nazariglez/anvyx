@@ -1433,7 +1433,7 @@ fn collect_undeclared_type_param_names(ty: &Type, declared: &[TypeParam], out: &
                 out.push(*name);
             }
         }
-        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+        Type::List { elem } | Type::Array { elem, .. } | Type::Slice { elem } => {
             collect_undeclared_type_param_names(elem, declared, out);
         }
         Type::Map { key, value } => {
@@ -1472,7 +1472,7 @@ fn type_contains_const_param(ty: &Type, id: crate::ast::ConstParamId) -> bool {
         Type::Array { elem, len } => {
             matches!(len, ArrayLen::Param(pid) if *pid == id) || type_contains_const_param(elem, id)
         }
-        Type::List { elem } | Type::ArrayView { elem } => type_contains_const_param(elem, id),
+        Type::List { elem } | Type::Slice { elem } => type_contains_const_param(elem, id),
         Type::Map { key, value } => {
             type_contains_const_param(key, id) || type_contains_const_param(value, id)
         }
@@ -1502,7 +1502,7 @@ fn is_valid_concrete_extend_type(ty: &Type) -> bool {
         Type::Struct { type_args, .. }
         | Type::DataRef { type_args, .. }
         | Type::Enum { type_args, .. } => type_args.iter().all(is_valid_concrete_extend_type),
-        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+        Type::List { elem } | Type::Array { elem, .. } | Type::Slice { elem } => {
             is_valid_concrete_extend_type(elem)
         }
         Type::Map { key, value } => {

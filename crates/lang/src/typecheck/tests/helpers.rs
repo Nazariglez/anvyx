@@ -430,8 +430,8 @@ pub(super) fn type_param(name: &str, id: u32) -> TypeParam {
     }
 }
 
-pub(super) fn view_type(elem: Type) -> Type {
-    Type::ArrayView { elem: elem.boxed() }
+pub(super) fn slice_type(elem: Type) -> Type {
+    Type::Slice { elem: elem.boxed() }
 }
 
 pub(super) fn field_expr(target: ExprNode, field: &str) -> ExprNode {

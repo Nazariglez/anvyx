@@ -4,7 +4,7 @@ use super::helpers::{
     array_fill, array_literal, assert_expr_type, assign_expr, call_expr, dummy_span, func_decl,
     get_expr_id, ident_expr, index_expr, let_binding, lit_float, lit_int, lit_nil, lit_string,
     map_literal_expr, opt_type, program, reset_expr_ids, run_err, run_ok, safe_index_expr,
-    var_binding, view_type,
+    slice_type, var_binding,
 };
 use crate::{
     ast::{
@@ -749,7 +749,7 @@ fn test_array_index_assignment_ok() {
     let _ = run_ok(prog);
 }
 
-// ---- array view tests ----
+// ---- slice tests ----
 
 #[test]
 fn test_view_param_accepts_fixed_array() {
@@ -757,7 +757,7 @@ fn test_view_param_accepts_fixed_array() {
 
     // fn sum(xs: [int; ..]) -> int { xs[0] }
     // sum([1, 2, 3])
-    let view_param = view_type(Type::Int);
+    let view_param = slice_type(Type::Int);
     let func = func_decl("sum", vec![("xs", view_param)], Type::Int, vec![]);
 
     let arr = array_literal(vec![lit_int(1), lit_int(2), lit_int(3)]);
@@ -778,7 +778,7 @@ fn test_view_param_accepts_list() {
     // fn sum(xs: [int; ..]) -> int { xs[0] }
     // let lst: [int] = [1, 2, 3];
     // sum(lst)
-    let view_param = view_type(Type::Int);
+    let view_param = slice_type(Type::Int);
     let func = func_decl("sum", vec![("xs", view_param)], Type::Int, vec![]);
 
     let lst = array_literal(vec![lit_int(1), lit_int(2), lit_int(3)]);
@@ -802,7 +802,7 @@ fn test_view_indexing_ok() {
     reset_expr_ids();
 
     // fn head(xs: [int; ..]) -> int { xs[0] }
-    let view_param = view_type(Type::Int);
+    let view_param = slice_type(Type::Int);
     let idx = index_expr(ident_expr("xs"), lit_int(0));
     let idx_id = get_expr_id(&idx);
     let func = FuncNode {
@@ -847,7 +847,7 @@ fn test_view_mismatched_element_type_err() {
 
     // fn f(xs: [int; ..]) {}
     // f(["a", "b"])
-    let view_param = view_type(Type::Int);
+    let view_param = slice_type(Type::Int);
     let func = func_decl("f", vec![("xs", view_param)], Type::Void, vec![]);
 
     let arr = array_literal(vec![lit_string("a"), lit_string("b")]);

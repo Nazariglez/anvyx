@@ -386,7 +386,7 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
         ),
         DiagnosticKind::ForIterableNotSupported { found } => (
             "type is not iterable".to_string(),
-            format!("found '{found}'; expected a range, array, list, view, or map"),
+            format!("found '{found}'; expected a range, array, list, slice, or map"),
         ),
         DiagnosticKind::ForStepNotInt { item_ty, step_ty } => (
             "step is only supported for integer ranges".to_string(),
@@ -426,7 +426,7 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
         ),
         DiagnosticKind::RangeIndexOnMap => (
             "maps do not support range indexing".to_string(),
-            "range slicing is only supported on arrays, lists, and views".to_string(),
+            "range slicing is only supported on arrays, lists, and slices".to_string(),
         ),
         DiagnosticKind::OptionalChainingOnNonOpt { found } => (
             "optional chaining requires an optional base type".to_string(),

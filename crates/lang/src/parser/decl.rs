@@ -1348,8 +1348,8 @@ fn resolve_type_params_with_self(
     self_type: Option<&ast::Type>,
 ) -> ast::Type {
     use ast::Type::{
-        Array, ArrayView, DataRef, Enum, Func, List, Map, NamedTuple, Struct, Tuple,
-        UnresolvedName, Var,
+        Array, DataRef, Enum, Func, List, Map, NamedTuple, Slice, Struct, Tuple, UnresolvedName,
+        Var,
     };
     match ty {
         UnresolvedName(ident) => {
@@ -1473,7 +1473,7 @@ fn resolve_type_params_with_self(
             }
         }
 
-        ArrayView { elem } => ArrayView {
+        Slice { elem } => Slice {
             elem: resolve_type_params_with_self(elem, type_param_map, const_param_map, self_type)
                 .boxed(),
         },

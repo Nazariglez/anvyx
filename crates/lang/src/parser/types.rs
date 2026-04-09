@@ -22,7 +22,7 @@ pub(super) fn param_type_ident<'src>() -> BoxedParser<'src, Type> {
     type_ident_inner(true)
 }
 
-fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, Type> {
+fn type_ident_inner<'src>(allow_slice: bool) -> BoxedParser<'src, Type> {
     recursive(move |type_parser| {
         let builtin_typ = select! {
             (Token::Keyword(Keyword::Int), _) => Type::Int,
@@ -62,7 +62,7 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, Type> {
         let semicolon = select! { (Token::Semicolon, _) => () };
         let colon = select! { (Token::Colon, _) => () };
 
-        let param_type_parser: BoxedParser<'src, Type> = if allow_view {
+        let param_type_parser: BoxedParser<'src, Type> = if allow_slice {
             type_parser.clone().boxed()
         } else {
             param_type_ident()
@@ -104,23 +104,21 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, Type> {
                 len,
             });
 
-        let view_type = open_bracket
+        let slice_type = select! { (Token::Ident(i), _) if i.0.as_ref() == "slice" => () }
+            .ignore_then(open_bracket)
             .ignore_then(type_parser.clone())
-            .then_ignore(semicolon)
-            .then_ignore(select! { (Token::Range, _) => () })
             .then_ignore(close_bracket)
-            .try_map(move |elem, span| {
-                if allow_view {
-                    Ok(Type::ArrayView { elem: elem.boxed() })
-                } else {
-                    Err(Rich::custom(
-                        span,
-                        "view types are only allowed in function parameters",
-                    ))
+            .validate(move |elem, extra, emitter| {
+                if !allow_slice {
+                    emitter.emit(Rich::custom(
+                        extra.span(),
+                        "slice types are only allowed in function parameters",
+                    ));
                 }
+                Type::Slice { elem: elem.boxed() }
             });
 
-        let bracketed_type = choice((view_type, choice((array_type, choice((map_type, list_type))))));
+        let bracketed_type = choice((array_type, choice((map_type, list_type))));
 
         let var_kw = select! { (Token::Keyword(Keyword::Var), _) => () }
             .or_not()
@@ -150,7 +148,7 @@ fn type_ident_inner<'src>(allow_view: bool) -> BoxedParser<'src, Type> {
                 ret: ret.boxed(),
             });
 
-        let primary_type = choice((builtin_typ, type_name_ref, paren_type, bracketed_type, fn_type));
+        let primary_type = choice((builtin_typ, slice_type, type_name_ref, paren_type, bracketed_type, fn_type));
         let optional_suffix = select! { (Token::Question, _) => TypeSuffix::Optional };
         let type_suffix = optional_suffix;
 

@@ -317,7 +317,7 @@ fn extract_iterable_item_type(ty: &Type, span: Span, errors: &mut Vec<Diagnostic
             ));
             Type::Infer
         }
-        Type::Array { elem, .. } | Type::List { elem } | Type::ArrayView { elem } => *elem.clone(),
+        Type::Array { elem, .. } | Type::List { elem } | Type::Slice { elem } => *elem.clone(),
         Type::Map { key, value } => Type::Tuple(vec![*key.clone(), *value.clone()]),
         Type::Infer => Type::Infer,
         _ => {
@@ -340,7 +340,7 @@ fn is_range_type(ty: &Type) -> bool {
 fn is_sequence_type(ty: &Type) -> bool {
     matches!(
         ty,
-        Type::Array { .. } | Type::List { .. } | Type::ArrayView { .. }
+        Type::Array { .. } | Type::List { .. } | Type::Slice { .. }
     )
 }
 

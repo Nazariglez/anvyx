@@ -1,7 +1,7 @@
 // @mode: check
 // @expect: success
 
-fn iterate(xs: [int; ..]) {
+fn iterate(xs: slice[int]) {
     for el in xs {
         let _: int = el;
     }

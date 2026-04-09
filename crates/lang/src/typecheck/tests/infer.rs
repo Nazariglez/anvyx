@@ -194,7 +194,7 @@ fn test_instantiate_arity_mismatch_too_many() {
     ));
 }
 
-// ---- subst_type: List / Map / ArrayView ----
+// ---- subst_type: List / Map / Slice ----
 
 #[test]
 fn test_subst_type_list() {
@@ -236,18 +236,18 @@ fn test_subst_type_map() {
 }
 
 #[test]
-fn test_subst_type_array_view() {
-    // substitute T -> int in [T; ..], expect [int; ..]
+fn test_subst_type_slice() {
+    // substitute T -> int in slice[T], expect slice[int]
     let mut subst = HashMap::new();
     subst.insert(TypeVarId(0), Type::Int);
 
-    let view_t = Type::ArrayView {
+    let slice_t = Type::Slice {
         elem: Box::new(type_var(0)),
     };
-    let result = subst_type(&view_t, &subst, &HashMap::new());
+    let result = subst_type(&slice_t, &subst, &HashMap::new());
     assert_eq!(
         result,
-        Type::ArrayView {
+        Type::Slice {
             elem: Box::new(Type::Int)
         }
     );

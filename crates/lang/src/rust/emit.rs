@@ -1275,7 +1275,7 @@ pub(super) fn emit_type(ty: &Type) -> Result<String, String> {
             let parts: Vec<String> = types.iter().map(emit_type).collect::<Result<_, _>>()?;
             Ok(format!("({})", parts.join(", ")))
         }
-        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+        Type::List { elem } | Type::Array { elem, .. } | Type::Slice { elem } => {
             let inner = emit_type(elem)?;
             Ok(format!("Vec<{inner}>"))
         }

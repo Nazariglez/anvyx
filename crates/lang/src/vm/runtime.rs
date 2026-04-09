@@ -735,11 +735,11 @@ impl<'a> VM<'a> {
                             })?;
                             self.push(element);
                         }
-                        Value::ArrayView { data, offset, len } => {
+                        Value::Slice { data, offset, len } => {
                             let idx = as_usize_index(&index_val)?;
                             if idx >= len {
                                 return Err(RuntimeError::new(format!(
-                                    "index {idx} out of bounds for array view of length {len}"
+                                    "index {idx} out of bounds for slice of length {len}"
                                 )));
                             }
                             let element = data[offset + idx].clone();
@@ -785,9 +785,9 @@ impl<'a> VM<'a> {
                             ManagedRc::make_mut(&mut l)[idx] = new_value;
                             self.push(Value::List(l));
                         }
-                        Value::ArrayView { .. } => {
+                        Value::Slice { .. } => {
                             return Err(RuntimeError::new(
-                                "cannot mutate through an array view".to_string(),
+                                "cannot mutate through a slice".to_string(),
                             ));
                         }
                         other => {
@@ -803,7 +803,7 @@ impl<'a> VM<'a> {
                     match collection {
                         Value::Array(a) => self.push(Value::Int(a.len() as i64)),
                         Value::List(l) => self.push(Value::Int(l.len() as i64)),
-                        Value::ArrayView { len, .. } => self.push(Value::Int(len as i64)),
+                        Value::Slice { len, .. } => self.push(Value::Int(len as i64)),
                         other => {
                             return Err(RuntimeError::new(format!(
                                 "CollectionLen: expected array or list, got {other}"
@@ -829,19 +829,19 @@ impl<'a> VM<'a> {
                                     "slice {start}..{end} out of bounds for array of length {len}"
                                 )));
                             }
-                            self.push(Value::ArrayView {
+                            self.push(Value::Slice {
                                 data: a,
                                 offset: start,
                                 len: end - start,
                             });
                         }
-                        Value::ArrayView { data, offset, len } => {
+                        Value::Slice { data, offset, len } => {
                             if start > end || end > len {
                                 return Err(RuntimeError::new(format!(
-                                    "slice {start}..{end} out of bounds for array view of length {len}"
+                                    "slice {start}..{end} out of bounds for slice of length {len}"
                                 )));
                             }
-                            self.push(Value::ArrayView {
+                            self.push(Value::Slice {
                                 data,
                                 offset: offset + start,
                                 len: end - start,

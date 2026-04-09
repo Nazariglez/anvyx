@@ -755,7 +755,7 @@ fn validate_type(ty: &Type, fn_name: &str, errors: &mut Vec<String>) {
                 "Rust backend: unsupported type `{name}` in function `{fn_name}`"
             ));
         }
-        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+        Type::List { elem } | Type::Array { elem, .. } | Type::Slice { elem } => {
             validate_type(elem, fn_name, errors);
         }
         Type::Map { key, value } => {
@@ -798,7 +798,7 @@ fn track_type_usage(
                 track_type_usage(program, e, used_aggregates, used_enums);
             }
         }
-        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+        Type::List { elem } | Type::Array { elem, .. } | Type::Slice { elem } => {
             track_type_usage(program, elem, used_aggregates, used_enums);
         }
         Type::Map { key, value } => {
@@ -811,7 +811,7 @@ fn track_type_usage(
 
 fn track_collection_flags(ty: &Type, flags: &mut HelperFlags) {
     match ty {
-        Type::List { .. } | Type::Array { .. } | Type::ArrayView { .. } => {
+        Type::List { .. } | Type::Array { .. } | Type::Slice { .. } => {
             flags.enable(Feature::UsesCollections);
         }
         Type::Map { .. } => {

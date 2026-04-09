@@ -810,7 +810,7 @@ impl TypeChecker {
                     len: resolved_len,
                 }
             }
-            Type::ArrayView { elem } => Type::ArrayView {
+            Type::Slice { elem } => Type::Slice {
                 elem: self.resolve_type(elem).boxed(),
             },
             Type::List { elem } => Type::List {
@@ -1135,9 +1135,9 @@ impl TypeChecker {
         // each arm documents a distinct permitted coercion; likely to diverge as type rules evolve
         let inner_pair = match (&from_ty, &to_ty) {
             (Type::Array { elem: f, .. }, Type::Array { elem: t, .. }) => Some((f, t)),
-            (Type::ArrayView { elem: f }, Type::ArrayView { elem: t }) => Some((f, t)),
-            (Type::Array { elem: f, .. }, Type::ArrayView { elem: t }) => Some((f, t)),
-            (Type::List { elem: f }, Type::ArrayView { elem: t }) => Some((f, t)),
+            (Type::Slice { elem: f }, Type::Slice { elem: t }) => Some((f, t)),
+            (Type::Array { elem: f, .. }, Type::Slice { elem: t }) => Some((f, t)),
+            (Type::List { elem: f }, Type::Slice { elem: t }) => Some((f, t)),
             // skip when either side has Infer, constrain_equal handles unification
             (Type::List { elem: f }, Type::List { elem: t })
                 if !contains_infer(f) && !contains_infer(t) =>
@@ -1773,9 +1773,7 @@ pub(super) fn type_index_on_base(
         }
 
         return match base_ty {
-            Type::Array { elem, .. } | Type::ArrayView { elem } => {
-                Type::ArrayView { elem: elem.clone() }
-            }
+            Type::Array { elem, .. } | Type::Slice { elem } => Type::Slice { elem: elem.clone() },
             Type::List { elem } => Type::List { elem: elem.clone() },
             _ => {
                 errors.push(Diagnostic::new(
@@ -1822,7 +1820,7 @@ pub(super) fn type_index_on_base(
 
 pub(super) fn indexable_element_type(ty: &Type) -> Option<Type> {
     match ty {
-        Type::Array { elem, .. } | Type::List { elem } | Type::ArrayView { elem } => {
+        Type::Array { elem, .. } | Type::List { elem } | Type::Slice { elem } => {
             Some((**elem).clone())
         }
         _ => None,

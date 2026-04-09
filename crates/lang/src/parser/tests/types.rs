@@ -203,66 +203,69 @@ fn type_optional_array_fixed_parses() {
 }
 
 #[test]
-fn view_type_int_parses() {
-    let ty = parse_param_type("[int; ..]");
+fn slice_type_int_parses() {
+    let ty = parse_param_type("slice[int]");
     match ty {
-        ast::Type::ArrayView { elem } => {
+        ast::Type::Slice { elem } => {
             assert_eq!(*elem, ast::Type::Int);
         }
-        other => panic!("expected View(Int), found {other:?}"),
+        other => panic!("expected Slice(Int), found {other:?}"),
     }
 }
 
 #[test]
-fn view_type_float_parses() {
-    let ty = parse_param_type("[float; ..]");
+fn slice_type_float_parses() {
+    let ty = parse_param_type("slice[float]");
     match ty {
-        ast::Type::ArrayView { elem } => {
+        ast::Type::Slice { elem } => {
             assert_eq!(*elem, ast::Type::Float);
         }
-        other => panic!("expected View(Float), found {other:?}"),
+        other => panic!("expected Slice(Float), found {other:?}"),
     }
 }
 
 #[test]
-fn view_type_array_parses() {
-    let ty = parse_param_type("[[int; 3]; ..]");
+fn slice_type_array_parses() {
+    let ty = parse_param_type("slice[[int; 3]]");
     match ty {
-        ast::Type::ArrayView { elem } => match *elem {
+        ast::Type::Slice { elem } => match *elem {
             ast::Type::Array { elem: inner, len } => {
                 assert_eq!(*inner, ast::Type::Int);
                 assert_eq!(len, ast::ArrayLen::Fixed(3));
             }
             other => panic!("expected Array(Int, Fixed(3)), found {other:?}"),
         },
-        other => panic!("expected View(Array(...)), found {other:?}"),
+        other => panic!("expected Slice(Array(...)), found {other:?}"),
     }
 }
 
 #[test]
-fn view_type_list_parses() {
-    let ty = parse_param_type("[[string]; ..]");
+fn slice_type_list_parses() {
+    let ty = parse_param_type("slice[[string]]");
     match ty {
-        ast::Type::ArrayView { elem } => match *elem {
+        ast::Type::Slice { elem } => match *elem {
             ast::Type::List { elem: inner } => {
                 assert_eq!(*inner, ast::Type::String);
             }
             other => panic!("expected List(String), found {other:?}"),
         },
-        other => panic!("expected View(List(...)), found {other:?}"),
+        other => panic!("expected Slice(List(...)), found {other:?}"),
     }
 }
 
 #[test]
-fn view_type_optional_parses() {
-    let ty = parse_param_type("[int; ..]?");
-    assert!(ty.is_option(), "expected Optional(View(Int)), found {ty:?}");
+fn slice_type_optional_parses() {
+    let ty = parse_param_type("slice[int]?");
+    assert!(
+        ty.is_option(),
+        "expected Optional(Slice(Int)), found {ty:?}"
+    );
     let inner = ty.option_inner().expect("is_option guarantees inner");
     match inner {
-        ast::Type::ArrayView { elem } => {
+        ast::Type::Slice { elem } => {
             assert_eq!(**elem, ast::Type::Int);
         }
-        other => panic!("expected View(Int), found {other:?}"),
+        other => panic!("expected Slice(Int), found {other:?}"),
     }
 }
 

@@ -5,7 +5,7 @@
 // hello
 // @match-end
 
-fn head<T>(xs: [T; ..]) -> T {
+fn head<T>(xs: slice[T]) -> T {
     xs[0]
 }
 

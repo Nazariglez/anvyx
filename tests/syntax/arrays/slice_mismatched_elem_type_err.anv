@@ -2,7 +2,7 @@
 // @expect: error
 // @contains: Mismatched types
 
-fn takes_ints(xs: [int; ..]) {
+fn takes_ints(xs: slice[int]) {
 }
 
 fn main() {

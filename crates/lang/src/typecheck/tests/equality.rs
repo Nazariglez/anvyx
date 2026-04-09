@@ -692,15 +692,15 @@ fn test_eq_map_fn_value_errors() {
     assert_expr_type(&tcx, eq_id, Type::Bool);
 }
 
-// ---- non-equatable containers: array view stays non-equatable ----
+// ---- non-equatable containers: slice stays non-equatable ----
 
 #[test]
-fn test_eq_array_view_errors() {
+fn test_eq_slice_errors() {
     reset_expr_ids();
 
     // fn compare(a: [int; ..], b: [int; ..]) -> bool { a == b }
-    // ArrayView is not equatable
-    let view_ty = Type::ArrayView {
+    // Slice is not equatable
+    let slice_ty = Type::Slice {
         elem: Type::Int.boxed(),
     };
     let fn_body = vec![return_stmt(Some(binary_expr(
@@ -710,7 +710,7 @@ fn test_eq_array_view_errors() {
     )))];
     let compare_fn = fn_decl(
         "compare",
-        vec![("a", view_ty.clone()), ("b", view_ty)],
+        vec![("a", slice_ty.clone()), ("b", slice_ty)],
         Type::Bool,
         fn_body,
     );
@@ -721,7 +721,7 @@ fn test_eq_array_view_errors() {
         errors
             .iter()
             .any(|e| matches!(&e.kind, DiagnosticKind::NotEquatable { .. })),
-        "Expected NotEquatable for ArrayView, got: {:?}",
+        "Expected NotEquatable for Slice, got: {:?}",
         errors
     );
 }

@@ -15,7 +15,7 @@ pub(super) fn contains_infer(ty: &Type) -> bool {
 
 /// Checks if 'from' is assignable to 'to'
 pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
-    use Type::{Array, ArrayView, Extern};
+    use Type::{Array, Extern, Slice};
 
     // same type is always assignable
     if from == to {
@@ -73,9 +73,9 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
             Array {
                 elem: elem_from, ..
             }
-            | ArrayView { elem: elem_from }
+            | Slice { elem: elem_from }
             | Type::List { elem: elem_from },
-            ArrayView { elem: elem_to },
+            Slice { elem: elem_to },
         ) => is_assignable(elem_from, elem_to),
 
         // opaque extern types are only assignable to the exact same extern type
@@ -157,7 +157,7 @@ pub(super) fn unify_types(
         return None;
     }
 
-    // structural cases (List, Map, ArrayView, Func, Struct, DataRef, Enum, Tuple, NamedTuple)
+    // structural cases (List, Map, Slice, Func, Struct, DataRef, Enum, Tuple, NamedTuple)
     if let Some(unified) =
         map_type_structure(left, right, &mut |l, r| unify_types(l, r, span, errors))
     {

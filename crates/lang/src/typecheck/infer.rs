@@ -310,11 +310,11 @@ pub(super) fn constrain_slots_from_type(
                 }
             }
         }
-        // cross-shape coercions ArrayView accepts Array and List
-        (Type::ArrayView { elem: te }, Type::Array { elem: ee, .. } | Type::List { elem: ee }) => {
+        // cross-shape coercions slice accepts array and list
+        (Type::Slice { elem: te }, Type::Array { elem: ee, .. } | Type::List { elem: ee }) => {
             constrain_slots_from_type(te, ee, slots, const_slots, span, type_checker, errors);
         }
-        // Func needs custom error reporting for mutability mismatches
+        // func needs custom error reporting for mutability mismatches
         (
             Type::Func {
                 params: tp,
@@ -354,7 +354,7 @@ pub(super) fn constrain_slots_from_type(
             }
             constrain_slots_from_type(tr, er, slots, const_slots, span, type_checker, errors);
         }
-        // structural cases (List, Map, ArrayView-ArrayView, Struct, DataRef, Enum, Tuple, NamedTuple)
+        // structural cases (List, Map, Slice-Slice, Struct, DataRef, Enum, Tuple, NamedTuple)
         _ => {
             walk_type_structure(template, expected, &mut |t, e| {
                 constrain_slots_from_type(t, e, slots, const_slots, span, type_checker, errors);

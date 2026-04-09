@@ -256,8 +256,8 @@ pub enum Type {
     Array { elem: Box<Type>, len: ArrayLen },
     /// Map type (key-value pairs)
     Map { key: Box<Type>, value: Box<Type> },
-    /// View/slice type for function parameters ([T; ..])
-    ArrayView { elem: Box<Type> },
+    /// Slice type for function parameters ([T; ..])
+    Slice { elem: Box<Type> },
     /// Opaque handle type declared with 'extern type'
     Extern { name: Ident },
 }
@@ -377,8 +377,8 @@ impl Type {
         matches!(self, Type::Map { .. })
     }
 
-    pub fn is_array_view(&self) -> bool {
-        matches!(self, Type::ArrayView { .. })
+    pub fn is_slice(&self) -> bool {
+        matches!(self, Type::Slice { .. })
     }
 
     pub fn contains_any(&self) -> bool {
@@ -387,7 +387,7 @@ impl Type {
             Type::Func { params, ret } => {
                 params.iter().any(|p| p.ty.contains_any()) || ret.contains_any()
             }
-            Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+            Type::List { elem } | Type::Array { elem, .. } | Type::Slice { elem } => {
                 elem.contains_any()
             }
             Type::Map { key, value } => key.contains_any() || value.contains_any(),
@@ -502,7 +502,7 @@ impl Display for Type {
                 ArrayLen::Param(id) => write!(f, "[{elem}; {id}]"),
             },
             Type::Map { key, value } => write!(f, "[{key}: {value}]"),
-            Type::ArrayView { elem } => write!(f, "[{elem}; ..]"),
+            Type::Slice { elem } => write!(f, "slice[{elem}]"),
             Type::Extern { name } => write!(f, "{name}"),
         }
     }

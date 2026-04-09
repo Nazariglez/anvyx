@@ -78,7 +78,7 @@ fn classify_iterable(ty: &Type) -> Option<IterableKind> {
                 None
             }
         }
-        Type::Array { elem, .. } | Type::List { elem } | Type::ArrayView { elem } => {
+        Type::Array { elem, .. } | Type::List { elem } | Type::Slice { elem } => {
             Some(IterableKind::Sequence(*elem.clone()))
         }
         Type::Map { key, value } => Some(IterableKind::Map {

@@ -1,15 +1,15 @@
 // @mode: check
 // @expect: success
 
-fn head<T>(xs: [T; ..]) -> T {
+fn head<T>(xs: slice[T]) -> T {
     xs[0]
 }
 
-fn relay<T>(xs: [T; ..]) -> T {
+fn relay<T>(xs: slice[T]) -> T {
     xs[0]
 }
 
-fn pass_through<T>(xs: [T; ..]) -> T {
+fn pass_through<T>(xs: slice[T]) -> T {
     relay(xs)
 }
 

@@ -1,7 +1,7 @@
 // @mode: check
 // @expect: error
 // @contains: not an array or list
-// @contains: must be an array, list, or view
+// @contains: must be an array, list, or slice
 
 fn get_first<T>(a: T) -> int {
     return a[0];

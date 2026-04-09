@@ -19,9 +19,10 @@ TM=$(grep -oE '\\\\b\(?[a-z|]+\)?\\\\b' \
 
 SCM_GRAMMAR_HANDLED='int|float|double|bool|string|void|any|pub'
 
+# ignore self, from, op, and slice here because they are only keywords in specific contexts.
 SCM=$(grep -oE '"[a-z]+"' "$REPO_ROOT/editors/nvim/queries/highlights.scm" \
   | tr -d '"' \
-  | grep -vxE 'self|from|op' \
+  | grep -vxE 'self|from|op|slice' \
   | sort -u)
 
 LEXER_FOR_SCM=$(echo "$LEXER" | grep -vxE "$SCM_GRAMMAR_HANDLED")

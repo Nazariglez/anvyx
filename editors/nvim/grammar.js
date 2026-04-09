@@ -448,6 +448,7 @@ module.exports = grammar({
     // types
     _type: $ => choice(
       $.builtin_type,
+      $.slice_type,
       $.type_identifier,
       $.generic_type,
       $.optional_type,
@@ -459,6 +460,7 @@ module.exports = grammar({
       seq('(', $._type, ')'),
     ),
     builtin_type: $ => choice('int', 'float', 'double', 'bool', 'string', 'void', 'any'),
+    slice_type: $ => seq('slice', '[', $._type, ']'),
     type_identifier: $ => $.identifier,
     generic_type: $ => prec(1, seq($.identifier, '<', commaSep1($._type), '>')),
     optional_type: $ => prec.left(seq($._type, '?')),

@@ -1,15 +1,15 @@
 // @mode: check
 // @expect: success
 
-fn head(xs: [int; ..]) -> int {
+fn head(xs: slice[int]) -> int {
     xs[0]
 }
 
-fn get_second(xs: [int; ..]) -> int {
+fn get_second(xs: slice[int]) -> int {
     xs[1]
 }
 
-fn avg(xs: [float; ..]) -> float {
+fn avg(xs: slice[float]) -> float {
     xs[0]
 }
 

@@ -81,7 +81,7 @@ where
     match (left, right) {
         (Type::List { elem: left }, Type::List { elem: right })
         | (Type::Array { elem: left, .. }, Type::Array { elem: right, .. })
-        | (Type::ArrayView { elem: left }, Type::ArrayView { elem: right }) => relate(left, right),
+        | (Type::Slice { elem: left }, Type::Slice { elem: right }) => relate(left, right),
         (
             Type::Map {
                 key: left_key,
@@ -150,11 +150,9 @@ where
         (Type::List { elem: left }, Type::List { elem: right }) => Some(Type::List {
             elem: map(left, right)?.boxed(),
         }),
-        (Type::ArrayView { elem: left }, Type::ArrayView { elem: right }) => {
-            Some(Type::ArrayView {
-                elem: map(left, right)?.boxed(),
-            })
-        }
+        (Type::Slice { elem: left }, Type::Slice { elem: right }) => Some(Type::Slice {
+            elem: map(left, right)?.boxed(),
+        }),
         (
             Type::Map {
                 key: left_key,
@@ -321,7 +319,7 @@ pub fn fold_type(ty: &Type, f: &mut impl FnMut(Type) -> Type) -> Type {
             elem: Box::new(fold_type(elem, f)),
             len: *len,
         },
-        Type::ArrayView { elem } => Type::ArrayView {
+        Type::Slice { elem } => Type::Slice {
             elem: Box::new(fold_type(elem, f)),
         },
         Type::Map { key, value } => Type::Map {
@@ -357,7 +355,7 @@ pub fn type_any(ty: &Type, pred: &mut impl FnMut(&Type) -> bool) -> bool {
         Type::Struct { type_args, .. }
         | Type::DataRef { type_args, .. }
         | Type::Enum { type_args, .. } => type_args.iter().any(|a| type_any(a, pred)),
-        Type::List { elem } | Type::Array { elem, .. } | Type::ArrayView { elem } => {
+        Type::List { elem } | Type::Array { elem, .. } | Type::Slice { elem } => {
             type_any(elem, pred)
         }
         Type::Map { key, value } => type_any(key, pred) || type_any(value, pred),
@@ -500,7 +498,7 @@ mod tests {
             key: Box::new(Type::List {
                 elem: Box::new(Type::Int),
             }),
-            value: Box::new(Type::ArrayView {
+            value: Box::new(Type::Slice {
                 elem: Box::new(Type::Bool),
             }),
         };
@@ -508,7 +506,7 @@ mod tests {
             key: Box::new(Type::List {
                 elem: Box::new(Type::String),
             }),
-            value: Box::new(Type::ArrayView {
+            value: Box::new(Type::Slice {
                 elem: Box::new(Type::Float),
             }),
         };
@@ -532,10 +530,10 @@ mod tests {
                     }
                 ),
                 (
-                    Type::ArrayView {
+                    Type::Slice {
                         elem: Box::new(Type::Bool)
                     },
-                    Type::ArrayView {
+                    Type::Slice {
                         elem: Box::new(Type::Float)
                     }
                 )

@@ -23,6 +23,8 @@
 
 ; -- Types
 (builtin_type) @type.builtin
+(slice_type
+  "slice" @type.builtin)
 (type_identifier) @type
 
 (struct_definition

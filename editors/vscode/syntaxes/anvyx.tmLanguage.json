@@ -186,6 +186,10 @@
         },
         {
           "name": "storage.type.anvyx",
+          "match": "\\bslice(?=\\[)"
+        },
+        {
+          "name": "storage.type.anvyx",
           "match": "\\b(int|float|double|bool|string|void|any)\\b"
         }
       ]

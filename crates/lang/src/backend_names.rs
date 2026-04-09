@@ -48,7 +48,7 @@ pub fn encode_type(ty: &Type) -> String {
         Type::Map { key, value } => {
             format!("Map_{}_{}", encode_type(key), encode_type(value))
         }
-        Type::ArrayView { elem } => format!("ArrView_{}", encode_type(elem)),
+        Type::Slice { elem } => format!("Slice_{}", encode_type(elem)),
         Type::Extern { name } => format!("Ext_{name}"),
         Type::Func { .. } => "Fn".to_string(),
     }

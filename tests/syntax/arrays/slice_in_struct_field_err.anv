@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: error
+// @contains: slice types are only allowed in function parameters
+
+struct Bad {
+    xs: slice[int]
+}
+
+fn main() {}
+

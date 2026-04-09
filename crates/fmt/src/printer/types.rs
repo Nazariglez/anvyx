@@ -108,10 +108,10 @@ impl Printer<'_> {
                 self.format_type(value);
                 self.write("]");
             }
-            ast::Type::ArrayView { elem } => {
-                self.write("[");
+            ast::Type::Slice { elem } => {
+                self.write("slice[");
                 self.format_type(elem);
-                self.write("; ..]");
+                self.write("]");
             }
             ast::Type::Extern { name } => self.write_fmt(name),
         }

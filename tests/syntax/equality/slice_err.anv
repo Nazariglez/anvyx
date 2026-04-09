@@ -2,7 +2,7 @@
 // @expect: error
 // @contains: not equatable
 
-fn compare(a: [int; ..], b: [int; ..]) -> bool {
+fn compare(a: slice[int], b: slice[int]) -> bool {
     a == b
 }
 

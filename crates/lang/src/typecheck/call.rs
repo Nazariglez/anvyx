@@ -2118,10 +2118,12 @@ fn generic_instantiation_help(
             let param = find_type_param_name(found, type_params, type_args);
             Some(match param {
                 Some(p) => format!(
-                    "'{context_name}<{p}>' indexes {p} — {p} must be an array, list, or view"
+                    "'{context_name}<{p}>' indexes {p} — {p} must be an array, list, or slice"
                 ),
                 None => {
-                    format!("'{context_name}' uses indexing which requires an array, list, or view")
+                    format!(
+                        "'{context_name}' uses indexing which requires an array, list, or slice"
+                    )
                 }
             })
         }

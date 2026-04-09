@@ -226,7 +226,7 @@ pub enum Value {
     ExternHandle(ManagedRc<ExternHandleData>),
     DataRef(ManagedRc<StructData>),
     Closure(ManagedRc<ClosureData>),
-    ArrayView {
+    Slice {
         data: ManagedRc<Vec<Value>>,
         offset: usize,
         len: usize,
@@ -254,12 +254,12 @@ impl PartialEq for Value {
             (Value::DataRef(a), Value::DataRef(b)) => ManagedRc::ptr_eq(a, b),
             (Value::Closure(a), Value::Closure(b)) => a == b,
             (
-                Value::ArrayView {
+                Value::Slice {
                     data: a,
                     offset: ao,
                     len: al,
                 },
-                Value::ArrayView {
+                Value::Slice {
                     data: b,
                     offset: bo,
                     len: bl,
@@ -292,7 +292,7 @@ impl Hash for Value {
             Value::ExternHandle(data) => data.hash(state),
             Value::DataRef(s) => (s.as_ptr() as usize).hash(state),
             Value::Closure(c) => c.hash(state),
-            Value::ArrayView { data, offset, len } => {
+            Value::Slice { data, offset, len } => {
                 data[*offset..*offset + *len].hash(state);
             }
             Value::StackRef(idx) => idx.hash(state),
@@ -378,7 +378,7 @@ impl fmt::Display for Value {
             Value::ExternHandle(data) => write!(f, "<extern:{}>", data.id),
             Value::DataRef(s) => write!(f, "<dataref:{}>", s.type_id),
             Value::Closure(_) => write!(f, "<fn>"),
-            Value::ArrayView { data, offset, len } => {
+            Value::Slice { data, offset, len } => {
                 write!(f, "[")?;
                 for (i, v) in data[*offset..*offset + *len].iter().enumerate() {
                     if i > 0 {
@@ -440,7 +440,7 @@ pub fn type_name(v: &Value) -> &'static str {
         Value::ExternHandle(_) => "extern handle",
         Value::DataRef(_) => "dataref",
         Value::Closure(_) => "fn",
-        Value::ArrayView { .. } => "array view",
+        Value::Slice { .. } => "slice",
         Value::StackRef(_) => "stackref",
         Value::PathRef(_) => "pathref",
     }
