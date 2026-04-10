@@ -4,6 +4,7 @@ use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::error::{Rich, RichPattern, RichReason};
 
 use crate::{
+    conditional::CondError,
     intrinsic::{IntrinsicDiagnostic, IntrinsicDiagnosticLevel, IntrinsicError},
     lexer::{SpannedToken, Token},
     resolve::ImportError,
@@ -186,6 +187,37 @@ pub fn report_import_errors(
                 );
             }
         }
+    }
+}
+
+pub fn report_conditional_errors(src: &str, file_path: &str, errors: &[CondError]) {
+    for err in errors {
+        let span = err.span();
+        let byte_range = span.start..span.end;
+
+        let help = match err {
+            CondError::UnknownPredicate { .. } => {
+                Some("valid predicates are: profile, os, arch, feature".to_string())
+            }
+            CondError::UnknownPredicateArg {
+                valid, predicate, ..
+            } => {
+                let valid_list = valid.join(", ");
+                Some(format!("valid values for {predicate}() are: {valid_list}"))
+            }
+            CondError::ElifAfterElse { .. } => Some("#elif must appear before #else".to_string()),
+            _ => None,
+        };
+
+        emit_report(
+            src,
+            file_path,
+            Severity::Error,
+            (byte_range, err.to_string(), String::new()),
+            vec![],
+            vec![],
+            help,
+        );
     }
 }
 
@@ -887,14 +919,10 @@ pub fn report_intrinsic_diagnostics(
 ) {
     for diag in diagnostics {
         let byte_range = token_span_to_byte_range(tokens, diag.span.start..diag.span.end);
-        let severity = match diag.level {
-            IntrinsicDiagnosticLevel::Error => Severity::Error,
-            IntrinsicDiagnosticLevel::Warning | IntrinsicDiagnosticLevel::Note => Severity::Warning,
-        };
-        let prefix = match diag.level {
-            IntrinsicDiagnosticLevel::Warning => "#warning",
-            IntrinsicDiagnosticLevel::Error => "#error",
-            IntrinsicDiagnosticLevel::Note => "#log",
+        let (severity, prefix) = match diag.level {
+            IntrinsicDiagnosticLevel::Error => (Severity::Error, "#error"),
+            IntrinsicDiagnosticLevel::Warning => (Severity::Warning, "#warning"),
+            IntrinsicDiagnosticLevel::Note => (Severity::Warning, "#log"),
         };
         emit_report(
             src,

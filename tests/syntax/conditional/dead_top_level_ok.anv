@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+#if profile(release)
+fn broken() -> int {
+    "not an int"
+}
+#end
+
+fn main() {}

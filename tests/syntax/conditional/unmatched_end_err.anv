@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: #end without matching
+
+fn main() {
+    #end
+}

@@ -1,18 +1,20 @@
-pub mod ast;
 mod builtin;
+mod conditional;
 mod error;
 mod hir;
-pub mod intrinsic;
 mod intrinsic_resolve;
-pub mod lexer;
 mod lower;
-pub mod parser;
 mod resolve;
 mod rust;
-pub mod span;
 mod std_module;
 mod typecheck;
 mod vm;
+
+pub mod ast;
+pub mod intrinsic;
+pub mod lexer;
+pub mod parser;
+pub mod span;
 
 pub(crate) mod backend_names;
 pub(crate) mod ir_meta;
@@ -63,12 +65,21 @@ mod test_helpers;
 pub(crate) fn parse_source(
     source: &str,
     file_path: &str,
+    ctx: &CompilationContext,
 ) -> Result<(ast::Program, Vec<lexer::SpannedToken>), String> {
     let tokens = match lexer::tokenize(source) {
         Ok(tokens) => tokens,
         Err(errors) => {
             error::report_lexer_errors(source, file_path, errors);
             return Err("Failed to tokenize program".to_string());
+        }
+    };
+
+    let tokens = match conditional::filter_tokens(&tokens, ctx) {
+        Ok(filtered) => filtered,
+        Err(errors) => {
+            error::report_conditional_errors(source, file_path, &errors);
+            return Err("Conditional compilation error".to_string());
         }
     };
 
@@ -105,10 +116,10 @@ fn analyze_with_extern_meta(
 ) -> AnalyzeResult {
     use std::collections::HashSet;
 
-    let (core_ast, _) = parse_source(core_source, "<core>")
+    let (core_ast, _) = parse_source(core_source, "<core>", compilation_ctx)
         .map_err(|_| "Failed to parse core source (internal error)".to_string())?;
 
-    let (user_ast, user_tokens) = parse_source(program, file_path)?;
+    let (user_ast, user_tokens) = parse_source(program, file_path, compilation_ctx)?;
 
     // parse extern metadata JSON and extract provider names for resolve skip list
     let mut parsed_providers = std::collections::HashMap::new();
@@ -138,6 +149,7 @@ fn analyze_with_extern_meta(
         &project_root,
         &extern_names,
         std_modules,
+        compilation_ctx,
     ) {
         Ok(result) => result,
         Err(errors) => {
@@ -176,8 +188,9 @@ fn analyze_with_extern_meta(
     let mut core_count = 0usize;
     for (name, source) in core_modules {
         let file_label = format!("<core.{name}>");
-        let (module_ast, tokens) = parse_source(&source.anv_source, &file_label)
-            .map_err(|_| format!("Failed to parse core module '{name}' (internal error)"))?;
+        let (module_ast, tokens) =
+            parse_source(&source.anv_source, &file_label, compilation_ctx)
+                .map_err(|_| format!("Failed to parse core module '{name}' (internal error)"))?;
         let source_loc = SourceLocationInfo::new(file_label, &source.anv_source, &tokens);
         let path_key = vec![name.clone()];
         module_list.insert(0, (path_key.clone(), module_ast.stmts));

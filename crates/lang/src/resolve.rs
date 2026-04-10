@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    SourceLocationInfo, StdModuleSource,
+    CompilationContext, SourceLocationInfo, StdModuleSource,
     ast::{Stmt, StmtNode},
     span::Span,
 };
@@ -31,6 +31,7 @@ pub(crate) fn resolve_imports(
     project_root: &Path,
     extern_names: &HashSet<String>,
     std_modules: &HashMap<String, StdModuleSource>,
+    compilation_ctx: &CompilationContext,
 ) -> Result<ResolveResult, Vec<ImportError>> {
     let mut modules = vec![];
     let mut resolving: HashSet<Vec<String>> = HashSet::new();
@@ -45,6 +46,7 @@ pub(crate) fn resolve_imports(
         &mut resolving,
         &mut resolved,
         &mut modules,
+        compilation_ctx,
         &mut errors,
     );
 
@@ -65,6 +67,7 @@ fn collect_imports(
     resolving: &mut HashSet<Vec<String>>,
     resolved: &mut HashSet<Vec<String>>,
     modules: &mut Vec<ModuleSource>,
+    compilation_ctx: &CompilationContext,
     errors: &mut Vec<ImportError>,
 ) {
     for stmt in stmts {
@@ -98,7 +101,8 @@ fn collect_imports(
             };
 
             let file_label = format!("<std.{module_name}>");
-            let Ok((module_ast, tokens)) = crate::parse_source(&source.anv_source, &file_label)
+            let Ok((module_ast, tokens)) =
+                crate::parse_source(&source.anv_source, &file_label, compilation_ctx)
             else {
                 errors.push(ImportError::ParseError {
                     file_path: file_label,
@@ -148,7 +152,9 @@ fn collect_imports(
         };
 
         let file_path_str = file_path.display().to_string();
-        let Ok((module_ast, tokens)) = crate::parse_source(&source, &file_path_str) else {
+        let Ok((module_ast, tokens)) =
+            crate::parse_source(&source, &file_path_str, compilation_ctx)
+        else {
             errors.push(ImportError::ParseError {
                 file_path: file_path_str,
             });
@@ -166,6 +172,7 @@ fn collect_imports(
             resolving,
             resolved,
             modules,
+            compilation_ctx,
             errors,
         );
 

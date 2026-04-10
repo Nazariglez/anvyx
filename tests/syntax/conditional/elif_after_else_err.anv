@@ -1,0 +1,13 @@
+// @mode: check
+// @expect: error
+// @contains: #elif after #else
+
+fn main() {
+    #if profile(release)
+    let x = 1;
+    #else
+    let x = 2;
+    #elif profile(debug)
+    let x = 3;
+    #end
+}

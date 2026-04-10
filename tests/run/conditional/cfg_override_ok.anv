@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @cfg: profile=release
+// @match: release
+
+fn main() {
+    #if profile(release)
+    println("release");
+    #else
+    println("debug");
+    #end
+}

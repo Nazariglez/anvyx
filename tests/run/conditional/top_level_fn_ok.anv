@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: exists
+
+#if profile(debug)
+fn debug_fn() -> string { "exists" }
+#end
+
+fn main() {
+    println(debug_fn());
+}

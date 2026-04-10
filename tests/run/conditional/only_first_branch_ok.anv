@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match: first
+
+fn main() {
+    #if profile(debug)
+    println("first");
+    #elif profile(debug)
+    println("second");
+    #else
+    println("third");
+    #end
+}

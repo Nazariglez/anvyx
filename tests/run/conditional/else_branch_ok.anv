@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: debug
+
+fn main() {
+    #if profile(release)
+    println("release");
+    #else
+    println("debug");
+    #end
+}

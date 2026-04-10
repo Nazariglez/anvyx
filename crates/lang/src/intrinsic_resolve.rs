@@ -428,16 +428,16 @@ fn try_fold_bool(expr: &mut ast::ExprNode, intrinsic_bools: &mut HashSet<ast::Ex
 
 /// If an intrinsic turns an "if" condition into boolean, keep only the branch that can run
 fn try_prune_if(expr: &mut ast::ExprNode, rcx: &mut ResolveCtx<'_>, fn_name: Option<&str>) {
-    let cond_value = match &expr.node.kind {
-        ast::ExprKind::If(node) => match &node.node.cond.node.kind {
-            ast::ExprKind::Lit(ast::Lit::Bool(v))
-                if rcx.intrinsic_bools.contains(&node.node.cond.node.id) =>
-            {
-                Some(*v)
-            }
-            _ => None,
-        },
-        _ => return,
+    let ast::ExprKind::If(node) = &expr.node.kind else {
+        return;
+    };
+    let cond_value = match &node.node.cond.node.kind {
+        ast::ExprKind::Lit(ast::Lit::Bool(v))
+            if rcx.intrinsic_bools.contains(&node.node.cond.node.id) =>
+        {
+            Some(*v)
+        }
+        _ => None,
     };
 
     match cond_value {

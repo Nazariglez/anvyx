@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @match: done
+
+fn main() {
+    #if profile(release)
+        #if profile(debug)
+        println("should not appear");
+        #end
+    #end
+    println("done");
+}

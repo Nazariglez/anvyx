@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: #else without matching
+
+fn main() {
+    #else
+    let x = 1;
+    #end
+}

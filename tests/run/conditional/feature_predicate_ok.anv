@@ -1,0 +1,12 @@
+// @mode: run
+// @expect: success
+// @feature: ecs
+// @match: ecs enabled
+
+fn main() {
+    #if feature(ecs)
+    println("ecs enabled");
+    #else
+    println("no ecs");
+    #end
+}

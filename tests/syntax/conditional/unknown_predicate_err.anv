@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: unknown conditional predicate
+
+fn main() {
+    #if platform(macos)
+    println("hello");
+    #end
+}

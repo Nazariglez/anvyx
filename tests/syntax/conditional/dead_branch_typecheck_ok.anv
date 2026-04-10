@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    #if profile(release)
+    let x: int = "this is not an int";
+    this_function_does_not_exist();
+    #end
+}

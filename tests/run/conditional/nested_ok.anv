@@ -1,0 +1,11 @@
+// @mode: run
+// @expect: success
+// @match: inner
+
+fn main() {
+    #if profile(debug)
+        #if profile(debug)
+        println("inner");
+        #end
+    #end
+}

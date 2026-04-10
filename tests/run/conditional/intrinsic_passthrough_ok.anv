@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match-begin
+// true
+// debug
+// @match-end
+
+fn main() {
+    println(#profile(debug));
+    #if profile(debug)
+    println("debug");
+    #end
+}

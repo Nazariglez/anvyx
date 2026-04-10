@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: error
+// @contains: #elif without matching
+
+fn main() {
+    #elif profile(debug)
+    let x = 1;
+    #end
+}
