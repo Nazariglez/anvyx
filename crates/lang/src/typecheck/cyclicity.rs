@@ -128,7 +128,9 @@ fn extract_dataref_refs(
                     out.push(*name);
                 }
             }
-            Type::Enum { name, type_args } => {
+            Type::Enum {
+                name, type_args, ..
+            } => {
                 // type_any handles type_args recursion automatically
                 // expand variant fields which are not part of the structural tree
                 if let Some(enum_def) = enum_defs.get(name) {
@@ -146,7 +148,9 @@ fn extract_dataref_refs(
 fn type_contains_func(ty: &Type, enum_defs: &HashMap<Ident, EnumDef>) -> bool {
     type_any(ty, &mut |t| match t {
         Type::Func { .. } => true,
-        Type::Enum { name, type_args } => {
+        Type::Enum {
+            name, type_args, ..
+        } => {
             // type_any handles type_args recursion automatically
             // expand variant fields which are not part of the structural tree
             enum_defs.get(name).is_some_and(|def| {
@@ -267,7 +271,9 @@ fn extract_value_type_refs(
             }
             // dataref structs are skipped, they introduce pointer indirection breaking the cycle
         }
-        Type::Enum { name, type_args } => {
+        Type::Enum {
+            name, type_args, ..
+        } => {
             expand_enum_value_refs(*name, type_args, struct_defs, enum_defs, out);
         }
         Type::Tuple(elems) => {

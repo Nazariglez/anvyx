@@ -255,7 +255,7 @@ pub fn lower_program(
 
         let mut fc = FuncLower::new();
 
-        let self_type = kind.make_type(*struct_name, vec![]);
+        let self_type = kind.make_type(*struct_name, vec![], None);
         register_named_local(&mut fc, self_ident, self_type);
         if matches!(method.receiver, Some(MethodReceiver::Var)) {
             fc.locals[0].is_ref = true;

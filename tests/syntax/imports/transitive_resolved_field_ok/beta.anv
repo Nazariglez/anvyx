@@ -1,5 +1,5 @@
 // @helper
 
 pub struct Item {
-    pub value: int,
+    value: int,
 }

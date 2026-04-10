@@ -444,6 +444,7 @@ fn check_inferred_enum(
     let Some(Type::Enum {
         name: enum_name,
         type_args,
+        ..
     }) = resolved_expected.as_ref()
     else {
         errors.push(Diagnostic::new(
@@ -482,10 +483,7 @@ fn check_inferred_enum(
 
     let type_params = &enum_def.type_params;
     match (&node.node.args, &variant.kind) {
-        (InferredEnumArgs::Unit, VariantKind::Unit) => Type::Enum {
-            name: enum_name,
-            type_args,
-        },
+        (InferredEnumArgs::Unit, VariantKind::Unit) => enum_def.make_type(enum_name, type_args),
         (InferredEnumArgs::Unit, _) => {
             errors.push(Diagnostic::new(
                 span,
@@ -517,10 +515,7 @@ fn check_inferred_enum(
                 let expected_ref = TypeRef::concrete(&substituted);
                 type_checker.constrain_assignable(arg_expr.span, arg_ref, expected_ref, errors);
             }
-            Type::Enum {
-                name: enum_name,
-                type_args,
-            }
+            enum_def.make_type(enum_name, type_args)
         }
         (InferredEnumArgs::Tuple(_), _) => {
             errors.push(Diagnostic::new(
@@ -544,10 +539,7 @@ fn check_inferred_enum(
                 type_checker,
                 errors,
             );
-            Type::Enum {
-                name: enum_name,
-                type_args,
-            }
+            enum_def.make_type(enum_name, type_args)
         }
         (InferredEnumArgs::Struct(_), _) => {
             errors.push(Diagnostic::new(

@@ -14,8 +14,8 @@ use crate::{
     ast::{
         AggregateKind, ArrayLen, BinaryOp, BlockNode, CallNode, ConstParam, EnumDecl, ExprId,
         ExtendMethodNode, FieldAccessNode, FuncNode, FuncParam, Ident, IndexNode, Method,
-        MethodReceiver, Mutability, Param, StmtNode, StructDecl, StructField, Type, TypeParam,
-        TypeVarId, UnaryOp, VariantKind,
+        MethodReceiver, ModulePath, Mutability, Param, StmtNode, StructDecl, StructField, Type,
+        TypeParam, TypeVarId, UnaryOp, VariantKind,
     },
     span::Span,
 };
@@ -30,6 +30,7 @@ pub(super) struct EnumVariantDef {
 
 #[derive(Debug, Clone)]
 pub(super) struct EnumDef {
+    pub(super) defining_module: Option<ModulePath>,
     pub type_params: Vec<TypeParam>,
     #[allow(dead_code)] // stored for future enum const param support
     pub const_params: Vec<ConstParam>,
@@ -50,6 +51,7 @@ impl EnumDef {
             })
             .collect();
         Self {
+            defining_module: None,
             type_params: decl.type_params.clone(),
             const_params: decl.const_params.clone(),
             variants,
@@ -69,6 +71,14 @@ impl EnumDef {
         variant
             .annotations
             .check_deprecation(span, "variant", variant.name, errors);
+    }
+
+    pub fn make_type(&self, name: Ident, type_args: Vec<Type>) -> Type {
+        Type::Enum {
+            name,
+            type_args,
+            origin: self.defining_module.clone(),
+        }
     }
 }
 
@@ -116,7 +126,7 @@ pub(super) fn type_references_generic(ty: &Type, type_params: &[TypeParam]) -> b
 
 #[derive(Debug, Clone)]
 pub struct StructDef {
-    pub(super) defining_module: Option<Vec<String>>,
+    pub(super) defining_module: Option<ModulePath>,
     pub kind: AggregateKind,
     pub span: Span,
     pub type_params: Vec<TypeParam>,
@@ -144,7 +154,8 @@ impl StructDef {
     }
 
     pub fn make_type(&self, name: Ident, type_args: Vec<Type>) -> Type {
-        self.kind.make_type(name, type_args)
+        self.kind
+            .make_type(name, type_args, self.defining_module.clone())
     }
 }
 
@@ -176,6 +187,7 @@ pub struct ExternUnaryOpDef {
 
 #[derive(Debug, Clone)]
 pub struct ExternTypeDef {
+    pub(super) defining_module: Option<ModulePath>,
     pub has_init: bool,
     pub field_order: Vec<Ident>,
     pub fields: HashMap<Ident, ExternFieldDef>,
@@ -186,6 +198,13 @@ pub struct ExternTypeDef {
 }
 
 impl ExternTypeDef {
+    pub fn make_type(&self, name: Ident) -> Type {
+        Type::Extern {
+            name,
+            origin: self.defining_module.clone(),
+        }
+    }
+
     pub fn as_struct_fields(&self) -> Vec<StructField> {
         self.field_order
             .iter()
@@ -667,11 +686,36 @@ impl TypeChecker {
         }
     }
 
-    pub(super) fn get_struct_deep(&self, name: Ident) -> DeepLookup<'_, StructDef> {
-        if let Some(def) = self.get_struct(name) {
+    fn get_deep<'a, T>(
+        &'a self,
+        name: Ident,
+        origin: Option<&[String]>,
+        local: impl FnOnce(Ident) -> Option<&'a T>,
+        module_accessor: impl Fn(&ModuleDef) -> Option<&T>,
+    ) -> DeepLookup<'a, T> {
+        if let Some(def) = origin
+            .and_then(|p| self.resolved_module_defs.get(p))
+            .and_then(&module_accessor)
+        {
             return DeepLookup::Found(def);
         }
-        self.find_in_modules(|m| m.struct_defs.get(&name))
+        if let Some(def) = local(name) {
+            return DeepLookup::Found(def);
+        }
+        self.find_in_modules(module_accessor)
+    }
+
+    pub(super) fn get_struct_deep(
+        &self,
+        name: Ident,
+        origin: Option<&[String]>,
+    ) -> DeepLookup<'_, StructDef> {
+        self.get_deep(
+            name,
+            origin,
+            |n| self.get_struct(n),
+            |m| m.struct_defs.get(&name),
+        )
     }
 
     pub(super) fn is_cross_module(&self, defining_module: Option<&[String]>) -> bool {
@@ -701,18 +745,30 @@ impl TypeChecker {
         );
     }
 
-    pub(super) fn get_enum_deep(&self, name: Ident) -> DeepLookup<'_, EnumDef> {
-        if let Some(def) = self.get_enum(name) {
-            return DeepLookup::Found(def);
-        }
-        self.find_in_modules(|m| m.enum_defs.get(&name))
+    pub(super) fn get_enum_deep(
+        &self,
+        name: Ident,
+        origin: Option<&[String]>,
+    ) -> DeepLookup<'_, EnumDef> {
+        self.get_deep(
+            name,
+            origin,
+            |n| self.get_enum(n),
+            |m| m.enum_defs.get(&name),
+        )
     }
 
-    pub(super) fn get_extern_type_deep(&self, name: Ident) -> DeepLookup<'_, ExternTypeDef> {
-        if let Some(def) = self.get_extern_type(name) {
-            return DeepLookup::Found(def);
-        }
-        self.find_in_modules(|m| m.extern_types.get(&name))
+    pub(super) fn get_extern_type_deep(
+        &self,
+        name: Ident,
+        origin: Option<&[String]>,
+    ) -> DeepLookup<'_, ExternTypeDef> {
+        self.get_deep(
+            name,
+            origin,
+            |n| self.get_extern_type(n),
+            |m| m.extern_types.get(&name),
+        )
     }
 
     pub(super) fn get_extend_methods(&self, ty: &Type, name: Ident) -> &[ExtendEntry] {
@@ -726,50 +782,128 @@ impl TypeChecker {
         self.ctx.module_defs.get(&name)
     }
 
+    pub(super) fn check_name_ambiguity(
+        &self,
+        name: Ident,
+        span: Span,
+        errors: &mut Vec<Diagnostic>,
+    ) -> bool {
+        fn push_if_ambiguous<T>(
+            result: DeepLookup<'_, T>,
+            name: Ident,
+            span: Span,
+            errors: &mut Vec<Diagnostic>,
+        ) -> bool {
+            if let DeepLookup::Ambiguous(first, second) = result {
+                errors.push(Diagnostic::new(
+                    span,
+                    DiagnosticKind::AmbiguousType {
+                        name,
+                        first_module: first,
+                        second_module: second,
+                    },
+                ));
+                return true;
+            }
+            false
+        }
+        push_if_ambiguous(self.get_struct_deep(name, None), name, span, errors)
+            || push_if_ambiguous(self.get_enum_deep(name, None), name, span, errors)
+            || push_if_ambiguous(self.get_extern_type_deep(name, None), name, span, errors)
+    }
+
     pub(super) fn resolve_type(&self, ty: &Type) -> Type {
         match ty {
             Type::UnresolvedName(name) if self.ctx.extern_type_defs.contains_key(name) => {
-                Type::Extern { name: *name }
+                self.ctx.extern_type_defs[name].make_type(*name)
             }
             Type::UnresolvedName(name) if self.ctx.struct_defs.contains_key(name) => {
-                let def = &self.ctx.struct_defs[name];
-                def.make_type(*name, vec![])
+                self.ctx.struct_defs[name].make_type(*name, vec![])
             }
-            Type::UnresolvedName(name) if self.ctx.enum_defs.contains_key(name) => Type::Enum {
-                name: *name,
-                type_args: vec![],
-            },
+            Type::UnresolvedName(name) if self.ctx.enum_defs.contains_key(name) => {
+                self.ctx.enum_defs[name].make_type(*name, vec![])
+            }
             // the parser creates a struct for any named type with type args, this can be an enum or a struct
-            Type::Struct { name, type_args } if self.ctx.enum_defs.contains_key(name) => {
-                Type::Enum {
+            Type::Struct {
+                name, type_args, ..
+            } if self.ctx.enum_defs.contains_key(name) => {
+                let resolved = type_args.iter().map(|t| self.resolve_type(t)).collect();
+                self.ctx.enum_defs[name].make_type(*name, resolved)
+            }
+            Type::Struct {
+                name, type_args, ..
+            } if self
+                .ctx
+                .struct_defs
+                .get(name)
+                .is_some_and(|d| d.kind.is_dataref()) =>
+            {
+                let resolved = type_args.iter().map(|t| self.resolve_type(t)).collect();
+                self.ctx.struct_defs[name].make_type(*name, resolved)
+            }
+            Type::Struct {
+                name,
+                type_args,
+                origin,
+            } => {
+                let resolved_origin = origin.clone().or_else(|| {
+                    self.ctx
+                        .struct_defs
+                        .get(name)
+                        .and_then(|d| d.defining_module.clone())
+                });
+                Type::Struct {
                     name: *name,
                     type_args: type_args.iter().map(|t| self.resolve_type(t)).collect(),
+                    origin: resolved_origin,
                 }
             }
-            Type::Struct { name, type_args }
-                if self
-                    .ctx
-                    .struct_defs
-                    .get(name)
-                    .is_some_and(|d| d.kind.is_dataref()) =>
-            {
+            Type::DataRef {
+                name,
+                type_args,
+                origin,
+            } => {
+                let resolved_origin = origin.clone().or_else(|| {
+                    self.ctx
+                        .struct_defs
+                        .get(name)
+                        .and_then(|d| d.defining_module.clone())
+                });
                 Type::DataRef {
                     name: *name,
                     type_args: type_args.iter().map(|t| self.resolve_type(t)).collect(),
+                    origin: resolved_origin,
                 }
             }
-            Type::Struct { name, type_args } => Type::Struct {
-                name: *name,
-                type_args: type_args.iter().map(|t| self.resolve_type(t)).collect(),
-            },
-            Type::DataRef { name, type_args } => Type::DataRef {
-                name: *name,
-                type_args: type_args.iter().map(|t| self.resolve_type(t)).collect(),
-            },
-            Type::Enum { name, type_args } => Type::Enum {
-                name: *name,
-                type_args: type_args.iter().map(|t| self.resolve_type(t)).collect(),
-            },
+            Type::Enum {
+                name,
+                type_args,
+                origin,
+            } => {
+                let resolved_origin = origin.clone().or_else(|| {
+                    self.ctx
+                        .enum_defs
+                        .get(name)
+                        .and_then(|d| d.defining_module.clone())
+                });
+                Type::Enum {
+                    name: *name,
+                    type_args: type_args.iter().map(|t| self.resolve_type(t)).collect(),
+                    origin: resolved_origin,
+                }
+            }
+            Type::Extern { name, origin } => {
+                let resolved_origin = origin.clone().or_else(|| {
+                    self.ctx
+                        .extern_type_defs
+                        .get(name)
+                        .and_then(|d| d.defining_module.clone())
+                });
+                Type::Extern {
+                    name: *name,
+                    origin: resolved_origin,
+                }
+            }
             Type::Tuple(elems) => Type::Tuple(elems.iter().map(|t| self.resolve_type(t)).collect()),
             Type::NamedTuple(fields) => Type::NamedTuple(
                 fields
@@ -852,20 +986,11 @@ impl TypeChecker {
             if let DeepLookup::Found(def) = self.find_in_modules(|m| m.struct_defs.get(&name)) {
                 return def.make_type(name, vec![]);
             }
-            if matches!(
-                self.find_in_modules(|m| m.enum_defs.get(&name)),
-                DeepLookup::Found(_)
-            ) {
-                return Type::Enum {
-                    name,
-                    type_args: vec![],
-                };
+            if let DeepLookup::Found(def) = self.find_in_modules(|m| m.enum_defs.get(&name)) {
+                return def.make_type(name, vec![]);
             }
-            if matches!(
-                self.find_in_modules(|m| m.extern_types.get(&name)),
-                DeepLookup::Found(_)
-            ) {
-                return Type::Extern { name };
+            if let DeepLookup::Found(def) = self.find_in_modules(|m| m.extern_types.get(&name)) {
+                return def.make_type(name);
             }
             Type::UnresolvedName(name)
         })
@@ -1179,30 +1304,36 @@ impl TypeChecker {
                 Type::Struct {
                     name: nf,
                     type_args: af,
+                    ..
                 },
                 Type::Struct {
                     name: nt,
                     type_args: at,
+                    ..
                 },
             )
             | (
                 Type::Enum {
                     name: nf,
                     type_args: af,
+                    ..
                 },
                 Type::Enum {
                     name: nt,
                     type_args: at,
+                    ..
                 },
             )
             | (
                 Type::DataRef {
                     name: nf,
                     type_args: af,
+                    ..
                 },
                 Type::DataRef {
                     name: nt,
                     type_args: at,
+                    ..
                 },
             ) if nf == nt
                 && af.len() == at.len()
@@ -1581,7 +1712,7 @@ pub(super) fn type_field_on_base(
     errors: &mut Vec<Diagnostic>,
 ) -> Type {
     if let Some(agg) = base_ty.as_aggregate() {
-        let struct_def = match type_checker.get_struct_deep(agg.name) {
+        let struct_def = match type_checker.get_struct_deep(agg.name, agg.origin) {
             DeepLookup::Found(def) => def,
             DeepLookup::Ambiguous(first, second) => {
                 errors.push(Diagnostic::new(
@@ -1650,8 +1781,8 @@ pub(super) fn type_field_on_base(
             ));
             Type::Infer
         }
-        Type::Extern { name } => {
-            let extern_def = match type_checker.get_extern_type_deep(*name) {
+        Type::Extern { name, origin } => {
+            let extern_def = match type_checker.get_extern_type_deep(*name, origin.as_deref()) {
                 DeepLookup::Found(def) => def,
                 DeepLookup::Ambiguous(first, second) => {
                     errors.push(Diagnostic::new(
@@ -1690,38 +1821,8 @@ pub(super) fn type_field_on_base(
             Type::Infer
         }
         Type::UnresolvedName(name) => {
-            // it could be an ambiguois/transitive type, so we do deep lookup before falling through
-            if let DeepLookup::Ambiguous(first, second) = type_checker.get_struct_deep(*name) {
-                errors.push(Diagnostic::new(
-                    span,
-                    DiagnosticKind::AmbiguousType {
-                        name: *name,
-                        first_module: first,
-                        second_module: second,
-                    },
-                ));
-                return Type::Infer;
-            }
-            if let DeepLookup::Ambiguous(first, second) = type_checker.get_enum_deep(*name) {
-                errors.push(Diagnostic::new(
-                    span,
-                    DiagnosticKind::AmbiguousType {
-                        name: *name,
-                        first_module: first,
-                        second_module: second,
-                    },
-                ));
-                return Type::Infer;
-            }
-            if let DeepLookup::Ambiguous(first, second) = type_checker.get_extern_type_deep(*name) {
-                errors.push(Diagnostic::new(
-                    span,
-                    DiagnosticKind::AmbiguousType {
-                        name: *name,
-                        first_module: first,
-                        second_module: second,
-                    },
-                ));
+            // it could be an ambiguous/transitive type, so we do deep lookup before falling through
+            if type_checker.check_name_ambiguity(*name, span, errors) {
                 return Type::Infer;
             }
             errors.push(Diagnostic::new(
@@ -1865,7 +1966,11 @@ fn check_type_property(ty: &Type, tc: &TypeChecker, prop: TypeProperty) -> Resul
             }
             Ok(())
         }
-        Type::Enum { name, type_args } => {
+        Type::Enum {
+            name,
+            type_args,
+            origin,
+        } => {
             if ty.is_option() {
                 return match prop {
                     TypeProperty::Keyable => {
@@ -1877,7 +1982,7 @@ fn check_type_property(ty: &Type, tc: &TypeChecker, prop: TypeProperty) -> Resul
                     }
                 };
             }
-            let DeepLookup::Found(enum_def) = tc.get_enum_deep(*name) else {
+            let DeepLookup::Found(enum_def) = tc.get_enum_deep(*name, origin.as_deref()) else {
                 return Err(format!("enum '{name}' is not known"));
             };
             let subst = build_subst(&enum_def.type_params, type_args);
@@ -1901,8 +2006,12 @@ fn check_type_property(ty: &Type, tc: &TypeChecker, prop: TypeProperty) -> Resul
             }
             Ok(())
         }
-        Type::Struct { name, type_args } => {
-            let DeepLookup::Found(struct_def) = tc.get_struct_deep(*name) else {
+        Type::Struct {
+            name,
+            type_args,
+            origin,
+        } => {
+            let DeepLookup::Found(struct_def) = tc.get_struct_deep(*name, origin.as_deref()) else {
                 return Err(format!("struct '{name}' is not known"));
             };
             let subst = build_subst(&struct_def.type_params, type_args);

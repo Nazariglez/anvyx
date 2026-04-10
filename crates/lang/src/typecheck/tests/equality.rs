@@ -509,6 +509,7 @@ fn test_eq_list_of_structs_ok() {
     let point_ty = Type::Struct {
         name: super::helpers::dummy_ident("Point"),
         type_args: vec![],
+        origin: None,
     };
     let list_ty = Type::List {
         elem: point_ty.clone().boxed(),

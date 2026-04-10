@@ -1300,7 +1300,7 @@ fn try_check_method_call(
 
     let target_ty = check_expr(target, type_checker, errors, None);
     if let Some(agg) = target_ty.as_aggregate() {
-        match type_checker.get_struct_deep(agg.name) {
+        match type_checker.get_struct_deep(agg.name, agg.origin) {
             DeepLookup::Found(def) => {
                 let struct_def = def.clone();
                 return Some(check_instance_method_call(
@@ -1451,10 +1451,7 @@ fn check_enum_tuple_variant(
         vec![]
     };
 
-    Type::Enum {
-        name: enum_name,
-        type_args,
-    }
+    enum_def.make_type(enum_name, type_args)
 }
 
 fn check_generic_static_method(

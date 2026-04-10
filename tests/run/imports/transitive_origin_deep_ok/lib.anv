@@ -1,0 +1,7 @@
+// @helper
+
+import types { Data };
+
+pub fn make_data() -> Data {
+    Data { value: 99 }
+}

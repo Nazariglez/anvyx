@@ -1,47 +1,40 @@
-use std::sync::LazyLock;
-
 use internment::Intern;
 
 use crate::ast::{Ident, Type};
 
-pub(super) fn range_type(elem_ty: Type) -> Type {
+fn make_range_struct(name: &str, elem_ty: Type) -> Type {
     Type::Struct {
-        name: range_ident(),
+        name: Ident(Intern::new(name.to_string())),
         type_args: vec![elem_ty],
+        origin: None,
     }
+}
+
+pub(super) fn range_type(elem_ty: Type) -> Type {
+    make_range_struct("Range", elem_ty)
 }
 
 pub(super) fn range_inclusive_type(elem_ty: Type) -> Type {
-    Type::Struct {
-        name: range_inclusive_ident(),
-        type_args: vec![elem_ty],
-    }
+    make_range_struct("RangeInclusive", elem_ty)
 }
 
 pub(super) fn range_from_type(elem_ty: Type) -> Type {
-    Type::Struct {
-        name: Ident(Intern::new("RangeFrom".to_string())),
-        type_args: vec![elem_ty],
-    }
+    make_range_struct("RangeFrom", elem_ty)
 }
 
 pub(super) fn range_to_type(elem_ty: Type) -> Type {
-    Type::Struct {
-        name: Ident(Intern::new("RangeTo".to_string())),
-        type_args: vec![elem_ty],
-    }
+    make_range_struct("RangeTo", elem_ty)
 }
 
 pub(super) fn range_to_inclusive_type(elem_ty: Type) -> Type {
-    Type::Struct {
-        name: Ident(Intern::new("RangeToInclusive".to_string())),
-        type_args: vec![elem_ty],
-    }
+    make_range_struct("RangeToInclusive", elem_ty)
 }
 
 pub(super) fn range_element_type(ty: &Type) -> Option<&Type> {
     match ty {
-        Type::Struct { name, type_args } if type_args.len() == 1 => {
+        Type::Struct {
+            name, type_args, ..
+        } if type_args.len() == 1 => {
             let s = name.0.as_ref();
             let is_range = s == "Range"
                 || s == "RangeInclusive"
@@ -52,16 +45,4 @@ pub(super) fn range_element_type(ty: &Type) -> Option<&Type> {
         }
         _ => None,
     }
-}
-
-static RANGE_IDENT: LazyLock<Ident> = LazyLock::new(|| Ident(Intern::new("Range".to_string())));
-static RANGE_INCLUSIVE_IDENT: LazyLock<Ident> =
-    LazyLock::new(|| Ident(Intern::new("RangeInclusive".to_string())));
-
-pub(super) fn range_ident() -> Ident {
-    *RANGE_IDENT
-}
-
-pub(super) fn range_inclusive_ident() -> Ident {
-    *RANGE_INCLUSIVE_IDENT
 }

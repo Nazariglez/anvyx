@@ -90,8 +90,9 @@ pub(super) fn check_binary(
             if let Some(ref ty) = eq_ty
                 && !ty.is_infer()
             {
-                let has_extern_eq = if let Type::Extern { name } = ty
-                    && let DeepLookup::Found(def) = type_checker.get_extern_type_deep(*name)
+                let has_extern_eq = if let Type::Extern { name, origin } = ty
+                    && let DeepLookup::Found(def) =
+                        type_checker.get_extern_type_deep(*name, origin.as_deref())
                 {
                     def.operators.iter().any(|o| o.op == Eq)
                 } else {
@@ -286,8 +287,8 @@ fn resolve_extern_binary_op(
     right_ty: &Type,
     type_checker: &TypeChecker,
 ) -> Option<ExternOpResult> {
-    let left_match = if let Type::Extern { name } = left_ty {
-        match type_checker.get_extern_type_deep(*name) {
+    let left_match = if let Type::Extern { name, origin } = left_ty {
+        match type_checker.get_extern_type_deep(*name, origin.as_deref()) {
             DeepLookup::Found(def) => def
                 .operators
                 .iter()
@@ -299,8 +300,8 @@ fn resolve_extern_binary_op(
         None
     };
 
-    let right_match = if let Type::Extern { name } = right_ty {
-        match type_checker.get_extern_type_deep(*name) {
+    let right_match = if let Type::Extern { name, origin } = right_ty {
+        match type_checker.get_extern_type_deep(*name, origin.as_deref()) {
             DeepLookup::Found(def) => def
                 .operators
                 .iter()
@@ -333,8 +334,9 @@ pub(super) fn check_unary(
         UnaryOp::BitNot if expr_ty.is_int() => Type::Int,
         _ => {
             if node.op == UnaryOp::Neg
-                && let Type::Extern { name } = &expr_ty
-                && let DeepLookup::Found(def) = type_checker.get_extern_type_deep(*name)
+                && let Type::Extern { name, origin } = &expr_ty
+                && let DeepLookup::Found(def) =
+                    type_checker.get_extern_type_deep(*name, origin.as_deref())
                 && let Some(op_def) = def.unary_operators.iter().find(|o| o.op == UnaryOp::Neg)
             {
                 return op_def.ret.clone();

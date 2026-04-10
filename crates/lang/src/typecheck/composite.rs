@@ -309,7 +309,7 @@ fn check_extern_init_lit(
         type_checker.constrain_assignable(field_expr.span, field_ref, expected_ref, errors);
     }
 
-    Type::Extern { name: type_name }
+    extern_def.make_type(type_name)
 }
 
 pub(super) fn check_tuple_index(
@@ -658,8 +658,5 @@ fn check_enum_struct_variant(
         errors,
     );
 
-    Type::Enum {
-        name: enum_name,
-        type_args,
-    }
+    enum_def.make_type(enum_name, type_args)
 }

@@ -95,7 +95,10 @@ pub(super) fn lower_match_stmts(
         is_ref: false,
     });
 
-    if let Type::Enum { name, type_args } = &scrutinee_ty {
+    if let Type::Enum {
+        name, type_args, ..
+    } = &scrutinee_ty
+    {
         let mcx = MatchLowerCtx {
             match_node,
             span,
@@ -1445,6 +1448,7 @@ pub(super) fn lower_if_let(
     if let Type::Enum {
         name: enum_name,
         type_args,
+        ..
     } = &scrutinee_ty
     {
         let enum_name = *enum_name;
@@ -1891,6 +1895,7 @@ pub(super) fn lower_let_else(
     if let Type::Enum {
         name: enum_name,
         type_args,
+        ..
     } = &scrutinee_ty
     {
         let enum_name = *enum_name;
@@ -2258,6 +2263,7 @@ fn lower_while_let_enum(
     let Type::Enum {
         name: enum_name,
         type_args,
+        ..
     } = &scrutinee_ty
     else {
         return Err(LowerError::UnsupportedExprKind {

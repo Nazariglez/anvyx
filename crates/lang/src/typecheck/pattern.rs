@@ -431,7 +431,9 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
                 .any(|(sub, ty)| is_refutable(&sub.node, ty, type_checker))
         }
         Pattern::EnumUnit { qualifier, .. } => {
-            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*qualifier) else {
+            let DeepLookup::Found(enum_def) =
+                type_checker.get_enum_deep(*qualifier, value_ty.origin())
+            else {
                 return true;
             };
             enum_def.variants.len() > 1
@@ -439,7 +441,9 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
         Pattern::EnumTuple {
             qualifier, fields, ..
         } => {
-            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*qualifier) else {
+            let DeepLookup::Found(enum_def) =
+                type_checker.get_enum_deep(*qualifier, value_ty.origin())
+            else {
                 return true;
             };
             if enum_def.variants.len() > 1 {
@@ -470,7 +474,9 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
         Pattern::EnumStruct {
             qualifier, fields, ..
         } => {
-            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*qualifier) else {
+            let DeepLookup::Found(enum_def) =
+                type_checker.get_enum_deep(*qualifier, value_ty.origin())
+            else {
                 return true;
             };
             if enum_def.variants.len() > 1 {
@@ -499,16 +505,21 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
             let Type::Enum { name, .. } = value_ty else {
                 return true;
             };
-            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*name) else {
+            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*name, value_ty.origin())
+            else {
                 return true;
             };
             enum_def.variants.len() > 1
         }
         Pattern::InferredEnumTuple { fields, .. } => {
-            let Type::Enum { name, type_args } = value_ty else {
+            let Type::Enum {
+                name, type_args, ..
+            } = value_ty
+            else {
                 return true;
             };
-            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*name) else {
+            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*name, value_ty.origin())
+            else {
                 return true;
             };
             if enum_def.variants.len() > 1 {
@@ -534,10 +545,14 @@ pub(super) fn is_refutable(pattern: &Pattern, value_ty: &Type, type_checker: &Ty
                 })
         }
         Pattern::InferredEnumStruct { fields, .. } => {
-            let Type::Enum { name, type_args } = value_ty else {
+            let Type::Enum {
+                name, type_args, ..
+            } = value_ty
+            else {
                 return true;
             };
-            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*name) else {
+            let DeepLookup::Found(enum_def) = type_checker.get_enum_deep(*name, value_ty.origin())
+            else {
                 return true;
             };
             if enum_def.variants.len() > 1 {
@@ -898,6 +913,7 @@ fn check_enum_preamble<'a>(
     let Type::Enum {
         name: enum_name,
         type_args,
+        ..
     } = value_ty
     else {
         errors.push(Diagnostic::new(
@@ -907,6 +923,7 @@ fn check_enum_preamble<'a>(
                 found: Type::Enum {
                     name: qualifier,
                     type_args: vec![],
+                    origin: None,
                 },
             },
         ));
@@ -924,7 +941,7 @@ fn check_enum_preamble<'a>(
         return None;
     }
 
-    let enum_def = match type_checker.get_enum_deep(qualifier) {
+    let enum_def = match type_checker.get_enum_deep(qualifier, value_ty.origin()) {
         DeepLookup::Found(def) => def.clone(),
         DeepLookup::NotFound => {
             errors.push(Diagnostic::new(
@@ -1150,7 +1167,7 @@ fn check_struct_destructure_pattern(
     errors: &mut Vec<Diagnostic>,
 ) {
     // try native struct first
-    match type_checker.get_struct_deep(type_name) {
+    match type_checker.get_struct_deep(type_name, value_ty.origin()) {
         DeepLookup::Ambiguous(first, second) => {
             errors.push(Diagnostic::new(
                 pattern.span,
@@ -1236,7 +1253,7 @@ fn check_struct_destructure_pattern(
     }
 
     // try extern type
-    match type_checker.get_extern_type_deep(type_name) {
+    match type_checker.get_extern_type_deep(type_name, value_ty.origin()) {
         DeepLookup::Ambiguous(first, second) => {
             errors.push(Diagnostic::new(
                 pattern.span,
@@ -1251,12 +1268,15 @@ fn check_struct_destructure_pattern(
         DeepLookup::NotFound => {}
         DeepLookup::Found(def) => {
             let extern_def = def.clone();
-            let matches_type = matches!(value_ty, Type::Extern { name } if *name == type_name);
+            let matches_type = matches!(value_ty, Type::Extern { name, .. } if *name == type_name);
             if !matches_type {
                 errors.push(Diagnostic::new(
                     pattern.span,
                     DiagnosticKind::MismatchedTypes {
-                        expected: Type::Extern { name: type_name },
+                        expected: Type::Extern {
+                            name: type_name,
+                            origin: None,
+                        },
                         found: value_ty.clone(),
                     },
                 ));

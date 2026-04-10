@@ -1263,11 +1263,17 @@ pub(super) fn emit_type(ty: &Type) -> Result<String, String> {
         Type::Bool => Ok("bool".into()),
         Type::String => Ok("String".into()),
         Type::Void => Ok("()".into()),
-        Type::Struct { name, type_args } if type_args.is_empty() => Ok(name.to_string()),
+        Type::Struct {
+            name, type_args, ..
+        } if type_args.is_empty() => Ok(name.to_string()),
         // UnresolvedName survives into HIR locals/return types for user-defined struct/enum names
         Type::UnresolvedName(name) => Ok(name.to_string()),
-        Type::Enum { name, type_args } if type_args.is_empty() => Ok(name.to_string()),
-        Type::Enum { name, type_args } => {
+        Type::Enum {
+            name, type_args, ..
+        } if type_args.is_empty() => Ok(name.to_string()),
+        Type::Enum {
+            name, type_args, ..
+        } => {
             let args: Vec<String> = type_args.iter().map(emit_type).collect::<Result<_, _>>()?;
             Ok(format!("{}<{}>", name, args.join(", ")))
         }

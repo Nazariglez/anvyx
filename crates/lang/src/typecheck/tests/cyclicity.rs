@@ -8,6 +8,7 @@ fn struct_type(name: &str) -> Type {
     Type::Struct {
         name: dummy_ident(name),
         type_args: vec![],
+        origin: None,
     }
 }
 
@@ -15,6 +16,7 @@ fn enum_type(name: &str) -> Type {
     Type::Enum {
         name: dummy_ident(name),
         type_args: vec![],
+        origin: None,
     }
 }
 

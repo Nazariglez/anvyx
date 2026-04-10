@@ -1,0 +1,11 @@
+// @mode: check
+// @expect: success
+
+import api { origin };
+import other;
+
+fn main() {
+    let p = origin();
+    let s = p.sum();
+    let x = p.x;
+}

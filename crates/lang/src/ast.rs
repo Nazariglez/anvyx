@@ -1,8 +1,20 @@
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    hash::{Hash, Hasher},
+    rc::Rc,
+};
 
 use internment::Intern;
 
 use crate::span::Spanned;
+
+/// Module path ident where a type was originally defined
+pub type ModulePath = Rc<[String]>;
+
+/// Merge two optional module paths, preferring the left existing origin
+pub fn merge_origin(left: &Option<ModulePath>, right: &Option<ModulePath>) -> Option<ModulePath> {
+    left.clone().or_else(|| right.clone())
+}
 
 pub const OPTION_ENUM_NAME: &str = "Option";
 
@@ -216,7 +228,7 @@ impl FuncParam {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub enum Type {
     /// Unknown type that needs to be inferred
     Infer,
@@ -248,11 +260,23 @@ pub enum Type {
     /// Named tuple type (x: int, y: string)
     NamedTuple(Vec<(Ident, Type)>),
     /// Struct type
-    Struct { name: Ident, type_args: Vec<Type> },
+    Struct {
+        name: Ident,
+        type_args: Vec<Type>,
+        origin: Option<ModulePath>,
+    },
     /// DataRef type
-    DataRef { name: Ident, type_args: Vec<Type> },
+    DataRef {
+        name: Ident,
+        type_args: Vec<Type>,
+        origin: Option<ModulePath>,
+    },
     /// Enum type
-    Enum { name: Ident, type_args: Vec<Type> },
+    Enum {
+        name: Ident,
+        type_args: Vec<Type>,
+        origin: Option<ModulePath>,
+    },
     /// List are dynamic arrays
     List { elem: Box<Type> },
     /// Arrays are fixed length [T; N] or [T; _]
@@ -262,7 +286,123 @@ pub enum Type {
     /// Slice type for function parameters ([T; ..])
     Slice { elem: Box<Type> },
     /// Opaque handle type declared with 'extern type'
-    Extern { name: Ident },
+    Extern {
+        name: Ident,
+        origin: Option<ModulePath>,
+    },
+}
+
+impl PartialEq for Type {
+    fn eq(&self, other: &Self) -> bool {
+        use Type::*;
+        match (self, other) {
+            (Infer, Infer) => true,
+            (Any, Any) => true,
+            (Int, Int) => true,
+            (Float, Float) => true,
+            (Double, Double) => true,
+            (Bool, Bool) => true,
+            (String, String) => true,
+            (Void, Void) => true,
+            (
+                Func {
+                    params: p1,
+                    ret: r1,
+                },
+                Func {
+                    params: p2,
+                    ret: r2,
+                },
+            ) => p1 == p2 && r1 == r2,
+            (Var(a), Var(b)) => a == b,
+            (UnresolvedName(a), UnresolvedName(b)) => a == b,
+            (Tuple(a), Tuple(b)) => a == b,
+            (NamedTuple(a), NamedTuple(b)) => a == b,
+            (
+                Struct {
+                    name: n1,
+                    type_args: t1,
+                    ..
+                },
+                Struct {
+                    name: n2,
+                    type_args: t2,
+                    ..
+                },
+            )
+            | (
+                DataRef {
+                    name: n1,
+                    type_args: t1,
+                    ..
+                },
+                DataRef {
+                    name: n2,
+                    type_args: t2,
+                    ..
+                },
+            )
+            | (
+                Enum {
+                    name: n1,
+                    type_args: t1,
+                    ..
+                },
+                Enum {
+                    name: n2,
+                    type_args: t2,
+                    ..
+                },
+            ) => n1 == n2 && t1 == t2,
+            (List { elem: a }, List { elem: b }) => a == b,
+            (Array { elem: e1, len: l1 }, Array { elem: e2, len: l2 }) => e1 == e2 && l1 == l2,
+            (Map { key: k1, value: v1 }, Map { key: k2, value: v2 }) => k1 == k2 && v1 == v2,
+            (Slice { elem: a }, Slice { elem: b }) => a == b,
+            (Extern { name: n1, .. }, Extern { name: n2, .. }) => n1 == n2,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Type {}
+
+impl Hash for Type {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Type::Func { params, ret } => {
+                params.hash(state);
+                ret.hash(state);
+            }
+            Type::Var(id) => id.hash(state),
+            Type::UnresolvedName(ident) => ident.hash(state),
+            Type::Tuple(elems) => elems.hash(state),
+            Type::NamedTuple(fields) => fields.hash(state),
+            Type::Struct {
+                name, type_args, ..
+            }
+            | Type::DataRef {
+                name, type_args, ..
+            }
+            | Type::Enum {
+                name, type_args, ..
+            } => {
+                name.hash(state);
+                type_args.hash(state);
+            }
+            Type::List { elem } | Type::Slice { elem } => elem.hash(state),
+            Type::Array { elem, len } => {
+                elem.hash(state);
+                len.hash(state);
+            }
+            Type::Map { key, value } => {
+                key.hash(state);
+                value.hash(state);
+            }
+            Type::Extern { name, .. } => name.hash(state),
+            _ => {}
+        }
+    }
 }
 
 impl Type {
@@ -300,7 +440,9 @@ impl Type {
 
     pub fn is_option_with_infer(&self) -> bool {
         match self {
-            Type::Enum { name, type_args } if name.0.as_ref() == OPTION_ENUM_NAME => {
+            Type::Enum {
+                name, type_args, ..
+            } if name.0.as_ref() == OPTION_ENUM_NAME => {
                 type_args.first().is_some_and(Type::is_infer)
             }
             _ => false,
@@ -309,9 +451,9 @@ impl Type {
 
     pub fn option_inner(&self) -> Option<&Type> {
         match self {
-            Type::Enum { name, type_args } if name.0.as_ref() == OPTION_ENUM_NAME => {
-                type_args.first()
-            }
+            Type::Enum {
+                name, type_args, ..
+            } if name.0.as_ref() == OPTION_ENUM_NAME => type_args.first(),
             _ => None,
         }
     }
@@ -321,6 +463,7 @@ impl Type {
         Type::Enum {
             name,
             type_args: vec![inner],
+            origin: None,
         }
     }
 
@@ -350,16 +493,36 @@ impl Type {
 
     pub fn as_aggregate(&self) -> Option<AggregateTypeRef<'_>> {
         match self {
-            Type::Struct { name, type_args } => Some(AggregateTypeRef {
+            Type::Struct {
+                name,
+                type_args,
+                origin,
+            } => Some(AggregateTypeRef {
                 kind: AggregateKind::Struct,
                 name: *name,
                 type_args,
+                origin: origin.as_deref(),
             }),
-            Type::DataRef { name, type_args } => Some(AggregateTypeRef {
+            Type::DataRef {
+                name,
+                type_args,
+                origin,
+            } => Some(AggregateTypeRef {
                 kind: AggregateKind::DataRef,
                 name: *name,
                 type_args,
+                origin: origin.as_deref(),
             }),
+            _ => None,
+        }
+    }
+
+    pub fn origin(&self) -> Option<&[String]> {
+        match self {
+            Type::Struct { origin, .. }
+            | Type::DataRef { origin, .. }
+            | Type::Enum { origin, .. }
+            | Type::Extern { origin, .. } => origin.as_deref(),
             _ => None,
         }
     }
@@ -426,14 +589,15 @@ impl Type {
 
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Type::*;
         match self {
-            Type::Int => write!(f, "int"),
-            Type::Float => write!(f, "float"),
-            Type::Double => write!(f, "double"),
-            Type::Bool => write!(f, "bool"),
-            Type::String => write!(f, "string"),
-            Type::Void => write!(f, "void"),
-            Type::Func { params, ret } => write!(
+            Int => write!(f, "int"),
+            Float => write!(f, "float"),
+            Double => write!(f, "double"),
+            Bool => write!(f, "bool"),
+            String => write!(f, "string"),
+            Void => write!(f, "void"),
+            Func { params, ret } => write!(
                 f,
                 "fn({}) -> {}",
                 params
@@ -447,11 +611,11 @@ impl Display for Type {
                     .join(", "),
                 ret
             ),
-            Type::Infer => write!(f, "<infer>"),
-            Type::Any => write!(f, "any"),
-            Type::Var(id) => write!(f, "{id}"),
-            Type::UnresolvedName(ident) => write!(f, "{ident}"),
-            Type::Tuple(elements) => {
+            Infer => write!(f, "<infer>"),
+            Any => write!(f, "any"),
+            Var(id) => write!(f, "{id}"),
+            UnresolvedName(ident) => write!(f, "{ident}"),
+            Tuple(elements) => {
                 let parts = elements
                     .iter()
                     .map(ToString::to_string)
@@ -459,7 +623,7 @@ impl Display for Type {
                     .join(", ");
                 write!(f, "({parts})")
             }
-            Type::NamedTuple(fields) => {
+            NamedTuple(fields) => {
                 let parts = fields
                     .iter()
                     .map(|(name, ty)| format!("{name}: {ty}"))
@@ -467,7 +631,12 @@ impl Display for Type {
                     .join(", ");
                 write!(f, "({parts})")
             }
-            Type::Struct { name, type_args } | Type::DataRef { name, type_args } => {
+            Struct {
+                name, type_args, ..
+            }
+            | DataRef {
+                name, type_args, ..
+            } => {
                 if type_args.is_empty() {
                     write!(f, "{name}")
                 } else {
@@ -479,7 +648,9 @@ impl Display for Type {
                     write!(f, "{name}<{args}>")
                 }
             }
-            Type::Enum { name, type_args } => {
+            Enum {
+                name, type_args, ..
+            } => {
                 if name.0.as_ref() == OPTION_ENUM_NAME
                     && let Some(inner) = type_args.first()
                 {
@@ -497,16 +668,16 @@ impl Display for Type {
                     write!(f, "{name}<{args}>")
                 }
             }
-            Type::List { elem } => write!(f, "[{elem}]"),
-            Type::Array { elem, len } => match len {
+            List { elem } => write!(f, "[{elem}]"),
+            Array { elem, len } => match len {
                 ArrayLen::Fixed(n) => write!(f, "[{elem}; {n}]"),
                 ArrayLen::Infer => write!(f, "[{elem}; _]"),
                 ArrayLen::Named(ident) => write!(f, "[{elem}; {ident}]"),
                 ArrayLen::Param(id) => write!(f, "[{elem}; {id}]"),
             },
-            Type::Map { key, value } => write!(f, "[{key}: {value}]"),
-            Type::Slice { elem } => write!(f, "slice[{elem}]"),
-            Type::Extern { name } => write!(f, "{name}"),
+            Map { key, value } => write!(f, "[{key}: {value}]"),
+            Slice { elem } => write!(f, "slice[{elem}]"),
+            Extern { name, .. } => write!(f, "{name}"),
         }
     }
 }
@@ -541,10 +712,18 @@ impl AggregateKind {
         matches!(self, Self::DataRef)
     }
 
-    pub fn make_type(self, name: Ident, type_args: Vec<Type>) -> Type {
+    pub fn make_type(self, name: Ident, type_args: Vec<Type>, origin: Option<ModulePath>) -> Type {
         match self {
-            Self::Struct => Type::Struct { name, type_args },
-            Self::DataRef => Type::DataRef { name, type_args },
+            Self::Struct => Type::Struct {
+                name,
+                type_args,
+                origin,
+            },
+            Self::DataRef => Type::DataRef {
+                name,
+                type_args,
+                origin,
+            },
         }
     }
 }
@@ -553,6 +732,7 @@ pub struct AggregateTypeRef<'a> {
     pub kind: AggregateKind,
     pub name: Ident,
     pub type_args: &'a [Type],
+    pub origin: Option<&'a [String]>,
 }
 
 impl AggregateTypeRef<'_> {

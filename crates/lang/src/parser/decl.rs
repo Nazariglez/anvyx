@@ -277,7 +277,7 @@ fn extern_type_declaration<'src>(
         .map_with(|(name, body), e| {
             let s = e.span();
             let (members, has_init) = body.unwrap_or((vec![], false));
-            let self_type = ast::Type::Extern { name };
+            let self_type = ast::Type::Extern { name, origin: None };
             let empty_map = HashMap::new();
             let empty_const_map = HashMap::new();
             let resolved_members =
@@ -865,6 +865,7 @@ fn aggregate_declaration<'src>(
             let self_type = kind.make_type(
                 name,
                 type_params.iter().map(|tp| ast::Type::Var(tp.id)).collect(),
+                None,
             );
 
             let fields = raw_fields
@@ -1244,6 +1245,7 @@ pub(super) fn extend_declaration<'src>(
                     ast::Type::DataRef {
                         name,
                         type_args: vec![],
+                        origin: None,
                     },
                     gp,
                 )
@@ -1364,7 +1366,9 @@ fn resolve_type_params_with_self(
             ty.clone()
         }
 
-        Enum { name, type_args } => Enum {
+        Enum {
+            name, type_args, ..
+        } => Enum {
             name: *name,
             type_args: type_args
                 .iter()
@@ -1372,6 +1376,7 @@ fn resolve_type_params_with_self(
                     resolve_type_params_with_self(a, type_param_map, const_param_map, self_type)
                 })
                 .collect(),
+            origin: None,
         },
 
         Func { params, ret } => {
@@ -1424,7 +1429,9 @@ fn resolve_type_params_with_self(
             NamedTuple(resolved_fields)
         }
 
-        Struct { name, type_args } => {
+        Struct {
+            name, type_args, ..
+        } => {
             let resolved_args = type_args
                 .iter()
                 .map(|arg| {
@@ -1434,10 +1441,13 @@ fn resolve_type_params_with_self(
             Struct {
                 name: *name,
                 type_args: resolved_args,
+                origin: None,
             }
         }
 
-        DataRef { name, type_args } => {
+        DataRef {
+            name, type_args, ..
+        } => {
             let resolved_args = type_args
                 .iter()
                 .map(|arg| {
@@ -1447,6 +1457,7 @@ fn resolve_type_params_with_self(
             DataRef {
                 name: *name,
                 type_args: resolved_args,
+                origin: None,
             }
         }
 

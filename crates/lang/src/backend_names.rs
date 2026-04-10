@@ -17,13 +17,21 @@ pub fn encode_type(ty: &Type) -> String {
         Type::Infer => "Infer".to_string(),
         Type::Var(id) => format!("V{}", id.0),
         Type::UnresolvedName(ident) => ident.to_string(),
-        Type::Enum { name, type_args } if name.0.as_ref() == OPTION_ENUM_NAME => {
+        Type::Enum {
+            name, type_args, ..
+        } if name.0.as_ref() == OPTION_ENUM_NAME => {
             let inner = type_args.first().map_or("Infer".to_string(), encode_type);
             format!("Opt_{inner}")
         }
-        Type::Enum { name, type_args }
-        | Type::Struct { name, type_args }
-        | Type::DataRef { name, type_args } => encode_named_with_args(name.to_string(), type_args),
+        Type::Enum {
+            name, type_args, ..
+        }
+        | Type::Struct {
+            name, type_args, ..
+        }
+        | Type::DataRef {
+            name, type_args, ..
+        } => encode_named_with_args(name.to_string(), type_args),
         Type::Tuple(elems) => {
             let n = elems.len();
             let parts: Vec<_> = elems.iter().map(encode_type).collect();
@@ -49,7 +57,7 @@ pub fn encode_type(ty: &Type) -> String {
             format!("Map_{}_{}", encode_type(key), encode_type(value))
         }
         Type::Slice { elem } => format!("Slice_{}", encode_type(elem)),
-        Type::Extern { name } => format!("Ext_{name}"),
+        Type::Extern { name, .. } => format!("Ext_{name}"),
         Type::Func { .. } => "Fn".to_string(),
     }
 }
@@ -171,6 +179,7 @@ mod tests {
         let opt_int = Type::Enum {
             name: ident("Option"),
             type_args: vec![Type::Int],
+            origin: None,
         };
         assert_eq!(encode_type(&opt_int), "Opt_i64");
     }
@@ -181,6 +190,7 @@ mod tests {
         let opt = Type::Enum {
             name: ident("Option"),
             type_args: vec![inner],
+            origin: None,
         };
         assert_eq!(encode_type(&opt), "Opt_Tup2_i64_String");
     }
@@ -196,6 +206,7 @@ mod tests {
         let t = Type::Struct {
             name: ident("Pair"),
             type_args: vec![Type::Int],
+            origin: None,
         };
         assert_eq!(encode_type(&t), "Pair_i64");
     }
@@ -205,6 +216,7 @@ mod tests {
         let t = Type::Enum {
             name: ident("Color"),
             type_args: vec![],
+            origin: None,
         };
         assert_eq!(encode_type(&t), "Color");
     }
@@ -300,6 +312,7 @@ mod tests {
         let target = Type::Struct {
             name: ident("Vec2"),
             type_args: vec![],
+            origin: None,
         };
         let name = encode_cast_name("main", &target, &Type::Float);
         assert_eq!(name.to_string(), "__cast::main::Vec2::from_f32");
@@ -317,6 +330,7 @@ mod tests {
             Type::Enum {
                 name: ident("Option"),
                 type_args: vec![Type::Int],
+                origin: None,
             },
             Type::Tuple(vec![Type::Int, Type::String]),
             Type::List {

@@ -1,0 +1,6 @@
+// @helper
+
+pub struct Item {
+    value: int,
+    label: string,
+}

@@ -580,7 +580,7 @@ fn try_lower_extern_binary_op(
     };
 
     // try left dispatch, lhs is extern
-    let result = if let Type::Extern { name } = &lhs.ty {
+    let result = if let Type::Extern { name, .. } = &lhs.ty {
         let extern_def = ctx.shared.tcx.get_extern_type(*name);
         extern_def.and_then(|def| {
             def.operators
@@ -599,7 +599,7 @@ fn try_lower_extern_binary_op(
 
     // if left dispatch didn't match, try right dispatch, rhs is extern
     let result = result.or_else(|| {
-        if let Type::Extern { name } = &rhs.ty {
+        if let Type::Extern { name, .. } = &rhs.ty {
             let extern_def = ctx.shared.tcx.get_extern_type(*name);
             extern_def.and_then(|def| {
                 def.operators
@@ -651,7 +651,7 @@ fn try_lower_extern_unary_op(
     span: Span,
     ctx: &LowerCtx,
 ) -> Result<Option<hir::ExprKind>, LowerError> {
-    let Type::Extern { name } = &inner.ty else {
+    let Type::Extern { name, .. } = &inner.ty else {
         return Ok(None);
     };
 
@@ -1167,7 +1167,10 @@ fn lower_safe_call_expr(
                     ref_mask,
                 },
             )
-        } else if let Type::Extern { name: type_name } = &inner_ty {
+        } else if let Type::Extern {
+            name: type_name, ..
+        } = &inner_ty
+        {
             let qualified = Ident(Intern::new(format!("{type_name}::{method_name}")));
             let &extern_id = ctx.shared.externs.get(&qualified).ok_or_else(|| {
                 LowerError::UnsupportedExprKind {
@@ -2814,7 +2817,10 @@ fn try_lower_method_call(
             )));
         }
 
-        if let Type::Extern { name: type_name } = &target_ty {
+        if let Type::Extern {
+            name: type_name, ..
+        } = &target_ty
+        {
             let qualified = Ident(Intern::new(format!("{type_name}::{method_name}")));
             if let Some(&extern_id) = ctx.shared.externs.get(&qualified) {
                 let receiver = lower_expr(&field.node.target, ctx, fc, out)?;
@@ -3112,7 +3118,7 @@ fn lower_struct_literal_expr(
         ));
     }
 
-    if let Type::Extern { name } = &ty {
+    if let Type::Extern { name, .. } = &ty {
         let init_name = Ident(Intern::new(format!("{name}::__init__")));
         let extern_id =
             *ctx.shared
@@ -3315,7 +3321,7 @@ fn lower_field_expr(
                     },
                 ));
             }
-            Type::Extern { name } => {
+            Type::Extern { name, .. } => {
                 let qualified = Ident(Intern::new(format!("{name}::__get_{field_name}")));
                 let extern_id = *ctx.shared.externs.get(&qualified).ok_or_else(|| {
                     LowerError::UnsupportedExprKind {

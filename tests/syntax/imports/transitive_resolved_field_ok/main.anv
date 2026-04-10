@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+import facade { get_item };
+import beta;
+
+fn main() {
+    let item = get_item();
+    println(item.value);
+}

@@ -913,7 +913,7 @@ fn extern_type_flows_through_hir() {
     let ExprKind::CallExtern { .. } = &init.kind else {
         panic!("expected CallExtern, got {:?}", init.kind);
     };
-    let Type::Extern { name } = &init.ty else {
+    let Type::Extern { name, .. } = &init.ty else {
         panic!("expected Type::Extern, got {:?}", init.ty);
     };
     assert_eq!(name.to_string(), "Sprite");

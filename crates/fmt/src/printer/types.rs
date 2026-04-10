@@ -61,13 +61,20 @@ impl Printer<'_> {
                 }
                 self.write(")");
             }
-            ast::Type::Struct { name, type_args } | ast::Type::DataRef { name, type_args } => {
+            ast::Type::Struct {
+                name, type_args, ..
+            }
+            | ast::Type::DataRef {
+                name, type_args, ..
+            } => {
                 self.write_fmt(name);
                 if !type_args.is_empty() {
                     self.format_type_args(type_args);
                 }
             }
-            ast::Type::Enum { name, type_args } => {
+            ast::Type::Enum {
+                name, type_args, ..
+            } => {
                 if *name.0 == "Option" && type_args.len() == 1 {
                     self.format_type(&type_args[0]);
                     self.write("?");
@@ -113,7 +120,7 @@ impl Printer<'_> {
                 self.format_type(elem);
                 self.write("]");
             }
-            ast::Type::Extern { name } => self.write_fmt(name),
+            ast::Type::Extern { name, .. } => self.write_fmt(name),
         }
     }
 

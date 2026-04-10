@@ -517,7 +517,9 @@ impl Printer<'_> {
     }
 
     fn format_extend_type(&mut self, ty: &ast::Type) {
-        if let ast::Type::DataRef { name, type_args } = ty
+        if let ast::Type::DataRef {
+            name, type_args, ..
+        } = ty
             && type_args.is_empty()
         {
             self.write("dataref ");

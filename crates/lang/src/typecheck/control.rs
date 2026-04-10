@@ -516,7 +516,7 @@ fn check_match_enum(
 ) -> Type {
     let scrutinee = &match_node.node.scrutinee;
 
-    let enum_def = match type_checker.get_enum_deep(enum_name) {
+    let enum_def = match type_checker.get_enum_deep(enum_name, scrutinee_ty.origin()) {
         DeepLookup::Found(def) => def.clone(),
         DeepLookup::Ambiguous(first, second) => {
             errors.push(Diagnostic::new(

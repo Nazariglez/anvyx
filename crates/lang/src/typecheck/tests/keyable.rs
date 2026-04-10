@@ -132,6 +132,7 @@ fn test_map_enum_keyable_payload_ok() {
         key: Type::Enum {
             name: dummy_ident("Cell"),
             type_args: vec![],
+            origin: None,
         }
         .boxed(),
         value: Type::Int.boxed(),
@@ -163,6 +164,7 @@ fn test_map_enum_non_keyable_payload_err() {
         key: Type::Enum {
             name: dummy_ident("Wrapper"),
             type_args: vec![],
+            origin: None,
         }
         .boxed(),
         value: Type::Int.boxed(),
@@ -230,6 +232,7 @@ fn test_map_enum_list_payload_reason_note() {
         key: Type::Enum {
             name: dummy_ident("Wrapper"),
             type_args: vec![],
+            origin: None,
         }
         .boxed(),
         value: Type::Int.boxed(),

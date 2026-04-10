@@ -5,7 +5,7 @@ use super::{
     visit::{map_type_structure, type_any, walk_type_structure},
 };
 use crate::{
-    ast::{ArrayLen, Type},
+    ast::{ArrayLen, Type, merge_origin},
     span::Span,
 };
 
@@ -79,7 +79,7 @@ pub(super) fn is_assignable(from: &Type, to: &Type) -> bool {
         ) => is_assignable(elem_from, elem_to),
 
         // opaque extern types are only assignable to the exact same extern type
-        (Extern { name: ln }, Extern { name: rn }) => ln == rn,
+        (Extern { name: ln, .. }, Extern { name: rn, .. }) => ln == rn,
 
         // structural cases (List, Map, Func, Struct, DataRef, Enum, Tuple, NamedTuple)
         _ => walk_type_structure(from, to, &mut |f, t| is_assignable(f, t)),
@@ -143,9 +143,20 @@ pub(super) fn unify_types(
     }
 
     // extern types unify only if they have the same name
-    if let (Extern { name: ln }, Extern { name: rn }) = (left, right) {
+    if let (
+        Extern {
+            name: ln,
+            origin: lo,
+        },
+        Extern {
+            name: rn,
+            origin: ro,
+        },
+    ) = (left, right)
+    {
         if ln == rn {
-            return Some(Extern { name: *ln });
+            let origin = merge_origin(lo, ro);
+            return Some(Extern { name: *ln, origin });
         }
         errors.push(Diagnostic::new(
             span,

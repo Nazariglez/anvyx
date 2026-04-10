@@ -500,7 +500,7 @@ pub(super) fn lower_assign(
         ast::ExprKind::Field(field_access) => {
             let target_expr = &field_access.node.target;
             let target_ty = ctx.expr_type(target_expr.node.id, span)?;
-            if let Type::Extern { name } = &target_ty {
+            if let Type::Extern { name, .. } = &target_ty {
                 let field_name = field_access.node.field;
                 let setter_qualified = Ident(Intern::new(format!("{name}::__set_{field_name}")));
                 let setter_id = *ctx.shared.externs.get(&setter_qualified).ok_or_else(|| {

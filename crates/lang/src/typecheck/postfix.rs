@@ -223,7 +223,9 @@ fn named_type_parts(ty: &Type) -> (Ident, &[Type]) {
         return (agg.name, agg.type_args);
     }
     match ty {
-        Type::Enum { name, type_args } => (*name, type_args.as_slice()),
+        Type::Enum {
+            name, type_args, ..
+        } => (*name, type_args.as_slice()),
         _ => unreachable!("called named_type_parts on non-named type"),
     }
 }
@@ -260,7 +262,7 @@ fn match_type_pattern(
         | (Type::Void, Type::Void)
         | (Type::Any, Type::Any) => true,
 
-        (Type::Extern { name: n1 }, Type::Extern { name: n2 }) => n1 == n2,
+        (Type::Extern { name: n1, .. }, Type::Extern { name: n2, .. }) => n1 == n2,
 
         // match named types by name and type args only, since the concrete variant may not be resolved yet
         (r, p) if is_named_type(r) && is_named_type(p) => {
@@ -322,6 +324,7 @@ fn substitute_fresh(pattern: &Type, type_params: &[TypeParam]) -> Type {
     fold_type(pattern, &mut |ty| match ty {
         Type::UnresolvedName(name) if type_params.iter().any(|p| p.name == name) => Type::Extern {
             name: Ident(Intern::new(format!("__Fresh_{name}"))),
+            origin: None,
         },
         other => other,
     })
@@ -944,7 +947,7 @@ fn try_struct_method(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Option<MethodCallOutcome> {
-    let struct_def = match type_checker.get_struct_deep(struct_name) {
+    let struct_def = match type_checker.get_struct_deep(struct_name, detection_ty.origin()) {
         DeepLookup::Found(def) => def.clone(),
         DeepLookup::Ambiguous(first, second) => {
             errors.push(Diagnostic::new(
@@ -1037,7 +1040,7 @@ fn try_extern_method(
     type_checker: &mut TypeChecker,
     errors: &mut Vec<Diagnostic>,
 ) -> Option<MethodCallOutcome> {
-    let extern_def = match type_checker.get_extern_type_deep(extern_name) {
+    let extern_def = match type_checker.get_extern_type_deep(extern_name, detection_ty.origin()) {
         DeepLookup::Found(def) => def.clone(),
         DeepLookup::Ambiguous(first, second) => {
             errors.push(Diagnostic::new(
@@ -1369,7 +1372,7 @@ fn handle_method_call_if_applicable(
     }
 
     // extern type method dispatch
-    if let Type::Extern { name } = detection_ty
+    if let Type::Extern { name, .. } = detection_ty
         && let Some(outcome) = try_extern_method(
             *name,
             detection_ty,
@@ -1390,28 +1393,7 @@ fn handle_method_call_if_applicable(
     // check if the type is an unresolved name that may be an ambiguous transitive type
     if let Type::UnresolvedName(name) = detection_ty {
         let span = field_node.span;
-        let emit_ambiguous = |errors: &mut Vec<Diagnostic>, first: String, second: String| {
-            errors.push(Diagnostic::new(
-                span,
-                DiagnosticKind::AmbiguousType {
-                    name: *name,
-                    first_module: first,
-                    second_module: second,
-                },
-            ));
-        };
-        if let DeepLookup::Ambiguous(first, second) = type_checker.get_struct_deep(*name) {
-            emit_ambiguous(errors, first, second);
-            mark_remaining_ops_infer(chain, index, type_checker);
-            return Some(MethodCallOutcome::Abort);
-        }
-        if let DeepLookup::Ambiguous(first, second) = type_checker.get_enum_deep(*name) {
-            emit_ambiguous(errors, first, second);
-            mark_remaining_ops_infer(chain, index, type_checker);
-            return Some(MethodCallOutcome::Abort);
-        }
-        if let DeepLookup::Ambiguous(first, second) = type_checker.get_extern_type_deep(*name) {
-            emit_ambiguous(errors, first, second);
+        if type_checker.check_name_ambiguity(*name, span, errors) {
             mark_remaining_ops_infer(chain, index, type_checker);
             return Some(MethodCallOutcome::Abort);
         }
@@ -1839,10 +1821,7 @@ fn resolve_enum_unit_variant(
             } else {
                 enum_def.type_params.iter().map(|_| Type::Infer).collect()
             };
-            Type::Enum {
-                name: enum_name,
-                type_args,
-            }
+            enum_def.make_type(enum_name, type_args)
         }
         VariantKind::Tuple(_) | VariantKind::Struct(_) => {
             errors.push(Diagnostic::new(
@@ -2057,12 +2036,14 @@ mod tests {
         let opt_t = Type::Enum {
             name: ident("Option"),
             type_args: vec![unresolved("T")],
+            origin: None,
         };
         let opt_list_t = Type::Enum {
             name: ident("Option"),
             type_args: vec![Type::List {
                 elem: Box::new(unresolved("T")),
             }],
+            origin: None,
         };
         let params = vec![tp("T", 0)];
 

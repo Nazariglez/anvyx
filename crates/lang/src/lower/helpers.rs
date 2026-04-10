@@ -81,11 +81,16 @@ pub(super) fn register_extern_type_members(
     externs: &mut HashMap<Ident, hir::ExternId>,
     extern_decls: &mut Vec<hir::ExternDecl>,
 ) {
+    let self_ty = Type::Extern {
+        name: type_name,
+        origin: None,
+    };
+
     for (field_name, field_def) in &extern_def.fields {
         let getter_name = Ident(Intern::new(format!("{type_name}::__get_{field_name}")));
         register_extern_decl(
             getter_name,
-            vec![Type::Extern { name: type_name }],
+            vec![self_ty.clone()],
             field_def.ty.clone(),
             next_extern_id,
             externs,
@@ -95,7 +100,7 @@ pub(super) fn register_extern_type_members(
         let setter_name = Ident(Intern::new(format!("{type_name}::__set_{field_name}")));
         register_extern_decl(
             setter_name,
-            vec![Type::Extern { name: type_name }, field_def.ty.clone()],
+            vec![self_ty.clone(), field_def.ty.clone()],
             Type::Void,
             next_extern_id,
             externs,
@@ -105,7 +110,7 @@ pub(super) fn register_extern_type_members(
 
     for (method_name, method_def) in &extern_def.methods {
         let qualified = Ident(Intern::new(format!("{type_name}::{method_name}")));
-        let mut params = vec![Type::Extern { name: type_name }];
+        let mut params = vec![self_ty.clone()];
         params.extend(method_def.params.iter().map(|p| p.ty.clone()));
         register_extern_decl(
             qualified,
@@ -140,7 +145,7 @@ pub(super) fn register_extern_type_members(
         register_extern_decl(
             init_name,
             params,
-            Type::Extern { name: type_name },
+            self_ty.clone(),
             next_extern_id,
             externs,
             extern_decls,
@@ -151,9 +156,9 @@ pub(super) fn register_extern_type_members(
         let key =
             extern_binary_op_key(type_name, op_def.op, &op_def.other_ty, op_def.self_on_right);
         let params = if op_def.self_on_right {
-            vec![op_def.other_ty.clone(), Type::Extern { name: type_name }]
+            vec![op_def.other_ty.clone(), self_ty.clone()]
         } else {
-            vec![Type::Extern { name: type_name }, op_def.other_ty.clone()]
+            vec![self_ty.clone(), op_def.other_ty.clone()]
         };
         register_extern_decl(
             key,
@@ -169,7 +174,7 @@ pub(super) fn register_extern_type_members(
         let key = extern_unary_op_key(type_name, op_def.op);
         register_extern_decl(
             key,
-            vec![Type::Extern { name: type_name }],
+            vec![self_ty.clone()],
             op_def.ret.clone(),
             next_extern_id,
             externs,
@@ -258,30 +263,37 @@ pub(super) fn resolve_extend_ty(ty: &Type, ctx: &SharedCtx) -> Option<Type> {
                     .tcx
                     .aggregate_kind(*name)
                     .unwrap_or(ast::AggregateKind::Struct);
-                Some(kind.make_type(*name, vec![]))
+                Some(kind.make_type(*name, vec![], None))
             } else if ctx.enum_type_ids.contains_key(name) {
                 Some(Type::Enum {
                     name: *name,
                     type_args: vec![],
+                    origin: None,
                 })
             } else if ctx.tcx.get_extern_type(*name).is_some() {
-                Some(Type::Extern { name: *name })
+                Some(Type::Extern {
+                    name: *name,
+                    origin: None,
+                })
             } else {
                 None
             }
         }
-        Type::Struct { name, type_args } if !type_args.is_empty() => {
+        Type::Struct {
+            name, type_args, ..
+        } if !type_args.is_empty() => {
             if ctx.enum_type_ids.contains_key(name) {
                 Some(Type::Enum {
                     name: *name,
                     type_args: type_args.clone(),
+                    origin: None,
                 })
             } else {
                 let kind = ctx
                     .tcx
                     .aggregate_kind(*name)
                     .unwrap_or(ast::AggregateKind::Struct);
-                Some(kind.make_type(*name, type_args.clone()))
+                Some(kind.make_type(*name, type_args.clone(), None))
             }
         }
         other => Some(other.clone()),

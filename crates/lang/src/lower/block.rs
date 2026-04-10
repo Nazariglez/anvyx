@@ -184,7 +184,10 @@ fn lower_stmt(
                                 },
                             });
                         }
-                    } else if let Type::Extern { name: extern_name } = &rhs_ty {
+                    } else if let Type::Extern {
+                        name: extern_name, ..
+                    } = &rhs_ty
+                    {
                         for (field_name, subpat) in fields {
                             let Pattern::Ident(binding_name) = &subpat.node else {
                                 return Err(LowerError::UnsupportedPattern { span: subpat.span });

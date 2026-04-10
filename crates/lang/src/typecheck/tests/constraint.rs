@@ -181,6 +181,7 @@ fn test_constrain_struct_passthrough_ok() {
     let point_ty = Type::Struct {
         name: dummy_ident("Point"),
         type_args: vec![],
+        origin: None,
     };
     let point_decl = struct_decl("Point", vec![("x", Type::Int), ("y", Type::Int)], vec![]);
     let make_point = fn_decl(
@@ -219,6 +220,7 @@ fn test_constrain_generic_struct_name_mismatch_errors() {
         Type::Struct {
             name: dummy_ident("Foo"),
             type_args: vec![],
+            origin: None,
         },
         vec![return_stmt(Some(struct_literal_expr(
             "Foo",
@@ -232,6 +234,7 @@ fn test_constrain_generic_struct_name_mismatch_errors() {
         Some(Type::Struct {
             name: dummy_ident("Bar"),
             type_args: vec![],
+            origin: None,
         }),
         call,
     );
@@ -641,6 +644,7 @@ fn test_generic_method_returns_struct_instantiation() {
     let container_of_u = Type::Struct {
         name: dummy_ident("Container"),
         type_args: vec![Type::Var(method_u_id)],
+        origin: None,
     };
     let gm = generic_method(
         "wrap",
@@ -677,6 +681,7 @@ fn test_generic_method_returns_struct_instantiation() {
     let expected = Type::Struct {
         name: dummy_ident("Container"),
         type_args: vec![Type::String],
+        origin: None,
     };
     assert_expr_type(&tcx, call_id, expected);
 }
@@ -863,6 +868,7 @@ fn test_constrain_generic_struct_type_arg_inferred_from_annotation() {
     let wrapper_int = Type::Struct {
         name: dummy_ident("Wrapper"),
         type_args: vec![Type::Int],
+        origin: None,
     };
     let make_fn = fn_decl(
         "make",
@@ -904,6 +910,7 @@ fn test_constrain_generic_struct_type_arg_mismatch_errors() {
         Type::Struct {
             name: dummy_ident("Wrapper"),
             type_args: vec![Type::Int],
+            origin: None,
         },
         vec![return_stmt(Some(struct_literal_expr(
             "Wrapper",
@@ -917,6 +924,7 @@ fn test_constrain_generic_struct_type_arg_mismatch_errors() {
         Some(Type::Struct {
             name: dummy_ident("Wrapper"),
             type_args: vec![Type::String],
+            origin: None,
         }),
         call,
     );
@@ -966,6 +974,7 @@ fn test_constrain_generic_enum_type_arg_assignable() {
     let box_int = Type::Enum {
         name: dummy_ident("Box"),
         type_args: vec![Type::Int],
+        origin: None,
     };
     let inner_binding = let_binding("b", Some(box_int.clone()), ident_expr("x"));
     let use_box_fn = fn_decl(
@@ -1014,10 +1023,12 @@ fn test_constrain_generic_enum_type_arg_mismatch_errors() {
     let box_int = Type::Enum {
         name: dummy_ident("Box"),
         type_args: vec![Type::Int],
+        origin: None,
     };
     let box_string = Type::Enum {
         name: dummy_ident("Box"),
         type_args: vec![Type::String],
+        origin: None,
     };
     let inner_binding = let_binding("b", Some(box_string), ident_expr("x"));
     let use_box_fn = fn_decl(

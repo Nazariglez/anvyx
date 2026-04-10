@@ -421,7 +421,8 @@ fn extern_type_self_in_return_resolves() {
     assert_eq!(
         *ret,
         Type::Extern {
-            name: ast::Ident(internment::Intern::new("Point".to_string()))
+            name: ast::Ident(internment::Intern::new("Point".to_string())),
+            origin: None,
         }
     );
 }

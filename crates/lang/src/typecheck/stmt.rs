@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    rc::Rc,
     sync::LazyLock,
 };
 
@@ -32,7 +33,8 @@ use crate::{
     ast::{
         AggregateKind, ArrayLen, BlockNode, ConstDeclNode, ConstParam, DeferBody, ExprId, ExprKind,
         ExprNode, ExternFunc, ExternTypeMember, Func, FuncNode, FuncParam, Ident, ImportKind,
-        Mutability, Param, ReturnNode, Stmt, StmtNode, Type, TypeParam, VariantKind, Visibility,
+        ModulePath, Mutability, Param, ReturnNode, Stmt, StmtNode, Type, TypeParam, VariantKind,
+        Visibility,
     },
     backend_names,
     span::Span,
@@ -270,6 +272,7 @@ fn extract_decl(stmt: &StmtNode, resolve: &impl Fn(&Type) -> Type) -> Option<Dec
 }
 
 fn apply_decl_to_scope(decl: DeclInfo, type_checker: &mut TypeChecker) {
+    let origin: Option<ModulePath> = type_checker.ctx.module_path.as_deref().map(Rc::from);
     match decl {
         DeclInfo::Func {
             name,
@@ -323,15 +326,16 @@ fn apply_decl_to_scope(decl: DeclInfo, type_checker: &mut TypeChecker) {
             type_checker.set_func_var(name, func_ty);
             type_checker.func_param_info.insert(name, param_info);
         }
-        DeclInfo::ExternType { name, def } => {
+        DeclInfo::ExternType { name, mut def } => {
+            def.defining_module.clone_from(&origin);
             type_checker.ctx.extern_type_defs.insert(name, def);
         }
         DeclInfo::Aggregate { name, mut def, .. } => {
-            def.defining_module
-                .clone_from(&type_checker.ctx.module_path);
+            def.defining_module.clone_from(&origin);
             type_checker.ctx.struct_defs.insert(name, def);
         }
-        DeclInfo::Enum { name, def, .. } => {
+        DeclInfo::Enum { name, mut def, .. } => {
+            def.defining_module.clone_from(&origin);
             type_checker.ctx.enum_defs.insert(name, def);
         }
         DeclInfo::Const { .. } => {}
@@ -343,6 +347,7 @@ fn apply_decl_to_summary(
     module_def: &mut ModuleDef,
     defining_module: &[String],
 ) -> Option<Ident> {
+    let origin: Option<ModulePath> = Some(Rc::from(defining_module));
     match decl {
         DeclInfo::Func {
             name,
@@ -388,8 +393,9 @@ fn apply_decl_to_summary(
             module_def.func_param_info.insert(name, param_info);
             None
         }
-        DeclInfo::ExternType { name, def } => {
+        DeclInfo::ExternType { name, mut def } => {
             module_def.all_names.insert(name);
+            def.defining_module.clone_from(&origin);
             module_def.extern_types.insert(name, def);
             None
         }
@@ -402,19 +408,20 @@ fn apply_decl_to_summary(
             if visibility != Visibility::Public {
                 return None;
             }
-            def.defining_module = Some(defining_module.to_vec());
+            def.defining_module.clone_from(&origin);
             module_def.struct_defs.insert(name, def);
             Some(name)
         }
         DeclInfo::Enum {
             name,
             visibility,
-            def,
+            mut def,
         } => {
             module_def.all_names.insert(name);
             if visibility != Visibility::Public {
                 return None;
             }
+            def.defining_module.clone_from(&origin);
             module_def.enum_defs.insert(name, def);
             Some(name)
         }
@@ -695,6 +702,7 @@ fn build_extern_type_def(
     }
 
     ExternTypeDef {
+        defining_module: None,
         has_init,
         field_order,
         fields,
@@ -749,6 +757,7 @@ pub(super) fn collect_scope_types(
             type_checker.ctx.extern_type_defs.insert(
                 node.node.name,
                 ExternTypeDef {
+                    defining_module: None,
                     has_init: false,
                     field_order: vec![],
                     fields: HashMap::new(),
@@ -1004,6 +1013,60 @@ pub(super) fn collect_scope_types(
     }
 }
 
+fn collect_pre_imported_types(
+    stmts: &[StmtNode],
+    resolved_module_defs: &HashMap<Vec<String>, ModuleDef>,
+) -> (
+    HashMap<Ident, StructDef>,
+    HashMap<Ident, EnumDef>,
+    HashMap<Ident, ExternTypeDef>,
+) {
+    let mut structs: HashMap<Ident, StructDef> = HashMap::new();
+    let mut enums: HashMap<Ident, EnumDef> = HashMap::new();
+    let mut extern_types: HashMap<Ident, ExternTypeDef> = HashMap::new();
+
+    for stmt in stmts {
+        let Stmt::Import(node) = &stmt.node else {
+            continue;
+        };
+        let import = &node.node;
+        let path_key: Vec<String> = import.path.iter().map(ToString::to_string).collect();
+        let Some(source_def) = resolved_module_defs.get(&path_key) else {
+            continue;
+        };
+        match &import.kind {
+            ImportKind::Selective(items) => {
+                for item in items {
+                    let bind_as = item.alias.unwrap_or(item.name);
+                    if let Some(def) = source_def.struct_defs.get(&item.name) {
+                        structs.entry(bind_as).or_insert_with(|| def.clone());
+                    }
+                    if let Some(def) = source_def.enum_defs.get(&item.name) {
+                        enums.entry(bind_as).or_insert_with(|| def.clone());
+                    }
+                    if let Some(def) = source_def.extern_types.get(&item.name) {
+                        extern_types.entry(bind_as).or_insert_with(|| def.clone());
+                    }
+                }
+            }
+            ImportKind::Wildcard => {
+                for (name, def) in &source_def.struct_defs {
+                    structs.entry(*name).or_insert_with(|| def.clone());
+                }
+                for (name, def) in &source_def.enum_defs {
+                    enums.entry(*name).or_insert_with(|| def.clone());
+                }
+                for (name, def) in &source_def.extern_types {
+                    extern_types.entry(*name).or_insert_with(|| def.clone());
+                }
+            }
+            ImportKind::Module | ImportKind::ModuleAs(_) => {}
+        }
+    }
+
+    (structs, enums, extern_types)
+}
+
 pub(super) fn build_module_def_with_reexports(
     stmts: &[StmtNode],
     type_checker: &TypeChecker,
@@ -1022,10 +1085,16 @@ pub(super) fn build_module_def_with_reexports(
         }
     }
 
+    let (pre_imported_structs, pre_imported_enums, pre_imported_extern_types) =
+        collect_pre_imported_types(stmts, &type_checker.resolved_module_defs);
+
     let resolve = |ty: &Type| -> Type {
         fn pre_resolve(ty: &Type, local: &HashSet<Ident>) -> Type {
             match ty {
-                Type::UnresolvedName(name) if local.contains(name) => Type::Extern { name: *name },
+                Type::UnresolvedName(name) if local.contains(name) => Type::Extern {
+                    name: *name,
+                    origin: None,
+                },
                 Type::Func { params, ret } => Type::Func {
                     params: params
                         .iter()
@@ -1037,6 +1106,17 @@ pub(super) fn build_module_def_with_reexports(
             }
         }
         let pre = pre_resolve(ty, &local_extern_types);
+        if let Type::UnresolvedName(name) = &pre {
+            if let Some(def) = pre_imported_structs.get(name) {
+                return def.make_type(*name, vec![]);
+            }
+            if let Some(def) = pre_imported_enums.get(name) {
+                return def.make_type(*name, vec![]);
+            }
+            if let Some(def) = pre_imported_extern_types.get(name) {
+                return def.make_type(*name);
+            }
+        }
         type_checker.resolve_type_with_module_fallback(&pre)
     };
 
@@ -1153,13 +1233,15 @@ pub(super) fn build_module_def_with_reexports(
                             Type::Enum {
                                 name: *name,
                                 type_args,
+                                origin: None,
                             }
                         } else if let Some(def) = type_checker.get_struct(*name) {
-                            def.kind.make_type(*name, type_args)
+                            def.kind.make_type(*name, type_args, None)
                         } else {
                             Type::Struct {
                                 name: *name,
                                 type_args,
+                                origin: None,
                             }
                         }
                     } else {
@@ -1417,7 +1499,7 @@ pub(super) fn extend_base_key(ty: &Type) -> Option<Ident> {
         return Some(agg.name);
     }
     match ty {
-        Type::Enum { name, .. } | Type::Extern { name } => Some(*name),
+        Type::Enum { name, .. } | Type::Extern { name, .. } => Some(*name),
         Type::List { .. } => Some(*IDENT_LIST),
         Type::Map { .. } => Some(*IDENT_MAP),
         Type::Tuple(_) => Some(*IDENT_TUPLE),
@@ -1564,7 +1646,7 @@ fn check_extend_decl(
             type_checker
                 .get_struct(agg.name)
                 .is_some_and(|def| def.methods.contains_key(&method.node.name))
-        } else if let Type::Extern { name } = &resolved_ty {
+        } else if let Type::Extern { name, .. } = &resolved_ty {
             type_checker
                 .get_extern_type(*name)
                 .is_some_and(|def| def.methods.contains_key(&method.node.name))
@@ -1740,8 +1822,12 @@ fn resolve_generic_extend_named_type(
         return None;
     }
     Some(match agg_kind {
-        None => Type::Enum { name, type_args },
-        Some(kind) => kind.make_type(name, type_args),
+        None => Type::Enum {
+            name,
+            type_args,
+            origin: None,
+        },
+        Some(kind) => kind.make_type(name, type_args, None),
     })
 }
 

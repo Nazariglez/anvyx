@@ -1,4 +1,4 @@
-use crate::ast::{FuncParam, Ident, Type};
+use crate::ast::{FuncParam, Ident, Type, merge_origin};
 
 fn walk_type_pairs<F>(left: &[Type], right: &[Type], relate: &mut F) -> bool
 where
@@ -106,30 +106,36 @@ where
             Type::Struct {
                 name: left_name,
                 type_args: left_args,
+                ..
             },
             Type::Struct {
                 name: right_name,
                 type_args: right_args,
+                ..
             },
         )
         | (
             Type::DataRef {
                 name: left_name,
                 type_args: left_args,
+                ..
             },
             Type::DataRef {
                 name: right_name,
                 type_args: right_args,
+                ..
             },
         )
         | (
             Type::Enum {
                 name: left_name,
                 type_args: left_args,
+                ..
             },
             Type::Enum {
                 name: right_name,
                 type_args: right_args,
+                ..
             },
         ) => walk_named_type_args(*left_name, left_args, *right_name, right_args, relate),
         (Type::Tuple(left_elems), Type::Tuple(right_elems)) => {
@@ -203,62 +209,80 @@ where
             Type::Struct {
                 name: left_name,
                 type_args: left_args,
+                origin: lo,
             },
             Type::Struct {
                 name: right_name,
                 type_args: right_args,
+                origin: ro,
             },
-        ) => map_named_type_args(
-            *left_name,
-            left_args,
-            *right_name,
-            right_args,
-            map,
-            |n, a| Type::Struct {
-                name: n,
-                type_args: a,
-            },
-        ),
+        ) => {
+            let origin = merge_origin(lo, ro);
+            map_named_type_args(
+                *left_name,
+                left_args,
+                *right_name,
+                right_args,
+                map,
+                move |n, a| Type::Struct {
+                    name: n,
+                    type_args: a,
+                    origin: origin.clone(),
+                },
+            )
+        }
         (
             Type::DataRef {
                 name: left_name,
                 type_args: left_args,
+                origin: lo,
             },
             Type::DataRef {
                 name: right_name,
                 type_args: right_args,
+                origin: ro,
             },
-        ) => map_named_type_args(
-            *left_name,
-            left_args,
-            *right_name,
-            right_args,
-            map,
-            |n, a| Type::DataRef {
-                name: n,
-                type_args: a,
-            },
-        ),
+        ) => {
+            let origin = merge_origin(lo, ro);
+            map_named_type_args(
+                *left_name,
+                left_args,
+                *right_name,
+                right_args,
+                map,
+                move |n, a| Type::DataRef {
+                    name: n,
+                    type_args: a,
+                    origin: origin.clone(),
+                },
+            )
+        }
         (
             Type::Enum {
                 name: left_name,
                 type_args: left_args,
+                origin: lo,
             },
             Type::Enum {
                 name: right_name,
                 type_args: right_args,
+                origin: ro,
             },
-        ) => map_named_type_args(
-            *left_name,
-            left_args,
-            *right_name,
-            right_args,
-            map,
-            |n, a| Type::Enum {
-                name: n,
-                type_args: a,
-            },
-        ),
+        ) => {
+            let origin = merge_origin(lo, ro);
+            map_named_type_args(
+                *left_name,
+                left_args,
+                *right_name,
+                right_args,
+                map,
+                move |n, a| Type::Enum {
+                    name: n,
+                    type_args: a,
+                    origin: origin.clone(),
+                },
+            )
+        }
         (Type::Tuple(left_elems), Type::Tuple(right_elems))
             if left_elems.len() == right_elems.len() =>
         {
@@ -300,17 +324,32 @@ pub fn fold_type(ty: &Type, f: &mut impl FnMut(Type) -> Type) -> Type {
         Type::NamedTuple(fields) => {
             Type::NamedTuple(fields.iter().map(|(n, t)| (*n, fold_type(t, f))).collect())
         }
-        Type::Struct { name, type_args } => Type::Struct {
+        Type::Struct {
+            name,
+            type_args,
+            origin,
+        } => Type::Struct {
             name: *name,
             type_args: type_args.iter().map(|a| fold_type(a, f)).collect(),
+            origin: origin.clone(),
         },
-        Type::DataRef { name, type_args } => Type::DataRef {
+        Type::DataRef {
+            name,
+            type_args,
+            origin,
+        } => Type::DataRef {
             name: *name,
             type_args: type_args.iter().map(|a| fold_type(a, f)).collect(),
+            origin: origin.clone(),
         },
-        Type::Enum { name, type_args } => Type::Enum {
+        Type::Enum {
+            name,
+            type_args,
+            origin,
+        } => Type::Enum {
             name: *name,
             type_args: type_args.iter().map(|a| fold_type(a, f)).collect(),
+            origin: origin.clone(),
         },
         Type::List { elem } => Type::List {
             elem: Box::new(fold_type(elem, f)),
@@ -421,6 +460,7 @@ mod tests {
             type_args: vec![Type::List {
                 elem: Box::new(var(1)),
             }],
+            origin: None,
         };
         let result = fold_type(&ty, &mut |t| match t {
             Type::Var(TypeVarId(1)) => Type::String,
@@ -433,6 +473,7 @@ mod tests {
                 type_args: vec![Type::List {
                     elem: Box::new(Type::String),
                 }],
+                origin: None,
             }
         );
     }
@@ -577,14 +618,17 @@ mod tests {
         let left_name = Type::Struct {
             name: ident("Foo"),
             type_args: vec![Type::Int],
+            origin: None,
         };
         let right_name = Type::Struct {
             name: ident("Bar"),
             type_args: vec![Type::Int],
+            origin: None,
         };
         let right_arity = Type::Struct {
             name: ident("Foo"),
             type_args: vec![Type::Int, Type::Bool],
+            origin: None,
         };
 
         assert!(!walk_type_structure(
@@ -628,8 +672,14 @@ mod tests {
     #[test]
     fn walk_type_structure_returns_false_for_leaf_types() {
         assert!(!walk_type_structure(
-            &Type::Extern { name: ident("Foo") },
-            &Type::Extern { name: ident("Foo") },
+            &Type::Extern {
+                name: ident("Foo"),
+                origin: None
+            },
+            &Type::Extern {
+                name: ident("Foo"),
+                origin: None
+            },
             &mut |_, _| true
         ));
         assert!(!walk_type_structure(&Type::Int, &Type::Int, &mut |_, _| {
@@ -740,10 +790,12 @@ mod tests {
         let left = Type::Struct {
             name: ident("Foo"),
             type_args: vec![Type::Int],
+            origin: None,
         };
         let right = Type::Struct {
             name: ident("Bar"),
             type_args: vec![Type::Int],
+            origin: None,
         };
 
         assert_eq!(
@@ -759,10 +811,12 @@ mod tests {
         let left = Type::Struct {
             name: ident("Box"),
             type_args: vec![Type::Int],
+            origin: None,
         };
         let right = Type::Struct {
             name: ident("Box"),
             type_args: vec![Type::Bool],
+            origin: None,
         };
 
         let result = map_type_structure(&left, &right, &mut |_, _| Some(Type::String));
@@ -771,7 +825,8 @@ mod tests {
             result,
             Some(Type::Struct {
                 name: ident("Box"),
-                type_args: vec![Type::String]
+                type_args: vec![Type::String],
+                origin: None,
             })
         );
     }
@@ -805,8 +860,14 @@ mod tests {
         );
         assert_eq!(
             map_type_structure(
-                &Type::Extern { name: ident("Foo") },
-                &Type::Extern { name: ident("Foo") },
+                &Type::Extern {
+                    name: ident("Foo"),
+                    origin: None
+                },
+                &Type::Extern {
+                    name: ident("Foo"),
+                    origin: None
+                },
                 &mut |_, _| Some(Type::Void),
             ),
             None
@@ -852,6 +913,7 @@ mod tests {
         let ty = Type::Enum {
             name: ident("Option"),
             type_args: vec![Type::Infer],
+            origin: None,
         };
         assert!(type_any(&ty, &mut |t| matches!(t, Type::Infer)));
     }

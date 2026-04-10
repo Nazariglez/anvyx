@@ -1,0 +1,7 @@
+// @helper
+
+import alpha { Item };
+
+pub fn get_item() -> Item {
+    Item { value: 42, label: "test" }
+}

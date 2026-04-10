@@ -47,7 +47,7 @@ fn type_ident_inner<'src>(allow_slice: bool) -> BoxedParser<'src, Type> {
         let type_name_ref = identifier()
             .then(type_args.or_not())
             .map(|(name, args)| match args {
-                Some(type_args) => Type::Struct { name, type_args },
+                Some(type_args) => Type::Struct { name, type_args, origin: None },
                 None => Type::UnresolvedName(name),
             });
 

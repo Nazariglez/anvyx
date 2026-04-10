@@ -68,7 +68,9 @@ enum IterableKind {
 
 fn classify_iterable(ty: &Type) -> Option<IterableKind> {
     match ty {
-        Type::Struct { name, type_args } => {
+        Type::Struct {
+            name, type_args, ..
+        } => {
             let name_str = name.0.as_ref();
             let is_range =
                 name_str == "Range" || name_str == "RangeInclusive" || name_str == "RangeFrom";

@@ -750,7 +750,7 @@ fn validate_type(ty: &Type, fn_name: &str, errors: &mut Vec<String>) {
                 validate_type(e, fn_name, errors);
             }
         }
-        Type::Struct { name, .. } | Type::DataRef { name, .. } | Type::Extern { name } => {
+        Type::Struct { name, .. } | Type::DataRef { name, .. } | Type::Extern { name, .. } => {
             errors.push(format!(
                 "Rust backend: unsupported type `{name}` in function `{fn_name}`"
             ));
