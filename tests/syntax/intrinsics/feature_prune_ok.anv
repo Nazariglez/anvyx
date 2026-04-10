@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    if #feature(nonexistent) {
+        let x: int = "type error pruned away";
+    }
+}

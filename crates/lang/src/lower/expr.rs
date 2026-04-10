@@ -551,6 +551,10 @@ pub(super) fn lower_expr(
             return lower_inferred_enum(node, ty, span, ctx, fc, out);
         }
 
+        ast::ExprKind::IntrinsicCall(_) => {
+            unreachable!("IntrinsicCall should have been resolved before lowering")
+        }
+
         other @ ast::ExprKind::Assign(_) => {
             return Err(LowerError::UnsupportedExprKind {
                 span,

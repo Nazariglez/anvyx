@@ -10,6 +10,8 @@ pub struct Directives {
     pub skip: Option<String>,
     pub helper: bool,
     pub lint: Vec<String>,
+    pub feature: Vec<String>,
+    pub cfg: Vec<String>,
 }
 
 impl Directives {
@@ -76,6 +78,12 @@ impl Directives {
             }
             if let Some(ln) = trimmed.strip_prefix("// @lint:") {
                 directives.lint.push(ln.trim().to_string());
+            }
+            if let Some(ln) = trimmed.strip_prefix("// @feature:") {
+                directives.feature.push(ln.trim().to_string());
+            }
+            if let Some(ln) = trimmed.strip_prefix("// @cfg:") {
+                directives.cfg.push(ln.trim().to_string());
             }
         }
 

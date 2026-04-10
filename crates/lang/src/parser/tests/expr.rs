@@ -640,3 +640,26 @@ fn cast_chained() {
     expect_ident(inner_inner, "x");
     assert_eq!(*inner_target, ast::Type::Float);
 }
+
+#[test]
+fn intrinsic_call_basic() {
+    let expr = parse_expr("#profile(debug)");
+    let args = expect_intrinsic_call(&expr, "profile");
+    assert_eq!(args.len(), 1);
+    expect_ident(&args[0], "debug");
+}
+
+#[test]
+fn intrinsic_call_no_args() {
+    let expr = parse_expr("#file()");
+    let args = expect_intrinsic_call(&expr, "file");
+    assert!(args.is_empty());
+}
+
+#[test]
+fn intrinsic_call_unknown_parses() {
+    // Parser does not validate names — unknown intrinsics parse fine
+    let expr = parse_expr("#unknown(x)");
+    let args = expect_intrinsic_call(&expr, "unknown");
+    assert_eq!(args.len(), 1);
+}

@@ -1,0 +1,9 @@
+// @mode: check
+// @expect: success
+// @cfg: os=wasm
+
+fn main() {
+    if #os(macos) {
+        let x: int = "not an int";
+    }
+}

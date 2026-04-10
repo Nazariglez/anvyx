@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: unknown intrinsic
+
+fn main() {
+    let x = #foo(bar);
+}

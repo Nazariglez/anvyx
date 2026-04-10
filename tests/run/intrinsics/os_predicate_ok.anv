@@ -1,0 +1,8 @@
+// @mode: run
+// @expect: success
+// @contains: true
+
+fn main() {
+    let detected = #os(macos) || #os(linux) || #os(windows);
+    println(detected);
+}

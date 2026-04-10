@@ -94,6 +94,9 @@ pub(super) fn check_expr(
         ExprKind::Field(_) | ExprKind::Index(_) | ExprKind::Call(_) => {
             unreachable!("postfix expressions should be routed through check_postfix_chain")
         }
+        ExprKind::IntrinsicCall(_) => {
+            unreachable!("IntrinsicCall should have been resolved before typechecking")
+        }
     };
 
     type_checker.set_type(expr_node.node.id, ty.clone(), expr_node.span);

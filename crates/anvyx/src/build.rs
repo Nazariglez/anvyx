@@ -80,6 +80,8 @@ pub fn execute_runner(
     backend: &str,
     release: bool,
     lint_config: LintConfig,
+    features: &[String],
+    cfgs: &[String],
 ) -> Result<(), String> {
     let binary = runner_binary_path(project_root);
     if !binary.exists() {
@@ -96,6 +98,12 @@ pub fn execute_runner(
     if lint_config.internal_access != anvyx_lang::LintLevel::Warn {
         cmd.arg("--lint")
             .arg(format!("internal_access={}", lint_config.internal_access));
+    }
+    for feat in features {
+        cmd.args(["--feature", feat]);
+    }
+    for cfg_val in cfgs {
+        cmd.args(["--cfg", cfg_val]);
     }
     let status = cmd
         .status()
@@ -687,6 +695,8 @@ mod tests {
             "vm",
             false,
             LintConfig::default(),
+            &[],
+            &[],
         );
 
         assert!(result.is_err());

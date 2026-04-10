@@ -1,0 +1,8 @@
+// @mode: run
+// @expect: success
+// @feature: ecs
+// @match: true
+
+fn main() {
+    println(#feature(ecs));
+}

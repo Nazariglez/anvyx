@@ -27,7 +27,9 @@ fn main() {
 %EXTERN_EXTENDS%
 %RUNTIME_INIT%
     let rust_config = anvyx_lang::RustBackendConfig { profile: %PROFILE% };
-    match anvyx_lang::run_program_with_std(&source, &file_path, backend, externs, &extern_metadata, &std_sources, &core, &rust_config, anvyx_lang::LintConfig::default()) {
+    let compilation_ctx = anvyx_lang::CompilationContext::from_host(%PROFILE%);
+    let options = anvyx_lang::CompileOptions { lint: anvyx_lang::LintConfig::default(), compilation_ctx: &compilation_ctx };
+    match anvyx_lang::run_program_with_std(&source, &file_path, backend, externs, &extern_metadata, &std_sources, &core, &rust_config, options) {
         Ok(output) => print!("{output}"),
         Err(e) => { eprintln!("{e}"); std::process::exit(1); }
     }

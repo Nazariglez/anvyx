@@ -197,6 +197,13 @@ impl Printer<'_> {
 
             ast::ExprKind::Lambda(node) => self.format_lambda(&node.node),
             ast::ExprKind::InferredEnum(node) => self.format_inferred_enum_expr(&node.node),
+            ast::ExprKind::IntrinsicCall(node) => {
+                self.write("#");
+                self.write_fmt(node.node.name);
+                self.format_comma_list("(", ")", &node.node.args, |p, e| {
+                    p.format_expr(&e.node);
+                });
+            }
         }
     }
 

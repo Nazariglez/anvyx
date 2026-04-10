@@ -1,0 +1,7 @@
+// @mode: run
+// @expect: success
+// @match: false
+
+fn main() {
+    println(#feature(physics));
+}

@@ -1,0 +1,8 @@
+// @mode: run
+// @expect: success
+// @cfg: os=wasm
+// @match: true
+
+fn main() {
+    println(#os(wasm));
+}

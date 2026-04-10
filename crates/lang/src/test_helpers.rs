@@ -1,7 +1,7 @@
 use internment::Intern;
 
 use crate::{
-    LintConfig, Profile,
+    CompilationContext, LintConfig, Profile,
     ast::{self, BinaryOp, Ident, Type},
     hir::{Block, Expr, Func, FuncId, Local, LocalId, Program, Stmt, StmtKind},
     lower::{self, LowerError},
@@ -27,6 +27,7 @@ pub(crate) fn generate_hir(source: &str, file_path: &str) -> Result<Program, Str
         &HashMap::new(),
         &HashMap::new(),
         LintConfig::default(),
+        &CompilationContext::from_host(Profile::Debug),
     )
 }
 

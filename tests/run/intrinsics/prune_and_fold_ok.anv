@@ -1,0 +1,9 @@
+// @mode: run
+// @expect: success
+// @match: both true
+
+fn main() {
+    if #profile(debug) && !#profile(release) {
+        println("both true");
+    }
+}

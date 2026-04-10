@@ -1,19 +1,22 @@
 use std::{collections::HashMap, fs, path::Path};
 
 use anvyx_lang::{
-    Backend, CoreSource, LintConfig, Profile, RustBackendConfig, run_program_with_std,
+    Backend, CompilationContext, CompileOptions, CoreSource, LintConfig, RustBackendConfig,
+    run_program_with_std,
 };
 
 use crate::std_support::{collect_core, collect_std};
 
-pub fn cmd(file: &Path, backend: &str, release: bool, lint: LintConfig) -> Result<(), String> {
+pub fn cmd(
+    file: &Path,
+    backend: &str,
+    lint: LintConfig,
+    ctx: &CompilationContext,
+) -> Result<(), String> {
     let backend = backend.parse::<Backend>()?;
-    let profile = if release {
-        Profile::Release
-    } else {
-        Profile::Debug
+    let rust_config = RustBackendConfig {
+        profile: ctx.profile,
     };
-    let rust_config = RustBackendConfig { profile };
     let program = fs::read_to_string(file).map_err(|e| format!("Failed to read file: {e}"))?;
     let file_path = file.to_string_lossy().to_string();
     let (std_sources, mut handlers) = collect_std();
@@ -33,7 +36,10 @@ pub fn cmd(file: &Path, backend: &str, release: bool, lint: LintConfig) -> Resul
         &std_sources,
         &core,
         &rust_config,
-        lint,
+        CompileOptions {
+            lint,
+            compilation_ctx: ctx,
+        },
     )?;
     print!("{output}");
     Ok(())

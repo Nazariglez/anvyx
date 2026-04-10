@@ -1,0 +1,9 @@
+// @mode: run
+// @expect: success
+// @match: at least one
+
+fn main() {
+    if #profile(debug) || #profile(release) {
+        println("at least one");
+    }
+}

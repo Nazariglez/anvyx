@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+// @warn-contains: debugging
+
+fn main() {
+    // TODO: we need a way to detect comptime logs in the test runner
+    #log("debugging");
+}

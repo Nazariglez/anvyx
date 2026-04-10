@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: expects 0 argument(s)
+
+fn main() {
+    #line(42);
+}

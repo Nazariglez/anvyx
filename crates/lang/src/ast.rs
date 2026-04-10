@@ -44,6 +44,7 @@ pub type ImportNode = Spanned<Import>;
 pub type LambdaNode = Spanned<Lambda>;
 pub type AnnotationNode = Spanned<Annotation>;
 pub type DeferNode = Spanned<Defer>;
+pub type IntrinsicCallNode = Spanned<IntrinsicCall>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
@@ -113,6 +114,7 @@ pub enum ExprKind {
     Cast(CastNode),
     Lambda(LambdaNode),
     InferredEnum(InferredEnumNode),
+    IntrinsicCall(IntrinsicCallNode),
 }
 
 impl ExprKind {
@@ -142,6 +144,7 @@ impl ExprKind {
             Self::Cast(_) => "Cast",
             Self::Lambda(_) => "Lambda",
             Self::InferredEnum(_) => "InferredEnum",
+            Self::IntrinsicCall(_) => "IntrinsicCall",
         }
     }
 }
@@ -795,6 +798,12 @@ pub struct InferredEnum {
 }
 
 pub type InferredEnumNode = Spanned<InferredEnum>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntrinsicCall {
+    pub name: Ident,
+    pub args: Vec<ExprNode>,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {

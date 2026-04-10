@@ -1,0 +1,12 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    if #profile(release) {
+        let a: int = "bad";
+    } else if #profile(debug) {
+        let b = 42;
+    } else {
+        let c: int = "also bad";
+    }
+}

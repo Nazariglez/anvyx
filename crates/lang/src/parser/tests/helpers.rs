@@ -245,3 +245,20 @@ pub(super) fn expect_cast<'a>(expr: &'a ast::ExprNode) -> (&'a ast::ExprNode, &'
         other => panic!("expected Cast, found {other:?}"),
     }
 }
+
+pub(super) fn expect_intrinsic_call<'a>(
+    expr: &'a ast::ExprNode,
+    name: &str,
+) -> &'a [ast::ExprNode] {
+    match &expr.node.kind {
+        ast::ExprKind::IntrinsicCall(node) => {
+            assert_eq!(
+                node.node.name.0.as_ref(),
+                name,
+                "expected intrinsic '#{name}'"
+            );
+            &node.node.args
+        }
+        other => panic!("expected IntrinsicCall '#{name}', found {other:?}"),
+    }
+}

@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: unknown os 'haiku'
+
+fn main() {
+    let x = #os(haiku);
+}

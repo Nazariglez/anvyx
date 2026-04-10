@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: error
+// @contains: string literal
+
+fn main() {
+    let msg = "hi";
+    #warning(msg);
+}

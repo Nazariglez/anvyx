@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    StdModuleSource,
+    SourceLocationInfo, StdModuleSource,
     ast::{Stmt, StmtNode},
     span::Span,
 };
@@ -19,6 +19,7 @@ pub enum ImportError {
 pub struct ModuleSource {
     pub path_key: Vec<String>,
     pub stmts: Vec<StmtNode>,
+    pub source_location: Option<SourceLocationInfo>,
 }
 
 pub struct ResolveResult {
@@ -97,17 +98,21 @@ fn collect_imports(
             };
 
             let file_label = format!("<std.{module_name}>");
-            let Ok((module_ast, _)) = crate::parse_source(&source.anv_source, &file_label) else {
+            let Ok((module_ast, tokens)) = crate::parse_source(&source.anv_source, &file_label)
+            else {
                 errors.push(ImportError::ParseError {
                     file_path: file_label,
                 });
                 continue;
             };
+            let source_location =
+                SourceLocationInfo::new(file_label.clone(), &source.anv_source, &tokens);
 
             resolved.insert(path_key.clone());
             modules.push(ModuleSource {
                 path_key,
                 stmts: module_ast.stmts,
+                source_location: Some(source_location),
             });
             continue;
         }
@@ -143,13 +148,14 @@ fn collect_imports(
         };
 
         let file_path_str = file_path.display().to_string();
-        let Ok((module_ast, _tokens)) = crate::parse_source(&source, &file_path_str) else {
+        let Ok((module_ast, tokens)) = crate::parse_source(&source, &file_path_str) else {
             errors.push(ImportError::ParseError {
                 file_path: file_path_str,
             });
             resolving.remove(&path_key);
             continue;
         };
+        let source_location = SourceLocationInfo::new(file_path_str.clone(), &source, &tokens);
 
         // recursively resolve imports declared inside this module
         collect_imports(
@@ -169,6 +175,7 @@ fn collect_imports(
         modules.push(ModuleSource {
             path_key,
             stmts: module_ast.stmts,
+            source_location: Some(source_location),
         });
     }
 }

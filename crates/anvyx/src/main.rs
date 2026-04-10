@@ -10,7 +10,7 @@ mod std_support;
 
 use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
-use anvyx_lang::{LintConfig, LintLevel};
+use anvyx_lang::{CompilationContext, LintConfig, LintLevel, Profile};
 use clap::{Parser, Subcommand};
 
 use crate::manifest::Manifest;
@@ -37,12 +37,20 @@ enum Command {
         release: bool,
         #[arg(long, value_name = "KEY=VALUE")]
         lint: Vec<String>,
+        #[arg(long, value_delimiter = ',')]
+        feature: Vec<String>,
+        #[arg(long, value_name = "KEY=VALUE")]
+        cfg: Vec<String>,
     },
     #[command(about = "Check an Anvyx file")]
     Check {
         file: Option<PathBuf>,
         #[arg(long, value_name = "KEY=VALUE")]
         lint: Vec<String>,
+        #[arg(long, value_delimiter = ',')]
+        feature: Vec<String>,
+        #[arg(long, value_name = "KEY=VALUE")]
+        cfg: Vec<String>,
     },
     #[command(about = "Create a new Anvyx project")]
     Init { name: Option<String> },
@@ -50,6 +58,10 @@ enum Command {
     Build {
         #[arg(long)]
         release: bool,
+        #[arg(long, value_delimiter = ',')]
+        feature: Vec<String>,
+        #[arg(long, value_name = "KEY=VALUE")]
+        cfg: Vec<String>,
     },
     #[command(about = "Remove build cache")]
     Clean,
@@ -71,6 +83,55 @@ fn main() {
     }
 }
 
+fn build_compilation_ctx(
+    release: bool,
+    features: &[String],
+    cfgs: &[String],
+) -> Result<CompilationContext, String> {
+    let profile = if release {
+        Profile::Release
+    } else {
+        Profile::Debug
+    };
+    let mut ctx = CompilationContext::from_host(profile);
+    ctx.features = features.to_vec();
+    for pair in cfgs {
+        let (key, value) = pair.split_once('=').ok_or_else(|| {
+            format!("invalid --cfg format: '{pair}'. Expected KEY=VALUE (e.g. --cfg os=wasm)")
+        })?;
+
+        let v = value.trim();
+        match key.trim() {
+            "os" => {
+                ctx.os = v.parse().map_err(|()| {
+                    format!(
+                        "unknown os value: '{v}'. Expected: macos, linux, windows, wasm, ios, android",
+                    )
+                })?;
+            }
+            "arch" => {
+                ctx.arch = v.parse().map_err(|()| {
+                    format!("unknown arch value: '{v}'. Expected: x86_64, aarch64",)
+                })?;
+            }
+            "profile" => {
+                ctx.profile = v.parse().map_err(|()| {
+                    format!("unknown profile value: '{v}'. Expected: debug, release",)
+                })?;
+            }
+            "feature" => {
+                ctx.features.push(v.to_string());
+            }
+            other => {
+                return Err(format!(
+                    "unknown --cfg category: '{other}'. Expected: os, arch, profile, feature"
+                ));
+            }
+        }
+    }
+    Ok(ctx)
+}
+
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Command::Run {
@@ -78,10 +139,13 @@ fn run(cli: Cli) -> Result<(), String> {
             backend,
             release,
             lint,
+            feature,
+            cfg,
         } => {
             let manifest = manifest::parse_manifest()?;
             let path = resolve_entry(file, manifest.as_ref())?;
             let lint_config = resolve_lint_config(manifest.as_ref(), &lint)?;
+            let compilation_ctx = build_compilation_ctx(release, &feature, &cfg)?;
 
             let has_externs = manifest.as_ref().is_some_and(Manifest::has_externs);
             if has_externs {
@@ -90,17 +154,31 @@ fn run(cli: Cli) -> Result<(), String> {
 
                 progress::status("Checking", &format!("{}...", path.display()));
                 progress::status("Running", &format!("{}...", path.display()));
-                build::execute_runner(&ctx.cwd, &path, &backend, release, lint_config)?;
+                build::execute_runner(
+                    &ctx.cwd,
+                    &path,
+                    &backend,
+                    release,
+                    lint_config,
+                    &feature,
+                    &cfg,
+                )?;
             } else {
                 progress::status("Checking", &format!("{}...", path.display()));
                 progress::status("Running", &format!("{}...", path.display()));
-                run::cmd(&path, &backend, release, lint_config)?;
+                run::cmd(&path, &backend, lint_config, &compilation_ctx)?;
             }
         }
-        Command::Check { file, lint } => {
+        Command::Check {
+            file,
+            lint,
+            feature,
+            cfg,
+        } => {
             let manifest = manifest::parse_manifest()?;
             let path = resolve_entry(file, manifest.as_ref())?;
             let lint_config = resolve_lint_config(manifest.as_ref(), &lint)?;
+            let compilation_ctx = build_compilation_ctx(false, &feature, &cfg)?;
 
             let has_externs = manifest.as_ref().is_some_and(Manifest::has_externs);
             let extern_meta = if has_externs {
@@ -112,7 +190,7 @@ fn run(cli: Cli) -> Result<(), String> {
             };
 
             progress::status("Checking", &format!("{}...", path.display()));
-            check::cmd(&path, &extern_meta, lint_config)?;
+            check::cmd(&path, &extern_meta, lint_config, &compilation_ctx)?;
             progress::status(
                 "Finished",
                 &format!("{} checked successfully", path.display()),
@@ -127,7 +205,11 @@ fn run(cli: Cli) -> Result<(), String> {
         Command::Fmt { path, check, stdin } => {
             fmt::cmd(path, check, stdin)?;
         }
-        Command::Build { release } => {
+        Command::Build {
+            release,
+            feature,
+            cfg,
+        } => {
             let manifest =
                 manifest::parse_manifest()?.ok_or("anvyx build requires an anvyx.toml manifest")?;
             let cwd = std::env::current_dir()
@@ -148,6 +230,8 @@ fn run(cli: Cli) -> Result<(), String> {
             let dist_dir = build::assemble_dist(&cwd, &project_name)?;
             build::bundle_sources(&cwd, &dist_dir, &manifest)?;
             progress::status("Finished", &format!("{}", dist_dir.display()));
+
+            let _ = (&feature, &cfg);
         }
     }
 

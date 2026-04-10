@@ -633,6 +633,34 @@ fn inferred_enum_expr<'src>(
         .boxed()
 }
 
+fn intrinsic_call_expr<'src>(
+    expr: impl AnvParser<'src, ast::ExprNode>,
+) -> BoxedParser<'src, ast::ExprNode> {
+    let comma = select! { (Token::Comma, _) => () };
+
+    select! { (Token::Hash, _) => () }
+        .ignore_then(identifier())
+        .then(
+            select! { (Token::Open(Delimiter::Parent), _) => () }
+                .ignore_then(
+                    expr.separated_by(comma)
+                        .allow_trailing()
+                        .collect::<Vec<_>>(),
+                )
+                .then_ignore(select! { (Token::Close(Delimiter::Parent), _) => () }),
+        )
+        .map_with(|(name, args), e| {
+            let s = e.span();
+            let span = Span::new(s.start, s.end);
+            let node = Spanned::new(ast::IntrinsicCall { name, args }, span);
+            let expr_id = new_expr_id();
+            let expr = ast::Expr::new(ast::ExprKind::IntrinsicCall(node), expr_id);
+            Spanned::new(expr, span)
+        })
+        .labelled("intrinsic call")
+        .boxed()
+}
+
 fn atom_expr<'src>(
     stmt: impl AnvParser<'src, ast::StmtNode>,
     expr: impl AnvParser<'src, ast::ExprNode>,
@@ -640,6 +668,7 @@ fn atom_expr<'src>(
     choice((
         inferred_enum_expr(expr.clone()),
         lambda_expr(stmt.clone(), expr.clone()),
+        intrinsic_call_expr(expr.clone()),
         string_interp(expr.clone()),
         literal().map_with(|lit, e| {
             let s = e.span();
@@ -676,6 +705,7 @@ fn cond_atom_expr<'src>(
 ) -> BoxedParser<'src, ast::ExprNode> {
     choice((
         inferred_enum_expr(cond_expr.clone()),
+        intrinsic_call_expr(cond_expr.clone()),
         literal().map_with(|lit, e| {
             let s = e.span();
             let span = Span::new(s.start, s.end);

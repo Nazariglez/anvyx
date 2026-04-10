@@ -1,0 +1,13 @@
+// @mode: run
+// @expect: success
+// @match: debug path
+
+fn main() {
+    if #profile(release) {
+        println("release path");
+    } else if #profile(debug) {
+        println("debug path");
+    } else {
+        println("fallback");
+    }
+}

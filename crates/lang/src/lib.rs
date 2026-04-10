@@ -2,6 +2,8 @@ pub mod ast;
 mod builtin;
 mod error;
 mod hir;
+pub mod intrinsic;
+mod intrinsic_resolve;
 pub mod lexer;
 mod lower;
 pub mod parser;
@@ -19,6 +21,7 @@ pub mod metadata;
 pub mod prelude_enums;
 
 pub use anvyx_macros::{export_fn, export_methods, export_type, provider};
+pub use intrinsic::{CompilationContext, SourceLocationInfo, TargetArch, TargetOs};
 pub use metadata::{
     ExternDecl, ExternFieldDecl, ExternFuncMeta, ExternMethodDecl, ExternOpDecl, ExternOpMeta,
     ExternProviderMeta, ExternStaticMethodDecl, ExternTypeDecl, ExternTypeDeclConst,
@@ -46,6 +49,12 @@ pub struct StdModuleSource {
 pub struct CoreSource {
     pub prelude: String,
     pub modules: std::collections::HashMap<String, StdModuleSource>,
+}
+
+#[derive(Clone, Copy)]
+pub struct CompileOptions<'a> {
+    pub lint: LintConfig,
+    pub compilation_ctx: &'a CompilationContext,
 }
 
 #[cfg(test)]
@@ -92,6 +101,7 @@ fn analyze_with_extern_meta(
     std_modules: &std::collections::HashMap<String, StdModuleSource>,
     core_modules: &std::collections::HashMap<String, StdModuleSource>,
     lint: LintConfig,
+    compilation_ctx: &CompilationContext,
 ) -> AnalyzeResult {
     use std::collections::HashSet;
 
@@ -137,12 +147,14 @@ fn analyze_with_extern_meta(
     };
 
     let mut module_list: Vec<(Vec<String>, Vec<ast::StmtNode>)> = vec![];
+    let mut module_source_locs: Vec<Option<SourceLocationInfo>> = vec![];
     let mut scc_groups: Vec<Vec<usize>> = vec![];
     for group in resolve_result.module_groups {
         let group_indices = group
             .into_iter()
             .map(|module| {
                 let idx = module_list.len();
+                module_source_locs.push(module.source_location);
                 module_list.push((module.path_key, module.stmts));
                 idx
             })
@@ -155,6 +167,7 @@ fn analyze_with_extern_meta(
         let stmts = metadata::metadata_to_extern_stmts(meta)
             .map_err(|e| format!("Failed to create extern stmts for '{name}': {e}"))?;
         scc_groups.push(vec![module_list.len()]);
+        module_source_locs.push(None);
         module_list.push((vec![name.clone()], stmts));
     }
 
@@ -163,10 +176,12 @@ fn analyze_with_extern_meta(
     let mut core_count = 0usize;
     for (name, source) in core_modules {
         let file_label = format!("<core.{name}>");
-        let (module_ast, _) = parse_source(&source.anv_source, &file_label)
+        let (module_ast, tokens) = parse_source(&source.anv_source, &file_label)
             .map_err(|_| format!("Failed to parse core module '{name}' (internal error)"))?;
+        let source_loc = SourceLocationInfo::new(file_label, &source.anv_source, &tokens);
         let path_key = vec![name.clone()];
         module_list.insert(0, (path_key.clone(), module_ast.stmts));
+        module_source_locs.insert(0, Some(source_loc));
         auto_use_modules.push(path_key);
         core_count += 1;
     }
@@ -182,9 +197,72 @@ fn analyze_with_extern_meta(
 
     let mut combined_stmts = core_ast.stmts;
     combined_stmts.extend(user_ast.stmts);
-    let combined = ast::Program {
+    let mut combined = ast::Program {
         stmts: combined_stmts,
     };
+
+    // resolve intrinsics in module ast
+    for ((_, stmts), source_loc) in module_list.iter_mut().zip(module_source_locs.iter()) {
+        let mut module_prog = ast::Program {
+            stmts: std::mem::take(stmts),
+        };
+        let resolve_result = intrinsic_resolve::resolve_intrinsics(
+            &mut module_prog,
+            compilation_ctx,
+            source_loc.as_ref(),
+        );
+
+        for diag in &resolve_result.diagnostics {
+            let prefix = match diag.level {
+                intrinsic::IntrinsicDiagnosticLevel::Warning => "warning",
+                intrinsic::IntrinsicDiagnosticLevel::Error => "error",
+                intrinsic::IntrinsicDiagnosticLevel::Note => "note",
+            };
+            eprintln!("{prefix}: {}", diag.message);
+        }
+
+        if !resolve_result.errors.is_empty() {
+            let msg = resolve_result
+                .errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(msg);
+        }
+
+        if resolve_result.has_error_diagnostic() {
+            return Err("Compilation halted by #error directive".to_string());
+        }
+
+        *stmts = module_prog.stmts;
+    }
+
+    // resolve intrinsics in combined (core + user) ast
+    let user_source_loc = SourceLocationInfo::new(file_path.to_string(), program, &user_tokens);
+    let resolve_result = intrinsic_resolve::resolve_intrinsics(
+        &mut combined,
+        compilation_ctx,
+        Some(&user_source_loc),
+    );
+
+    if !resolve_result.diagnostics.is_empty() {
+        error::report_intrinsic_diagnostics(
+            program,
+            file_path,
+            &user_tokens,
+            &resolve_result.diagnostics,
+        );
+    }
+
+    if !resolve_result.errors.is_empty() {
+        error::report_intrinsic_errors(program, file_path, &user_tokens, &resolve_result.errors);
+        return Err("Failed to resolve intrinsics".to_string());
+    }
+
+    if resolve_result.has_error_diagnostic() {
+        return Err("Compilation halted by #error directive".to_string());
+    }
 
     let tcx = match typecheck::check_program_with_modules(
         &combined,
@@ -218,6 +296,7 @@ pub fn generate_ast(
     file_path: &str,
     core_source: &str,
     lint: LintConfig,
+    compilation_ctx: &CompilationContext,
 ) -> Result<ast::Program, String> {
     generate_ast_with_externs(
         program,
@@ -225,6 +304,7 @@ pub fn generate_ast(
         core_source,
         &std::collections::HashMap::new(),
         lint,
+        compilation_ctx,
     )
 }
 
@@ -234,6 +314,7 @@ pub fn generate_ast_with_externs(
     core_source: &str,
     extern_metadata: &std::collections::HashMap<String, String>,
     lint: LintConfig,
+    compilation_ctx: &CompilationContext,
 ) -> Result<ast::Program, String> {
     generate_ast_with_std(
         program,
@@ -243,6 +324,7 @@ pub fn generate_ast_with_externs(
         &std::collections::HashMap::new(),
         &std::collections::HashMap::new(),
         lint,
+        compilation_ctx,
     )
 }
 
@@ -254,6 +336,7 @@ pub fn generate_ast_with_std(
     std_modules: &std::collections::HashMap<String, StdModuleSource>,
     core_modules: &std::collections::HashMap<String, StdModuleSource>,
     lint: LintConfig,
+    compilation_ctx: &CompilationContext,
 ) -> Result<ast::Program, String> {
     let (ast, _, _, _) = analyze_with_extern_meta(
         program,
@@ -263,6 +346,7 @@ pub fn generate_ast_with_std(
         std_modules,
         core_modules,
         lint,
+        compilation_ctx,
     )?;
     Ok(ast)
 }
@@ -275,6 +359,7 @@ pub(crate) fn generate_hir_with_std(
     std_modules: &std::collections::HashMap<String, StdModuleSource>,
     core_modules: &std::collections::HashMap<String, StdModuleSource>,
     lint: LintConfig,
+    compilation_ctx: &CompilationContext,
 ) -> Result<hir::Program, String> {
     let (ast, tcx, _, module_list) = analyze_with_extern_meta(
         program,
@@ -284,6 +369,7 @@ pub(crate) fn generate_hir_with_std(
         std_modules,
         core_modules,
         lint,
+        compilation_ctx,
     )?;
     lower::lower_program(&ast, &tcx, &module_list).map_err(|e| format!("Lowering error: {e}"))
 }
@@ -293,6 +379,28 @@ pub enum Profile {
     #[default]
     Debug,
     Release,
+}
+
+impl Profile {
+    pub const ALL: &[&str] = &["debug", "release"];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Debug => "debug",
+            Self::Release => "release",
+        }
+    }
+}
+
+impl std::str::FromStr for Profile {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, ()> {
+        match s {
+            "debug" => Ok(Self::Debug),
+            "release" => Ok(Self::Release),
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -326,6 +434,7 @@ pub fn run_program(
     backend: Backend,
     rust_config: &RustBackendConfig,
     lint: LintConfig,
+    compilation_ctx: &CompilationContext,
 ) -> Result<String, String> {
     run_program_with_externs(
         program,
@@ -336,6 +445,7 @@ pub fn run_program(
         &std::collections::HashMap::new(),
         rust_config,
         lint,
+        compilation_ctx,
     )
 }
 
@@ -348,6 +458,7 @@ pub fn run_program_with_externs(
     extern_metadata: &std::collections::HashMap<String, String>,
     rust_config: &RustBackendConfig,
     lint: LintConfig,
+    compilation_ctx: &CompilationContext,
 ) -> Result<String, String> {
     let core = CoreSource {
         prelude: core_source.to_string(),
@@ -362,7 +473,10 @@ pub fn run_program_with_externs(
         &std::collections::HashMap::new(),
         &core,
         rust_config,
-        lint,
+        CompileOptions {
+            lint,
+            compilation_ctx,
+        },
     )
 }
 
@@ -387,6 +501,7 @@ pub fn compile_vm_with_externs(
     core_source: &str,
     externs: std::collections::HashMap<String, ExternHandler>,
     lint: LintConfig,
+    compilation_ctx: &CompilationContext,
 ) -> Result<(CompiledProgram, ExternRegistry), String> {
     use std::collections::HashMap;
 
@@ -398,6 +513,7 @@ pub fn compile_vm_with_externs(
         &HashMap::new(),
         &HashMap::new(),
         lint,
+        compilation_ctx,
     )?;
 
     let filtered = filter_externs_by_hir(externs, &hir);
@@ -413,7 +529,7 @@ pub fn run_program_with_std(
     std_modules: &std::collections::HashMap<String, StdModuleSource>,
     core: &CoreSource,
     rust_config: &RustBackendConfig,
-    lint: LintConfig,
+    options: CompileOptions<'_>,
 ) -> Result<String, String> {
     let hir = generate_hir_with_std(
         program,
@@ -422,7 +538,8 @@ pub fn run_program_with_std(
         extern_metadata,
         std_modules,
         &core.modules,
-        lint,
+        options.lint,
+        options.compilation_ctx,
     )?;
 
     let filtered = filter_externs_by_hir(externs, &hir);
@@ -461,6 +578,7 @@ mod extern_import_tests {
             &HashMap::new(),
             &HashMap::new(),
             LintConfig::default(),
+            &CompilationContext::from_host(Profile::Debug),
         );
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
@@ -474,6 +592,7 @@ mod extern_import_tests {
             &HashMap::new(),
             &HashMap::new(),
             LintConfig::default(),
+            &CompilationContext::from_host(Profile::Debug),
         );
         assert!(result.is_err());
     }
@@ -524,6 +643,7 @@ mod extern_import_tests {
             &HashMap::new(),
             &HashMap::new(),
             LintConfig::default(),
+            &CompilationContext::from_host(Profile::Debug),
         );
         assert!(hir.is_ok(), "unexpected error: {:?}", hir.err());
         let program = hir.unwrap();
@@ -540,6 +660,7 @@ mod extern_import_tests {
             &HashMap::new(),
             &HashMap::new(),
             LintConfig::default(),
+            &CompilationContext::from_host(Profile::Debug),
         );
         assert!(result.is_ok());
     }
@@ -571,6 +692,7 @@ mod std_import_tests {
             &math_std_modules(),
             &HashMap::new(),
             LintConfig::default(),
+            &CompilationContext::from_host(Profile::Debug),
         );
         assert!(result.is_ok(), "unexpected error: {:?}", result.err());
     }
@@ -584,6 +706,7 @@ mod std_import_tests {
             &math_std_modules(),
             &HashMap::new(),
             LintConfig::default(),
+            &CompilationContext::from_host(Profile::Debug),
         );
         assert!(result.is_err());
     }

@@ -4,6 +4,7 @@ use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::error::{Rich, RichPattern, RichReason};
 
 use crate::{
+    intrinsic::{IntrinsicDiagnostic, IntrinsicDiagnosticLevel, IntrinsicError},
     lexer::{SpannedToken, Token},
     resolve::ImportError,
     typecheck::{Diagnostic, DiagnosticKind, Severity},
@@ -875,6 +876,60 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
             format!("type '{type_name}' has infinite size"),
             format!("field '{cycle_field}' of type '{cycle_target}' creates a value-type cycle"),
         ),
+    }
+}
+
+pub fn report_intrinsic_diagnostics(
+    src: &str,
+    file_path: &str,
+    tokens: &[SpannedToken],
+    diagnostics: &[IntrinsicDiagnostic],
+) {
+    for diag in diagnostics {
+        let byte_range = token_span_to_byte_range(tokens, diag.span.start..diag.span.end);
+        let severity = match diag.level {
+            IntrinsicDiagnosticLevel::Error => Severity::Error,
+            IntrinsicDiagnosticLevel::Warning | IntrinsicDiagnosticLevel::Note => Severity::Warning,
+        };
+        let prefix = match diag.level {
+            IntrinsicDiagnosticLevel::Warning => "#warning",
+            IntrinsicDiagnosticLevel::Error => "#error",
+            IntrinsicDiagnosticLevel::Note => "#log",
+        };
+        emit_report(
+            src,
+            file_path,
+            severity,
+            (
+                byte_range,
+                format!("{prefix}: {}", diag.message),
+                String::new(),
+            ),
+            vec![],
+            vec![],
+            None,
+        );
+    }
+}
+
+pub fn report_intrinsic_errors(
+    src: &str,
+    file_path: &str,
+    tokens: &[SpannedToken],
+    errors: &[IntrinsicError],
+) {
+    for err in errors {
+        let span = err.span();
+        let byte_range = token_span_to_byte_range(tokens, span.start..span.end);
+        emit_report(
+            src,
+            file_path,
+            Severity::Error,
+            (byte_range, err.to_string(), String::new()),
+            vec![],
+            vec![],
+            None,
+        );
     }
 }
 

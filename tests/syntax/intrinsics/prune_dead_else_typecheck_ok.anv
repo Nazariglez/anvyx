@@ -1,0 +1,10 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    if #profile(debug) {
+        let x = 1;
+    } else {
+        let y: int = "also not an int";
+    }
+}

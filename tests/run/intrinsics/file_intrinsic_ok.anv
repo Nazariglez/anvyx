@@ -1,0 +1,7 @@
+// @mode: run
+// @expect: success
+// @contains: file_intrinsic_ok.anv
+
+fn main() {
+    println(#file());
+}

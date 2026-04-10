@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    if #profile(release) {
+        let x: int = "not an int";
+    }
+}

@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: not supported
+
+fn main() {
+    #error("not supported");
+}

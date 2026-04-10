@@ -51,7 +51,9 @@ fn main() {
     let mut externs: HashMap<String, anvyx_lang::ExternHandler> = HashMap::new();
 %EXTERN_EXTENDS%
 %RUNTIME_INIT%
-    match anvyx_lang::run_program_with_std(&source, file_path, backend, externs, &extern_metadata, &std_sources, &core, &rust_config, lint_config) {
+    let compilation_ctx = anvyx_lang::CompilationContext::from_host(profile);
+    let options = anvyx_lang::CompileOptions { lint: lint_config, compilation_ctx: &compilation_ctx };
+    match anvyx_lang::run_program_with_std(&source, file_path, backend, externs, &extern_metadata, &std_sources, &core, &rust_config, options) {
         Ok(output) => print!("{output}"),
         Err(e) => { eprintln!("{e}"); std::process::exit(1); }
     }

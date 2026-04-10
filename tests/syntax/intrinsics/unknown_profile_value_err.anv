@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: error
+// @contains: unknown profile
+
+fn main() {
+    let x = #profile(fast);
+}

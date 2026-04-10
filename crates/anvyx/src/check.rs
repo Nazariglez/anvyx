@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fs, path::Path};
 
-use anvyx_lang::LintConfig;
+use anvyx_lang::{CompilationContext, LintConfig};
 
 use crate::std_support::{collect_core, collect_std};
 
@@ -8,6 +8,7 @@ pub fn cmd(
     file: &Path,
     extern_meta: &HashMap<String, String>,
     lint: LintConfig,
+    ctx: &CompilationContext,
 ) -> Result<(), String> {
     let program = fs::read_to_string(file).map_err(|e| format!("Failed to read file: {e}"))?;
     let file_path = file.to_string_lossy().to_string();
@@ -22,6 +23,7 @@ pub fn cmd(
         &std_sources,
         &core_sources,
         lint,
+        ctx,
     )?;
     Ok(())
 }

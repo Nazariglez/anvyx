@@ -1,0 +1,7 @@
+// @mode: check
+// @expect: success
+// @warn-contains: placeholder
+
+fn main() {
+    #warning("placeholder");
+}

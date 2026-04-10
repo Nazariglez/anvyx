@@ -1,0 +1,8 @@
+// @mode: check
+// @expect: success
+
+fn main() {
+    if #profile(release) {
+        #error("release not supported yet");
+    }
+}

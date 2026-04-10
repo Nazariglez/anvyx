@@ -58,6 +58,8 @@ pub fn run_test_file(
         directives.mode,
         effective_backend,
         &directives.lint,
+        &directives.feature,
+        &directives.cfg,
     )?;
     let elapsed = start_time.elapsed();
 
@@ -279,6 +281,8 @@ fn spawn_test_process(
     mode: Mode,
     backend: Option<&str>,
     lint_overrides: &[String],
+    feature_overrides: &[String],
+    cfg_overrides: &[String],
 ) -> Result<ProcessOutcome, String> {
     let subcommand = match mode {
         Mode::Check => "check",
@@ -294,6 +298,12 @@ fn spawn_test_process(
 
     for lint_arg in lint_overrides {
         command.args(["--lint", lint_arg]);
+    }
+    for feat_arg in feature_overrides {
+        command.args(["--feature", feat_arg]);
+    }
+    for cfg_arg in cfg_overrides {
+        command.args(["--cfg", cfg_arg]);
     }
 
     let mut child = command
