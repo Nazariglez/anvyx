@@ -27,7 +27,7 @@ use std::collections::HashMap;
 pub use const_eval::ConstValue;
 use const_eval::evaluate_and_export_consts;
 use constraint::resolve_constraints;
-pub use error::{Diagnostic, DiagnosticKind, Severity};
+pub use error::{Diagnostic, DiagnosticKind};
 pub use infer::{build_const_subst, resolve_type_param_names, subst_type};
 use internment::Intern;
 pub use lint::{LintConfig, LintLevel};
@@ -39,6 +39,7 @@ pub use types::{
 use unify::contains_infer;
 pub use visit::{map_type_structure, walk_type_structure};
 
+pub use crate::diagnostic::Severity;
 use crate::{
     ast::{Ident, Program, Stmt, StmtNode, Visibility},
     builtin::Builtin,

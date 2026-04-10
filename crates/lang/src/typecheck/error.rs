@@ -1,6 +1,7 @@
 use super::lint::LintLevel;
 use crate::{
     ast::{Ident, Type},
+    diagnostic::Severity,
     span::Span,
 };
 
@@ -11,12 +12,6 @@ pub struct Diagnostic {
     pub help: Option<String>,
     pub notes: Vec<String>,
     pub secondary: Vec<(Span, String)>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Severity {
-    Error,
-    Warning,
 }
 
 impl Diagnostic {

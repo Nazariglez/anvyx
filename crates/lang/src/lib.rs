@@ -11,6 +11,7 @@ mod typecheck;
 mod vm;
 
 pub mod ast;
+pub mod diagnostic;
 pub mod intrinsic;
 pub mod lexer;
 pub mod parser;
@@ -23,6 +24,10 @@ pub mod metadata;
 pub mod prelude_enums;
 
 pub use anvyx_macros::{export_fn, export_methods, export_type, provider};
+pub use diagnostic::{
+    CompileOutput, CompileResult, DiagnosticFile, DiagnosticLabel, DiagnosticReport, RunError,
+    RunOutput, Severity,
+};
 pub use intrinsic::{CompilationContext, SourceLocationInfo, TargetArch, TargetOs};
 pub use metadata::{
     ExternDecl, ExternFieldDecl, ExternFuncMeta, ExternMethodDecl, ExternOpDecl, ExternOpMeta,
@@ -66,32 +71,50 @@ pub(crate) fn parse_source(
     source: &str,
     file_path: &str,
     ctx: &CompilationContext,
-) -> Result<(ast::Program, Vec<lexer::SpannedToken>), String> {
+) -> Result<diagnostic::ParsedFile, DiagnosticReport> {
+    let make_report = |diagnostics: Vec<diagnostic::Diagnostic>| DiagnosticReport {
+        diagnostics,
+        files: vec![DiagnosticFile {
+            path: file_path.to_string(),
+            source: source.to_string(),
+        }],
+    };
+
     let tokens = match lexer::tokenize(source) {
         Ok(tokens) => tokens,
         Err(errors) => {
-            error::report_lexer_errors(source, file_path, errors);
-            return Err("Failed to tokenize program".to_string());
+            return Err(make_report(error::collect_lexer_diagnostics(
+                file_path, errors,
+            )));
         }
     };
 
     let tokens = match conditional::filter_tokens(&tokens, ctx) {
         Ok(filtered) => filtered,
         Err(errors) => {
-            error::report_conditional_errors(source, file_path, &errors);
-            return Err("Conditional compilation error".to_string());
+            return Err(make_report(error::collect_conditional_diagnostics(
+                file_path, &errors,
+            )));
         }
     };
 
     let ast = match parser::parse_ast(&tokens) {
         Ok(ast) => ast,
         Err(errors) => {
-            error::report_parse_errors(source, file_path, &tokens, errors);
-            return Err("Failed to parse program".to_string());
+            return Err(make_report(error::collect_parse_diagnostics(
+                file_path, &tokens, errors,
+            )));
         }
     };
 
-    Ok((ast, tokens))
+    Ok(diagnostic::ParsedFile {
+        file: diagnostic::LoadedFile {
+            path: file_path.to_string(),
+            source: source.to_string(),
+            tokens,
+        },
+        ast,
+    })
 }
 
 type AnalyzeResult = Result<
@@ -116,10 +139,23 @@ fn analyze_with_extern_meta(
 ) -> AnalyzeResult {
     use std::collections::HashSet;
 
-    let (core_ast, _) = parse_source(core_source, "<core>", compilation_ctx)
-        .map_err(|_| "Failed to parse core source (internal error)".to_string())?;
+    let mut report = DiagnosticReport::default();
 
-    let (user_ast, user_tokens) = parse_source(program, file_path, compilation_ctx)?;
+    let core_ast = parse_source(core_source, "<core>", compilation_ctx)
+        .map_err(|r| {
+            r.print_ariadne();
+            "Failed to parse core source (internal error)".to_string()
+        })?
+        .ast;
+
+    let diagnostic::ParsedFile {
+        file: user_file,
+        ast: user_ast,
+    } = parse_source(program, file_path, compilation_ctx).map_err(|r| {
+        r.print_ariadne();
+        "Failed to parse program".to_string()
+    })?;
+    report.add_file(file_path, program);
 
     // parse extern metadata JSON and extract provider names for resolve skip list
     let mut parsed_providers = std::collections::HashMap::new();
@@ -152,21 +188,32 @@ fn analyze_with_extern_meta(
         compilation_ctx,
     ) {
         Ok(result) => result,
-        Err(errors) => {
-            error::report_import_errors(program, file_path, &user_tokens, &errors);
+        Err(resolve_errors) => {
+            for r in resolve_errors.parse_reports {
+                report.merge(r);
+            }
+            if !resolve_errors.import_errors.is_empty() {
+                let diags = error::collect_import_diagnostics(
+                    file_path,
+                    &user_file.tokens,
+                    &resolve_errors.import_errors,
+                );
+                report.diagnostics.extend(diags);
+            }
+            report.print_ariadne();
             return Err("Failed to resolve imports".to_string());
         }
     };
 
     let mut module_list: Vec<(Vec<String>, Vec<ast::StmtNode>)> = vec![];
-    let mut module_source_locs: Vec<Option<SourceLocationInfo>> = vec![];
+    let mut module_loaded_files: Vec<Option<diagnostic::LoadedFile>> = vec![];
     let mut scc_groups: Vec<Vec<usize>> = vec![];
     for group in resolve_result.module_groups {
         let group_indices = group
             .into_iter()
             .map(|module| {
                 let idx = module_list.len();
-                module_source_locs.push(module.source_location);
+                module_loaded_files.push(module.loaded_file);
                 module_list.push((module.path_key, module.stmts));
                 idx
             })
@@ -179,7 +226,7 @@ fn analyze_with_extern_meta(
         let stmts = metadata::metadata_to_extern_stmts(meta)
             .map_err(|e| format!("Failed to create extern stmts for '{name}': {e}"))?;
         scc_groups.push(vec![module_list.len()]);
-        module_source_locs.push(None);
+        module_loaded_files.push(None);
         module_list.push((vec![name.clone()], stmts));
     }
 
@@ -188,13 +235,14 @@ fn analyze_with_extern_meta(
     let mut core_count = 0usize;
     for (name, source) in core_modules {
         let file_label = format!("<core.{name}>");
-        let (module_ast, tokens) =
-            parse_source(&source.anv_source, &file_label, compilation_ctx)
-                .map_err(|_| format!("Failed to parse core module '{name}' (internal error)"))?;
-        let source_loc = SourceLocationInfo::new(file_label, &source.anv_source, &tokens);
+        let parsed =
+            parse_source(&source.anv_source, &file_label, compilation_ctx).map_err(|r| {
+                r.print_ariadne();
+                format!("Failed to parse core module '{name}' (internal error)")
+            })?;
         let path_key = vec![name.clone()];
-        module_list.insert(0, (path_key.clone(), module_ast.stmts));
-        module_source_locs.insert(0, Some(source_loc));
+        module_list.insert(0, (path_key.clone(), parsed.ast.stmts));
+        module_loaded_files.insert(0, Some(parsed.file));
         auto_use_modules.push(path_key);
         core_count += 1;
     }
@@ -215,36 +263,59 @@ fn analyze_with_extern_meta(
     };
 
     // resolve intrinsics in module ast
-    for ((_, stmts), source_loc) in module_list.iter_mut().zip(module_source_locs.iter()) {
+    for ((_, stmts), loaded_file) in module_list.iter_mut().zip(module_loaded_files.iter()) {
+        let source_loc_info = loaded_file.as_ref().map(|lf| lf.to_source_location_info());
         let mut module_prog = ast::Program {
             stmts: std::mem::take(stmts),
         };
         let resolve_result = intrinsic_resolve::resolve_intrinsics(
             &mut module_prog,
             compilation_ctx,
-            source_loc.as_ref(),
+            source_loc_info.as_ref(),
         );
 
-        for diag in &resolve_result.diagnostics {
-            let prefix = match diag.level {
-                intrinsic::IntrinsicDiagnosticLevel::Warning => "warning",
-                intrinsic::IntrinsicDiagnosticLevel::Error => "error",
-                intrinsic::IntrinsicDiagnosticLevel::Note => "note",
-            };
-            eprintln!("{prefix}: {}", diag.message);
-        }
-
-        if !resolve_result.errors.is_empty() {
-            let msg = resolve_result
-                .errors
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("\n");
-            return Err(msg);
+        if let Some(lf) = loaded_file {
+            if !resolve_result.diagnostics.is_empty() {
+                let diags = error::collect_intrinsic_diagnostics(
+                    &lf.path,
+                    &lf.tokens,
+                    &resolve_result.diagnostics,
+                );
+                report.add_file(&lf.path, &lf.source);
+                report.diagnostics.extend(diags);
+            }
+            if !resolve_result.errors.is_empty() {
+                let diags =
+                    error::collect_intrinsic_errors(&lf.path, &lf.tokens, &resolve_result.errors);
+                report.add_file(&lf.path, &lf.source);
+                report.diagnostics.extend(diags);
+                report.print_ariadne();
+                return Err("Failed to resolve intrinsics".to_string());
+            }
+        } else {
+            // extern provider modules — no source file, keep eprintln fallback
+            for diag in &resolve_result.diagnostics {
+                let prefix = match diag.level {
+                    intrinsic::IntrinsicDiagnosticLevel::Warning => "warning",
+                    intrinsic::IntrinsicDiagnosticLevel::Error => "error",
+                    intrinsic::IntrinsicDiagnosticLevel::Note => "note",
+                };
+                eprintln!("{prefix}: {}", diag.message);
+            }
+            if !resolve_result.errors.is_empty() {
+                let msg = resolve_result
+                    .errors
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                report.print_ariadne();
+                return Err(msg);
+            }
         }
 
         if resolve_result.has_error_diagnostic() {
+            report.print_ariadne();
             return Err("Compilation halted by #error directive".to_string());
         }
 
@@ -252,7 +323,8 @@ fn analyze_with_extern_meta(
     }
 
     // resolve intrinsics in combined (core + user) ast
-    let user_source_loc = SourceLocationInfo::new(file_path.to_string(), program, &user_tokens);
+    let user_source_loc =
+        SourceLocationInfo::new(file_path.to_string(), program, &user_file.tokens);
     let resolve_result = intrinsic_resolve::resolve_intrinsics(
         &mut combined,
         compilation_ctx,
@@ -260,20 +332,24 @@ fn analyze_with_extern_meta(
     );
 
     if !resolve_result.diagnostics.is_empty() {
-        error::report_intrinsic_diagnostics(
-            program,
+        let diags = error::collect_intrinsic_diagnostics(
             file_path,
-            &user_tokens,
+            &user_file.tokens,
             &resolve_result.diagnostics,
         );
+        report.diagnostics.extend(diags);
     }
 
     if !resolve_result.errors.is_empty() {
-        error::report_intrinsic_errors(program, file_path, &user_tokens, &resolve_result.errors);
+        let diags =
+            error::collect_intrinsic_errors(file_path, &user_file.tokens, &resolve_result.errors);
+        report.diagnostics.extend(diags);
+        report.print_ariadne();
         return Err("Failed to resolve intrinsics".to_string());
     }
 
     if resolve_result.has_error_diagnostic() {
+        report.print_ariadne();
         return Err("Compilation halted by #error directive".to_string());
     }
 
@@ -286,22 +362,28 @@ fn analyze_with_extern_meta(
     ) {
         Ok(tcx) => {
             if !tcx.warnings().is_empty() {
-                error::report_diagnostics(
-                    program,
+                let diags = error::collect_typecheck_diagnostics(
                     file_path,
-                    &user_tokens,
+                    &user_file.tokens,
                     tcx.warnings().to_vec(),
                 );
+                report.diagnostics.extend(diags);
             }
             tcx
         }
         Err(errors) => {
-            error::report_diagnostics(program, file_path, &user_tokens, errors);
+            let diags = error::collect_typecheck_diagnostics(file_path, &user_file.tokens, errors);
+            report.diagnostics.extend(diags);
+            report.print_ariadne();
             return Err("Failed to typecheck program".to_string());
         }
     };
 
-    Ok((combined, tcx, user_tokens, module_list))
+    if !report.diagnostics.is_empty() {
+        report.print_ariadne();
+    }
+
+    Ok((combined, tcx, user_file.tokens, module_list))
 }
 
 pub fn generate_ast(

@@ -1,14 +1,15 @@
 use std::ops::Range;
 
-use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::error::{Rich, RichPattern, RichReason};
 
 use crate::{
     conditional::CondError,
+    diagnostic::{self, Severity},
     intrinsic::{IntrinsicDiagnostic, IntrinsicDiagnosticLevel, IntrinsicError},
     lexer::{SpannedToken, Token},
     resolve::ImportError,
-    typecheck::{Diagnostic, DiagnosticKind, Severity},
+    span::Span,
+    typecheck::{Diagnostic, DiagnosticKind},
 };
 
 fn build_unexpected_msg(
@@ -32,192 +33,236 @@ fn build_unexpected_msg(
     }
 }
 
-pub fn report_lexer_errors(src: &str, file_path: &str, errors: Vec<Rich<'_, char>>) {
-    for e in errors {
-        let span = e.span();
-        let byte_range = span.start..span.end;
-
-        let last_context = last_ctx(&e)
-            .map(|s| format!("while lexing a {s}"))
-            .unwrap_or_default();
-
-        let custom_msg = match e.reason() {
-            RichReason::Custom(msg) => Some(msg.clone()),
-            RichReason::ExpectedFound { .. } => None,
-        };
-
-        let found_desc = e.found().map(|c| format!("'{c}'"));
-        let (msg_title, msg_body) =
-            build_unexpected_msg(custom_msg, found_desc, &last_context, "character");
-
-        emit_report(
-            src,
-            file_path,
-            Severity::Error,
-            (byte_range, msg_title, msg_body),
-            vec![],
-            vec![],
-            None,
-        );
-    }
+pub fn collect_lexer_diagnostics(
+    file_path: &str,
+    errors: Vec<Rich<'_, char>>,
+) -> Vec<diagnostic::Diagnostic> {
+    errors
+        .into_iter()
+        .map(|e| {
+            let span = e.span();
+            let last_context = last_ctx(&e)
+                .map(|s| format!("while lexing a {s}"))
+                .unwrap_or_default();
+            let custom_msg = match e.reason() {
+                RichReason::Custom(msg) => Some(msg.clone()),
+                RichReason::ExpectedFound { .. } => None,
+            };
+            let found_desc = e.found().map(|c| format!("'{c}'"));
+            let (title, body) =
+                build_unexpected_msg(custom_msg, found_desc, &last_context, "character");
+            make_plain_diagnostic(
+                file_path,
+                Span::new(span.start, span.end),
+                Severity::Error,
+                title,
+                body,
+            )
+        })
+        .collect()
 }
 
-pub fn report_parse_errors(
-    src: &str,
+pub fn collect_parse_diagnostics(
     file_path: &str,
     tokens: &[SpannedToken],
     errors: Vec<Rich<SpannedToken>>,
-) {
-    for e in errors {
-        let token_span = e.span();
-        let byte_range = token_span_to_byte_range(tokens, token_span.start..token_span.end);
-
-        let custom_msg = match e.reason() {
-            RichReason::Custom(msg) => Some(msg.clone()),
-            RichReason::ExpectedFound { .. } => None,
-        };
-
-        let last_context = last_ctx(&e)
-            .map(|s| format!("while parsing a {s}"))
-            .unwrap_or_default();
-
-        let found_desc = e.found().map(|(tok, _)| describe_token(tok));
-        let (msg_title, msg_body) =
-            build_unexpected_msg(custom_msg, found_desc, &last_context, "token");
-
-        emit_report(
-            src,
-            file_path,
-            Severity::Error,
-            (byte_range, msg_title, msg_body),
-            vec![],
-            vec![],
-            None,
-        );
-    }
+) -> Vec<diagnostic::Diagnostic> {
+    errors
+        .into_iter()
+        .map(|e| {
+            let token_span = e.span();
+            let custom_msg = match e.reason() {
+                RichReason::Custom(msg) => Some(msg.clone()),
+                RichReason::ExpectedFound { .. } => None,
+            };
+            let last_context = last_ctx(&e)
+                .map(|s| format!("while parsing a {s}"))
+                .unwrap_or_default();
+            let found_desc = e.found().map(|(tok, _)| describe_token(tok));
+            let (title, body) =
+                build_unexpected_msg(custom_msg, found_desc, &last_context, "token");
+            make_plain_diagnostic(
+                file_path,
+                token_span_to_span(tokens, token_span.start..token_span.end),
+                Severity::Error,
+                title,
+                body,
+            )
+        })
+        .collect()
 }
 
-pub fn report_diagnostics(
-    src: &str,
+pub fn collect_typecheck_diagnostics(
     file_path: &str,
     tokens: &[SpannedToken],
     errors: Vec<Diagnostic>,
-) {
-    for e in errors {
-        let byte_range = token_span_to_byte_range(tokens, e.span.start..e.span.end);
-        let (title, body) = format_diagnostic(&e.kind);
-        let severity = e.kind.severity();
-
-        let secondary: Vec<_> = e
-            .secondary
-            .iter()
-            .map(|(span, msg)| {
-                let range = token_span_to_byte_range(tokens, span.start..span.end);
-                (range, msg.clone())
-            })
-            .collect();
-
-        emit_report(
-            src,
-            file_path,
-            severity,
-            (byte_range, title, body),
-            secondary,
-            e.notes.clone(),
-            e.help.clone(),
-        );
-    }
+) -> Vec<diagnostic::Diagnostic> {
+    errors
+        .into_iter()
+        .map(|e| {
+            let (title, body) = format_diagnostic(&e.kind);
+            let severity = e.kind.severity();
+            let related = e
+                .secondary
+                .into_iter()
+                .map(|(span, msg)| diagnostic::DiagnosticLabel {
+                    file: file_path.to_string(),
+                    span: token_span_to_span(tokens, span.start..span.end),
+                    message: msg,
+                })
+                .collect();
+            make_simple_diagnostic(
+                file_path,
+                token_span_to_span(tokens, e.span.start..e.span.end),
+                severity,
+                title,
+                body,
+                related,
+                e.notes,
+                e.help,
+            )
+        })
+        .collect()
 }
 
-pub fn report_import_errors(
-    src: &str,
+pub fn collect_import_diagnostics(
     file_path: &str,
     tokens: &[SpannedToken],
     errors: &[ImportError],
-) {
-    for e in errors {
-        match e {
-            ImportError::FileNotFound { path, span } => {
-                let byte_range = token_span_to_byte_range(tokens, span.start..span.end);
-                emit_report(
-                    src,
-                    file_path,
-                    Severity::Error,
-                    (
-                        byte_range,
-                        format!("Cannot find module file '{path}'"),
-                        "import path cannot be resolved to a file".to_string(),
-                    ),
-                    vec![],
-                    vec![],
-                    None,
-                );
-            }
-            ImportError::ParseError {
-                file_path: imported_path,
-            } => {
-                emit_report(
-                    src,
-                    file_path,
-                    Severity::Error,
-                    (
-                        0..0,
-                        format!("Failed to parse imported module '{imported_path}'"),
-                        "the imported file contains errors".to_string(),
-                    ),
-                    vec![],
-                    vec![],
-                    None,
-                );
-            }
-            ImportError::UnknownStdModule { name, span } => {
-                let byte_range = token_span_to_byte_range(tokens, span.start..span.end);
-                emit_report(
-                    src,
-                    file_path,
-                    Severity::Error,
-                    (
-                        byte_range,
-                        format!("Unknown standard library module 'std.{name}'"),
-                        "no std module with this name exists".to_string(),
-                    ),
-                    vec![],
-                    vec![],
-                    None,
-                );
-            }
-        }
-    }
+) -> Vec<diagnostic::Diagnostic> {
+    errors
+        .iter()
+        .map(|e| match e {
+            ImportError::FileNotFound { path, span } => make_plain_diagnostic(
+                file_path,
+                token_span_to_span(tokens, span.start..span.end),
+                Severity::Error,
+                format!("Cannot find module file '{path}'"),
+                "import path cannot be resolved to a file".to_string(),
+            ),
+            ImportError::UnknownStdModule { name, span } => make_plain_diagnostic(
+                file_path,
+                token_span_to_span(tokens, span.start..span.end),
+                Severity::Error,
+                format!("Unknown standard library module 'std.{name}'"),
+                "no std module with this name exists".to_string(),
+            ),
+        })
+        .collect()
 }
 
-pub fn report_conditional_errors(src: &str, file_path: &str, errors: &[CondError]) {
-    for err in errors {
-        let span = err.span();
-        let byte_range = span.start..span.end;
+pub fn collect_conditional_diagnostics(
+    file_path: &str,
+    errors: &[CondError],
+) -> Vec<diagnostic::Diagnostic> {
+    errors
+        .iter()
+        .map(|err| {
+            let span = err.span();
+            let help = match err {
+                CondError::UnknownPredicate { .. } => {
+                    Some("valid predicates are: profile, os, arch, feature".to_string())
+                }
+                CondError::UnknownPredicateArg {
+                    valid, predicate, ..
+                } => {
+                    let valid_list = valid.join(", ");
+                    Some(format!("valid values for {predicate}() are: {valid_list}"))
+                }
+                CondError::ElifAfterElse { .. } => {
+                    Some("#elif must appear before #else".to_string())
+                }
+                _ => None,
+            };
+            make_simple_diagnostic(
+                file_path,
+                Span::new(span.start, span.end),
+                Severity::Error,
+                err.to_string(),
+                String::new(),
+                vec![],
+                vec![],
+                help,
+            )
+        })
+        .collect()
+}
 
-        let help = match err {
-            CondError::UnknownPredicate { .. } => {
-                Some("valid predicates are: profile, os, arch, feature".to_string())
-            }
-            CondError::UnknownPredicateArg {
-                valid, predicate, ..
-            } => {
-                let valid_list = valid.join(", ");
-                Some(format!("valid values for {predicate}() are: {valid_list}"))
-            }
-            CondError::ElifAfterElse { .. } => Some("#elif must appear before #else".to_string()),
-            _ => None,
-        };
+pub fn collect_intrinsic_diagnostics(
+    file_path: &str,
+    tokens: &[SpannedToken],
+    diagnostics: &[IntrinsicDiagnostic],
+) -> Vec<diagnostic::Diagnostic> {
+    diagnostics
+        .iter()
+        .map(|diag| {
+            let (severity, prefix) = match diag.level {
+                IntrinsicDiagnosticLevel::Error => (Severity::Error, "#error"),
+                IntrinsicDiagnosticLevel::Warning => (Severity::Warning, "#warning"),
+                IntrinsicDiagnosticLevel::Note => (Severity::Note, "#log"),
+            };
+            make_plain_diagnostic(
+                file_path,
+                token_span_to_span(tokens, diag.span.start..diag.span.end),
+                severity,
+                format!("{prefix}: {}", diag.message),
+                String::new(),
+            )
+        })
+        .collect()
+}
 
-        emit_report(
-            src,
-            file_path,
-            Severity::Error,
-            (byte_range, err.to_string(), String::new()),
-            vec![],
-            vec![],
-            help,
-        );
+pub fn collect_intrinsic_errors(
+    file_path: &str,
+    tokens: &[SpannedToken],
+    errors: &[IntrinsicError],
+) -> Vec<diagnostic::Diagnostic> {
+    errors
+        .iter()
+        .map(|err| {
+            let span = err.span();
+            make_plain_diagnostic(
+                file_path,
+                token_span_to_span(tokens, span.start..span.end),
+                Severity::Error,
+                err.to_string(),
+                String::new(),
+            )
+        })
+        .collect()
+}
+
+fn make_plain_diagnostic(
+    file_path: &str,
+    span: Span,
+    severity: Severity,
+    title: String,
+    body: String,
+) -> diagnostic::Diagnostic {
+    make_simple_diagnostic(file_path, span, severity, title, body, vec![], vec![], None)
+}
+
+fn make_simple_diagnostic(
+    file_path: &str,
+    span: Span,
+    severity: Severity,
+    title: String,
+    body: String,
+    related: Vec<diagnostic::DiagnosticLabel>,
+    notes: Vec<String>,
+    help: Option<String>,
+) -> diagnostic::Diagnostic {
+    diagnostic::Diagnostic {
+        severity,
+        message: title,
+        primary: diagnostic::DiagnosticLabel {
+            file: file_path.to_string(),
+            span,
+            message: body,
+        },
+        related,
+        notes,
+        help,
     }
 }
 
@@ -911,62 +956,11 @@ fn format_diagnostic(kind: &DiagnosticKind) -> (String, String) {
     }
 }
 
-pub fn report_intrinsic_diagnostics(
-    src: &str,
-    file_path: &str,
-    tokens: &[SpannedToken],
-    diagnostics: &[IntrinsicDiagnostic],
-) {
-    for diag in diagnostics {
-        let byte_range = token_span_to_byte_range(tokens, diag.span.start..diag.span.end);
-        let (severity, prefix) = match diag.level {
-            IntrinsicDiagnosticLevel::Error => (Severity::Error, "#error"),
-            IntrinsicDiagnosticLevel::Warning => (Severity::Warning, "#warning"),
-            IntrinsicDiagnosticLevel::Note => (Severity::Warning, "#log"),
-        };
-        emit_report(
-            src,
-            file_path,
-            severity,
-            (
-                byte_range,
-                format!("{prefix}: {}", diag.message),
-                String::new(),
-            ),
-            vec![],
-            vec![],
-            None,
-        );
-    }
-}
-
-pub fn report_intrinsic_errors(
-    src: &str,
-    file_path: &str,
-    tokens: &[SpannedToken],
-    errors: &[IntrinsicError],
-) {
-    for err in errors {
-        let span = err.span();
-        let byte_range = token_span_to_byte_range(tokens, span.start..span.end);
-        emit_report(
-            src,
-            file_path,
-            Severity::Error,
-            (byte_range, err.to_string(), String::new()),
-            vec![],
-            vec![],
-            None,
-        );
-    }
-}
-
-fn token_span_to_byte_range(tokens: &[SpannedToken], span: Range<usize>) -> Range<usize> {
+fn token_span_to_span(tokens: &[SpannedToken], span: Range<usize>) -> Span {
     let start_byte = tokens.get(span.start).map_or(0, |(_, s)| s.start);
     let last_tok_idx = span.end.saturating_sub(1);
     let end_byte = tokens.get(last_tok_idx).map_or(start_byte, |(_, s)| s.end);
-
-    start_byte..end_byte
+    Span::new(start_byte, end_byte)
 }
 
 fn last_ctx<T>(ctx: &Rich<'_, T>) -> Option<String> {
@@ -977,53 +971,6 @@ fn last_ctx<T>(ctx: &Rich<'_, T>) -> Option<String> {
         })
         .last()
         .map(|(s, _)| s.to_string())
-}
-
-fn emit_report(
-    src: &str,
-    file_path: &str,
-    severity: Severity,
-    primary: (Range<usize>, String, String),
-    secondary: Vec<(Range<usize>, String)>,
-    notes: Vec<String>,
-    help: Option<String>,
-) {
-    let (kind, color) = match severity {
-        Severity::Error => (ReportKind::Error, Color::Red),
-        Severity::Warning => (ReportKind::Warning, Color::Yellow),
-    };
-
-    let (range, title, label) = primary;
-
-    let mut report = Report::build(kind, (file_path, range.clone()))
-        .with_message(title)
-        .with_label(
-            Label::new((file_path, range))
-                .with_color(color)
-                .with_message(label),
-        );
-
-    for (sec_range, sec_msg) in secondary {
-        report = report.with_label(
-            Label::new((file_path, sec_range))
-                .with_color(Color::Blue)
-                .with_message(sec_msg),
-        );
-    }
-
-    for note in notes {
-        report = report.with_note(note);
-    }
-
-    if let Some(h) = help {
-        report = report.with_help(h);
-    }
-
-    let finished = report.finish();
-    let _ = match severity {
-        Severity::Warning => finished.eprint((file_path, Source::from(src))),
-        Severity::Error => finished.print((file_path, Source::from(src))),
-    };
 }
 
 fn describe_token(token: &Token) -> String {

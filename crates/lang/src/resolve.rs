@@ -4,26 +4,31 @@ use std::{
 };
 
 use crate::{
-    CompilationContext, SourceLocationInfo, StdModuleSource,
+    CompilationContext, StdModuleSource,
     ast::{Stmt, StmtNode},
+    diagnostic::{DiagnosticReport, LoadedFile},
     span::Span,
 };
 
 #[derive(Debug)]
 pub enum ImportError {
     FileNotFound { path: String, span: Span },
-    ParseError { file_path: String },
     UnknownStdModule { name: String, span: Span },
 }
 
 pub struct ModuleSource {
     pub path_key: Vec<String>,
     pub stmts: Vec<StmtNode>,
-    pub source_location: Option<SourceLocationInfo>,
+    pub loaded_file: Option<LoadedFile>,
 }
 
 pub struct ResolveResult {
     pub module_groups: Vec<Vec<ModuleSource>>,
+}
+
+pub(crate) struct ResolveErrors {
+    pub import_errors: Vec<ImportError>,
+    pub parse_reports: Vec<DiagnosticReport>,
 }
 
 pub(crate) fn resolve_imports(
@@ -32,11 +37,12 @@ pub(crate) fn resolve_imports(
     extern_names: &HashSet<String>,
     std_modules: &HashMap<String, StdModuleSource>,
     compilation_ctx: &CompilationContext,
-) -> Result<ResolveResult, Vec<ImportError>> {
+) -> Result<ResolveResult, ResolveErrors> {
     let mut modules = vec![];
     let mut resolving: HashSet<Vec<String>> = HashSet::new();
     let mut resolved: HashSet<Vec<String>> = HashSet::new();
     let mut errors = vec![];
+    let mut parse_reports = vec![];
 
     collect_imports(
         stmts,
@@ -48,13 +54,17 @@ pub(crate) fn resolve_imports(
         &mut modules,
         compilation_ctx,
         &mut errors,
+        &mut parse_reports,
     );
 
-    if errors.is_empty() {
+    if errors.is_empty() && parse_reports.is_empty() {
         let module_groups = topological_sort_sccs(modules);
         Ok(ResolveResult { module_groups })
     } else {
-        Err(errors)
+        Err(ResolveErrors {
+            import_errors: errors,
+            parse_reports,
+        })
     }
 }
 
@@ -69,6 +79,7 @@ fn collect_imports(
     modules: &mut Vec<ModuleSource>,
     compilation_ctx: &CompilationContext,
     errors: &mut Vec<ImportError>,
+    parse_reports: &mut Vec<DiagnosticReport>,
 ) {
     for stmt in stmts {
         let Stmt::Import(import_node) = &stmt.node else {
@@ -101,22 +112,20 @@ fn collect_imports(
             };
 
             let file_label = format!("<std.{module_name}>");
-            let Ok((module_ast, tokens)) =
-                crate::parse_source(&source.anv_source, &file_label, compilation_ctx)
-            else {
-                errors.push(ImportError::ParseError {
-                    file_path: file_label,
-                });
-                continue;
+            let parsed = match crate::parse_source(&source.anv_source, &file_label, compilation_ctx)
+            {
+                Ok(p) => p,
+                Err(report) => {
+                    parse_reports.push(report);
+                    continue;
+                }
             };
-            let source_location =
-                SourceLocationInfo::new(file_label.clone(), &source.anv_source, &tokens);
 
             resolved.insert(path_key.clone());
             modules.push(ModuleSource {
                 path_key,
-                stmts: module_ast.stmts,
-                source_location: Some(source_location),
+                stmts: parsed.ast.stmts,
+                loaded_file: Some(parsed.file),
             });
             continue;
         }
@@ -152,16 +161,18 @@ fn collect_imports(
         };
 
         let file_path_str = file_path.display().to_string();
-        let Ok((module_ast, tokens)) =
-            crate::parse_source(&source, &file_path_str, compilation_ctx)
-        else {
-            errors.push(ImportError::ParseError {
-                file_path: file_path_str,
-            });
-            resolving.remove(&path_key);
-            continue;
+        let parsed = match crate::parse_source(&source, &file_path_str, compilation_ctx) {
+            Ok(p) => p,
+            Err(report) => {
+                parse_reports.push(report);
+                resolving.remove(&path_key);
+                continue;
+            }
         };
-        let source_location = SourceLocationInfo::new(file_path_str.clone(), &source, &tokens);
+        let crate::diagnostic::ParsedFile {
+            file: loaded_file,
+            ast: module_ast,
+        } = parsed;
 
         // recursively resolve imports declared inside this module
         collect_imports(
@@ -174,6 +185,7 @@ fn collect_imports(
             modules,
             compilation_ctx,
             errors,
+            parse_reports,
         );
 
         resolving.remove(&path_key);
@@ -182,7 +194,7 @@ fn collect_imports(
         modules.push(ModuleSource {
             path_key,
             stmts: module_ast.stmts,
-            source_location: Some(source_location),
+            loaded_file: Some(loaded_file),
         });
     }
 }
